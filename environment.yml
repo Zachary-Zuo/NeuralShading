@@ -1,0 +1,11 @@
+name: neural-shading
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - numpy
+  - pytest
+  - pip
+  - pip:
+      - pyexr
+

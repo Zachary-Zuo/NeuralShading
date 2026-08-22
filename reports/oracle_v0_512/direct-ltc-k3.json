@@ -1,0 +1,20 @@
+{
+  "dataset": "D:\\01_Workspace\\NeuralShading\\data\\v0_oracle_512",
+  "direct": "D:\\01_Workspace\\NeuralShading\\data\\v0_oracle_512\\direct_top.npy",
+  "family": "ltc",
+  "lobe_count": 3,
+  "seconds": 102.8795112000007,
+  "clamped_negative_residual_fraction": 0.06742350260416667,
+  "smape": {
+    "mean": 0.11720467358827591,
+    "median": 0.08805026859045029,
+    "p90": 0.2732451558113098,
+    "p95": 0.33974161744117737
+  },
+  "relative_l1": {
+    "mean": 0.09421829879283905,
+    "median": 0.055564556270837784,
+    "p90": 0.2523505687713623,
+    "p95": 0.3253675699234009
+  }
+}

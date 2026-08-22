@@ -1,0 +1,16 @@
+{
+  "dataset": "D:\\01_Workspace\\NeuralShading\\data\\v0_oracle_512",
+  "archive": "D:\\01_Workspace\\NeuralShading\\reports\\oracle_v0_512\\direct-ltc-k2.npz",
+  "packet_count": 2048,
+  "packet_bytes": 176,
+  "median_relative_l1_vs_fp16_archive": 0.0001745305780787021,
+  "p99_relative_l1_vs_fp16_archive": 0.00023937082733027637,
+  "max_relative_l1_vs_fp16_archive": 0.0009930343367159367,
+  "max_absolute_vs_fp16_archive": 0.0037546157836914062,
+  "max_absolute_fraction_of_global_peak": 0.000219849418499507,
+  "worst_tile": 263,
+  "worst_bin": 20,
+  "worst_channel": 1,
+  "worst_expected": 8.8125,
+  "worst_actual": 8.816254615783691
+}

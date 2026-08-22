@@ -1,0 +1,18 @@
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.py[cod]
+*.egg-info/
+*.log
+
+# 本项目的本地构建和运行数据。
+build/
+data/
+external/
+
+# 报告中的文字和 JSON 指标进入 Git；可重新生成的二进制不进入。
+reports/generated/
+reports/**/*.npy
+reports/**/*.npz
+reports/**/*.pt

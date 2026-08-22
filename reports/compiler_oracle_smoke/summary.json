@@ -1,0 +1,30 @@
+{
+  "dataset": "data\\v0_oracle_512",
+  "feature_version": "stack-token-v1",
+  "model": "recurrent-compiler-baseline",
+  "width": 64,
+  "steps": 1000,
+  "batch_size": 256,
+  "learning_rate": 0.0003,
+  "seed": 20260822,
+  "device": "cuda",
+  "seconds": 12.060322900000756,
+  "parameter_count": 38642,
+  "metrics": {
+    "train": {
+      "loss": 0.540129657302584,
+      "relative_l1_median": 0.3932238817214966,
+      "relative_l1_p90": 0.7553694248199463
+    },
+    "validation": {
+      "loss": 0.577093780040741,
+      "relative_l1_median": 0.33117401599884033,
+      "relative_l1_p90": 0.6776977181434631
+    },
+    "test": {
+      "loss": 0.5560742020606995,
+      "relative_l1_median": 0.42098385095596313,
+      "relative_l1_p90": 0.7505064010620117
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "dataset": "D:\\01_Workspace\\NeuralShading\\data\\v0_train",
+  "checkpoint": "D:\\01_Workspace\\NeuralShading\\reports\\compiler_v0\\compiler.pt",
+  "model": "recurrent-compiler-baseline",
+  "evaluation_tiles_per_split": 16384,
+  "sampling": "evenly-spaced-across-full-split",
+  "metrics": {
+    "train": {
+      "loss": 0.22267519496381283,
+      "relative_l1_median": 0.2187003344297409,
+      "relative_l1_p90": 0.5750682950019836,
+      "ab_relative_l1_median": 0.19392699003219604,
+      "ab_relative_l1_p90": 0.610508143901825
+    },
+    "validation": {
+      "loss": 0.2251906474120915,
+      "relative_l1_median": 0.2222251296043396,
+      "relative_l1_p90": 0.5729178190231323,
+      "ab_relative_l1_median": 0.20837055146694183,
+      "ab_relative_l1_p90": 0.6281154155731201
+    },
+    "test": {
+      "loss": 0.2272222605533898,
+      "relative_l1_median": 0.21758919954299927,
+      "relative_l1_p90": 0.5678615570068359,
+      "ab_relative_l1_median": 0.1856490820646286,
+      "ab_relative_l1_p90": 0.6055163741111755
+    }
+  }
+}

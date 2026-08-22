@@ -1,0 +1,30 @@
+{
+  "dataset": "data\\v0_train",
+  "feature_version": "stack-token-v1",
+  "model": "recurrent-compiler-baseline",
+  "width": 64,
+  "steps": 20000,
+  "batch_size": 512,
+  "learning_rate": 0.0003,
+  "seed": 20260822,
+  "device": "cuda",
+  "seconds": 279.03953550000006,
+  "parameter_count": 38642,
+  "metrics": {
+    "train": {
+      "loss": 0.29191954620182514,
+      "relative_l1_median": 0.2551479935646057,
+      "relative_l1_p90": 0.8952937126159668
+    },
+    "validation": {
+      "loss": 0.25900521923904307,
+      "relative_l1_median": 0.2648070752620697,
+      "relative_l1_p90": 0.5018937587738037
+    },
+    "test": {
+      "loss": 0.36207078228790124,
+      "relative_l1_median": 0.3939078450202942,
+      "relative_l1_p90": 0.6300159096717834
+    }
+  }
+}

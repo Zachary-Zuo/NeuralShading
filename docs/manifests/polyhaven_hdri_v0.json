@@ -1,0 +1,106 @@
+{
+  "name": "polyhaven-hdri-v0",
+  "retrieved": "2026-08-22",
+  "source": "https://api.polyhaven.com",
+  "license": "CC0",
+  "resolution": "1k",
+  "format": "exr",
+  "assets": [
+    {
+      "id": "studio_small_03",
+      "name": "Studio Small 03",
+      "class": "indoor-artificial",
+      "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/exr/1k/studio_small_03_1k.exr",
+      "size": 1469189,
+      "md5": "5234d1ce124439a2c32a4603751c3069"
+    },
+    {
+      "id": "brown_photostudio_02",
+      "name": "Brown Photostudio 02",
+      "class": "indoor-mixed",
+      "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/exr/1k/brown_photostudio_02_1k.exr",
+      "size": 1352580,
+      "md5": "fb8ceb57f57abfb12175e6a1c326ac53"
+    },
+    {
+      "id": "metro_noord",
+      "name": "Metro: Noord",
+      "class": "indoor-artificial",
+      "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/exr/1k/metro_noord_1k.exr",
+      "size": 6133617,
+      "md5": "758a4347659b7e2349362c486f980dc7"
+    },
+    {
+      "id": "autumn_park",
+      "name": "Autumn Park",
+      "class": "outdoor-morning-clear",
+      "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/exr/1k/autumn_park_1k.exr",
+      "size": 1399744,
+      "md5": "8b4ed3c138f21704ff50d5fda5ab9a32"
+    },
+    {
+      "id": "spruit_sunrise",
+      "name": "Spruit Sunrise",
+      "class": "outdoor-sunrise-clear",
+      "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/exr/1k/spruit_sunrise_1k.exr",
+      "size": 1375103,
+      "md5": "6ebfc33bee48fd6078a2f6d1eab964a0"
+    },
+    {
+      "id": "kiara_1_dawn",
+      "name": "Kiara 1 Dawn",
+      "class": "outdoor-sunrise-partly-cloudy",
+      "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/exr/1k/kiara_1_dawn_1k.exr",
+      "size": 1296516,
+      "md5": "760446d88601bca5421b7e8c7c0637cf"
+    },
+    {
+      "id": "venice_sunset",
+      "name": "Venice Sunset",
+      "class": "outdoor-sunset-clear",
+      "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/exr/1k/venice_sunset_1k.exr",
+      "size": 1232232,
+      "md5": "6b4f063ca1a6edc4c984182fec206dbb"
+    },
+    {
+      "id": "industrial_sunset_02_puresky",
+      "name": "Industrial Sunset 02 (Pure Sky)",
+      "class": "outdoor-sunset-partly-cloudy",
+      "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/exr/1k/industrial_sunset_02_puresky_1k.exr",
+      "size": 5270111,
+      "md5": "86611e7b6fcab51a88f829a8301c6a69"
+    },
+    {
+      "id": "kloofendal_48d_partly_cloudy",
+      "name": "Kloofendal 48d Partly Cloudy",
+      "class": "outdoor-midday-partly-cloudy",
+      "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/exr/1k/kloofendal_48d_partly_cloudy_1k.exr",
+      "size": 1535232,
+      "md5": "b4c57ac7a27decdc9b58fe7549c05447"
+    },
+    {
+      "id": "abandoned_slipway",
+      "name": "Abandoned Slipway",
+      "class": "outdoor-midday-overcast",
+      "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/exr/1k/abandoned_slipway_1k.exr",
+      "size": 1420495,
+      "md5": "08fedc6cdd56ffe1629db35bb2d7ace1"
+    },
+    {
+      "id": "rogland_clear_night",
+      "name": "Rogland Clear Night",
+      "class": "outdoor-night-clear",
+      "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/exr/1k/rogland_clear_night_1k.exr",
+      "size": 6086322,
+      "md5": "71ec654030ec90efc630b06e55609393"
+    },
+    {
+      "id": "dikhololo_night",
+      "name": "Dikhololo Night",
+      "class": "outdoor-night-clear",
+      "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/exr/1k/dikhololo_night_1k.exr",
+      "size": 1648294,
+      "md5": "cc2274e43961e5b5bc43247528c7010d"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "dataset": "data\\v0_oracle_512",
+  "checkpoint": "D:\\01_Workspace\\NeuralShading\\reports\\compiler_v0\\compiler.pt",
+  "model": "recurrent-compiler-baseline",
+  "evaluation_tiles_per_split": 4096,
+  "sampling": "evenly-spaced-across-full-split",
+  "metrics": {
+    "train": {
+      "loss": 0.2969931662082672,
+      "relative_l1_median": 0.21626421809196472,
+      "relative_l1_p90": 0.5199012160301208,
+      "ab_relative_l1_median": 0.018793925642967224,
+      "ab_relative_l1_p90": 0.11344439536333084
+    },
+    "validation": {
+      "loss": 0.19835807383060455,
+      "relative_l1_median": 0.13880562782287598,
+      "relative_l1_p90": 0.377551794052124,
+      "ab_relative_l1_median": 0.018703248351812363,
+      "ab_relative_l1_p90": 0.06278522312641144
+    },
+    "test": {
+      "loss": 0.23320792615413666,
+      "relative_l1_median": 0.2269657850265503,
+      "relative_l1_p90": 0.5390839576721191,
+      "ab_relative_l1_median": 0.025298062711954117,
+      "ab_relative_l1_p90": 0.07977230101823807
+    }
+  }
+}

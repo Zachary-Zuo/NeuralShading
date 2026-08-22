@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Neural Closure Layer Stack v1",
+  "type": "object",
+  "required": ["version", "layers", "media"],
+  "properties": {
+    "version": {"const": 1},
+    "layers": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "required": ["type", "roughness_x", "roughness_y"],
+        "properties": {
+          "type": {"enum": ["RoughDielectric", "RoughConductor", "Diffuse", "Sheen"]},
+          "roughness_x": {"type": "number", "minimum": 0, "maximum": 1},
+          "roughness_y": {"type": "number", "minimum": 0, "maximum": 1},
+          "eta": {"$ref": "#/$defs/nonnegativeRgb"},
+          "k": {"$ref": "#/$defs/nonnegativeRgb"},
+          "albedo": {"$ref": "#/$defs/nonnegativeRgb"},
+          "tangent_rotation": {"type": "number"},
+          "flags": {"type": "integer", "minimum": 0, "maximum": 4294967295}
+        },
+        "additionalProperties": false
+      }
+    },
+    "media": {
+      "type": "array",
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "required": ["sigma_a", "sigma_s", "g", "thickness"],
+        "properties": {
+          "sigma_a": {"$ref": "#/$defs/nonnegativeRgb"},
+          "sigma_s": {"$ref": "#/$defs/nonnegativeRgb"},
+          "g": {"type": "number", "exclusiveMinimum": -1, "exclusiveMaximum": 1},
+          "thickness": {"type": "number", "minimum": 0}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "$defs": {
+    "nonnegativeRgb": {
+      "type": "array",
+      "prefixItems": [
+        {"type": "number", "minimum": 0},
+        {"type": "number", "minimum": 0},
+        {"type": "number", "minimum": 0}
+      ],
+      "minItems": 3,
+      "maxItems": 3
+    }
+  },
+  "additionalProperties": false
+}
+
