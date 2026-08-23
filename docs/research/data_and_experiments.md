@@ -144,7 +144,9 @@ target transform 的统计量只能由 source train × query train 生成并带 
 
 因此这些文件只保留为 provider/合同 smoke，E1 不得直接消费。下一步先让 query plan 支持按 `wo` 的 peak-aware 方向与 split 独立 probe，再生成最小的 targeted H5；不能用扩大同一均匀表代替修正 proposal。完整运行结果位于 `artifacts/research/supervision-audit/<dataset-id>/`。
 
-逐 `wo` 查询合同已经实现并通过 CPU 与 Falcor GPU 回归：`QueryPlan` 支持 `[view, light, 3]`，LayerStack shader 和四个 provider 都按 query group 消费真实方向。`ncls.e0-peak-grazing-mixture@1` 提供有显式归一化 PDF 的 uniform、三尺度 peak、grazing，以及完整球面的 transmission peak；uniform 基线也对不同 partition 使用确定性方位扰动。随后 v4 加入显式 query role：train/adversarial 使用 mixture，validation/test 使用独立 fixed uniform probe。source split 与 query role 的独立性由 audit 和 `ncls.e0-supervision-entry@2` 分别检查，不能再用 state split 方位扰动替代 held-out query。
+逐 `wo` 查询合同已经实现并通过 CPU 与 Falcor GPU 回归：`QueryPlan` 支持 `[view, light, 3]`，LayerStack shader 和四个 provider 都按 query group 消费真实方向。`ncls.e0-peak-grazing-mixture@1` 提供有显式归一化 PDF 的 uniform、三尺度 peak、grazing，以及完整球面的 transmission peak；uniform 基线也对不同 partition 使用确定性方位扰动。随后 v4 加入显式 query role：train/adversarial 使用 mixture，validation/test 使用独立 fixed uniform probe。source split 与 query role 的独立性由 audit 和 `ncls.e0-supervision-entry@3` 分别检查，不能再用 state split 方位扰动替代 held-out query。
+
+首个三资产 MERL v4 smoke 暴露了 source test × adversarial 与 source train × train 的三个精确 `wo` 碰撞；没有放宽 gate，而是改为由 `(source split, query role)` 联合生成非碰撞确定性方位。修复后全部 source/query partition 的 `wo/wi` overlap 为 0，adversarial raw-response peak 最近邻角 p95 为 `0.532°`，五度内 `wi` 掠射比例为 `0.119`。E0 gate v3 因而冻结 peak spacing p95 ≤ `2°`、掠射比例 ≥ `0.08`，并为 OpenPBR 冻结 adversarial 透射比例 ≥ `0.25`。
 
 真实 targeted probe 给出了两项稳定结果。MERL `black-obsidian` 使用 8 个 `wo`、每个 512 个 mixture query 后，peak 最近邻角 p95 从 pilot 的约 `8.73°` 降至 `1.15°`；OpenPBR `open_pbr_glass` 从约 `12.25°` 降至 `0.52°`，并实际包含约 `47.1%` 透射侧 query 与 `11.4%` 的五度内掠射 query。两个单资产 probe 的 proposal/profile 检查通过，gate 只因它们故意没有 validation/test state 而失败，不能把该预期失败解释为 proposal 失败。
 

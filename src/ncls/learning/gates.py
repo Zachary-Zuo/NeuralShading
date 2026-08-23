@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 
 GATE_FORMAT = "ncls.supervision-gate"
-GATE_VERSION = 2
+GATE_VERSION = 3
 
 
 def _sha256(value: Any) -> str:
@@ -71,6 +71,25 @@ def evaluate_supervision_gate(audit: Mapping[str, Any], gate: Mapping[str, Any])
     for profile in base["required_adversarial_profiles"]:
         actual = bool(adversarial[profile])
         check(f"coverage.adversarial.{profile}", actual, True, actual)
+    adversarial_response = audit["response"]["by_query_role"]["adversarial_probe"]
+    peak_spacing_value = adversarial_response["peak_nearest_neighbor_angle_degrees"].get("p95")
+    peak_spacing_p95 = float(peak_spacing_value) if peak_spacing_value is not None else None
+    maximum_peak_spacing = float(base["maximum_adversarial_peak_spacing_p95_degrees"])
+    check(
+        "coverage.adversarial.peak_spacing_p95_degrees",
+        peak_spacing_p95,
+        {"maximum": maximum_peak_spacing},
+        peak_spacing_p95 is not None and peak_spacing_p95 <= maximum_peak_spacing,
+    )
+    adversarial_coverage = audit["coverage"]["by_query_role"]["adversarial_probe"]
+    grazing_fraction = float(adversarial_coverage["wi_grazing_fraction_abs_cos_below_sin_5deg"])
+    minimum_grazing = float(base["minimum_adversarial_wi_grazing_fraction"])
+    check(
+        "coverage.adversarial.wi_grazing_fraction",
+        grazing_fraction,
+        {"minimum": minimum_grazing},
+        grazing_fraction >= minimum_grazing,
+    )
 
     transform = audit["target_transform_statistics"]
     expected_source_split = str(base["target_transform_fit_source_split"])
@@ -128,10 +147,19 @@ def evaluate_supervision_gate(audit: Mapping[str, Any], gate: Mapping[str, Any])
                 {"minimum": int(minimum_rotations)},
                 actual >= int(minimum_rotations),
             )
+        minimum_transmission = requirements.get("minimum_adversarial_wi_transmission_fraction")
+        if minimum_transmission is not None:
+            actual = float(adversarial_coverage["wi_transmission_fraction"])
+            check(
+                f"family.{family_id}.adversarial.wi_transmission_fraction",
+                actual,
+                {"minimum": float(minimum_transmission)},
+                actual >= float(minimum_transmission),
+            )
 
     return {
         "format_name": "ncls.supervision-gate-result",
-        "format_version": 2,
+        "format_version": 3,
         "gate_id": gate["gate_id"],
         "gate_sha256": _sha256(gate),
         "audit_sha256": audit["audit_sha256"],

@@ -14,7 +14,7 @@ from ncls.learning.gates import evaluate_supervision_gate, load_supervision_gate
 
 
 AUDIT_FORMAT = "ncls.supervision-audit"
-AUDIT_VERSION = 2
+AUDIT_VERSION = 3
 TRANSFORM_STATISTICS_FORMAT = "ncls.target-transform-statistics"
 TRANSFORM_STATISTICS_VERSION = 2
 _SPLIT_CODES = {name: index for index, name in enumerate(SPLIT_NAMES)}
@@ -266,6 +266,9 @@ def audit_supervision(
         top1_parts: list[np.ndarray] = []
         top5_parts: list[np.ndarray] = []
         peak_spacing_parts: list[np.ndarray] = []
+        group_top1 = np.empty(len(selected), dtype=np.float64)
+        group_top5 = np.empty(len(selected), dtype=np.float64)
+        group_peak_spacing = np.empty(len(selected), dtype=np.float64)
         worst_groups: list[dict[str, Any]] = []
         for family_id in sorted(set(map(str, selected_families.tolist()))):
             family_mask = selected_families == family_id
@@ -290,7 +293,8 @@ def audit_supervision(
             top1_parts.append(top1)
             top5_parts.append(top5)
 
-            peak_indices = order[:, 0]
+            response_magnitude = np.sum(np.abs(response), axis=-1) * valid
+            peak_indices = np.argmax(response_magnitude, axis=1)
             spacing = np.empty(len(peak_indices), dtype=np.float64)
             for local_index, peak_index in enumerate(peak_indices.tolist()):
                 dots = np.clip(wi[local_index] @ wi[local_index, peak_index], -1.0, 1.0)
@@ -306,6 +310,9 @@ def audit_supervision(
                 "peak_nearest_neighbor_angle_degrees": _percentiles(spacing, (0.05, 0.5, 0.9, 0.95)),
             }
             global_family_indices = np.flatnonzero(family_mask)
+            group_top1[global_family_indices] = top1
+            group_top5[global_family_indices] = top5
+            group_peak_spacing[global_family_indices] = spacing
             for local_index in np.argsort(top1)[-4:][::-1]:
                 selected_position = int(global_family_indices[local_index])
                 group_index = int(selected[selected_position])
@@ -411,6 +418,23 @@ def audit_supervision(
                 "replica_normalized_l1": float(replica_delta[selected_position]),
                 "maximum_sample_count": int(group_sample_count[selected_position]),
             })
+
+        response_by_query_role = {
+            name: {
+                "query_group_count": int(np.sum(selected_roles == code)),
+                "integrated_absolute_energy": _distribution(group_energy[selected_roles == code]),
+                "top_1_percent_energy_fraction": _percentiles(
+                    group_top1[selected_roles == code], (0.5, 0.9, 0.95)
+                ),
+                "top_5_percent_energy_fraction": _percentiles(
+                    group_top5[selected_roles == code], (0.5, 0.9, 0.95)
+                ),
+                "peak_nearest_neighbor_angle_degrees": _percentiles(
+                    group_peak_spacing[selected_roles == code], (0.05, 0.5, 0.9, 0.95)
+                ),
+            }
+            for name, code in _QUERY_ROLE_CODES.items()
+        }
 
         train_available = np.flatnonzero(
             (query_source_splits == _SPLIT_CODES["train"])
@@ -523,6 +547,7 @@ def audit_supervision(
                 "measure": dataset.manifest.response_measure,
                 "color_model": dataset.manifest.color_model,
                 "by_family": response_by_family,
+                "by_query_role": response_by_query_role,
                 "integrated_absolute_energy": _distribution(np.concatenate(group_energy_parts)),
                 "top_1_percent_energy_fraction": _percentiles(np.concatenate(top1_parts), (0.5, 0.9, 0.95)),
                 "top_5_percent_energy_fraction": _percentiles(np.concatenate(top5_parts), (0.5, 0.9, 0.95)),
@@ -569,6 +594,20 @@ def audit_supervision(
                 "wi_transmission_fraction": float(np.mean(wi[..., 2] < 0.0)),
                 "wi_grazing_fraction_abs_cos_below_sin_5deg": float(np.mean(np.abs(wi[..., 2]) < np.sin(np.deg2rad(5.0)))),
                 "wo_grazing_fraction_abs_cos_below_sin_5deg": float(np.mean(np.abs(wo[:, 2]) < np.sin(np.deg2rad(5.0)))),
+                "by_query_role": {
+                    name: {
+                        "query_group_count": int(np.sum(selected_roles == code)),
+                        "wi_transmission_fraction": float(np.mean(wi[selected_roles == code, ..., 2] < 0.0))
+                        if np.any(selected_roles == code) else 0.0,
+                        "wi_grazing_fraction_abs_cos_below_sin_5deg": float(np.mean(
+                            np.abs(wi[selected_roles == code, ..., 2]) < np.sin(np.deg2rad(5.0))
+                        )) if np.any(selected_roles == code) else 0.0,
+                        "wo_grazing_fraction_abs_cos_below_sin_5deg": float(np.mean(
+                            np.abs(wo[selected_roles == code, 2]) < np.sin(np.deg2rad(5.0))
+                        )) if np.any(selected_roles == code) else 0.0,
+                    }
+                    for name, code in _QUERY_ROLE_CODES.items()
+                },
                 "position_kinds": {
                     str(int(code)): int(np.sum(np.asarray(batch["position_kind"]) == code))
                     for code in np.unique(np.asarray(batch["position_kind"]))
