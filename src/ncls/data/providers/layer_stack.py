@@ -13,10 +13,12 @@ from ncls.data.contract import EvaluatedBlock, PositionKind, QueryPlan, Referenc
 from ncls.data.priors import (
     E0_LAYER_STACK_BOUNDARY_CASE_IDS,
     E0_LAYER_STACK_BOUNDARY_PROFILE_ID,
+    E1_LAYER_STACK_MULTI_INTERFACE_PROFILE_ID,
     E1_LAYER_STACK_NARROW_CONDUCTOR_PROFILE_ID,
     LAYER_STACK_RESEARCH_PRIOR_ID,
     LAYER_STACK_STATE_PROFILE_IDS,
     e0_layer_stack_boundary_cases,
+    e1_layer_stack_multi_interface_cases,
     e1_layer_stack_narrow_conductor_cases,
     sample_stack_families,
 )
@@ -55,6 +57,7 @@ class LayerStackProviderConfig:
         fixed_profile_counts = {
             E0_LAYER_STACK_BOUNDARY_PROFILE_ID: len(E0_LAYER_STACK_BOUNDARY_CASE_IDS),
             E1_LAYER_STACK_NARROW_CONDUCTOR_PROFILE_ID: 1,
+            E1_LAYER_STACK_MULTI_INTERFACE_PROFILE_ID: 1,
         }
         if self.state_profile_id in fixed_profile_counts:
             expected = fixed_profile_counts[self.state_profile_id]
@@ -102,6 +105,8 @@ class LayerStackProvider(BaseProvider):
             cases = e0_layer_stack_boundary_cases()
         elif config.state_profile_id == E1_LAYER_STACK_NARROW_CONDUCTOR_PROFILE_ID:
             cases = e1_layer_stack_narrow_conductor_cases()
+        elif config.state_profile_id == E1_LAYER_STACK_MULTI_INTERFACE_PROFILE_ID:
+            cases = e1_layer_stack_multi_interface_cases()
         else:
             cases = ()
         if cases:

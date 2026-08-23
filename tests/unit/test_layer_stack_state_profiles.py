@@ -13,8 +13,10 @@ from ncls.data import CollectionConfig
 from ncls.data.priors import (
     E0_LAYER_STACK_BOUNDARY_CASE_IDS,
     E0_LAYER_STACK_BOUNDARY_PROFILE_ID,
+    E1_LAYER_STACK_MULTI_INTERFACE_PROFILE_ID,
     E1_LAYER_STACK_NARROW_CONDUCTOR_PROFILE_ID,
     e0_layer_stack_boundary_cases,
+    e1_layer_stack_multi_interface_cases,
     e1_layer_stack_narrow_conductor_cases,
 )
 from ncls.data.providers import LayerStackProvider, LayerStackProviderConfig
@@ -100,6 +102,43 @@ def test_e1_narrow_conductor_profile_is_one_explicit_capacity_state() -> None:
     assert plan.query_roles.tolist() == [0] * 8 + [1] * 2 + [2] * 2 + [3] * 2
     assert all("peak" in proposal for proposal in plan.proposal_id)
     assert np.min(plan.view_directions[:, 2]) < np.sin(np.deg2rad(5.0))
+
+
+def test_e1_multi_interface_profile_is_one_explicit_residual_state() -> None:
+    cases = e1_layer_stack_multi_interface_cases()
+    assert tuple(case_id for case_id, _ in cases) == ("multi-interface-moving-peaks",)
+    stack = cases[0][1]
+    assert len(stack.interfaces) == 3
+    assert len(stack.media) == 2
+
+    provider = LayerStackProvider(
+        CollectionConfig(view_count=1, light_count=4, seed=20260824),
+        LayerStackProviderConfig(
+            family_count=1,
+            local_state_count=1,
+            state_profile_id=E1_LAYER_STACK_MULTI_INTERFACE_PROFILE_ID,
+        ),
+        evaluator=object(),
+    )
+    state = provider.source_states()[0]
+    program = MaterialProgram.from_json(state.native_payload.decode("utf-8"))
+    assert program.metadata["state_profile_id"] == E1_LAYER_STACK_MULTI_INTERFACE_PROFILE_ID
+    assert program.metadata["state_profile_case_id"] == "multi-interface-moving-peaks"
+
+
+def test_e1_multi_interface_profile_rejects_shape_changes() -> None:
+    with pytest.raises(ValueError, match="family_count=1"):
+        LayerStackProviderConfig(
+            family_count=2,
+            local_state_count=1,
+            state_profile_id=E1_LAYER_STACK_MULTI_INTERFACE_PROFILE_ID,
+        )
+    with pytest.raises(ValueError, match="local_state_count=1"):
+        LayerStackProviderConfig(
+            family_count=1,
+            local_state_count=2,
+            state_profile_id=E1_LAYER_STACK_MULTI_INTERFACE_PROFILE_ID,
+        )
 
 
 def test_layer_stack_provider_honors_query_group_batch_for_dense_view_profiles() -> None:
