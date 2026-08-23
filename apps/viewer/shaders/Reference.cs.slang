@@ -238,7 +238,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
             const float3 toLight = lightPoint - position;
             const float distanceSquared = max(dot(toLight, toLight), 1e-4f);
             const float3 wiWorld = normalize(toLight);
-            const float3 lightNormal = -normalize(cross(gRectangleAxisU, gRectangleAxisV));
+            const float3 lightNormal = normalize(cross(gRectangleAxisU, gRectangleAxisV));
             const float lightCosine = max(dot(lightNormal, -wiWorld), 0.0f);
             const float area = 4.0f * length(cross(gRectangleAxisU, gRectangleAxisV));
             const float3 response = nclsReferenceDirection(

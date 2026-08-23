@@ -324,6 +324,191 @@ const std::unordered_map<std::string, OpenPbrParameterLayout> kOpenPbrParameterL
     {"geometry_thin_walled", {58, 1}},
 };
 
+struct MaterialXParameterLayout
+{
+    const char* name;
+    uint32_t offset;
+    uint32_t width;
+    int32_t textureFlagOffset;
+};
+
+constexpr std::array<MaterialXParameterLayout, 14> kMaterialXParameterLayout = {{
+    {"base", kMxBase, 1, -1},
+    {"base_color", kMxBaseColor, 3, int32_t(kMxHasBaseColorTexture)},
+    {"diffuse_roughness", kMxDiffuseRoughness, 1, -1},
+    {"metalness", kMxMetalness, 1, int32_t(kMxHasMetalnessTexture)},
+    {"specular", kMxSpecular, 1, -1},
+    {"specular_color", kMxSpecularColor, 3, -1},
+    {"specular_roughness", kMxSpecularRoughness, 1, int32_t(kMxHasRoughnessTexture)},
+    {"specular_IOR", kMxSpecularIor, 1, -1},
+    {"specular_anisotropy", kMxSpecularAnisotropy, 1, -1},
+    {"specular_rotation", kMxSpecularRotation, 1, -1},
+    {"normal_scale", kMxNormalScale, 1, int32_t(kMxHasNormalTexture)},
+    {"emission", kMxEmission, 1, -1},
+    {"emission_color", kMxEmissionColor, 3, -1},
+    {"opacity", kMxOpacity, 1, -1},
+}};
+
+std::array<float, 3> constantFloat3Binding(
+    const json& parameters,
+    const char* name,
+    const std::array<float, 3>& fallback)
+{
+    if (!parameters.contains(name)) return fallback;
+    const auto& binding = parameters.at(name);
+    if (binding.value("source", "") == "geometry") return fallback;
+    if (binding.value("source", "") != "constant")
+        throw std::runtime_error("Falcor OpenPBR v1 runtime requires resolved constant binding: " + std::string(name));
+    const auto& value = binding.at("value");
+    if (!value.is_array() || value.size() != 3u)
+        throw std::runtime_error("OpenPBR parameter has wrong vector width: " + std::string(name));
+    std::array<float, 3> result{};
+    for (uint32_t component = 0u; component < 3u; ++component)
+    {
+        result[component] = value[component].get<float>();
+        if (!std::isfinite(result[component]))
+            throw std::runtime_error("OpenPBR parameter is non-finite: " + std::string(name));
+    }
+    return result;
+}
+
+void writeOpenPbrBasis(
+    std::array<float, 77>& values,
+    uint32_t offset,
+    const std::array<float, 3>& normalValue,
+    const std::array<float, 3>& tangentValue)
+{
+    auto dot3 = [](const std::array<float, 3>& left, const std::array<float, 3>& right) {
+        return left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
+    };
+    auto normalize = [&](const char* label, std::array<float, 3> value) {
+        const float lengthSquared = dot3(value, value);
+        if (!(lengthSquared > 1e-12f) || !std::isfinite(lengthSquared))
+            throw std::runtime_error(std::string("OpenPBR ") + label + " must be finite and nonzero");
+        const float inverseLength = 1.f / std::sqrt(lengthSquared);
+        for (float& component : value) component *= inverseLength;
+        return value;
+    };
+    const auto normal = normalize("geometry normal", normalValue);
+    std::array<float, 3> tangent = tangentValue;
+    const float tangentNormal = dot3(tangent, normal);
+    for (uint32_t component = 0u; component < 3u; ++component)
+        tangent[component] -= tangentNormal * normal[component];
+    tangent = normalize("geometry tangent", tangent);
+    const auto bitangent = normalize("geometry bitangent", {
+        normal[1] * tangent[2] - normal[2] * tangent[1],
+        normal[2] * tangent[0] - normal[0] * tangent[2],
+        normal[0] * tangent[1] - normal[1] * tangent[0],
+    });
+    std::copy(tangent.begin(), tangent.end(), values.begin() + offset);
+    std::copy(bitangent.begin(), bitangent.end(), values.begin() + offset + 3u);
+    std::copy(normal.begin(), normal.end(), values.begin() + offset + 6u);
+}
+
+json openPbrParameterValues(const ReferenceSource& source)
+{
+    json result = json::object();
+    for (const auto& [name, layout] : kOpenPbrParameterLayout)
+    {
+        if (name == "geometry_thin_walled") result[name] = source.openPbrInputs[layout.offset] != 0.f;
+        else if (layout.width == 1u) result[name] = source.openPbrInputs[layout.offset];
+        else
+        {
+            json value = json::array();
+            for (uint32_t component = 0u; component < layout.width; ++component)
+                value.push_back(source.openPbrInputs[layout.offset + component]);
+            result[name] = std::move(value);
+        }
+    }
+    result["geometry_tangent"] = {
+        source.openPbrInputs[59], source.openPbrInputs[60], source.openPbrInputs[61]};
+    result["geometry_normal"] = {
+        source.openPbrInputs[65], source.openPbrInputs[66], source.openPbrInputs[67]};
+    result["geometry_coat_tangent"] = {
+        source.openPbrInputs[68], source.openPbrInputs[69], source.openPbrInputs[70]};
+    result["geometry_coat_normal"] = {
+        source.openPbrInputs[74], source.openPbrInputs[75], source.openPbrInputs[76]};
+    return result;
+}
+
+void applyOpenPbrParameterValues(ReferenceSource& source, const json& parameters)
+{
+    for (const auto& [name, layout] : kOpenPbrParameterLayout)
+    {
+        if (!parameters.contains(name)) continue;
+        const auto& value = parameters.at(name);
+        if (layout.width == 1u)
+            source.openPbrInputs[layout.offset] = value.is_boolean() ? float(value.get<bool>()) : value.get<float>();
+        else
+        {
+            if (!value.is_array() || value.size() != layout.width)
+                throw std::runtime_error("OpenPBR scene parameter has wrong vector width: " + name);
+            for (uint32_t component = 0u; component < layout.width; ++component)
+                source.openPbrInputs[layout.offset + component] = value[component].get<float>();
+        }
+    }
+    const auto vector3 = [&](const char* name, const std::array<float, 3>& fallback) {
+        if (!parameters.contains(name)) return fallback;
+        const auto& value = parameters.at(name);
+        if (!value.is_array() || value.size() != 3u)
+            throw std::runtime_error("OpenPBR scene parameter has wrong vector width: " + std::string(name));
+        return std::array<float, 3>{value[0].get<float>(), value[1].get<float>(), value[2].get<float>()};
+    };
+    writeOpenPbrBasis(
+        source.openPbrInputs, 59u,
+        vector3("geometry_normal", {0.f, 0.f, 1.f}),
+        vector3("geometry_tangent", {1.f, 0.f, 0.f}));
+    writeOpenPbrBasis(
+        source.openPbrInputs, 68u,
+        vector3("geometry_coat_normal", {0.f, 0.f, 1.f}),
+        vector3("geometry_coat_tangent", {1.f, 0.f, 0.f}));
+    for (float value : source.openPbrInputs)
+        if (!std::isfinite(value)) throw std::runtime_error("OpenPBR scene state contains non-finite input");
+}
+
+json materialXParameterValues(const ReferenceSource& source)
+{
+    json result = json::object();
+    for (const auto& layout : kMaterialXParameterLayout)
+    {
+        if (layout.textureFlagOffset >= 0
+            && source.materialXInputs[static_cast<uint32_t>(layout.textureFlagOffset)] != 0.f
+            && std::string(layout.name) != "normal_scale")
+            continue;
+        if (layout.width == 1u) result[layout.name] = source.materialXInputs[layout.offset];
+        else result[layout.name] = {
+            source.materialXInputs[layout.offset],
+            source.materialXInputs[layout.offset + 1u],
+            source.materialXInputs[layout.offset + 2u]};
+    }
+    return result;
+}
+
+void applyMaterialXParameterValues(ReferenceSource& source, const json& parameters)
+{
+    for (const auto& layout : kMaterialXParameterLayout)
+    {
+        if (!parameters.contains(layout.name)) continue;
+        if (layout.textureFlagOffset >= 0
+            && source.materialXInputs[static_cast<uint32_t>(layout.textureFlagOffset)] != 0.f
+            && std::string(layout.name) != "normal_scale")
+            throw std::runtime_error("MaterialX scene state cannot override texture-driven input: " + std::string(layout.name));
+        const auto& value = parameters.at(layout.name);
+        if (layout.width == 1u) source.materialXInputs[layout.offset] = value.get<float>();
+        else
+        {
+            if (!value.is_array() || value.size() != layout.width)
+                throw std::runtime_error("MaterialX scene parameter has wrong vector width: " + std::string(layout.name));
+            for (uint32_t component = 0u; component < layout.width; ++component)
+                source.materialXInputs[layout.offset + component] = value[component].get<float>();
+        }
+    }
+    for (float value : source.materialXInputs)
+        if (!std::isfinite(value)) throw std::runtime_error("MaterialX scene state contains non-finite input");
+    if (!(source.materialXInputs[kMxSpecularIor] > 0.f))
+        throw std::runtime_error("MaterialX specular_IOR must be positive");
+}
+
 std::array<float, 77> defaultOpenPbrInputs()
 {
     return {
@@ -367,6 +552,16 @@ ReferenceSource loadOpenPbr(const std::filesystem::path& path, const json& docum
                 source.openPbrInputs[layout.offset + component] = value[component].get<float>();
         }
     }
+    writeOpenPbrBasis(
+        source.openPbrInputs,
+        59u,
+        constantFloat3Binding(parameters, "geometry_normal", {0.f, 0.f, 1.f}),
+        constantFloat3Binding(parameters, "geometry_tangent", {1.f, 0.f, 0.f}));
+    writeOpenPbrBasis(
+        source.openPbrInputs,
+        68u,
+        constantFloat3Binding(parameters, "geometry_coat_normal", {0.f, 0.f, 1.f}),
+        constantFloat3Binding(parameters, "geometry_coat_tangent", {1.f, 0.f, 0.f}));
     for (float value : source.openPbrInputs)
         if (!std::isfinite(value)) throw std::runtime_error("OpenPBR source material contains non-finite input");
     const std::string colorSpace = document.value("color_space", "");
@@ -431,8 +626,28 @@ const char* ReferenceSource::familyId() const
 
 ReferenceSource makeDefaultReferenceSource()
 {
+    return makeDefaultReferenceSource(ReferenceFamily::LayerStack);
+}
+
+ReferenceSource makeDefaultReferenceSource(ReferenceFamily family)
+{
     ReferenceSource source;
-    source.sourceSha256 = layerStackHash(source.layerStack);
+    source.family = family;
+    if (family == ReferenceFamily::LayerStack)
+    {
+        source.displayName = "Default layered material";
+        source.sourceSha256 = layerStackHash(source.layerStack);
+    }
+    else if (family == ReferenceFamily::OpenPbr)
+    {
+        source.openPbrInputs = defaultOpenPbrInputs();
+        source.openPbrColorSpace = 0u;
+        source.displayName = "Default OpenPBR material";
+    }
+    else
+    {
+        throw std::runtime_error("resource-backed reference family requires a source file");
+    }
     return source;
 }
 
@@ -456,5 +671,169 @@ ReferenceSource loadReferenceSource(const std::filesystem::path& path)
         return source;
     }
     throw std::runtime_error("unsupported source material extension: " + extension);
+}
+
+namespace
+{
+std::string portableSourceUri(
+    const std::filesystem::path& path,
+    const std::filesystem::path& manifestDirectory)
+{
+    if (path.empty()) return {};
+    const auto absolutePath = std::filesystem::absolute(path).lexically_normal();
+    std::error_code error;
+    const auto relative = std::filesystem::relative(
+        absolutePath,
+        std::filesystem::absolute(manifestDirectory).lexically_normal(),
+        error);
+    return error ? absolutePath.generic_string() : relative.generic_string();
+}
+
+std::filesystem::path resolveSourceUri(
+    const std::string& uri,
+    const std::filesystem::path& manifestDirectory)
+{
+    if (uri.empty()) return {};
+    const std::filesystem::path path(uri);
+    return std::filesystem::absolute(
+        path.is_absolute() ? path : manifestDirectory / path).lexically_normal();
+}
+
+json referenceSourceStatePayload(const ReferenceSource& source)
+{
+    json payload = {{"family_id", source.familyId()}};
+    switch (source.family)
+    {
+    case ReferenceFamily::LayerStack:
+        payload["material_program"] = makeMaterialProgramDocument(source.layerStack, source.displayName);
+        break;
+    case ReferenceFamily::OpenPbr:
+        payload["color_space"] = source.openPbrColorSpace == 0u ? "linear-srgb" : "acescg";
+        payload["parameters"] = openPbrParameterValues(source);
+        break;
+    case ReferenceFamily::MaterialX:
+        payload["source_sha256"] = source.sourceSha256;
+        payload["parameters"] = materialXParameterValues(source);
+        break;
+    case ReferenceFamily::Merl:
+        payload["source_sha256"] = source.sourceSha256;
+        break;
+    }
+    return payload;
+}
+} // namespace
+
+std::string referenceSourceStateHash(const ReferenceSource& source)
+{
+    const std::string canonical = referenceSourceStatePayload(source).dump();
+    return sha256Hex(canonical.data(), canonical.size());
+}
+
+json serializeReferenceSourceState(
+    const ReferenceSource& source,
+    const std::filesystem::path& manifestDirectory)
+{
+    json result = referenceSourceStatePayload(source);
+    result["display_name"] = source.displayName;
+    result["source_uri"] = portableSourceUri(source.sourcePath, manifestDirectory);
+    result["source_asset_sha256"] = source.sourceSha256;
+    result["state_sha256"] = referenceSourceStateHash(source);
+    return result;
+}
+
+ReferenceSource deserializeReferenceSourceState(
+    const json& document,
+    const std::filesystem::path& manifestDirectory)
+{
+    if (!document.is_object()) throw std::runtime_error("viewer scene source binding must be an object");
+    const std::string familyId = document.at("family_id").get<std::string>();
+    const auto sourcePath = resolveSourceUri(document.value("source_uri", std::string()), manifestDirectory);
+    const std::string expectedSourceHash = document.value("source_asset_sha256", std::string());
+    ReferenceSource source;
+    if (familyId == "ncls.layer-stack@1")
+    {
+        source = makeDefaultReferenceSource(ReferenceFamily::LayerStack);
+        source.layerStack = loadMaterialProgramDocument(
+            document.at("material_program"), &source.displayName, "Embedded LayerStack material");
+        source.sourcePath.clear();
+        source.sourceSha256 = layerStackHash(source.layerStack);
+    }
+    else if (familyId == "openpbr.surface@1.1.1")
+    {
+        if (!sourcePath.empty() && std::filesystem::is_regular_file(sourcePath))
+        {
+            source = loadReferenceSource(sourcePath);
+            if (source.family != ReferenceFamily::OpenPbr)
+                throw std::runtime_error("viewer scene OpenPBR source URI resolved to another family");
+            if (!expectedSourceHash.empty() && source.sourceSha256 != expectedSourceHash)
+                throw std::runtime_error("viewer scene OpenPBR source asset SHA-256 mismatch: " + sourcePath.string());
+        }
+        else
+        {
+            source = makeDefaultReferenceSource(ReferenceFamily::OpenPbr);
+            source.sourcePath = sourcePath;
+            source.sourceSha256 = expectedSourceHash;
+        }
+        const std::string colorSpace = document.at("color_space").get<std::string>();
+        if (colorSpace == "linear-srgb") source.openPbrColorSpace = 0u;
+        else if (colorSpace == "acescg") source.openPbrColorSpace = 1u;
+        else throw std::runtime_error("viewer scene OpenPBR color space is unsupported: " + colorSpace);
+        applyOpenPbrParameterValues(source, document.at("parameters"));
+    }
+    else if (familyId == "materialx.textured-surface@1" || familyId == "merl.measured-brdf@1")
+    {
+        if (sourcePath.empty() || !std::filesystem::is_regular_file(sourcePath))
+            throw std::runtime_error("viewer scene resource-backed source is missing: " + sourcePath.string());
+        source = loadReferenceSource(sourcePath);
+        const ReferenceFamily expectedFamily = familyId == "materialx.textured-surface@1"
+            ? ReferenceFamily::MaterialX : ReferenceFamily::Merl;
+        if (source.family != expectedFamily)
+            throw std::runtime_error("viewer scene source URI resolved to another family: " + sourcePath.string());
+        if (!expectedSourceHash.empty() && source.sourceSha256 != expectedSourceHash)
+            throw std::runtime_error("viewer scene source asset SHA-256 mismatch: " + sourcePath.string());
+        if (source.family == ReferenceFamily::MaterialX)
+            applyMaterialXParameterValues(source, document.at("parameters"));
+    }
+    else throw std::runtime_error("viewer scene contains unsupported source family: " + familyId);
+
+    source.displayName = document.value("display_name", source.displayName);
+    const std::string expectedStateHash = document.value("state_sha256", std::string());
+    if (!expectedStateHash.empty() && referenceSourceStateHash(source) != expectedStateHash)
+        throw std::runtime_error("viewer scene source-material state SHA-256 mismatch: " + familyId);
+    return source;
+}
+
+void saveOpenPbrReferenceSource(const std::filesystem::path& path, const ReferenceSource& source)
+{
+    if (source.family != ReferenceFamily::OpenPbr)
+        throw std::runtime_error("cannot save a non-OpenPBR source as OpenPBR JSON");
+    const json values = openPbrParameterValues(source);
+    json bindings = json::object();
+    std::vector<std::string> authored;
+    for (auto iterator = values.begin(); iterator != values.end(); ++iterator)
+    {
+        bindings[iterator.key()] = {{"source", "constant"}, {"value", iterator.value()}};
+        authored.push_back(iterator.key());
+    }
+    const json document = {
+        {"schema_name", "ncls.openpbr-material"},
+        {"schema_version", 1},
+        {"material_id", source.displayName},
+        {"color_space", source.openPbrColorSpace == 0u ? "linear-srgb" : "acescg"},
+        {"source_document", source.sourcePath.string()},
+        {"authored_parameters", authored},
+        {"parameters", bindings},
+    };
+    if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path());
+    const auto temporary = path.string() + ".tmp";
+    std::error_code error;
+    std::filesystem::remove(temporary, error);
+    {
+        std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
+        if (!stream) throw std::runtime_error("cannot write OpenPBR source material: " + path.string());
+        stream << document.dump(2) << '\n';
+    }
+    std::filesystem::remove(path, error);
+    std::filesystem::rename(temporary, path);
 }
 } // namespace ncls

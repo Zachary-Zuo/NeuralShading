@@ -211,18 +211,18 @@ LayerStackIR makeDefaultMaterial()
     return stack;
 }
 
-LayerStackIR loadMaterialProgram(const std::filesystem::path& path, std::string* displayName)
+LayerStackIR loadMaterialProgramDocument(
+    const json& document,
+    std::string* displayName,
+    const std::string& fallbackDisplayName)
 {
-    std::ifstream stream(path);
-    if (!stream) throw std::runtime_error("cannot open MaterialProgram: " + path.string());
-    const json document = json::parse(stream);
     require(document.value("schema_name", "") == "ncls.material-program", "unsupported MaterialProgram schema_name");
     require(document.value("schema_version", 0u) == 1u, "unsupported MaterialProgram schema_version");
     require(document.value("color_model", "") == "linear-srgb", "viewer requires linear-srgb MaterialProgram");
     if (displayName)
     {
-        *displayName = document.value("metadata", json::object()).value("display_name", path.stem().string());
-        if (displayName->empty()) *displayName = path.stem().string();
+        *displayName = document.value("metadata", json::object()).value("display_name", fallbackDisplayName);
+        if (displayName->empty()) *displayName = fallbackDisplayName;
     }
 
     std::unordered_map<std::string, const json*> nodes;
@@ -252,7 +252,14 @@ LayerStackIR loadMaterialProgram(const std::filesystem::path& path, std::string*
     return result;
 }
 
-void saveMaterialProgram(const std::filesystem::path& path, const LayerStackIR& stack, const std::string& displayName)
+LayerStackIR loadMaterialProgram(const std::filesystem::path& path, std::string* displayName)
+{
+    std::ifstream stream(path);
+    if (!stream) throw std::runtime_error("cannot open MaterialProgram: " + path.string());
+    return loadMaterialProgramDocument(json::parse(stream), displayName, path.stem().string());
+}
+
+json makeMaterialProgramDocument(const LayerStackIR& stack, const std::string& displayName)
 {
     validateLayerStack(stack);
     json nodes = json::array();
@@ -279,7 +286,7 @@ void saveMaterialProgram(const std::filesystem::path& path, const LayerStackIR& 
         {"interior_medium", nullptr}, {"exterior_medium", nullptr}, {"emission", nullptr},
         {"opacity", nullptr}, {"displacement", nullptr},
     };
-    const json document = {
+    return {
         {"schema_name", "ncls.material-program"},
         {"schema_version", 1},
         {"color_model", "linear-srgb"},
@@ -288,6 +295,11 @@ void saveMaterialProgram(const std::filesystem::path& path, const LayerStackIR& 
         {"outputs", outputs},
         {"metadata", {{"display_name", displayName}}},
     };
+}
+
+void saveMaterialProgram(const std::filesystem::path& path, const LayerStackIR& stack, const std::string& displayName)
+{
+    const json document = makeMaterialProgramDocument(stack, displayName);
     if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path());
     const auto temporary = path.string() + ".tmp";
     std::error_code removeError;

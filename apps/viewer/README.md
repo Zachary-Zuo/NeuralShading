@@ -39,11 +39,15 @@ viewer 不是当前 neural 模型结构的搜索工具。先在完整 `wo × wi`
 
 常用交互：单击选择物体/material slot；左键拖动 orbit；中键或右键拖动 pan；滚轮 dolly；拖动分割线；`Space` 暂停/继续 raw reference 累积；`R` 重置相机。UI 中可切换 raw/denoised preview，但该开关不重置或修改 raw 累积。
 
+UI 按职责分为 `Scene and camera`、`Material`、`Lighting`、`Reference and display`、`Realtime method`、`Capture` 与 `Performance and status`。`Lighting` 内再按环境光、方向光、点光和矩形光分组；未启用的灯只显示禁用说明，不再暴露看似可改但不会参与图像的颜色和强度。颜色控件编辑线性 RGB。材质或光照参数一旦变化，viewer 会自动解除 `Freeze reference`、清空旧累积并立即用新状态出图。
+
 `Source material family` 可以在当前 slot 上明确切换 LayerStack、MERL、OpenPBR 与 MaterialX。LayerStack/OpenPBR 可直接建立默认实例；MERL 必须选择 `.binary` 测量表，MaterialX 必须选择 `.mtlx` 及其原生纹理资源。OpenPBR 可另存 resolved native parameter JSON；MaterialX 的图/纹理和 MERL 测量表不由 viewer 改写，编辑后的 override 随 viewer scene 保存。
 
 `Save viewer scene` 写出 `ncls.viewer-scene@1` sidecar。它逐 material slot 保存 family 与状态：LayerStack 内嵌 `MaterialProgram`，OpenPBR 保存具名参数，MERL 保存测量表 URI/hash，MaterialX 保存文档/纹理 identity 与可编辑 constant override；同时保存几何、HDRI、相机、物理光照和 reference 上限。`Load viewer scene` 会按 URI、hash 和 slot 覆盖关系验证并重建 GPU 资源。详细合同见 [viewer scene 合同](../../docs/contracts/viewer_scene.md)。
 
 光照方向也有明确约定：方向光向量是 surface-to-light；矩形灯法线为 `normalize(cross(U,V))`。固定 studio preset 的资产 hash 只用于验证默认启动，不会再拦截交互式加载另一份 scene 或 HDRI。
+
+交互式启动默认把 Falcor/Slang 的详细 shader diagnostics 写入 exe 同目录的 `NclsViewer*.log`，避免把大量锁定上游 warning 刷到控制台；未捕获的 fatal error 仍会直接输出。需要调试完整控制台日志时加 `--verbose-console`。headless 模式始终保留控制台日志，便于自动化任务诊断。
 
 ## 无窗口捕获和回放
 

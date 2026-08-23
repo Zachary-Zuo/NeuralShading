@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include <nlohmann/json_fwd.hpp>
+
 namespace ncls
 {
 enum class ReferenceFamily : uint32_t
@@ -42,5 +44,14 @@ struct ReferenceSource
 };
 
 ReferenceSource makeDefaultReferenceSource();
+ReferenceSource makeDefaultReferenceSource(ReferenceFamily family);
 ReferenceSource loadReferenceSource(const std::filesystem::path& path);
+nlohmann::json serializeReferenceSourceState(
+    const ReferenceSource& source,
+    const std::filesystem::path& manifestDirectory);
+ReferenceSource deserializeReferenceSourceState(
+    const nlohmann::json& document,
+    const std::filesystem::path& manifestDirectory);
+std::string referenceSourceStateHash(const ReferenceSource& source);
+void saveOpenPbrReferenceSource(const std::filesystem::path& path, const ReferenceSource& source);
 } // namespace ncls

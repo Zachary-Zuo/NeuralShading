@@ -27,9 +27,11 @@ struct ViewerOptions
     std::filesystem::path referenceGeometryPath;
     std::string referenceGeometrySha256;
     std::filesystem::path replayPath;
+    std::filesystem::path viewerScenePath;
     std::filesystem::path captureManifest = "artifacts/captures/headless.json";
     std::string requestedMethodId;
     bool headless = false;
+    bool verboseConsole = false;
     uint32_t frameCount = 256;
     uint32_t width = 1280;
     uint32_t height = 720;
@@ -111,7 +113,7 @@ private:
     void createDefaultEnvironment();
     void rebuildEnvironmentSampling(const std::vector<Falcor::float4>& pixels, uint32_t width, uint32_t height);
     void resizeResources(uint32_t width, uint32_t height);
-    void loadScene(const std::filesystem::path& path);
+    void loadScene(const std::filesystem::path& path, const std::string& expectedSha256 = {});
     void createSceneReferencePass();
     void rebuildSceneFbo();
     void rebuildReferenceMaterialMetadata();
@@ -138,13 +140,16 @@ private:
     void beginTiming(PassTiming& timing);
     void endTiming(PassTiming& timing);
     void loadMaterial(const std::filesystem::path& path);
+    void installReferenceSource(ncls::ReferenceSource source, const std::filesystem::path& path = {});
     void saveMaterial(const std::filesystem::path& path);
-    void loadEnvironment(const std::filesystem::path& path);
+    void loadEnvironment(const std::filesystem::path& path, const std::string& expectedSha256 = {});
+    void loadViewerScene(const std::filesystem::path& path);
+    void saveViewerScene(const std::filesystem::path& path);
     void applyReplaySettings(const std::filesystem::path& path);
     void capture(const std::filesystem::path& manifestPath);
-    void renderMaterialUi(Falcor::Gui::Window& window);
-    void renderOpenPbrUi(Falcor::Gui::Window& window);
-    void renderMaterialXUi(Falcor::Gui::Window& window);
+    void renderMaterialUi(Falcor::Gui::Widgets& widgets);
+    void renderOpenPbrUi(Falcor::Gui::Widgets& widgets);
+    void renderMaterialXUi(Falcor::Gui::Widgets& widgets);
     bool allMaterialsSupportCurrentCompiler() const;
     bool hasActiveMethod() const;
 

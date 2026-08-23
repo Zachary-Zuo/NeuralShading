@@ -9,18 +9,16 @@ import Utils.Geometry.GeometryHelpers;
 #include "ViewerCommon.slang"
 #include "../../../shaders/ncls/contracts/layer_stack_ir.slang"
 #include "../../../shaders/ncls/reference/sampling.slang"
-#if NCLS_REFERENCE_FAMILY_MASK == 1
+#if (NCLS_REFERENCE_FAMILY_MASK & 1) != 0
 #include "../../../shaders/ncls/reference/random_walk_reference.slang"
-#elif NCLS_REFERENCE_FAMILY_MASK == 2
+#endif
+#if (NCLS_REFERENCE_FAMILY_MASK & 2) != 0
 #include "../../../shaders/ncls/reference/merl_reference.slang"
-#elif NCLS_REFERENCE_FAMILY_MASK == 4
+#endif
+#if (NCLS_REFERENCE_FAMILY_MASK & 4) != 0
 #include "../../../shaders/ncls/reference/openpbr_reference.slang"
-#elif NCLS_REFERENCE_FAMILY_MASK == 8
-#include "../../../shaders/ncls/reference/materialx_standard_surface_reference.slang"
-#else
-#include "../../../shaders/ncls/reference/random_walk_reference.slang"
-#include "../../../shaders/ncls/reference/merl_reference.slang"
-#include "../../../shaders/ncls/reference/openpbr_reference.slang"
+#endif
+#if (NCLS_REFERENCE_FAMILY_MASK & 8) != 0
 #include "../../../shaders/ncls/reference/materialx_standard_surface_reference.slang"
 #endif
 
@@ -294,19 +292,29 @@ float3 nclsEvalReferencePath(
     return nclsEvalMaterialXStandardSurface(
         gMaterialXInputs[surface.materialId], surface.materialX, viewLocal, lightLocal);
     #else
+    #if (NCLS_REFERENCE_FAMILY_MASK & 2) != 0
     if (surface.family == 1u)
         return nclsEvalMerlReference(gMerlBrdfs[surface.materialId], viewLocal, lightLocal);
+    #endif
+    #if (NCLS_REFERENCE_FAMILY_MASK & 4) != 0
     if (surface.family == 2u)
         return nclsEvalOpenPbrReference(gOpenPbrInputs[surface.materialId], viewLocal, lightLocal);
+    #endif
+    #if (NCLS_REFERENCE_FAMILY_MASK & 8) != 0
     if (surface.family == 3u)
     {
         if (lightLocal.z <= 0.0f) return float3(0.0f);
         return nclsEvalMaterialXStandardSurface(
             gMaterialXInputs[surface.materialId], surface.materialX, viewLocal, lightLocal);
     }
+    #endif
+    #if (NCLS_REFERENCE_FAMILY_MASK & 1) != 0
     if (lightLocal.z <= 0.0f) return float3(0.0f);
     return max(nclsEvalRandomWalkReference(
         gLayerStacks[surface.materialId][0], viewLocal, lightLocal, key, gMaxLayerWalkDepth), 0.0f);
+    #else
+    return float3(0.0f);
+    #endif
     #endif
 }
 
@@ -328,16 +336,20 @@ float nclsReflectionProposalPdf(
     const float2 alpha = float2(0.2f);
     #else
     float2 alpha = float2(0.2f);
+    #if (NCLS_REFERENCE_FAMILY_MASK & 1) != 0
     if (surface.family == 0u)
     {
         const NclsLayerInterfaceIR top = gLayerStacks[surface.materialId][0].interfaces[0];
         alpha = max(float2(top.alphaX, top.alphaY), float2(0.001f));
     }
-    else if (surface.family == 3u)
+    #endif
+    #if (NCLS_REFERENCE_FAMILY_MASK & 8) != 0
+    if (surface.family == 3u)
     {
         const float anisotropy = gMaterialXInputs[surface.materialId][15];
         alpha = nclsMxRoughnessAnisotropy(surface.materialX.specularRoughness, anisotropy);
     }
+    #endif
     #endif
     const float3 halfVector = nclsSafeNormalize(viewLocal + lightLocal);
     const float specularPdf = nclsGgxVisibleNormalPdf(viewLocal, halfVector, alpha)
@@ -520,8 +532,10 @@ NclsReferenceSample nclsSampleReferencePath(
     #elif NCLS_REFERENCE_FAMILY_MASK == 4
     return nclsSampleOpenPbrPath(surface, viewLocal, rng);
     #else
-    #if NCLS_REFERENCE_FAMILY_MASK != 2 && NCLS_REFERENCE_FAMILY_MASK != 8
+    #if (NCLS_REFERENCE_FAMILY_MASK & 1) != 0
     if (surface.family == 0u) return nclsSampleLayerStackPath(surface, viewLocal, rng);
+    #endif
+    #if (NCLS_REFERENCE_FAMILY_MASK & 4) != 0
     if (surface.family == 2u) return nclsSampleOpenPbrPath(surface, viewLocal, rng);
     #endif
 
@@ -540,16 +554,20 @@ NclsReferenceSample nclsSampleReferencePath(
         float2 alpha = float2(0.2f);
         #else
         float2 alpha = float2(0.2f);
+        #if (NCLS_REFERENCE_FAMILY_MASK & 1) != 0
         if (surface.family == 0u)
         {
             const NclsLayerInterfaceIR top = gLayerStacks[surface.materialId][0].interfaces[0];
             alpha = max(float2(top.alphaX, top.alphaY), float2(0.001f));
         }
-        else if (surface.family == 3u)
+        #endif
+        #if (NCLS_REFERENCE_FAMILY_MASK & 8) != 0
+        if (surface.family == 3u)
         {
             const float anisotropy = gMaterialXInputs[surface.materialId][15];
             alpha = nclsMxRoughnessAnisotropy(surface.materialX.specularRoughness, anisotropy);
         }
+        #endif
         #endif
         const float3 halfVector = nclsSampleGgxVisibleNormal(viewLocal, alpha, rng);
         direction = reflect(-viewLocal, halfVector);
@@ -585,12 +603,25 @@ float nclsReferencePdfPath(
     #elif NCLS_REFERENCE_FAMILY_MASK == 2 || NCLS_REFERENCE_FAMILY_MASK == 8
     return nclsReflectionProposalPdf(surface, viewLocal, lightLocal);
     #else
+    #if (NCLS_REFERENCE_FAMILY_MASK & 4) != 0
     if (surface.family == 2u)
     {
         const OpenPBR_PreparedBsdf prepared = nclsPrepareOpenPbrReference(
             gOpenPbrInputs[surface.materialId], viewLocal);
         return openpbr_pdf(prepared, lightLocal);
     }
+    #endif
+    #if (NCLS_REFERENCE_FAMILY_MASK & 1) != 0
+    if (surface.family == 0u)
+    {
+        const NclsLayerStackIR stack = gLayerStacks[surface.materialId][0];
+        if (stack.interfaceCount != 1u) return 0.0f;
+        const NclsLayerInterfaceIR layer = stack.interfaces[0];
+        const float etaT = layer.kind == (uint)NclsInterfaceKind::RoughDielectric
+            ? layer.relativeIor : 1.0f;
+        return nclsInterfacePdf(layer, viewLocal, lightLocal, 1.0f, etaT, NCLS_SAMPLE_REFLECTION);
+    }
+    #endif
     return nclsReflectionProposalPdf(surface, viewLocal, lightLocal);
     #endif
 }
@@ -606,14 +637,18 @@ float3 nclsReferenceEmissionPath(const NclsReferenceSurface surface, float3 view
     #elif (NCLS_REFERENCE_FAMILY_MASK & 12) == 0
     return float3(0.0f);
     #else
+    #if (NCLS_REFERENCE_FAMILY_MASK & 4) != 0
     if (surface.family == 2u)
     {
         const float3 emission = nclsOpenPbrEmission(gOpenPbrInputs[surface.materialId], viewLocal);
         return surface.openPbrColorSpace == 0u
             ? emission : nclsOpenPbrAcesCgToLinearSrgbPath(emission);
     }
+    #endif
+    #if (NCLS_REFERENCE_FAMILY_MASK & 8) != 0
     if (surface.family == 3u)
         return nclsMaterialXEmission(gMaterialXInputs[surface.materialId]);
+    #endif
     return float3(0.0f);
     #endif
 }
@@ -760,7 +795,7 @@ float3 nclsDirectLighting(
         const float distanceSquared = max(dot(toLight, toLight), 1e-8f);
         const float distance = sqrt(distanceSquared);
         const float3 lightWorld = toLight / distance;
-        const float3 lightNormal = -normalize(cross(gRectangleAxisU, gRectangleAxisV));
+        const float3 lightNormal = normalize(cross(gRectangleAxisU, gRectangleAxisV));
         const float lightCosine = max(dot(lightNormal, -lightWorld), 0.0f);
         const float area = 4.0f * length(cross(gRectangleAxisU, gRectangleAxisV));
         const float3 lightLocal = nclsViewerToLocal(lightWorld, surface.normal, surface.tangent);

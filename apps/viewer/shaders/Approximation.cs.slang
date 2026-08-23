@@ -111,7 +111,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     if (gUseRectangle != 0u)
     {
         static const uint kRectangleSamples = 8u;
-        const float3 lightNormal = -normalize(cross(gRectangleAxisU, gRectangleAxisV));
+        const float3 lightNormal = normalize(cross(gRectangleAxisU, gRectangleAxisV));
         const float area = 4.0f * length(cross(gRectangleAxisU, gRectangleAxisV));
         [unroll]
         for (uint sampleIndex = 0u; sampleIndex < kRectangleSamples; ++sampleIndex)

@@ -85,7 +85,11 @@ UI 的 `Source material family` 明确列出当前 viewer reference 真正接入
 
 OpenPBR UI 编辑 resolved native parameter；来自 scene 命中点的 `geometry_normal/tangent` binding 继续由局部 shading frame 提供。MaterialX UI 只编辑当前正式 subset 中没有被纹理连接驱动的 constant input；纹理驱动项必须保留原图连接。两族的 UI 修改都形成新的 source-material state hash，不能继续把原始文件 hash 冒充成编辑后状态的 identity。
 
+主面板按 scene/camera、material、lighting、reference/display、realtime method、capture 和 status 分组，lighting 内再按具体灯型分组。禁用灯的无效子控件必须隐藏并说明当前不参与图像；颜色统一按线性 RGB 编辑。材质或物理光照发生变化时必须自动解除 reference freeze、丢弃旧累积并用新状态重新采样，避免 UI 已改变但画面仍停留在旧状态。
+
 光照 UI 中方向光向量的语义是“从着色点指向光源的方向”。矩形灯由 center 与两个 half-axis 定义，`normalize(cross(U,V))` 是发光面法线；reference 与实时侧使用同一方向约定。默认 preset 的 SHA-256 只约束启动时加载的固定资产，不得阻止用户随后显式加载另一份 scene 或 HDRI。
+
+交互模式默认把 Falcor/Slang 详细 shader diagnostics 留在 exe 同目录的日志文件中，控制台只保留未捕获 fatal error；`--verbose-console` 可恢复完整控制台日志。headless 模式必须保留完整日志，不能因减少交互启动噪声而削弱自动化诊断。
 
 ## MethodBundle
 

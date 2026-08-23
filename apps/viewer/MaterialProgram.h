@@ -5,6 +5,8 @@
 #include <filesystem>
 #include <string>
 
+#include <nlohmann/json_fwd.hpp>
+
 namespace ncls
 {
 constexpr uint32_t kLayerStackMagic = 0x31534C4Eu;
@@ -68,6 +70,13 @@ static_assert(sizeof(LayerStackIR) == 752);
 
 LayerStackIR makeDefaultMaterial();
 LayerStackIR loadMaterialProgram(const std::filesystem::path& path, std::string* displayName = nullptr);
+LayerStackIR loadMaterialProgramDocument(
+    const nlohmann::json& document,
+    std::string* displayName = nullptr,
+    const std::string& fallbackDisplayName = "Embedded LayerStack material");
+nlohmann::json makeMaterialProgramDocument(
+    const LayerStackIR& stack,
+    const std::string& displayName);
 void saveMaterialProgram(const std::filesystem::path& path, const LayerStackIR& stack, const std::string& displayName);
 void validateLayerStack(const LayerStackIR& stack);
 std::string layerStackHash(const LayerStackIR& stack);

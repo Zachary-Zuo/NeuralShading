@@ -35,6 +35,12 @@ const Gui::DropdownList kComparisonModes = {
     {3, "Amplified absolute error"},
 };
 const Gui::DropdownList kBaseKinds = {{1, "Rough conductor"}, {2, "Diffuse"}, {3, "Sheen"}};
+const Gui::DropdownList kReferenceFamilies = {
+    {0, "LayerStack / homogeneous slab"},
+    {1, "MERL measured BRDF"},
+    {2, "OpenPBR 1.1.1"},
+    {3, "MaterialX standard_surface"},
+};
 
 float3 normalizedOr(float3 value, float3 fallback)
 {
@@ -45,6 +51,25 @@ float3 normalizedOr(float3 value, float3 fallback)
 std::string shortId(const std::string& value)
 {
     return value.size() > 12 ? value.substr(0, 12) : value;
+}
+
+std::string portableUri(const std::filesystem::path& path, const std::filesystem::path& baseDirectory)
+{
+    if (path.empty()) return {};
+    const auto absolutePath = std::filesystem::absolute(path).lexically_normal();
+    std::error_code error;
+    const auto relative = std::filesystem::relative(
+        absolutePath,
+        std::filesystem::absolute(baseDirectory).lexically_normal(),
+        error);
+    return error ? absolutePath.generic_string() : relative.generic_string();
+}
+
+std::filesystem::path resolveUri(const std::string& uri, const std::filesystem::path& baseDirectory)
+{
+    if (uri.empty()) return {};
+    const std::filesystem::path path(uri);
+    return std::filesystem::absolute(path.is_absolute() ? path : baseDirectory / path).lexically_normal();
 }
 
 bool isSceneFile(const std::filesystem::path& path)
@@ -137,6 +162,7 @@ ViewerOptions parseOptions(int argc, char** argv)
         options.environmentSha256 = replay.value("environment_sha256", std::string());
         options.referenceGeometryPath = resolve(replay.value("reference_geometry", std::string()));
         options.referenceGeometrySha256 = replay.value("reference_geometry_sha256", std::string());
+        options.viewerScenePath = resolve(replay.value("viewer_scene", std::string()));
         options.requestedMethodId = replay.value("method_id", std::string());
         const auto resolution = replay.at("resolution");
         options.width = resolution.at(0).get<uint32_t>();
@@ -157,18 +183,20 @@ ViewerOptions parseOptions(int argc, char** argv)
         else if (argument == "--environment") options.environmentPath = value(index, "--environment");
         else if (argument == "--reference-geometry") options.referenceGeometryPath = value(index, "--reference-geometry");
         else if (argument == "--replay") { options.replayPath = value(index, "--replay"); }
+        else if (argument == "--viewer-scene") options.viewerScenePath = value(index, "--viewer-scene");
         else if (argument == "--capture") options.captureManifest = value(index, "--capture");
         else if (argument == "--frames") options.frameCount = static_cast<uint32_t>(std::stoul(value(index, "--frames")));
         else if (argument == "--width") options.width = static_cast<uint32_t>(std::stoul(value(index, "--width")));
         else if (argument == "--height") options.height = static_cast<uint32_t>(std::stoul(value(index, "--height")));
         else if (argument == "--headless") options.headless = true;
+        else if (argument == "--verbose-console") options.verboseConsole = true;
         else if (argument == "--help")
         {
             std::cout
-                << "NclsViewer [--bundle-root DIR] [--material FILE] [--replay CAPTURE.json] "
+                << "NclsViewer [--bundle-root DIR] [--material FILE] [--replay CAPTURE.json] [--viewer-scene FILE] "
                    "[--reference-geometry SCENE] [--environment HDRI] "
                    "[--headless --frames N --capture FILE] "
-                   "[--width W --height H]\n";
+                   "[--width W --height H] [--verbose-console]\n";
             std::exit(0);
         }
         else throw std::runtime_error("unknown argument: " + argument);
@@ -217,7 +245,12 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
     initializeTiming(mLightingTiming);
     initializeTiming(mCompositeTiming);
 
-    if (!mOptions.replayPath.empty()) applyReplaySettings(mOptions.replayPath);
+    if (!mOptions.viewerScenePath.empty())
+    {
+        loadViewerScene(mOptions.viewerScenePath);
+        if (!mOptions.replayPath.empty()) applyReplaySettings(mOptions.replayPath);
+    }
+    else if (!mOptions.replayPath.empty()) applyReplaySettings(mOptions.replayPath);
     else if (mOptions.referenceGeometryPath.empty())
     {
         const auto presetPath = getRuntimeDirectory() / "data/ncls-viewer/studio-v1.json";
@@ -239,9 +272,14 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
             mOptions.materialPath = assetRoot / preset.at("source_material").get<std::string>();
         applyReplaySettings(presetPath);
     }
-    if (!mOptions.referenceGeometryPath.empty()) loadScene(mOptions.referenceGeometryPath);
-    if (!mOptions.materialPath.empty()) loadMaterial(mOptions.materialPath);
-    if (!mOptions.environmentPath.empty()) loadEnvironment(mOptions.environmentPath);
+    if (mOptions.viewerScenePath.empty())
+    {
+        if (!mOptions.referenceGeometryPath.empty())
+            loadScene(mOptions.referenceGeometryPath, mOptions.referenceGeometrySha256);
+        if (!mOptions.materialPath.empty()) loadMaterial(mOptions.materialPath);
+        if (!mOptions.environmentPath.empty())
+            loadEnvironment(mOptions.environmentPath, mOptions.environmentSha256);
+    }
     resizeResources(getTargetFbo()->getWidth(), getTargetFbo()->getHeight());
     scanBundles();
     if (!mOptions.requestedMethodId.empty())
@@ -455,14 +493,13 @@ void NclsViewer::resizeResources(uint32_t width, uint32_t height)
     resetReference(true, true);
 }
 
-void NclsViewer::loadScene(const std::filesystem::path& requestedPath)
+void NclsViewer::loadScene(const std::filesystem::path& requestedPath, const std::string& expectedSha256)
 {
     namespace fs = std::filesystem;
     const fs::path path = fs::absolute(requestedPath).lexically_normal();
     if (!fs::is_regular_file(path)) throw std::runtime_error("scene does not exist: " + path.string());
     const std::string geometrySha256 = ncls::sha256FileHex(path);
-    if (!mOptions.referenceGeometrySha256.empty()
-        && mOptions.referenceGeometrySha256 != geometrySha256)
+    if (!expectedSha256.empty() && expectedSha256 != geometrySha256)
         throw std::runtime_error("scene SHA-256 does not match replay: " + path.string());
 
     auto scene = Scene::create(getDevice(), path);
@@ -526,7 +563,7 @@ void NclsViewer::createSceneReferencePass()
     program.addShaderLibrary("NclsViewer/shaders/ReferencePathTracer.cs.slang").csEntry("main");
     program.addTypeConformances(mpScene->getTypeConformances());
     DefineList defines = mpScene->getSceneDefines();
-    defines.add("NCLS_MAX_SCENE_MATERIALS", std::to_string(kMaximumSceneMaterials));
+    defines.add("NCLS_MAX_SCENE_MATERIALS", std::to_string(mpScene->getMaterialCount()));
     uint32_t familyMask = 1u << static_cast<uint32_t>(mReferenceSource.family);
     for (const auto& [materialId, binding] : mInactiveSceneMaterials)
         familyMask |= 1u << static_cast<uint32_t>(binding.source.family);
@@ -709,6 +746,15 @@ void NclsViewer::scanBundles()
     const std::string previousId = mSelectedMethod >= 0 && mSelectedMethod < static_cast<int32_t>(mMethods.size())
         ? mMethods[mSelectedMethod].methodId
         : std::string();
+    if (!std::filesystem::is_directory(mOptions.bundleRoot))
+    {
+        mMethods.clear();
+        mBundleFailures.clear();
+        selectMethod(-1);
+        mStatus = "MethodBundle directory is absent; running reference-only: " + mOptions.bundleRoot.string();
+        logInfo("No MethodBundle directory at '{}'; running reference-only", mOptions.bundleRoot);
+        return;
+    }
     auto scan = ncls::scanMethodBundles(mOptions.bundleRoot, getRuntimeDirectory() / "shaders");
     std::vector<ncls::ViewerMethod> accepted;
     for (auto& method : scan.methods)
@@ -1114,159 +1160,205 @@ void NclsViewer::onFrameRender(RenderContext* pRenderContext, const ref<Fbo>& pT
     }
 }
 
-void NclsViewer::renderOpenPbrUi(Gui::Window& window)
+void NclsViewer::renderOpenPbrUi(Gui::Widgets& widgets)
 {
     auto& values = mReferenceSource.openPbrInputs;
     bool changed = false;
     auto color = [&](const char* label, uint32_t offset) {
         float3 value(values[offset], values[offset + 1u], values[offset + 2u]);
-        if (!window.rgbColor(label, value)) return false;
+        if (!widgets.rgbColor(label, value)) return false;
         values[offset] = value.x;
         values[offset + 1u] = value.y;
         values[offset + 2u] = value.z;
         return true;
     };
     auto scalar = [&](const char* label, uint32_t offset, float minimum, float maximum, float step) {
-        return window.var(label, values[offset], minimum, maximum, step);
+        return widgets.var(label, values[offset], minimum, maximum, step);
     };
 
-    window.text("OpenPBR 1.1.1 native parameters (in-memory edit)");
-    window.text("Base");
-    changed |= scalar("base_weight", 0, 0.f, 1.f, .01f);
-    changed |= color("base_color", 1);
-    changed |= scalar("base_diffuse_roughness", 4, 0.f, 1.f, .01f);
-    changed |= scalar("base_metalness", 5, 0.f, 1.f, .01f);
-
-    window.text("Subsurface");
-    changed |= scalar("subsurface_weight", 6, 0.f, 1.f, .01f);
-    changed |= color("subsurface_color", 7);
-    changed |= scalar("subsurface_radius", 10, 0.f, 100.f, .01f);
-    changed |= color("subsurface_radius_scale", 11);
-    changed |= scalar("subsurface_scatter_anisotropy", 14, -1.f, 1.f, .01f);
-
-    window.text("Specular");
-    changed |= scalar("specular_weight", 15, 0.f, 1.f, .01f);
-    changed |= color("specular_color", 16);
-    changed |= scalar("specular_roughness", 19, .001f, 1.f, .005f);
-    changed |= scalar("specular_roughness_anisotropy", 20, 0.f, 1.f, .01f);
-    changed |= scalar("specular_ior", 21, 1.001f, 3.f, .01f);
-    float specularRotation = std::atan2(values[23], values[22]);
-    if (window.var("specular_anisotropy_rotation", specularRotation, -3.14159f, 3.14159f, .01f))
+    widgets.text("OpenPBR 1.1.1 resolved native parameters");
     {
-        values[22] = std::cos(specularRotation);
-        values[23] = std::sin(specularRotation);
-        changed = true;
+        Gui::Group group = widgets.group("Base", true);
+        if (group)
+        {
+            changed |= scalar("base_weight", 0, 0.f, 1.f, .01f);
+            changed |= color("base_color (linear RGB)", 1);
+            changed |= scalar("base_diffuse_roughness", 4, 0.f, 1.f, .01f);
+            changed |= scalar("base_metalness", 5, 0.f, 1.f, .01f);
+        }
     }
-
-    window.text("Coat / Fuzz");
-    changed |= scalar("coat_weight", 24, 0.f, 1.f, .01f);
-    changed |= color("coat_color", 25);
-    changed |= scalar("coat_roughness", 28, .001f, 1.f, .005f);
-    changed |= scalar("coat_roughness_anisotropy", 29, 0.f, 1.f, .01f);
-    changed |= scalar("coat_ior", 30, 1.001f, 3.f, .01f);
-    changed |= scalar("coat_darkening", 31, 0.f, 1.f, .01f);
-    float coatRotation = std::atan2(values[33], values[32]);
-    if (window.var("coat_anisotropy_rotation", coatRotation, -3.14159f, 3.14159f, .01f))
     {
-        values[32] = std::cos(coatRotation);
-        values[33] = std::sin(coatRotation);
-        changed = true;
+        Gui::Group group = widgets.group("Subsurface", false);
+        if (group)
+        {
+            changed |= scalar("subsurface_weight", 6, 0.f, 1.f, .01f);
+            changed |= color("subsurface_color (linear RGB)", 7);
+            changed |= scalar("subsurface_radius", 10, 0.f, 100.f, .01f);
+            changed |= color("subsurface_radius_scale", 11);
+            changed |= scalar("subsurface_scatter_anisotropy", 14, -1.f, 1.f, .01f);
+        }
     }
-    changed |= scalar("fuzz_weight", 34, 0.f, 1.f, .01f);
-    changed |= color("fuzz_color", 35);
-    changed |= scalar("fuzz_roughness", 38, .001f, 1.f, .005f);
-
-    window.text("Transmission / Thin film");
-    changed |= scalar("transmission_weight", 39, 0.f, 1.f, .01f);
-    changed |= color("transmission_color", 40);
-    changed |= scalar("transmission_depth", 43, 0.f, 100.f, .01f);
-    changed |= color("transmission_scatter", 44);
-    changed |= scalar("transmission_scatter_anisotropy", 47, -1.f, 1.f, .01f);
-    changed |= scalar("transmission_dispersion_scale", 48, 0.f, 1.f, .01f);
-    changed |= scalar("transmission_dispersion_abbe_number", 49, 1.f, 100.f, .1f);
-    changed |= scalar("thin_film_weight", 50, 0.f, 1.f, .01f);
-    changed |= scalar("thin_film_thickness", 51, 0.f, 2000.f, 1.f);
-    changed |= scalar("thin_film_ior", 52, 1.001f, 3.f, .01f);
-
-    window.text("Emission / Geometry");
-    changed |= scalar("emission_luminance", 53, 0.f, 100000.f, 1.f);
-    changed |= color("emission_color", 54);
-    changed |= scalar("geometry_opacity", 57, 0.f, 1.f, .01f);
-    bool thinWalled = values[58] != 0.f;
-    if (window.checkbox("geometry_thin_walled", thinWalled))
     {
-        values[58] = thinWalled ? 1.f : 0.f;
-        changed = true;
+        Gui::Group group = widgets.group("Specular", true);
+        if (group)
+        {
+            changed |= scalar("specular_weight", 15, 0.f, 1.f, .01f);
+            changed |= color("specular_color (linear RGB)", 16);
+            changed |= scalar("specular_roughness", 19, .001f, 1.f, .005f);
+            changed |= scalar("specular_roughness_anisotropy", 20, 0.f, 1.f, .01f);
+            changed |= scalar("specular_ior", 21, 1.001f, 3.f, .01f);
+            float rotation = std::atan2(values[23], values[22]);
+            if (group.var("specular_anisotropy_rotation", rotation, -3.14159f, 3.14159f, .01f))
+            {
+                values[22] = std::cos(rotation);
+                values[23] = std::sin(rotation);
+                changed = true;
+            }
+        }
+    }
+    {
+        Gui::Group group = widgets.group("Coat and fuzz", false);
+        if (group)
+        {
+            changed |= scalar("coat_weight", 24, 0.f, 1.f, .01f);
+            changed |= color("coat_color (linear RGB)", 25);
+            changed |= scalar("coat_roughness", 28, .001f, 1.f, .005f);
+            changed |= scalar("coat_roughness_anisotropy", 29, 0.f, 1.f, .01f);
+            changed |= scalar("coat_ior", 30, 1.001f, 3.f, .01f);
+            changed |= scalar("coat_darkening", 31, 0.f, 1.f, .01f);
+            float rotation = std::atan2(values[33], values[32]);
+            if (group.var("coat_anisotropy_rotation", rotation, -3.14159f, 3.14159f, .01f))
+            {
+                values[32] = std::cos(rotation);
+                values[33] = std::sin(rotation);
+                changed = true;
+            }
+            changed |= scalar("fuzz_weight", 34, 0.f, 1.f, .01f);
+            changed |= color("fuzz_color (linear RGB)", 35);
+            changed |= scalar("fuzz_roughness", 38, .001f, 1.f, .005f);
+        }
+    }
+    {
+        Gui::Group group = widgets.group("Transmission and thin film", false);
+        if (group)
+        {
+            changed |= scalar("transmission_weight", 39, 0.f, 1.f, .01f);
+            changed |= color("transmission_color (linear RGB)", 40);
+            changed |= scalar("transmission_depth", 43, 0.f, 100.f, .01f);
+            changed |= color("transmission_scatter (linear RGB)", 44);
+            changed |= scalar("transmission_scatter_anisotropy", 47, -1.f, 1.f, .01f);
+            changed |= scalar("transmission_dispersion_scale", 48, 0.f, 1.f, .01f);
+            changed |= scalar("transmission_dispersion_abbe_number", 49, 1.f, 100.f, .1f);
+            changed |= scalar("thin_film_weight", 50, 0.f, 1.f, .01f);
+            changed |= scalar("thin_film_thickness", 51, 0.f, 2000.f, 1.f);
+            changed |= scalar("thin_film_ior", 52, 1.001f, 3.f, .01f);
+        }
+    }
+    {
+        Gui::Group group = widgets.group("Emission and geometry", false);
+        if (group)
+        {
+            changed |= scalar("emission_luminance", 53, 0.f, 100000.f, 1.f);
+            changed |= color("emission_color (linear RGB)", 54);
+            changed |= scalar("geometry_opacity", 57, 0.f, 1.f, .01f);
+            bool thinWalled = values[58] != 0.f;
+            if (group.checkbox("geometry_thin_walled", thinWalled))
+            {
+                values[58] = thinWalled ? 1.f : 0.f;
+                changed = true;
+            }
+        }
     }
     if (changed)
     {
+        mFreezeReference = false;
         updateReferenceSourceBuffer();
-        mStatus = "OpenPBR parameters updated; reference accumulation reset.";
+        mStatus = "OpenPBR parameters applied; reference resumed and accumulation reset.";
     }
 }
 
-void NclsViewer::renderMaterialXUi(Gui::Window& window)
+void NclsViewer::renderMaterialXUi(Gui::Widgets& widgets)
 {
     auto& values = mReferenceSource.materialXInputs;
     bool changed = false;
     auto color = [&](const char* label, uint32_t offset) {
         float3 value(values[offset], values[offset + 1u], values[offset + 2u]);
-        if (!window.rgbColor(label, value)) return false;
+        if (!widgets.rgbColor(label, value)) return false;
         values[offset] = value.x;
         values[offset + 1u] = value.y;
         values[offset + 2u] = value.z;
         return true;
     };
 
-    window.text("MaterialX standard_surface native inputs (in-memory edit)");
-    changed |= window.var("base", values[0], 0.f, 1.f, .01f);
-    if (values[6] == 0.f) changed |= color("base_color", 1);
-    else window.text("base_color: driven by the source texture");
-    changed |= window.var("diffuse_roughness", values[4], 0.f, 1.f, .01f);
-    if (values[7] == 0.f) changed |= window.var("metalness", values[5], 0.f, 1.f, .01f);
-    else window.text("metalness: driven by the source texture");
-    changed |= window.var("specular", values[8], 0.f, 1.f, .01f);
-    changed |= color("specular_color", 9);
-    if (values[13] == 0.f) changed |= window.var("specular_roughness", values[12], .001f, 1.f, .005f);
-    else window.text("specular_roughness: driven by the source texture");
-    changed |= window.var("specular_IOR", values[14], 1.001f, 3.f, .01f);
-    changed |= window.var("specular_anisotropy", values[15], 0.f, .98f, .01f);
-    changed |= window.var("specular_rotation", values[16], 0.f, 1.f, .01f);
-    if (values[18] != 0.f) changed |= window.var("normal scale", values[17], 0.f, 4.f, .01f);
-    else window.text("normal: no texture connected");
-    changed |= window.var("emission", values[19], 0.f, 1000.f, .01f);
-    changed |= color("emission_color", 20);
-    changed |= window.var("opacity", values[23], 0.f, 1.f, .01f);
+    widgets.text("MaterialX standard_surface resolved inputs");
+    {
+        Gui::Group group = widgets.group("Base", true);
+        if (group)
+        {
+            changed |= group.var("base", values[0], 0.f, 1.f, .01f);
+            if (values[6] == 0.f) changed |= color("base_color (linear RGB)", 1);
+            else group.text("base_color: driven by the source texture");
+            changed |= group.var("diffuse_roughness", values[4], 0.f, 1.f, .01f);
+            if (values[7] == 0.f) changed |= group.var("metalness", values[5], 0.f, 1.f, .01f);
+            else group.text("metalness: driven by the source texture");
+        }
+    }
+    {
+        Gui::Group group = widgets.group("Specular", true);
+        if (group)
+        {
+            changed |= group.var("specular", values[8], 0.f, 1.f, .01f);
+            changed |= color("specular_color (linear RGB)", 9);
+            if (values[13] == 0.f) changed |= group.var("specular_roughness", values[12], .001f, 1.f, .005f);
+            else group.text("specular_roughness: driven by the source texture");
+            changed |= group.var("specular_IOR", values[14], 1.001f, 3.f, .01f);
+            changed |= group.var("specular_anisotropy", values[15], 0.f, .98f, .01f);
+            changed |= group.var("specular_rotation", values[16], 0.f, 1.f, .01f);
+        }
+    }
+    {
+        Gui::Group group = widgets.group("Normal, emission and opacity", false);
+        if (group)
+        {
+            if (values[18] != 0.f) changed |= group.var("normal scale", values[17], 0.f, 4.f, .01f);
+            else group.text("normal: no texture connected");
+            changed |= group.var("emission", values[19], 0.f, 1000.f, .01f);
+            changed |= color("emission_color (linear RGB)", 20);
+            changed |= group.var("opacity", values[23], 0.f, 1.f, .01f);
+        }
+    }
     if (changed)
     {
+        mFreezeReference = false;
         updateReferenceSourceBuffer();
-        mStatus = "MaterialX parameters updated; reference accumulation reset.";
+        mStatus = "MaterialX parameters applied; reference resumed and accumulation reset.";
     }
 }
 
-void NclsViewer::renderMaterialUi(Gui::Window& window)
+void NclsViewer::renderMaterialUi(Gui::Widgets& widgets)
 {
     if (mReferenceSource.family != ncls::ReferenceFamily::LayerStack)
     {
-        window.text("Source family: " + std::string(mReferenceSource.familyId()));
-        window.text("Native reference: " + mReferenceSource.displayName);
-        window.text("Source file: " + mReferenceSource.sourcePath.string());
-        window.text("SHA-256: " + shortId(mReferenceSource.sourceSha256));
+        widgets.text("Source family: " + std::string(mReferenceSource.familyId()));
+        widgets.text("Native reference: " + mReferenceSource.displayName);
+        widgets.text("Source file: " + mReferenceSource.sourcePath.string());
+        widgets.text("Source asset SHA-256: " + shortId(mReferenceSource.sourceSha256));
+        widgets.text("Edited state SHA-256: " + shortId(ncls::referenceSourceStateHash(mReferenceSource)));
         if (mReferenceSource.family == ncls::ReferenceFamily::MaterialX)
         {
-            window.text("Falcor query: MaterialX 1.39.4 standard_surface + source textures");
-            window.text(mReferenceGeometryPath.empty()
+            widgets.text("Falcor query: MaterialX 1.39.4 standard_surface + source textures");
+            widgets.text(mReferenceGeometryPath.empty()
                 ? "Geometry contract: no scene specified; using the analytic-sphere fallback"
                 : "Geometry contract: reference path traces the Falcor scene; SHA-256 " + shortId(mReferenceGeometrySha256));
-            window.text("The displacement graph remains in the source document and is outside this surface-response query");
+            widgets.text("The displacement graph remains in the source document and is outside this surface-response query");
         }
-        if (mReferenceSource.family == ncls::ReferenceFamily::OpenPbr) renderOpenPbrUi(window);
-        else if (mReferenceSource.family == ncls::ReferenceFamily::MaterialX) renderMaterialXUi(window);
-        else window.text("MERL is a measured BRDF table with no continuous native controls; select another measurement to switch material.");
-        window.text("This source material retains its native representation; no compatible approximation compiler is available yet.");
+        if (mReferenceSource.family == ncls::ReferenceFamily::OpenPbr) renderOpenPbrUi(widgets);
+        else if (mReferenceSource.family == ncls::ReferenceFamily::MaterialX) renderMaterialXUi(widgets);
+        else widgets.text("MERL is a measured BRDF table with no continuous native controls; select another measurement to switch material.");
+        widgets.text("This source material retains its native representation; no compatible approximation compiler is available yet.");
         return;
     }
-    window.text("Material program (edits normalized LayerStackIR inputs, not a K2 packet)");
+    widgets.text("Material program (edits normalized LayerStackIR inputs, not a K2 packet)");
     mSelectedInterface = std::min(mSelectedInterface, mMaterial.interfaceCount - 1);
     Gui::DropdownList layers;
     for (uint32_t index = 0; index < mMaterial.interfaceCount; ++index)
@@ -1274,29 +1366,29 @@ void NclsViewer::renderMaterialUi(Gui::Window& window)
         const bool base = index + 1 == mMaterial.interfaceCount;
         layers.push_back({index, (base ? "Base " : "Coat ") + std::to_string(index)});
     }
-    window.dropdown("Current interface", layers, mSelectedInterface);
+    widgets.dropdown("Current interface", layers, mSelectedInterface);
     bool changed = false;
-    if (window.button("Add dielectric coat"))
+    if (widgets.button("Add dielectric coat"))
     {
         changed |= ncls::addDielectricCoat(mMaterial);
         mSelectedInterface = mMaterial.interfaceCount - 2;
     }
     if (mSelectedInterface + 1 < mMaterial.interfaceCount)
     {
-        if (window.button("Delete current coat", true))
+        if (widgets.button("Delete current coat", true))
         {
             changed |= ncls::removeCoat(mMaterial, mSelectedInterface);
             mSelectedInterface = std::min(mSelectedInterface, mMaterial.interfaceCount - 1);
         }
-        if (window.button("Move up", true)) changed |= ncls::moveCoat(mMaterial, mSelectedInterface, -1);
-        if (window.button("Move down", true)) changed |= ncls::moveCoat(mMaterial, mSelectedInterface, 1);
+        if (widgets.button("Move up", true)) changed |= ncls::moveCoat(mMaterial, mSelectedInterface, -1);
+        if (widgets.button("Move down", true)) changed |= ncls::moveCoat(mMaterial, mSelectedInterface, 1);
     }
     auto& interfaceValue = mMaterial.interfaces[mSelectedInterface];
     const bool isBase = mSelectedInterface + 1 == mMaterial.interfaceCount;
     if (isBase)
     {
         uint32_t kind = interfaceValue.kind;
-        if (window.dropdown("Base type", kBaseKinds, kind))
+        if (widgets.dropdown("Base type", kBaseKinds, kind))
         {
             interfaceValue = {};
             interfaceValue.kind = kind;
@@ -1310,21 +1402,22 @@ void NclsViewer::renderMaterialUi(Gui::Window& window)
     const auto kind = static_cast<ncls::InterfaceKind>(interfaceValue.kind);
     if (kind == ncls::InterfaceKind::RoughDielectric || kind == ncls::InterfaceKind::RoughConductor)
     {
-        changed |= window.var("alpha X", interfaceValue.alphaX, 0.001f, 1.f, 0.005f);
-        changed |= window.var("alpha Y", interfaceValue.alphaY, 0.001f, 1.f, 0.005f);
-        changed |= window.var("Tangent rotation (rad)", interfaceValue.tangentRotation, -3.14159f, 3.14159f, 0.01f);
+        changed |= widgets.var("alpha X", interfaceValue.alphaX, 0.001f, 1.f, 0.005f);
+        changed |= widgets.var("alpha Y", interfaceValue.alphaY, 0.001f, 1.f, 0.005f);
+        changed |= widgets.var("Tangent rotation (rad)", interfaceValue.tangentRotation, -3.14159f, 3.14159f, 0.01f);
     }
     if (kind == ncls::InterfaceKind::RoughDielectric)
-        changed |= window.var("Relative IOR", interfaceValue.relativeIor, 1.001f, 3.f, 0.01f);
+        changed |= widgets.var("Relative IOR", interfaceValue.relativeIor, 1.001f, 3.f, 0.01f);
     else if (kind == ncls::InterfaceKind::RoughConductor)
     {
+        widgets.text("Rough-conductor color is determined by eta/k; it has no albedo color input.");
         float3 eta(interfaceValue.etaR, interfaceValue.etaG, interfaceValue.etaB);
         float3 k(interfaceValue.kR, interfaceValue.kG, interfaceValue.kB);
-        if (window.var("eta RGB", eta, 0.f, 5.f, 0.01f))
+        if (widgets.var("eta RGB", eta, 0.f, 5.f, 0.01f))
         {
             interfaceValue.etaR = eta.x; interfaceValue.etaG = eta.y; interfaceValue.etaB = eta.z; changed = true;
         }
-        if (window.var("k RGB", k, 0.f, 10.f, 0.01f))
+        if (widgets.var("k RGB", k, 0.f, 10.f, 0.01f))
         {
             interfaceValue.kR = k.x; interfaceValue.kG = k.y; interfaceValue.kB = k.z; changed = true;
         }
@@ -1332,13 +1425,13 @@ void NclsViewer::renderMaterialUi(Gui::Window& window)
     else if (kind == ncls::InterfaceKind::Diffuse || kind == ncls::InterfaceKind::Sheen)
     {
         float3 color(interfaceValue.colorR, interfaceValue.colorG, interfaceValue.colorB);
-        if (window.rgbColor("Color", color))
+        if (widgets.rgbColor("Color (linear RGB)", color))
         {
             interfaceValue.colorR = color.x; interfaceValue.colorG = color.y; interfaceValue.colorB = color.z; changed = true;
         }
         if (kind == ncls::InterfaceKind::Sheen)
         {
-            if (window.var("Sheen roughness", interfaceValue.alphaX, 0.001f, 1.f, 0.005f))
+            if (widgets.var("Sheen roughness", interfaceValue.alphaX, 0.001f, 1.f, 0.005f))
             {
                 interfaceValue.alphaY = interfaceValue.alphaX;
                 changed = true;
@@ -1353,10 +1446,10 @@ void NclsViewer::renderMaterialUi(Gui::Window& window)
         float extinction = std::max((sigmaA.x + sigmaS.x + sigmaA.y + sigmaS.y + sigmaA.z + sigmaS.z) / 3.f, 0.f);
         float3 albedo = extinction > 1e-6f ? sigmaS / extinction : float3(0.f);
         bool mediumChanged = false;
-        mediumChanged |= window.var("Medium extinction (1/unit)", extinction, 0.f, 6.f, 0.01f);
-        mediumChanged |= window.rgbColor("Medium scattering albedo", albedo);
-        mediumChanged |= window.var("Phase-function g", medium.g, -0.95f, 0.95f, 0.01f);
-        mediumChanged |= window.var("Thickness", medium.thickness, 0.f, 2.f, 0.01f);
+        mediumChanged |= widgets.var("Medium extinction (1/unit)", extinction, 0.f, 6.f, 0.01f);
+        mediumChanged |= widgets.rgbColor("Medium scattering albedo (linear RGB)", albedo);
+        mediumChanged |= widgets.var("Phase-function g", medium.g, -0.95f, 0.95f, 0.01f);
+        mediumChanged |= widgets.var("Thickness", medium.thickness, 0.f, 2.f, 0.01f);
         if (mediumChanged)
         {
             albedo = clamp(albedo, float3(0.f), float3(1.f));
@@ -1369,211 +1462,349 @@ void NclsViewer::renderMaterialUi(Gui::Window& window)
     }
     if (changed)
     {
-        try { updateMaterialBuffer(); mStatus = "Material updated; reference accumulation reset."; }
+        mFreezeReference = false;
+        try { updateMaterialBuffer(); mStatus = "Material applied; reference resumed and accumulation reset."; }
         catch (const std::exception& error) { mStatus = error.what(); }
     }
-    window.text("IR SHA-256: " + shortId(ncls::layerStackHash(mMaterial)));
+    widgets.text("IR SHA-256: " + shortId(ncls::layerStackHash(mMaterial)));
+    widgets.text("Scene-state SHA-256: " + shortId(ncls::referenceSourceStateHash(mReferenceSource)));
 }
 
 void NclsViewer::onGuiRender(Gui* pGui)
 {
-    Gui::Window window(pGui, "NeuralShading Material Comparison", {410, 850}, {12, 12});
-    if (allMaterialsSupportCurrentCompiler())
-    {
-        Gui::DropdownList methodList = {{0, "None (reference only)"}};
-        for (uint32_t index = 0; index < mMethods.size(); ++index)
-            methodList.push_back({index + 1, mMethods[index].displayName + " [" + shortId(mMethods[index].methodId) + "]"});
-        if (window.dropdown("Right-side method", methodList, mMethodUiValue)) selectMethod(int32_t(mMethodUiValue) - 1);
-        if (window.button("Rescan MethodBundles")) scanBundles();
-    }
-    else window.text("Right-side method: one or more source-material slots have no compatible compiler; showing reference only.");
-    if (mSelectedMethod >= 0)
-    {
-        const auto& method = mMethods[mSelectedMethod];
-        window.text("method: " + shortId(method.methodId) + " / backend v" + std::to_string(method.backendVersion));
-        window.text("Parameters: " + std::to_string(method.parameterCount) + ", state: " + std::to_string(method.stateBytesPerPixel) + " B/pixel");
-        window.text("Image difference uses raw path-traced reference and includes transport differences.");
-    }
-    if (!mBundleFailures.empty()) window.text("Rejected bundles: " + std::to_string(mBundleFailures.size()) + " (see log/status for details)");
-
-    window.text("Reference: " + std::string(mReferenceSource.familyId()));
-    window.var("Samples per frame", mSamplesPerFrame, 1u, 16u);
-    if (mpScene && window.var("Max scene bounces", mMaxSceneBounces, 0u, 16u))
-        resetReference(false, false);
-    if (mReferenceSource.family == ncls::ReferenceFamily::LayerStack
-        && window.var("Max layer-walk depth", mMaxLayerWalkDepth, 4u, 128u))
-        resetReference(false, false);
-    window.checkbox("Freeze reference", mFreezeReference);
-    window.checkbox("Denoised preview (raw remains authoritative)", mUseDenoisedPreview);
-    if (window.button("Clear accumulation")) resetReference(false, false);
-    window.text("spp: " + std::to_string(mReferenceSpp) + ", elapsed: " + fmt::format("{:.2f}s", mAccumulationSeconds));
-    if (mpScene)
-        window.text("Estimated mean relative standard error: "
-            + fmt::format("{:.2f}%", 100.f * mEstimatedRelativeStandardError));
-    else
-        window.text("Analytic fallback noise proxy: "
-            + fmt::format("{:.4f}", 1.f / std::sqrt(float(std::max(mReferenceSpp, 1u)))));
-
-    bool physicalChanged = false;
-    if (mReferenceSource.family == ncls::ReferenceFamily::MaterialX)
-    {
-        if (mObjectMode != 0u) { mObjectMode = 0u; physicalChanged = true; }
-        window.text(mReferenceGeometryPath.empty()
-            ? "Preview object: analytic-sphere fallback (parity validation requires an explicit scene)"
-            : "Preview object: Falcor scene " + mReferenceGeometryPath.filename().string());
-    }
-    else if (!mpScene) physicalChanged |= window.dropdown("Preview object", kObjectModes, mObjectMode);
-    if (window.button("Load scene"))
-    {
-        std::filesystem::path path;
-        if (openFileDialog(Scene::getFileExtensionFilters(), path))
-        {
-            try { loadScene(path); }
-            catch (const std::exception& error) { mStatus = "Failed to load scene: " + std::string(error.what()); }
-        }
-    }
-    if (mpScene)
-    {
-        window.text("Scene: " + mReferenceGeometryPath.filename().string());
-        if (mSelectedSceneInstance != std::numeric_limits<uint32_t>::max())
-        {
-            window.text("Selected instance: " + std::to_string(mSelectedSceneInstance));
-            window.text("Geometry: " + mSelectedSceneGeometryName);
-            window.text("Scene material: " + mSelectedSceneMaterialName + " (#" + std::to_string(mSelectedSceneMaterial) + ")");
-        }
-        else window.text("Click an object to select its material slot.");
-    }
+    Gui::Window window(pGui, "NeuralShading Viewer", {460, 850}, {12, 12});
     const float sceneRadius = mpScene ? std::max(mpScene->getSceneBounds().radius(), 0.01f) : 1.f;
+    const float3 sceneCenter = mpScene ? mpScene->getSceneBounds().center() : float3(0.f);
+    const float sceneCenterExtent = std::max({
+        std::abs(sceneCenter.x),
+        std::abs(sceneCenter.y),
+        std::abs(sceneCenter.z),
+    });
+    const float lightCoordinateLimit = std::max(10.f, sceneCenterExtent + 4.f * sceneRadius);
+    const float lightAxisLimit = std::max(3.f, 2.f * sceneRadius);
+    const float lightPositionStep = std::max(0.02f, sceneRadius * 0.005f);
     const float minimumDistance = mpScene ? sceneRadius * 0.01f : 1.25f;
     const float maximumDistance = mpScene ? sceneRadius * 20.f : 9.f;
-    physicalChanged |= window.var("Camera distance", mCamera.distance, minimumDistance, maximumDistance, sceneRadius * 0.002f);
-    physicalChanged |= window.var("Vertical FOV", mCamera.verticalFovDegrees, 12.f, 90.f, 0.5f);
-    if (physicalChanged) resetReference(true, true);
-    if (window.button("Reset camera")) resetCamera();
 
-    if (hasActiveMethod())
     {
-        window.dropdown("Comparison display", kComparisonModes, mComparisonMode);
-        window.var("Split position", mSplit, 0.1f, 0.9f, 0.005f);
-    }
-    else
-    {
-        mComparisonMode = 0u;
-        window.text("Display mode: full-width reference preview");
-    }
-    window.var("Shared exposure EV", mExposure, -8.f, 8.f, 0.05f);
-    if (mComparisonMode == 3u) window.var("Error amplification", mDifferenceScale, 1.f, 100.f, 0.5f);
-
-    bool lightChanged = false;
-    lightChanged |= window.checkbox("HDRI / environment", mLighting.useEnvironment);
-    lightChanged |= window.var("Environment rotation", mLighting.environmentRotation, -3.14159f, 3.14159f, 0.01f);
-    lightChanged |= window.var("Environment intensity", mLighting.environmentIntensity, 0.f, 20.f, 0.02f);
-    if (window.button("Load HDRI"))
-    {
-        std::filesystem::path path;
-        if (openFileDialog(Bitmap::getFileDialogFilters(ResourceFormat::RGBA32Float), path))
+        Gui::Group group = window.group("Scene and camera", true);
+        if (group)
         {
-            try { loadEnvironment(path); }
-            catch (const std::exception& error) { mStatus = "Failed to load HDRI: " + std::string(error.what()); }
+            bool physicalChanged = false;
+            if (mReferenceSource.family == ncls::ReferenceFamily::MaterialX)
+            {
+                if (mObjectMode != 0u) { mObjectMode = 0u; physicalChanged = true; }
+                group.text(mReferenceGeometryPath.empty()
+                    ? "Preview: analytic sphere (parity requires an explicit scene)"
+                    : "Scene: " + mReferenceGeometryPath.filename().string());
+            }
+            else if (!mpScene) physicalChanged |= group.dropdown("Preview object", kObjectModes, mObjectMode);
+            if (mpScene)
+            {
+                group.text("Scene: " + mReferenceGeometryPath.filename().string());
+                if (mSelectedSceneInstance != std::numeric_limits<uint32_t>::max())
+                {
+                    group.text("Selected instance: " + std::to_string(mSelectedSceneInstance));
+                    group.text("Geometry: " + mSelectedSceneGeometryName);
+                    group.text("Material slot: " + mSelectedSceneMaterialName
+                        + " (#" + std::to_string(mSelectedSceneMaterial) + ")");
+                }
+                else group.text("Click an object to select its material slot.");
+            }
+            if (group.button("Load scene"))
+            {
+                std::filesystem::path path;
+                if (openFileDialog(Scene::getFileExtensionFilters(), path))
+                {
+                    try { loadScene(path); }
+                    catch (const std::exception& error) { mStatus = "Failed to load scene: " + std::string(error.what()); }
+                }
+            }
+            if (group.button("Load viewer scene"))
+            {
+                std::filesystem::path path;
+                if (openFileDialog({{"json", "NeuralShading viewer scene JSON"}}, path))
+                {
+                    try { loadViewerScene(path); }
+                    catch (const std::exception& error) { mStatus = "Failed to load viewer scene: " + std::string(error.what()); }
+                }
+            }
+            if (mpScene && group.button("Save viewer scene", true))
+            {
+                std::filesystem::path path = "viewer-scene.json";
+                if (saveFileDialog({{"json", "NeuralShading viewer scene JSON"}}, path))
+                {
+                    try { saveViewerScene(path); }
+                    catch (const std::exception& error) { mStatus = "Failed to save viewer scene: " + std::string(error.what()); }
+                }
+            }
+            physicalChanged |= group.var(
+                "Camera distance", mCamera.distance,
+                minimumDistance, maximumDistance, sceneRadius * 0.002f);
+            physicalChanged |= group.var("Vertical FOV", mCamera.verticalFovDegrees, 12.f, 90.f, 0.5f);
+            if (physicalChanged) resetReference(true, true);
+            if (group.button("Reset camera")) resetCamera();
         }
     }
-    lightChanged |= window.checkbox("Directional light", mLighting.useSun);
-    lightChanged |= window.var("Directional-light direction", mLighting.sunDirection, -1.f, 1.f, 0.01f);
-    lightChanged |= window.var("Directional-light intensity", mLighting.sunIntensity, 0.f, 50.f, 0.05f);
-    lightChanged |= window.rgbColor("Directional-light color", mLighting.sunColor);
-    lightChanged |= window.checkbox("Point light", mLighting.usePoint);
-    lightChanged |= window.var("Point-light position", mLighting.pointPosition, -10.f, 10.f, 0.02f);
-    lightChanged |= window.var("Point-light intensity", mLighting.pointIntensity, 0.f, 100.f, 0.1f);
-    lightChanged |= window.rgbColor("Point-light color", mLighting.pointColor);
-    lightChanged |= window.checkbox("Rectangle light", mLighting.useRectangle);
-    lightChanged |= window.var("Rectangle-light center", mLighting.rectangleCenter, -10.f, 10.f, 0.02f);
-    lightChanged |= window.var("Rectangle-light half-axis U", mLighting.rectangleAxisU, -3.f, 3.f, 0.02f);
-    lightChanged |= window.var("Rectangle-light half-axis V", mLighting.rectangleAxisV, -3.f, 3.f, 0.02f);
-    lightChanged |= window.var("Rectangle-light intensity", mLighting.rectangleIntensity, 0.f, 100.f, 0.1f);
-    lightChanged |= window.rgbColor("Rectangle-light color", mLighting.rectangleColor);
-    if (lightChanged) resetReference(false, false);
 
-    renderMaterialUi(window);
-    if (window.button("Switch source material / family"))
     {
-        std::filesystem::path path;
-        if (openFileDialog({
-                {"json", "MaterialProgram / OpenPBR JSON"},
-                {"binary", "MERL BRDF table"},
-                {"mtlx", "MaterialX document"}}, path))
-            loadMaterial(path);
-    }
-    if (mReferenceSource.family == ncls::ReferenceFamily::LayerStack
-        && window.button("Save MaterialProgram", true))
-    {
-        std::filesystem::path path = mMaterialPath;
-        if (saveFileDialog({{"json", "MaterialProgram JSON"}}, path)) saveMaterial(path);
-    }
-    if (window.button("Save full capture"))
-    {
-        std::filesystem::path path = "capture.json";
-        if (saveFileDialog({{"json", "Capture manifest"}}, path)) capture(path);
+        Gui::Group group = window.group("Material", true);
+        if (group)
+        {
+            group.text(mpScene
+                ? "Editing material slot #" + std::to_string(mActiveSceneMaterial)
+                : "Editing the analytic preview material");
+            uint32_t requestedFamily = static_cast<uint32_t>(mReferenceSource.family);
+            if (group.dropdown("Source material family", kReferenceFamilies, requestedFamily)
+                && requestedFamily != static_cast<uint32_t>(mReferenceSource.family))
+            {
+                const auto family = static_cast<ncls::ReferenceFamily>(requestedFamily);
+                if (family == ncls::ReferenceFamily::LayerStack || family == ncls::ReferenceFamily::OpenPbr)
+                {
+                    try
+                    {
+                        installReferenceSource(ncls::makeDefaultReferenceSource(family));
+                        mStatus = "Created a default " + std::string(mReferenceSource.familyId())
+                            + " source material for the selected scene slot.";
+                    }
+                    catch (const std::exception& error) { mStatus = "Failed to switch source family: " + std::string(error.what()); }
+                }
+                else
+                {
+                    std::filesystem::path path;
+                    const FileDialogFilterVec filters = family == ncls::ReferenceFamily::Merl
+                        ? FileDialogFilterVec{{"binary", "MERL BRDF table"}}
+                        : FileDialogFilterVec{{"mtlx", "MaterialX document"}};
+                    if (openFileDialog(filters, path)) loadMaterial(path);
+                    else mStatus = "Family switch cancelled; MERL and MaterialX require their native source asset.";
+                }
+            }
+            renderMaterialUi(group);
+            if (group.button("Load source material into selected slot"))
+            {
+                std::filesystem::path path;
+                if (openFileDialog({
+                        {"json", "MaterialProgram / OpenPBR JSON"},
+                        {"binary", "MERL BRDF table"},
+                        {"mtlx", "MaterialX document"}}, path))
+                    loadMaterial(path);
+            }
+            if ((mReferenceSource.family == ncls::ReferenceFamily::LayerStack
+                    || mReferenceSource.family == ncls::ReferenceFamily::OpenPbr)
+                && group.button(mReferenceSource.family == ncls::ReferenceFamily::LayerStack
+                        ? "Save MaterialProgram" : "Save OpenPBR source JSON", true))
+            {
+                std::filesystem::path path = mMaterialPath;
+                if (saveFileDialog({{"json", "MaterialProgram JSON"}}, path)) saveMaterial(path);
+            }
+        }
     }
 
-    window.text("GPU ms (asynchronous timestamp)");
-    window.text(fmt::format(
-        "visibility {:.3f} | reference {:.3f}\nprepare {:.3f} | lighting {:.3f} | composite {:.3f}",
-        mVisibilityTiming.milliseconds,
-        mReferenceTiming.milliseconds,
-        mPrepareTiming.milliseconds,
-        mLightingTiming.milliseconds,
-        mCompositeTiming.milliseconds));
-    window.text("Controls: left-drag orbit; middle/right-drag pan; wheel dolly; drag divider; Space freezes reference.");
-    if (!mStatus.empty()) window.text("Status: " + mStatus);
+    {
+        Gui::Group group = window.group("Lighting", true);
+        if (group)
+        {
+            group.text("Colors are linear RGB. Editing an enabled light resumes the reference.");
+            bool lightChanged = false;
+            {
+                Gui::Group light = group.group("Environment / HDRI", true);
+                if (light)
+                {
+                    lightChanged |= light.checkbox("Enabled", mLighting.useEnvironment);
+                    if (mLighting.useEnvironment)
+                    {
+                        lightChanged |= light.var("Rotation", mLighting.environmentRotation, -3.14159f, 3.14159f, 0.01f);
+                        lightChanged |= light.var("Intensity", mLighting.environmentIntensity, 0.f, 20.f, 0.02f);
+                    }
+                    else light.text("Disabled: this HDRI does not contribute to the image.");
+                    if (light.button("Load HDRI"))
+                    {
+                        std::filesystem::path path;
+                        if (openFileDialog(Bitmap::getFileDialogFilters(ResourceFormat::RGBA32Float), path))
+                        {
+                            try { loadEnvironment(path); }
+                            catch (const std::exception& error) { mStatus = "Failed to load HDRI: " + std::string(error.what()); }
+                        }
+                    }
+                }
+            }
+            {
+                Gui::Group light = group.group("Directional light", true);
+                if (light)
+                {
+                    lightChanged |= light.checkbox("Enabled", mLighting.useSun);
+                    if (mLighting.useSun)
+                    {
+                        lightChanged |= light.direction("Direction (surface -> light)", mLighting.sunDirection);
+                        lightChanged |= light.var("Intensity", mLighting.sunIntensity, 0.f, 50.f, 0.05f);
+                        lightChanged |= light.rgbColor("Color (linear RGB)", mLighting.sunColor);
+                    }
+                    else light.text("Disabled: its direction, intensity and color do not affect the image.");
+                }
+            }
+            {
+                Gui::Group light = group.group("Point light", false);
+                if (light)
+                {
+                    lightChanged |= light.checkbox("Enabled", mLighting.usePoint);
+                    if (mLighting.usePoint)
+                    {
+                        lightChanged |= light.var(
+                            "Position", mLighting.pointPosition,
+                            -lightCoordinateLimit, lightCoordinateLimit, lightPositionStep);
+                        lightChanged |= light.var("Intensity", mLighting.pointIntensity, 0.f, 100.f, 0.1f);
+                        lightChanged |= light.rgbColor("Color (linear RGB)", mLighting.pointColor);
+                    }
+                    else light.text("Disabled: its position, intensity and color do not affect the image.");
+                }
+            }
+            {
+                Gui::Group light = group.group("Rectangle light", true);
+                if (light)
+                {
+                    lightChanged |= light.checkbox("Enabled", mLighting.useRectangle);
+                    if (mLighting.useRectangle)
+                    {
+                        lightChanged |= light.var(
+                            "Center", mLighting.rectangleCenter,
+                            -lightCoordinateLimit, lightCoordinateLimit, lightPositionStep);
+                        lightChanged |= light.var(
+                            "Half-axis U", mLighting.rectangleAxisU,
+                            -lightAxisLimit, lightAxisLimit, lightPositionStep);
+                        lightChanged |= light.var(
+                            "Half-axis V", mLighting.rectangleAxisV,
+                            -lightAxisLimit, lightAxisLimit, lightPositionStep);
+                        light.text("Emitting normal = normalize(U x V)");
+                        lightChanged |= light.var("Intensity", mLighting.rectangleIntensity, 0.f, 100.f, 0.1f);
+                        lightChanged |= light.rgbColor("Color (linear RGB)", mLighting.rectangleColor);
+                    }
+                    else light.text("Disabled: its shape, intensity and color do not affect the image.");
+                }
+            }
+            if (lightChanged)
+            {
+                mFreezeReference = false;
+                resetReference(false, false);
+                mStatus = "Lighting applied; reference resumed and accumulation reset.";
+            }
+        }
+    }
+
+    {
+        Gui::Group group = window.group("Reference and display", true);
+        if (group)
+        {
+            group.text("Reference: " + std::string(mReferenceSource.familyId()));
+            group.var("Samples per frame", mSamplesPerFrame, 1u, 16u);
+            if (mpScene && group.var("Max scene bounces", mMaxSceneBounces, 0u, 16u))
+                resetReference(false, false);
+            if (mReferenceSource.family == ncls::ReferenceFamily::LayerStack
+                && group.var("Max layer-walk depth", mMaxLayerWalkDepth, 4u, 128u))
+                resetReference(false, false);
+            group.checkbox("Freeze reference", mFreezeReference);
+            group.text("Material and lighting edits automatically resume a frozen reference.");
+            group.checkbox("Denoised preview (raw remains authoritative)", mUseDenoisedPreview);
+            if (group.button("Clear accumulation")) resetReference(false, false);
+            if (hasActiveMethod())
+            {
+                group.dropdown("Comparison display", kComparisonModes, mComparisonMode);
+                group.var("Split position", mSplit, 0.1f, 0.9f, 0.005f);
+            }
+            else
+            {
+                mComparisonMode = 0u;
+                group.text("Display: full-width reference preview");
+            }
+            group.var("Shared exposure EV", mExposure, -8.f, 8.f, 0.05f);
+            if (mComparisonMode == 3u) group.var("Error amplification", mDifferenceScale, 1.f, 100.f, 0.5f);
+            group.text("spp: " + std::to_string(mReferenceSpp)
+                + ", elapsed: " + fmt::format("{:.2f}s", mAccumulationSeconds));
+            if (mpScene)
+                group.text("Estimated mean relative standard error: "
+                    + fmt::format("{:.2f}%", 100.f * mEstimatedRelativeStandardError));
+            else
+                group.text("Analytic fallback noise proxy: "
+                    + fmt::format("{:.4f}", 1.f / std::sqrt(float(std::max(mReferenceSpp, 1u)))));
+        }
+    }
+
+    {
+        Gui::Group group = window.group("Realtime method", false);
+        if (group)
+        {
+            if (allMaterialsSupportCurrentCompiler())
+            {
+                Gui::DropdownList methodList = {{0, "None (reference only)"}};
+                for (uint32_t index = 0; index < mMethods.size(); ++index)
+                    methodList.push_back({index + 1, mMethods[index].displayName
+                        + " [" + shortId(mMethods[index].methodId) + "]"});
+                if (group.dropdown("Right-side method", methodList, mMethodUiValue))
+                    selectMethod(int32_t(mMethodUiValue) - 1);
+                if (group.button("Rescan MethodBundles")) scanBundles();
+            }
+            else group.text("One or more material slots have no compatible compiler; showing reference only.");
+            if (mSelectedMethod >= 0)
+            {
+                const auto& method = mMethods[mSelectedMethod];
+                group.text("method: " + shortId(method.methodId)
+                    + " / backend v" + std::to_string(method.backendVersion));
+                group.text("Parameters: " + std::to_string(method.parameterCount)
+                    + ", state: " + std::to_string(method.stateBytesPerPixel) + " B/pixel");
+                group.text("Difference includes material approximation and transport differences.");
+            }
+            if (!mBundleFailures.empty())
+                group.text("Rejected bundles: " + std::to_string(mBundleFailures.size()) + " (details are in the log)");
+        }
+    }
+
+    {
+        Gui::Group group = window.group("Capture", false);
+        if (group && group.button("Save full capture"))
+        {
+            std::filesystem::path path = "capture.json";
+            if (saveFileDialog({{"json", "Capture manifest"}}, path)) capture(path);
+        }
+    }
+
+    {
+        Gui::Group group = window.group("Performance and status", false);
+        if (group)
+        {
+            group.text("GPU ms (asynchronous timestamp)");
+            group.text(fmt::format(
+                "visibility {:.3f} | reference {:.3f}\nprepare {:.3f} | lighting {:.3f} | composite {:.3f}",
+                mVisibilityTiming.milliseconds,
+                mReferenceTiming.milliseconds,
+                mPrepareTiming.milliseconds,
+                mLightingTiming.milliseconds,
+                mCompositeTiming.milliseconds));
+            group.textWrapped("Controls: left-drag orbit; middle/right-drag pan; wheel dolly; drag divider; Space freezes reference.");
+            if (!mStatus.empty()) group.textWrapped("Status: " + mStatus);
+            const auto logPath = Logger::getLogFilePath();
+            if (!logPath.empty()) group.textWrapped("Detailed log: " + logPath.string());
+        }
+    }
 }
 
 void NclsViewer::loadMaterial(const std::filesystem::path& path)
 {
-    const bool viewWasSplit = hasActiveMethod();
     try
     {
         logInfo("Loading source material '{}'", path);
-        auto source = ncls::loadReferenceSource(path);
-        auto gpu = createSourceGpuResources(source);
-        mReferenceSource = std::move(source);
-        mSourceGpu = std::move(gpu);
-        if (mpScene)
-        {
-            rebuildReferenceMaterialMetadata();
-            createSceneReferencePass();
-        }
+        installReferenceSource(ncls::loadReferenceSource(path), path);
         logInfo("Loaded source metadata: family='{}' hash='{}'", mReferenceSource.familyId(), shortId(mReferenceSource.sourceSha256));
-        mMaterialDisplayName = mReferenceSource.displayName;
-        mMaterialPath = path;
         if (mReferenceSource.family == ncls::ReferenceFamily::LayerStack)
-        {
-            updateMaterialBuffer();
             mStatus = "Loaded LayerStack MaterialProgram: " + path.string();
-        }
         else if (mReferenceSource.family == ncls::ReferenceFamily::Merl)
-        {
-            selectMethod(-1);
-            resetReference(false, true);
             mStatus = "Loaded native MERL measurement into the Falcor reference pass: " + path.string();
-        }
         else if (mReferenceSource.family == ncls::ReferenceFamily::OpenPbr)
-        {
-            selectMethod(-1);
-            resetReference(false, true);
             mStatus = "Loaded OpenPBR 1.1.1 resolved-input material into the Falcor reference pass: " + path.string();
-        }
         else if (mReferenceSource.family == ncls::ReferenceFamily::MaterialX)
         {
-            mObjectMode = 0u; // Only used by the analytic fallback when no replay scene is present.
-            selectMethod(-1);
-            resetReference(true, true);
             mStatus = "Loaded MaterialX standard_surface and connected source textures into the Falcor reference pass; "
                 + (mReferenceGeometryPath.empty() ? std::string("currently using the analytic-sphere fallback: ") : std::string("currently path tracing the Falcor scene: "))
                 + path.string();
         }
-        if (!allMaterialsSupportCurrentCompiler()) selectMethod(-1);
-        if (viewWasSplit != hasActiveMethod() && mOutputWidth > 0u && mOutputHeight > 0u)
-            resizeResources(mOutputWidth, mOutputHeight);
     }
     catch (const std::exception& error)
     {
@@ -1582,25 +1813,50 @@ void NclsViewer::loadMaterial(const std::filesystem::path& path)
     }
 }
 
+void NclsViewer::installReferenceSource(ncls::ReferenceSource source, const std::filesystem::path& path)
+{
+    const bool viewWasSplit = hasActiveMethod();
+    auto gpu = createSourceGpuResources(source);
+    mReferenceSource = std::move(source);
+    mSourceGpu = std::move(gpu);
+    mMaterialDisplayName = mReferenceSource.displayName;
+    mMaterialPath = path.empty() ? mReferenceSource.sourcePath : path;
+    if (mReferenceSource.family == ncls::ReferenceFamily::MaterialX) mObjectMode = 0u;
+    if (mpScene)
+    {
+        rebuildReferenceMaterialMetadata();
+        createSceneReferencePass();
+    }
+    if (mReferenceSource.family == ncls::ReferenceFamily::LayerStack) updateMaterialBuffer();
+    else resetReference(mReferenceSource.family == ncls::ReferenceFamily::MaterialX, true);
+    if (!allMaterialsSupportCurrentCompiler()) selectMethod(-1);
+    if (viewWasSplit != hasActiveMethod() && mOutputWidth > 0u && mOutputHeight > 0u)
+        resizeResources(mOutputWidth, mOutputHeight);
+}
+
 void NclsViewer::saveMaterial(const std::filesystem::path& path)
 {
     try
     {
-        ncls::saveMaterialProgram(path, mMaterial, mMaterialDisplayName);
+        if (mReferenceSource.family == ncls::ReferenceFamily::LayerStack)
+            ncls::saveMaterialProgram(path, mMaterial, mMaterialDisplayName);
+        else if (mReferenceSource.family == ncls::ReferenceFamily::OpenPbr)
+            ncls::saveOpenPbrReferenceSource(path, mReferenceSource);
+        else throw std::runtime_error("this source family is saved through the viewer scene because it depends on an external native asset");
         mMaterialPath = path;
-        mStatus = "Saved MaterialProgram: " + path.string();
+        mStatus = "Saved source material: " + path.string();
     }
     catch (const std::exception& error) { mStatus = "Save failed: " + std::string(error.what()); }
 }
 
-void NclsViewer::loadEnvironment(const std::filesystem::path& path)
+void NclsViewer::loadEnvironment(const std::filesystem::path& path, const std::string& expectedSha256)
 {
     const auto resolvedPath = std::filesystem::absolute(path).lexically_normal();
     if (!std::filesystem::is_regular_file(resolvedPath))
         throw std::runtime_error("HDRI does not exist: " + resolvedPath.string());
     const std::string environmentSha256 = ncls::sha256FileHex(resolvedPath);
-    if (!mOptions.environmentSha256.empty() && environmentSha256 != mOptions.environmentSha256)
-        throw std::runtime_error("HDRI SHA-256 does not match the fixed preset/replay: " + resolvedPath.string());
+    if (!expectedSha256.empty() && environmentSha256 != expectedSha256)
+        throw std::runtime_error("HDRI SHA-256 does not match the viewer scene/preset/replay: " + resolvedPath.string());
     auto texture = Texture::createFromFile(getDevice(), resolvedPath, true, false);
     if (!texture) throw std::runtime_error("Falcor failed to load HDRI: " + resolvedPath.string());
     mpEnvironment = texture;
@@ -1619,6 +1875,204 @@ void NclsViewer::loadEnvironment(const std::filesystem::path& path)
     mEnvironmentSha256 = environmentSha256;
     resetReference(false, false);
     mStatus = "Loaded HDRI: " + resolvedPath.string();
+}
+
+void NclsViewer::saveViewerScene(const std::filesystem::path& requestedPath)
+{
+    namespace fs = std::filesystem;
+    if (!mpScene) throw std::runtime_error("a viewer scene requires an explicit Falcor scene");
+    fs::path path = requestedPath;
+    if (path.extension() != ".json") path += ".json";
+    path = fs::absolute(path).lexically_normal();
+    if (!path.parent_path().empty()) fs::create_directories(path.parent_path());
+    const fs::path base = path.parent_path();
+
+    nlohmann::json bindings = nlohmann::json::array();
+    auto appendBinding = [&](uint32_t materialId, const ncls::ReferenceSource& source) {
+        std::string sceneMaterialName;
+        if (const auto material = mpScene->getMaterial(MaterialID(materialId)))
+            sceneMaterialName = material->getName();
+        bindings.push_back({
+            {"material_id", materialId},
+            {"scene_material_name", sceneMaterialName},
+            {"source", ncls::serializeReferenceSourceState(source, base)},
+        });
+    };
+    appendBinding(mActiveSceneMaterial, mReferenceSource);
+    for (uint32_t materialId = 0u; materialId < mpScene->getMaterialCount(); ++materialId)
+        if (materialId != mActiveSceneMaterial)
+        {
+            const auto* binding = inactiveSceneMaterial(materialId);
+            if (!binding) throw std::runtime_error("scene material slot has no source binding");
+            appendBinding(materialId, binding->source);
+        }
+
+    const nlohmann::json document = {
+        {"format_name", "ncls.viewer-scene"},
+        {"format_version", 1},
+        {"reference_integrator", "ncls.scene-path-tracer@1"},
+        {"geometry", {
+            {"uri", portableUri(mReferenceGeometryPath, base)},
+            {"sha256", mReferenceGeometrySha256},
+        }},
+        {"environment", {
+            {"uri", portableUri(mEnvironmentPath, base)},
+            {"sha256", mEnvironmentSha256},
+        }},
+        {"active_material_id", mActiveSceneMaterial},
+        {"material_bindings", bindings},
+        {"reference", {
+            {"samples_per_frame", mSamplesPerFrame},
+            {"scene_max_bounces", mMaxSceneBounces},
+            {"layer_walk_max_depth", mMaxLayerWalkDepth},
+        }},
+        {"camera", {
+            {"target", {mCamera.target.x, mCamera.target.y, mCamera.target.z}},
+            {"yaw", mCamera.yaw}, {"pitch", mCamera.pitch}, {"distance", mCamera.distance},
+            {"vertical_fov_degrees", mCamera.verticalFovDegrees},
+        }},
+        {"display", {
+            {"exposure_ev", mExposure},
+            {"denoised_preview", mUseDenoisedPreview},
+        }},
+        {"lighting", {
+            {"use_environment", mLighting.useEnvironment},
+            {"environment_rotation", mLighting.environmentRotation},
+            {"environment_intensity", mLighting.environmentIntensity},
+            {"use_sun", mLighting.useSun},
+            {"sun_direction_to_light", {mLighting.sunDirection.x, mLighting.sunDirection.y, mLighting.sunDirection.z}},
+            {"sun_intensity", mLighting.sunIntensity},
+            {"sun_color", {mLighting.sunColor.x, mLighting.sunColor.y, mLighting.sunColor.z}},
+            {"use_point", mLighting.usePoint},
+            {"point_position", {mLighting.pointPosition.x, mLighting.pointPosition.y, mLighting.pointPosition.z}},
+            {"point_intensity", mLighting.pointIntensity},
+            {"point_color", {mLighting.pointColor.x, mLighting.pointColor.y, mLighting.pointColor.z}},
+            {"use_rectangle", mLighting.useRectangle},
+            {"rectangle_center", {mLighting.rectangleCenter.x, mLighting.rectangleCenter.y, mLighting.rectangleCenter.z}},
+            {"rectangle_axis_u", {mLighting.rectangleAxisU.x, mLighting.rectangleAxisU.y, mLighting.rectangleAxisU.z}},
+            {"rectangle_axis_v", {mLighting.rectangleAxisV.x, mLighting.rectangleAxisV.y, mLighting.rectangleAxisV.z}},
+            {"rectangle_intensity", mLighting.rectangleIntensity},
+            {"rectangle_color", {mLighting.rectangleColor.x, mLighting.rectangleColor.y, mLighting.rectangleColor.z}},
+        }},
+    };
+    const auto temporary = path.string() + ".tmp";
+    std::error_code error;
+    fs::remove(temporary, error);
+    {
+        std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
+        if (!stream) throw std::runtime_error("cannot write viewer scene: " + path.string());
+        stream << document.dump(2) << '\n';
+    }
+    fs::remove(path, error);
+    fs::rename(temporary, path);
+    mStatus = "Saved viewer scene with all material-slot bindings: " + path.string();
+}
+
+void NclsViewer::loadViewerScene(const std::filesystem::path& requestedPath)
+{
+    namespace fs = std::filesystem;
+    const fs::path path = fs::absolute(requestedPath).lexically_normal();
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) throw std::runtime_error("cannot open viewer scene: " + path.string());
+    const nlohmann::json document = nlohmann::json::parse(stream);
+    if (document.value("format_name", "") != "ncls.viewer-scene" || document.value("format_version", 0u) != 1u)
+        throw std::runtime_error("unsupported viewer scene format: " + path.string());
+    if (document.value("reference_integrator", "") != "ncls.scene-path-tracer@1")
+        throw std::runtime_error("viewer scene requires reference_integrator ncls.scene-path-tracer@1");
+    const fs::path base = path.parent_path();
+    const auto& geometry = document.at("geometry");
+    loadScene(resolveUri(geometry.at("uri").get<std::string>(), base), geometry.at("sha256").get<std::string>());
+
+    const auto& environment = document.at("environment");
+    const auto environmentPath = resolveUri(environment.value("uri", std::string()), base);
+    if (environmentPath.empty()) createDefaultEnvironment();
+    else loadEnvironment(environmentPath, environment.value("sha256", std::string()));
+
+    const auto vector3 = [](const nlohmann::json& value) {
+        if (!value.is_array() || value.size() != 3u)
+            throw std::runtime_error("viewer scene vector must contain three values");
+        return float3(value[0].get<float>(), value[1].get<float>(), value[2].get<float>());
+    };
+    const auto& reference = document.at("reference");
+    mSamplesPerFrame = std::clamp(reference.at("samples_per_frame").get<uint32_t>(), 1u, 16u);
+    mMaxSceneBounces = std::clamp(reference.at("scene_max_bounces").get<uint32_t>(), 0u, 16u);
+    mMaxLayerWalkDepth = std::clamp(reference.at("layer_walk_max_depth").get<uint32_t>(), 4u, 128u);
+    const auto& camera = document.at("camera");
+    mCamera.target = vector3(camera.at("target"));
+    mCamera.yaw = camera.at("yaw").get<float>();
+    mCamera.pitch = camera.at("pitch").get<float>();
+    mCamera.distance = camera.at("distance").get<float>();
+    mCamera.verticalFovDegrees = camera.at("vertical_fov_degrees").get<float>();
+    const auto& display = document.at("display");
+    mExposure = display.at("exposure_ev").get<float>();
+    mUseDenoisedPreview = display.value("denoised_preview", true);
+    const auto& lighting = document.at("lighting");
+    mLighting.useEnvironment = lighting.at("use_environment").get<bool>();
+    mLighting.environmentRotation = lighting.at("environment_rotation").get<float>();
+    mLighting.environmentIntensity = lighting.at("environment_intensity").get<float>();
+    mLighting.useSun = lighting.at("use_sun").get<bool>();
+    mLighting.sunDirection = vector3(lighting.at("sun_direction_to_light"));
+    mLighting.sunIntensity = lighting.at("sun_intensity").get<float>();
+    mLighting.sunColor = vector3(lighting.at("sun_color"));
+    mLighting.usePoint = lighting.at("use_point").get<bool>();
+    mLighting.pointPosition = vector3(lighting.at("point_position"));
+    mLighting.pointIntensity = lighting.at("point_intensity").get<float>();
+    mLighting.pointColor = vector3(lighting.at("point_color"));
+    mLighting.useRectangle = lighting.at("use_rectangle").get<bool>();
+    mLighting.rectangleCenter = vector3(lighting.at("rectangle_center"));
+    mLighting.rectangleAxisU = vector3(lighting.at("rectangle_axis_u"));
+    mLighting.rectangleAxisV = vector3(lighting.at("rectangle_axis_v"));
+    mLighting.rectangleIntensity = lighting.at("rectangle_intensity").get<float>();
+    mLighting.rectangleColor = vector3(lighting.at("rectangle_color"));
+
+    std::unordered_map<uint32_t, MaterialSlotBinding> loadedBindings;
+    for (const auto& bindingDocument : document.at("material_bindings"))
+    {
+        const uint32_t materialId = bindingDocument.at("material_id").get<uint32_t>();
+        if (materialId >= mpScene->getMaterialCount())
+            throw std::runtime_error("viewer scene material binding is outside the Falcor scene material range");
+        MaterialSlotBinding binding;
+        binding.source = ncls::deserializeReferenceSourceState(bindingDocument.at("source"), base);
+        binding.gpu = createSourceGpuResources(binding.source);
+        binding.materialPath = binding.source.sourcePath;
+        binding.displayName = binding.source.displayName;
+        if (!loadedBindings.emplace(materialId, std::move(binding)).second)
+            throw std::runtime_error("viewer scene contains a duplicate material binding");
+    }
+    if (loadedBindings.size() != mpScene->getMaterialCount())
+        throw std::runtime_error("viewer scene must bind every Falcor material slot exactly once");
+    const uint32_t activeMaterialId = document.at("active_material_id").get<uint32_t>();
+    auto active = loadedBindings.find(activeMaterialId);
+    if (active == loadedBindings.end()) throw std::runtime_error("viewer scene active material ID has no binding");
+
+    mReferenceSource = std::move(active->second.source);
+    mSourceGpu = std::move(active->second.gpu);
+    mMaterialPath = std::move(active->second.materialPath);
+    mMaterialDisplayName = std::move(active->second.displayName);
+    loadedBindings.erase(active);
+    mInactiveSceneMaterials = std::move(loadedBindings);
+    mActiveSceneMaterial = activeMaterialId;
+    mSelectedSceneMaterial = activeMaterialId;
+    mSelectedSceneInstance = std::numeric_limits<uint32_t>::max();
+    for (uint32_t instanceId = 0u; instanceId < mpScene->getGeometryInstanceCount(); ++instanceId)
+    {
+        const auto& instance = mpScene->getGeometryInstance(instanceId);
+        if (instance.materialID != activeMaterialId) continue;
+        mSelectedSceneInstance = instanceId;
+        if (instance.getType() == Scene::GeometryType::TriangleMesh
+            || instance.getType() == Scene::GeometryType::DisplacedTriangleMesh)
+            mSelectedSceneGeometryName = mpScene->getMeshName(instance.geometryID);
+        else mSelectedSceneGeometryName = "Geometry #" + std::to_string(instance.geometryID);
+        break;
+    }
+    if (const auto material = mpScene->getMaterial(MaterialID(activeMaterialId)))
+        mSelectedSceneMaterialName = material->getName();
+    rebuildReferenceMaterialMetadata();
+    createSceneReferencePass();
+    selectMethod(-1);
+    resetReference(true, true);
+    mStatus = "Loaded viewer scene with " + std::to_string(mpScene->getMaterialCount())
+        + " material-slot binding(s): " + path.string();
 }
 
 void NclsViewer::applyReplaySettings(const std::filesystem::path& path)
@@ -1682,6 +2136,7 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
     const fs::path differencePath = stem.string() + "-difference.exr";
     const fs::path differenceDisplayPath = stem.string() + "-difference.png";
     const fs::path materialPath = stem.string() + "-material.json";
+    const fs::path viewerScenePath = stem.string() + "-scene.json";
     const fs::path metricsPath = stem.string() + "-metrics.csv";
 
     getDevice()->wait();
@@ -1702,6 +2157,7 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
     const bool approximationAvailable = hasActiveMethod();
     if (mReferenceSource.family == ncls::ReferenceFamily::LayerStack)
         ncls::saveMaterialProgram(materialPath, mMaterial, mMaterialDisplayName);
+    if (mpScene) saveViewerScene(viewerScenePath);
     mpReference[mReferencePing]->captureToFile(0, 0, referencePath, Bitmap::FileFormat::ExrFile, Bitmap::ExportFlags::None, false);
     mpDenoisedReference[1]->captureToFile(
         0, 0, denoisedReferencePath, Bitmap::FileFormat::ExrFile, Bitmap::ExportFlags::None, false);
@@ -1743,6 +2199,7 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
             {"source_family_id", source.familyId()},
             {"source_sha256", source.family == ncls::ReferenceFamily::LayerStack
                 ? ncls::layerStackHash(source.layerStack) : source.sourceSha256},
+            {"source_state_sha256", ncls::referenceSourceStateHash(source)},
             {"source_path", source.sourcePath.string()},
         });
     };
@@ -1752,9 +2209,7 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         for (const auto& [materialId, binding] : mInactiveSceneMaterials)
             appendBinding(materialId, binding.source, false);
     }
-    const bool sceneMaterialBindingsReplayable = mpScene
-        && mpScene->getMaterialCount() == 1u
-        && mInactiveSceneMaterials.empty();
+    const bool sceneMaterialBindingsReplayable = mpScene != nullptr;
     nlohmann::json manifest = {
         {"format_name", "ncls.viewer-capture"},
         {"format_version", 3},
@@ -1763,6 +2218,8 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         {"bundle_root", std::filesystem::absolute(mOptions.bundleRoot).string()},
         {"source_material_family_id", mReferenceSource.familyId()},
         {"source_material_sha256", mReferenceSource.sourceSha256},
+        {"source_material_state_sha256", ncls::referenceSourceStateHash(mReferenceSource)},
+        {"source_material_asset_sha256", mReferenceSource.sourceSha256},
         {"source_material", mReferenceSource.family == ncls::ReferenceFamily::LayerStack
             ? materialPath.filename().string()
             : mReferenceSource.sourcePath.string()},
@@ -1773,6 +2230,7 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         {"environment_sha256", mEnvironmentSha256},
         {"reference_geometry", mReferenceGeometryPath.empty() ? std::string() : std::filesystem::absolute(mReferenceGeometryPath).string()},
         {"reference_geometry_sha256", mReferenceGeometrySha256},
+        {"viewer_scene", mpScene ? viewerScenePath.filename().string() : std::string()},
         {"scene_material_bindings", sceneMaterialBindings},
         {"scene_material_bindings_replayable", sceneMaterialBindingsReplayable},
         {"resolution", {mOutputWidth, mOutputHeight}},
@@ -1837,6 +2295,7 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
             {"difference_linear", approximationAvailable ? differencePath.filename().string() : std::string()},
             {"difference_display", approximationAvailable ? differenceDisplayPath.filename().string() : std::string()},
             {"material_program", mReferenceSource.family == ncls::ReferenceFamily::LayerStack ? materialPath.filename().string() : std::string()},
+            {"viewer_scene", mpScene ? viewerScenePath.filename().string() : std::string()},
             {"metrics_csv", metricsPath.filename().string()},
         }},
     };
@@ -2005,6 +2464,8 @@ void NclsViewer::onDroppedFile(const std::filesystem::path& path)
 int runMain(int argc, char** argv)
 {
     ViewerOptions options = parseOptions(argc, argv);
+    if (!options.headless && !options.verboseConsole)
+        Logger::setOutputs(Logger::getOutputs() & ~Logger::OutputFlags::Console);
     SampleAppConfig config;
     config.deviceDesc.type = Device::Type::D3D12;
     config.windowDesc.title = "NeuralShading - Multi-Family Reference / MethodBundle";
