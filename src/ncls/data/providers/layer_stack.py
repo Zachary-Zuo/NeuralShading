@@ -159,7 +159,7 @@ class LayerStackProvider(BaseProvider):
             self._evaluator = FalcorReferenceEvaluator(
                 plan.light_directions,
                 max_depth=self.provider_config.max_depth,
-                max_query_group_batch=max(self.provider_config.query_group_batch, len(plan.view_directions)),
+                max_query_group_batch=self.provider_config.query_group_batch,
             )
         if int(self._evaluator.light_count) != plan.direction_count:
             raise ValueError("LayerStack evaluator direction count disagrees with the persisted QueryPlan")
@@ -182,34 +182,46 @@ class LayerStackProvider(BaseProvider):
             ],
             dtype=np.uint32,
         )
-        if self.provider_config.adaptive:
-            evaluated = evaluate_reference_adaptive(
-                evaluator,
-                materials,
-                plan.view_directions,
-                query_group_seeds=seeds,
-                light_directions=plan.light_directions,
-                batch_samples=self.provider_config.batch_samples,
-                min_samples=self.provider_config.min_samples,
-                max_samples=self.provider_config.max_samples,
-                relative_standard_error=self.provider_config.relative_standard_error,
+        evaluated_parts = []
+        for start in range(0, len(materials), self.provider_config.query_group_batch):
+            stop = min(start + self.provider_config.query_group_batch, len(materials))
+            lights = (
+                plan.light_directions
+                if plan.light_directions.ndim == 2
+                else plan.light_directions[start:stop]
             )
-        else:
-            evaluated = evaluate_reference_fixed(
-                evaluator,
-                materials,
-                plan.view_directions,
-                query_group_seeds=seeds,
-                light_directions=plan.light_directions,
-                samples_per_replica=self.provider_config.samples_per_replica,
-            )
+            if self.provider_config.adaptive:
+                evaluated_parts.append(evaluate_reference_adaptive(
+                    evaluator,
+                    materials[start:stop],
+                    plan.view_directions[start:stop],
+                    query_group_seeds=seeds[start:stop],
+                    light_directions=lights,
+                    batch_samples=self.provider_config.batch_samples,
+                    min_samples=self.provider_config.min_samples,
+                    max_samples=self.provider_config.max_samples,
+                    relative_standard_error=self.provider_config.relative_standard_error,
+                ))
+            else:
+                evaluated_parts.append(evaluate_reference_fixed(
+                    evaluator,
+                    materials[start:stop],
+                    plan.view_directions[start:stop],
+                    query_group_seeds=seeds[start:stop],
+                    light_directions=lights,
+                    samples_per_replica=self.provider_config.samples_per_replica,
+                ))
+
+        def concatenate(name: str) -> np.ndarray:
+            return np.concatenate([getattr(part, name) for part in evaluated_parts], axis=0)
+
         shape = (1, len(plan.view_directions), plan.direction_count)
         return EvaluatedBlock(
-            evaluated.mean[None].astype(np.float32),
-            evaluated.variance[None].astype(np.float32),
-            evaluated.replica_mean_a[None].astype(np.float32),
-            evaluated.replica_mean_b[None].astype(np.float32),
-            np.broadcast_to(evaluated.sample_count[None, :, None], shape).copy().astype(np.uint32),
+            concatenate("mean")[None].astype(np.float32),
+            concatenate("variance")[None].astype(np.float32),
+            concatenate("replica_mean_a")[None].astype(np.float32),
+            concatenate("replica_mean_b")[None].astype(np.float32),
+            np.broadcast_to(concatenate("sample_count")[None, :, None], shape).copy().astype(np.uint32),
             np.ones(shape, dtype=np.uint8),
             np.ones(shape, dtype=np.uint32),
             np.zeros(shape, dtype=np.float32),

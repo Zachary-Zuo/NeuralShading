@@ -100,3 +100,54 @@ def test_e1_narrow_conductor_profile_is_one_explicit_capacity_state() -> None:
     assert plan.query_roles.tolist() == [0] * 8 + [1] * 2 + [2] * 2 + [3] * 2
     assert all("peak" in proposal for proposal in plan.proposal_id)
     assert np.min(plan.view_directions[:, 2]) < np.sin(np.deg2rad(5.0))
+
+
+def test_layer_stack_provider_honors_query_group_batch_for_dense_view_profiles() -> None:
+    class RecordingEvaluator:
+        light_count = 32
+
+        def __init__(self) -> None:
+            self.batch_sizes: list[int] = []
+
+        def evaluate_query_groups(
+            self,
+            materials,
+            view_directions,
+            *,
+            sample_count_per_replica,
+            query_group_seeds,
+            light_directions,
+            sample_offset=0,
+        ):
+            del view_directions, sample_count_per_replica, query_group_seeds, light_directions, sample_offset
+            self.batch_sizes.append(len(materials))
+            mean = np.full((len(materials), self.light_count, 3), 0.2, dtype=np.float32)
+            second = mean * mean + 0.01
+            return mean, second, mean, second
+
+    collection = CollectionConfig(
+        view_count=8,
+        validation_view_count=2,
+        test_view_count=2,
+        adversarial_view_count=2,
+        light_count=32,
+        query_profile_id="ncls.e1-independent-peak-grazing-mixture@1",
+    )
+    evaluator = RecordingEvaluator()
+    provider = LayerStackProvider(
+        collection,
+        LayerStackProviderConfig(
+            family_count=1,
+            local_state_count=1,
+            samples_per_replica=2,
+            query_group_batch=3,
+            state_profile_id=E1_LAYER_STACK_NARROW_CONDUCTOR_PROFILE_ID,
+        ),
+        evaluator=evaluator,
+    )
+    state = provider.source_states()[0]
+    surfaces = provider.surface_samples(state)
+    plan = provider.query_plan(state, surfaces)
+    result = provider.evaluate(state, surfaces, plan)
+    assert evaluator.batch_sizes == [3, 3, 3, 3, 2]
+    assert result.mean.shape == (1, 14, 32, 3)
