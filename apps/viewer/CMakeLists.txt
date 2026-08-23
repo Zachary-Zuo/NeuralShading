@@ -17,10 +17,12 @@ target_sources(NclsViewer PRIVATE
     NclsViewer.h
     shaders/Approximation.cs.slang
     shaders/Composite.cs.slang
+    shaders/Denoise.cs.slang
     shaders/SceneVisibility.3d.slang
     shaders/Parity.cs.slang
     shaders/Prepare.cs.slang
     shaders/Reference.cs.slang
+    shaders/ReferencePathTracer.cs.slang
     shaders/ViewerCommon.slang
     shaders/Visibility.cs.slang
     "${NCLS_PROJECT_ROOT}/shaders/ncls/backends/legacy_ltc_k2/legacy_ltc_k2.slang"
@@ -52,3 +54,27 @@ add_custom_command(TARGET NclsViewer POST_BUILD
         "$<TARGET_FILE_DIR:NclsViewer>/external/openpbr-bsdf"
     COMMENT "NclsViewer: Copying pinned OpenPBR Slang reference headers"
 )
+
+add_custom_target(NclsViewerStudioAssets ALL
+    COMMAND "${CMAKE_COMMAND}" -E make_directory
+        "${FALCOR_OUTPUT_DIRECTORY}/data/ncls-viewer"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${NCLS_PROJECT_ROOT}/configs/viewer-studio-v1.json"
+        "${FALCOR_OUTPUT_DIRECTORY}/data/ncls-viewer/studio-v1.json"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${NCLS_PROJECT_ROOT}/configs/viewer-studio-material-v1.json"
+        "${FALCOR_OUTPUT_DIRECTORY}/data/ncls-viewer/viewer-studio-material-v1.json"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${NCLS_PROJECT_ROOT}/data/source-materials/viewer-scenes/studio-v1/shaderball.glb"
+        "${FALCOR_OUTPUT_DIRECTORY}/data/ncls-viewer/shaderball.glb"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${NCLS_PROJECT_ROOT}/data/hdris/polyhaven_1k/studio_small_03_1k.exr"
+        "${FALCOR_OUTPUT_DIRECTORY}/data/ncls-viewer/studio_small_03_1k.exr"
+    DEPENDS
+        "${NCLS_PROJECT_ROOT}/configs/viewer-studio-v1.json"
+        "${NCLS_PROJECT_ROOT}/configs/viewer-studio-material-v1.json"
+        "${NCLS_PROJECT_ROOT}/data/source-materials/viewer-scenes/studio-v1/shaderball.glb"
+        "${NCLS_PROJECT_ROOT}/data/hdris/polyhaven_1k/studio_small_03_1k.exr"
+    COMMENT "NclsViewer: Copying the fixed studio-v1 scene"
+)
+add_dependencies(NclsViewer NclsViewerStudioAssets)

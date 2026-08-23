@@ -26,6 +26,7 @@ FALCOR_EXPORT_D3D12_AGILITY_SDK
 namespace
 {
 constexpr uint32_t kLegacyStateBytes = 176;
+constexpr uint32_t kMaximumSceneMaterials = 64;
 const Gui::DropdownList kObjectModes = {{0, "Sphere"}, {1, "Shader ball"}, {2, "Detail hero"}};
 const Gui::DropdownList kComparisonModes = {
     {0, "Reference / method split"},
@@ -86,6 +87,26 @@ ref<Texture> loadHalfRgbaExr(ref<Device> device, const std::filesystem::path& pa
     return texture;
 }
 
+std::vector<float4> readHalfRgbaExrPixels(
+    const std::filesystem::path& path, uint32_t& width, uint32_t& height)
+{
+    OPENEXR_IMF_NAMESPACE::RgbaInputFile file(path.string().c_str());
+    const auto window = file.dataWindow();
+    if (window.min.x != 0 || window.min.y != 0 || window.max.x < 0 || window.max.y < 0)
+        throw std::runtime_error("environment EXR requires a zero-origin data window: " + path.string());
+    width = static_cast<uint32_t>(window.max.x + 1);
+    height = static_cast<uint32_t>(window.max.y + 1);
+    std::vector<OPENEXR_IMF_NAMESPACE::Rgba> halfPixels(size_t(width) * height);
+    file.setFrameBuffer(halfPixels.data(), 1, width);
+    file.readPixels(window.min.y, window.max.y);
+    std::vector<float4> pixels(halfPixels.size());
+    for (size_t index = 0; index < halfPixels.size(); ++index)
+        pixels[index] = float4(
+            float(halfPixels[index].r), float(halfPixels[index].g),
+            float(halfPixels[index].b), float(halfPixels[index].a));
+    return pixels;
+}
+
 ViewerOptions parseOptions(int argc, char** argv)
 {
     ViewerOptions options;
@@ -97,8 +118,12 @@ ViewerOptions parseOptions(int argc, char** argv)
         if (!stream) throw std::runtime_error("cannot open replay manifest: " + options.replayPath.string());
         const nlohmann::json replay = nlohmann::json::parse(stream);
         const uint32_t replayVersion = replay.value("format_version", 0u);
-        if (replay.value("format_name", "") != "ncls.viewer-capture" || (replayVersion != 1u && replayVersion != 2u))
+        if (replay.value("format_name", "") != "ncls.viewer-capture"
+            || (replayVersion != 1u && replayVersion != 2u && replayVersion != 3u))
             throw std::runtime_error("unsupported replay manifest");
+        if (replayVersion == 3u
+            && replay.value("reference_integrator", "") != "ncls.scene-path-tracer@1")
+            throw std::runtime_error("capture v3 requires reference_integrator ncls.scene-path-tracer@1");
         const auto base = std::filesystem::absolute(options.replayPath).parent_path();
         const auto resolve = [&](const std::string& value) {
             if (value.empty()) return std::filesystem::path();
@@ -109,6 +134,7 @@ ViewerOptions parseOptions(int argc, char** argv)
         options.materialPath = resolve(replay.value(
             "source_material", replay.value("material_program", std::string())));
         options.environmentPath = resolve(replay.value("environment", std::string()));
+        options.environmentSha256 = replay.value("environment_sha256", std::string());
         options.referenceGeometryPath = resolve(replay.value("reference_geometry", std::string()));
         options.referenceGeometrySha256 = replay.value("reference_geometry_sha256", std::string());
         options.requestedMethodId = replay.value("method_id", std::string());
@@ -128,6 +154,7 @@ ViewerOptions parseOptions(int argc, char** argv)
         const std::string argument = argv[index];
         if (argument == "--bundle-root") options.bundleRoot = value(index, "--bundle-root");
         else if (argument == "--material") options.materialPath = value(index, "--material");
+        else if (argument == "--environment") options.environmentPath = value(index, "--environment");
         else if (argument == "--reference-geometry") options.referenceGeometryPath = value(index, "--reference-geometry");
         else if (argument == "--replay") { options.replayPath = value(index, "--replay"); }
         else if (argument == "--capture") options.captureManifest = value(index, "--capture");
@@ -139,7 +166,7 @@ ViewerOptions parseOptions(int argc, char** argv)
         {
             std::cout
                 << "NclsViewer [--bundle-root DIR] [--material FILE] [--replay CAPTURE.json] "
-                   "[--reference-geometry SCENE] "
+                   "[--reference-geometry SCENE] [--environment HDRI] "
                    "[--headless --frames N --capture FILE] "
                    "[--width W --height H]\n";
             std::exit(0);
@@ -176,6 +203,11 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
     const float zero = 0.f;
     mpWeights = getDevice()->createStructuredBuffer(
         sizeof(float), 1, ResourceBindFlags::ShaderResource, MemoryType::DeviceLocal, &zero);
+    const std::array<uint32_t, 2> zeroNoiseStats{};
+    mpReferenceNoiseStats = getDevice()->createStructuredBuffer(
+        sizeof(uint32_t), static_cast<uint32_t>(zeroNoiseStats.size()),
+        ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess,
+        MemoryType::DeviceLocal, zeroNoiseStats.data());
     auto initializeTiming = [&](PassTiming& timing) {
         for (auto& timer : timing.timers) timer = GpuTimer::create(getDevice());
     };
@@ -186,6 +218,27 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
     initializeTiming(mCompositeTiming);
 
     if (!mOptions.replayPath.empty()) applyReplaySettings(mOptions.replayPath);
+    else if (mOptions.referenceGeometryPath.empty())
+    {
+        const auto presetPath = getRuntimeDirectory() / "data/ncls-viewer/studio-v1.json";
+        std::ifstream stream(presetPath, std::ios::binary);
+        if (!stream) throw std::runtime_error(
+            "fixed viewer studio preset is missing; rebuild with scripts/build_viewer.ps1: " + presetPath.string());
+        const nlohmann::json preset = nlohmann::json::parse(stream);
+        if (preset.value("format_name", "") != "ncls.viewer-studio" || preset.value("format_version", 0u) != 1u)
+            throw std::runtime_error("unsupported fixed viewer studio preset: " + presetPath.string());
+        const auto assetRoot = presetPath.parent_path();
+        mOptions.referenceGeometryPath = assetRoot / preset.at("reference_geometry").get<std::string>();
+        mOptions.referenceGeometrySha256 = preset.at("reference_geometry_sha256").get<std::string>();
+        if (mOptions.environmentPath.empty())
+        {
+            mOptions.environmentPath = assetRoot / preset.at("environment").get<std::string>();
+            mOptions.environmentSha256 = preset.at("environment_sha256").get<std::string>();
+        }
+        if (mOptions.materialPath.empty())
+            mOptions.materialPath = assetRoot / preset.at("source_material").get<std::string>();
+        applyReplaySettings(presetPath);
+    }
     if (!mOptions.referenceGeometryPath.empty()) loadScene(mOptions.referenceGeometryPath);
     if (!mOptions.materialPath.empty()) loadMaterial(mOptions.materialPath);
     if (!mOptions.environmentPath.empty()) loadEnvironment(mOptions.environmentPath);
@@ -210,6 +263,7 @@ void NclsViewer::createPasses()
 {
     mpVisibilityPass = ComputePass::create(getDevice(), "NclsViewer/shaders/Visibility.cs.slang");
     mpReferencePass = ComputePass::create(getDevice(), "NclsViewer/shaders/Reference.cs.slang");
+    mpDenoisePass = ComputePass::create(getDevice(), "NclsViewer/shaders/Denoise.cs.slang");
     mpPreparePass = ComputePass::create(getDevice(), "NclsViewer/shaders/Prepare.cs.slang");
     mpApproximationPass = ComputePass::create(getDevice(), "NclsViewer/shaders/Approximation.cs.slang");
     mpCompositePass = ComputePass::create(getDevice(), "NclsViewer/shaders/Composite.cs.slang");
@@ -234,7 +288,73 @@ void NclsViewer::createDefaultEnvironment()
     }
     mpEnvironment = getDevice()->createTexture2D(
         width, height, ResourceFormat::RGBA32Float, 1, 1, pixels.data(), ResourceBindFlags::ShaderResource);
+    rebuildEnvironmentSampling(pixels, width, height);
     mEnvironmentPath.clear();
+    mEnvironmentSha256.clear();
+}
+
+void NclsViewer::rebuildEnvironmentSampling(
+    const std::vector<float4>& pixels, uint32_t width, uint32_t height)
+{
+    if (width == 0u || height == 0u || pixels.size() != size_t(width) * height)
+    {
+        const std::array<float, 2> fallback{0.f, 1.f};
+        mpEnvironmentMarginalCdf = getDevice()->createStructuredBuffer(
+            sizeof(float), 2u, ResourceBindFlags::ShaderResource, MemoryType::DeviceLocal, fallback.data());
+        mpEnvironmentConditionalCdf = getDevice()->createStructuredBuffer(
+            sizeof(float), 2u, ResourceBindFlags::ShaderResource, MemoryType::DeviceLocal, fallback.data());
+        mEnvironmentSamplingDimensions = uint2(0u);
+        return;
+    }
+
+    std::vector<float> marginal(height + 1u, 0.f);
+    std::vector<float> conditional(size_t(height) * (width + 1u), 0.f);
+    std::vector<double> rowWeights(height, 0.0);
+    double totalWeight = 0.0;
+    for (uint32_t y = 0u; y < height; ++y)
+    {
+        const double theta = 3.14159265358979323846 * (double(y) + 0.5) / double(height);
+        const double solidAngleFactor = std::sin(theta);
+        double rowWeight = 0.0;
+        const size_t cdfBase = size_t(y) * (width + 1u);
+        for (uint32_t x = 0u; x < width; ++x)
+        {
+            const float4 pixel = pixels[size_t(y) * width + x];
+            const double luminance = 0.2126 * std::max(pixel.x, 0.f)
+                + 0.7152 * std::max(pixel.y, 0.f) + 0.0722 * std::max(pixel.z, 0.f);
+            rowWeight += luminance * solidAngleFactor;
+            conditional[cdfBase + x + 1u] = float(rowWeight);
+        }
+        rowWeights[y] = rowWeight;
+        totalWeight += rowWeight;
+        if (rowWeight > 0.0)
+            for (uint32_t x = 1u; x <= width; ++x)
+                conditional[cdfBase + x] = float(double(conditional[cdfBase + x]) / rowWeight);
+        else
+            for (uint32_t x = 1u; x <= width; ++x)
+                conditional[cdfBase + x] = float(x) / float(width);
+    }
+    if (!(totalWeight > 0.0) || !std::isfinite(totalWeight))
+    {
+        rebuildEnvironmentSampling({}, 0u, 0u);
+        return;
+    }
+    double runningWeight = 0.0;
+    for (uint32_t y = 0u; y < height; ++y)
+    {
+        runningWeight += rowWeights[y];
+        marginal[y + 1u] = float(runningWeight / totalWeight);
+    }
+    marginal.back() = 1.f;
+    for (uint32_t y = 0u; y < height; ++y)
+        conditional[size_t(y) * (width + 1u) + width] = 1.f;
+    mpEnvironmentMarginalCdf = getDevice()->createStructuredBuffer(
+        sizeof(float), static_cast<uint32_t>(marginal.size()), ResourceBindFlags::ShaderResource,
+        MemoryType::DeviceLocal, marginal.data());
+    mpEnvironmentConditionalCdf = getDevice()->createStructuredBuffer(
+        sizeof(float), static_cast<uint32_t>(conditional.size()), ResourceBindFlags::ShaderResource,
+        MemoryType::DeviceLocal, conditional.data());
+    mEnvironmentSamplingDimensions = uint2(width, height);
 }
 
 NclsViewer::SourceGpuResources NclsViewer::createSourceGpuResources(const ncls::ReferenceSource& source)
@@ -317,6 +437,8 @@ void NclsViewer::resizeResources(uint32_t width, uint32_t height)
         mViewWidth, mOutputHeight, ResourceFormat::R32Uint, 1, 1, nullptr, gBufferFlags);
     mpReference[0] = viewTexture();
     mpReference[1] = viewTexture();
+    mpDenoisedReference[0] = viewTexture();
+    mpDenoisedReference[1] = viewTexture();
     mpApproximation = viewTexture();
     mpComparisonLinear = getDevice()->createTexture2D(
         mOutputWidth, mOutputHeight, ResourceFormat::RGBA32Float, 1, 1, nullptr, shaderUav);
@@ -346,6 +468,9 @@ void NclsViewer::loadScene(const std::filesystem::path& requestedPath)
     auto scene = Scene::create(getDevice(), path);
     if (!scene || scene->getGeometryInstanceCount() == 0u)
         throw std::runtime_error("Falcor loaded a scene without renderable geometry: " + path.string());
+    if (scene->getMaterialCount() == 0u || scene->getMaterialCount() > kMaximumSceneMaterials)
+        throw std::runtime_error("scene material count must be in [1, "
+            + std::to_string(kMaximumSceneMaterials) + "]: " + path.string());
 
     ProgramDesc program;
     program.addShaderModules(scene->getShaderModules());
@@ -376,6 +501,8 @@ void NclsViewer::loadScene(const std::filesystem::path& requestedPath)
         binding.gpu = createSourceGpuResources(binding.source);
         mInactiveSceneMaterials.emplace(materialId, std::move(binding));
     }
+    rebuildReferenceMaterialMetadata();
+    createSceneReferencePass();
 
     const auto& bounds = mpScene->getSceneBounds();
     mCamera.target = bounds.center();
@@ -385,6 +512,44 @@ void NclsViewer::loadScene(const std::filesystem::path& requestedPath)
     mStatus = "Loaded Falcor scene: " + path.string();
     logInfo("Loaded Falcor scene '{}' ({} instances, {} materials, SHA-256 {})",
         path, mpScene->getGeometryInstanceCount(), mpScene->getMaterialCount(), shortId(mReferenceGeometrySha256));
+}
+
+void NclsViewer::createSceneReferencePass()
+{
+    if (!mpScene)
+    {
+        mpReferencePathPass.reset();
+        return;
+    }
+    ProgramDesc program;
+    program.addShaderModules(mpScene->getShaderModules());
+    program.addShaderLibrary("NclsViewer/shaders/ReferencePathTracer.cs.slang").csEntry("main");
+    program.addTypeConformances(mpScene->getTypeConformances());
+    DefineList defines = mpScene->getSceneDefines();
+    defines.add("NCLS_MAX_SCENE_MATERIALS", std::to_string(kMaximumSceneMaterials));
+    uint32_t familyMask = 1u << static_cast<uint32_t>(mReferenceSource.family);
+    for (const auto& [materialId, binding] : mInactiveSceneMaterials)
+        familyMask |= 1u << static_cast<uint32_t>(binding.source.family);
+    defines.add("NCLS_REFERENCE_FAMILY_MASK", std::to_string(familyMask));
+    mpReferencePathPass = ComputePass::create(getDevice(), program, defines, true);
+}
+
+void NclsViewer::rebuildReferenceMaterialMetadata()
+{
+    const uint32_t materialCount = mpScene ? mpScene->getMaterialCount() : 1u;
+    std::vector<uint4> metadata(materialCount, uint4(0u));
+    for (uint32_t materialId = 0u; materialId < materialCount; ++materialId)
+    {
+        const ncls::ReferenceSource* source = nullptr;
+        if (!mpScene || materialId == mActiveSceneMaterial) source = &mReferenceSource;
+        else if (const auto* binding = inactiveSceneMaterial(materialId)) source = &binding->source;
+        if (!source) throw std::runtime_error("scene material slot has no source reference binding");
+        metadata[materialId] = uint4(
+            static_cast<uint32_t>(source->family), source->openPbrColorSpace, 0u, 0u);
+    }
+    mpReferenceMaterialMetadata = getDevice()->createStructuredBuffer(
+        sizeof(uint4), materialCount, ResourceBindFlags::ShaderResource,
+        MemoryType::DeviceLocal, metadata.data());
 }
 
 void NclsViewer::rebuildSceneFbo()
@@ -455,6 +620,8 @@ void NclsViewer::activateSceneMaterial(uint32_t materialId)
     mInactiveSceneMaterials.erase(found);
     mInactiveSceneMaterials.emplace(mActiveSceneMaterial, std::move(previous));
     mActiveSceneMaterial = materialId;
+    rebuildReferenceMaterialMetadata();
+    createSceneReferencePass();
     mSelectedInterface = 0u;
     resetReference(false, true);
 
@@ -721,58 +888,106 @@ void NclsViewer::renderVisibility(RenderContext* pRenderContext)
 void NclsViewer::renderReference(RenderContext* pRenderContext)
 {
     const uint32_t next = 1u - mReferencePing;
-    auto root = mpReferencePass->getRootVar();
-    root["gMaterialXSampler"] = mpMaterialXSampler;
-    mOpenPbrLuts.bind(root);
-    root["gPositionDepth"] = mpPositionDepth;
-    root["gNormal"] = mpNormal;
-    root["gTangent"] = mpTangent;
-    root["gViewDirection"] = mpViewDirection;
-    root["gMaterialXTexCoord"] = mpMaterialXTexCoord;
-    root["gMaterialXTexCoordGrad"] = mpMaterialXTexCoordGrad;
-    root["gMaterialId"] = mpSceneMaterialId;
-    root["gPreviousReference"] = mpReference[mReferencePing];
-    root["gNextReference"] = mpReference[next];
-    root["gEnvironment"] = mpEnvironment;
-    root["gLinearSampler"] = mpLinearSampler;
-    auto constants = root["ReferenceCB"];
-    constants["gFrameDim"] = uint2(mViewWidth, mOutputHeight);
-    constants["gFrameIndex"] = mFrameIndex;
-    constants["gUseRasterGeometry"] = uint32_t(mpScene != nullptr);
-    constants["gReferenceSpp"] = mReferenceSpp;
-    constants["gSamplesThisFrame"] = mSamplesPerFrame;
-    constants["gMaxDepth"] = mMaxReferenceDepth;
-    constants["gResetAccumulation"] = uint32_t(mResetAccumulation);
     const bool accumulate = !mCameraDragging && !mPanDragging;
-    constants["gAccumulate"] = uint32_t(accumulate);
-    bindLighting(root, "ReferenceCB");
-
-    auto executeSource = [&](const ncls::ReferenceSource& source, const SourceGpuResources& gpu,
-                             uint32_t targetMaterialId, bool initializeOutput) {
-        root["gMaterials"] = gpu.pMaterial;
-        root["gMerlBrdf"] = gpu.pMerlBrdf;
-        root["gOpenPbrInputs"] = gpu.pOpenPbrInputs;
-        root["gMaterialXInputs"] = gpu.pMaterialXInputs;
-        root["gMaterialXBaseColor"] = gpu.pMaterialXBaseColor;
-        root["gMaterialXRoughness"] = gpu.pMaterialXRoughness;
-        root["gMaterialXMetalness"] = gpu.pMaterialXMetalness;
-        root["gMaterialXNormalMap"] = gpu.pMaterialXNormalMap;
-        constants["gReferenceFamily"] = static_cast<uint32_t>(source.family);
-        constants["gOpenPbrColorSpace"] = source.openPbrColorSpace;
-        constants["gTargetMaterialId"] = targetMaterialId;
-        constants["gInitializeOutput"] = uint32_t(initializeOutput);
-        mpReferencePass->execute(pRenderContext, mViewWidth, mOutputHeight);
-    };
-
     beginTiming(mReferenceTiming);
-    if (!mpScene) executeSource(mReferenceSource, mSourceGpu, 0u, true);
+    if (mpScene && mpReferencePathPass)
+    {
+        auto root = mpReferencePathPass->getRootVar();
+        mpScene->bindShaderDataForRaytracing(pRenderContext, root["gScene"]);
+        root["gMaterialMetadata"] = mpReferenceMaterialMetadata;
+        root["gMaterialXSampler"] = mpMaterialXSampler;
+        root["gPreviousReference"] = mpReference[mReferencePing];
+        root["gNextReference"] = mpReference[next];
+        root["gEnvironment"] = mpEnvironment;
+        root["gEnvironmentMarginalCdf"] = mpEnvironmentMarginalCdf;
+        root["gEnvironmentConditionalCdf"] = mpEnvironmentConditionalCdf;
+        root["gLinearSampler"] = mpLinearSampler;
+        root["gNoiseStats"] = mpReferenceNoiseStats;
+        bool hasOpenPbr = mReferenceSource.family == ncls::ReferenceFamily::OpenPbr;
+        for (const auto& [materialId, binding] : mInactiveSceneMaterials)
+            hasOpenPbr |= binding.source.family == ncls::ReferenceFamily::OpenPbr;
+        if (hasOpenPbr) mOpenPbrLuts.bind(root);
+
+        auto bindSource = [&](uint32_t materialId, const SourceGpuResources& gpu) {
+            root["gLayerStacks"][materialId] = gpu.pMaterial;
+            root["gMerlBrdfs"][materialId] = gpu.pMerlBrdf;
+            root["gOpenPbrInputs"][materialId] = gpu.pOpenPbrInputs;
+            root["gMaterialXInputs"][materialId] = gpu.pMaterialXInputs;
+            root["gMaterialXBaseColors"][materialId] = gpu.pMaterialXBaseColor;
+            root["gMaterialXRoughnesses"][materialId] = gpu.pMaterialXRoughness;
+            root["gMaterialXMetalnesses"][materialId] = gpu.pMaterialXMetalness;
+            root["gMaterialXNormalMaps"][materialId] = gpu.pMaterialXNormalMap;
+        };
+        bindSource(mActiveSceneMaterial, mSourceGpu);
+        for (const auto& [materialId, binding] : mInactiveSceneMaterials)
+            bindSource(materialId, binding.gpu);
+
+        auto constants = root["ReferencePathTracerCB"];
+        constants["gFrameDim"] = uint2(mViewWidth, mOutputHeight);
+        constants["gFrameIndex"] = mFrameIndex;
+        constants["gMaterialCount"] = mpScene->getMaterialCount();
+        constants["gReferenceSpp"] = mReferenceSpp;
+        constants["gSamplesThisFrame"] = mSamplesPerFrame;
+        constants["gMaxSceneBounces"] = mMaxSceneBounces;
+        constants["gMaxLayerWalkDepth"] = mMaxLayerWalkDepth;
+        constants["gResetAccumulation"] = uint32_t(mResetAccumulation);
+        constants["gAccumulate"] = uint32_t(accumulate);
+        std::string extension = mReferenceGeometryPath.extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+            [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+        constants["gFlipTexCoordV"] = uint32_t(extension == ".obj");
+        constants["gEnvironmentSamplingDimensions"] = mEnvironmentSamplingDimensions;
+        bindLighting(root, "ReferencePathTracerCB");
+        pRenderContext->clearUAV(mpReferenceNoiseStats->getUAV().get(), uint4(0u));
+        mpReferencePathPass->execute(pRenderContext, mViewWidth, mOutputHeight);
+    }
     else
     {
-        executeSource(mReferenceSource, mSourceGpu, mActiveSceneMaterial, true);
-        for (const auto& [materialId, binding] : mInactiveSceneMaterials)
-            executeSource(binding.source, binding.gpu, materialId, false);
+        auto root = mpReferencePass->getRootVar();
+        root["gMaterialXSampler"] = mpMaterialXSampler;
+        mOpenPbrLuts.bind(root);
+        root["gPositionDepth"] = mpPositionDepth;
+        root["gNormal"] = mpNormal;
+        root["gTangent"] = mpTangent;
+        root["gViewDirection"] = mpViewDirection;
+        root["gMaterialXTexCoord"] = mpMaterialXTexCoord;
+        root["gMaterialXTexCoordGrad"] = mpMaterialXTexCoordGrad;
+        root["gMaterialId"] = mpSceneMaterialId;
+        root["gPreviousReference"] = mpReference[mReferencePing];
+        root["gNextReference"] = mpReference[next];
+        root["gEnvironment"] = mpEnvironment;
+        root["gLinearSampler"] = mpLinearSampler;
+        auto constants = root["ReferenceCB"];
+        constants["gFrameDim"] = uint2(mViewWidth, mOutputHeight);
+        constants["gFrameIndex"] = mFrameIndex;
+        constants["gUseRasterGeometry"] = 0u;
+        constants["gReferenceSpp"] = mReferenceSpp;
+        constants["gSamplesThisFrame"] = mSamplesPerFrame;
+        constants["gMaxDepth"] = mMaxLayerWalkDepth;
+        constants["gResetAccumulation"] = uint32_t(mResetAccumulation);
+        constants["gAccumulate"] = uint32_t(accumulate);
+        bindLighting(root, "ReferenceCB");
+        root["gMaterials"] = mSourceGpu.pMaterial;
+        root["gMerlBrdf"] = mSourceGpu.pMerlBrdf;
+        root["gOpenPbrInputs"] = mSourceGpu.pOpenPbrInputs;
+        root["gMaterialXInputs"] = mSourceGpu.pMaterialXInputs;
+        root["gMaterialXBaseColor"] = mSourceGpu.pMaterialXBaseColor;
+        root["gMaterialXRoughness"] = mSourceGpu.pMaterialXRoughness;
+        root["gMaterialXMetalness"] = mSourceGpu.pMaterialXMetalness;
+        root["gMaterialXNormalMap"] = mSourceGpu.pMaterialXNormalMap;
+        constants["gReferenceFamily"] = static_cast<uint32_t>(mReferenceSource.family);
+        constants["gOpenPbrColorSpace"] = mReferenceSource.openPbrColorSpace;
+        constants["gTargetMaterialId"] = 0u;
+        constants["gInitializeOutput"] = 1u;
+        mpReferencePass->execute(pRenderContext, mViewWidth, mOutputHeight);
     }
     endTiming(mReferenceTiming);
+    if (mpScene && (mFrameIndex % 8u == 0u || mResetAccumulation))
+    {
+        const auto stats = pRenderContext->readBuffer<uint32_t>(mpReferenceNoiseStats.get(), 0u, 2u);
+        if (stats.size() == 2u && stats[1] > 0u)
+            mEstimatedRelativeStandardError = float(stats[0]) / (4096.f * float(stats[1]));
+    }
     mReferencePing = next;
     if (accumulate)
     {
@@ -781,6 +996,29 @@ void NclsViewer::renderReference(RenderContext* pRenderContext)
     }
     else mReferenceSpp = 0;
     mResetAccumulation = false;
+}
+
+void NclsViewer::renderDenoisedReference(RenderContext* pRenderContext)
+{
+    // Four a-trous scales make low-spp feedback readable. The raw running mean
+    // stays untouched and remains the only input to quantitative comparisons.
+    auto root = mpDenoisePass->getRootVar();
+    root["gRawReference"] = mpReference[mReferencePing];
+    root["gPositionDepth"] = mpPositionDepth;
+    root["gNormal"] = mpNormal;
+    root["gMaterialId"] = mpSceneMaterialId;
+    auto constants = root["DenoiseCB"];
+    constants["gFrameDim"] = uint2(mViewWidth, mOutputHeight);
+    constants["gReferenceSpp"] = std::max(mReferenceSpp, 1u);
+    for (uint32_t iteration = 0u; iteration < 4u; ++iteration)
+    {
+        root["gInput"] = iteration == 0u
+            ? mpReference[mReferencePing]
+            : mpDenoisedReference[1u - (iteration & 1u)];
+        root["gOutput"] = mpDenoisedReference[iteration & 1u];
+        constants["gStepWidth"] = 1u << iteration;
+        mpDenoisePass->execute(pRenderContext, mViewWidth, mOutputHeight);
+    }
 }
 
 void NclsViewer::renderPrepare(RenderContext* pRenderContext)
@@ -837,6 +1075,8 @@ void NclsViewer::renderComposite(RenderContext* pRenderContext)
 {
     auto root = mpCompositePass->getRootVar();
     root["gReference"] = mpReference[mReferencePing];
+    root["gDisplayReference"] = mUseDenoisedPreview
+        ? mpDenoisedReference[1] : mpReference[mReferencePing];
     root["gApproximation"] = mpApproximation;
     root["gLinearSampler"] = mpLinearSampler;
     root["gComparisonLinear"] = mpComparisonLinear;
@@ -857,6 +1097,7 @@ void NclsViewer::onFrameRender(RenderContext* pRenderContext, const ref<Fbo>& pT
 {
     if (mVisibilityDirty) renderVisibility(pRenderContext);
     if (!mFreezeReference) renderReference(pRenderContext);
+    renderDenoisedReference(pRenderContext);
     if (hasActiveMethod())
     {
         if (mPrepareDirty) renderPrepare(pRenderContext);
@@ -1016,7 +1257,7 @@ void NclsViewer::renderMaterialUi(Gui::Window& window)
             window.text("Falcor query: MaterialX 1.39.4 standard_surface + source textures");
             window.text(mReferenceGeometryPath.empty()
                 ? "Geometry contract: no scene specified; using the analytic-sphere fallback"
-                : "Geometry contract: Falcor rasterizes the replay scene; SHA-256 " + shortId(mReferenceGeometrySha256));
+                : "Geometry contract: reference path traces the Falcor scene; SHA-256 " + shortId(mReferenceGeometrySha256));
             window.text("The displacement graph remains in the source document and is outside this surface-response query");
         }
         if (mReferenceSource.family == ncls::ReferenceFamily::OpenPbr) renderOpenPbrUi(window);
@@ -1151,17 +1392,27 @@ void NclsViewer::onGuiRender(Gui* pGui)
         const auto& method = mMethods[mSelectedMethod];
         window.text("method: " + shortId(method.methodId) + " / backend v" + std::to_string(method.backendVersion));
         window.text("Parameters: " + std::to_string(method.parameterCount) + ", state: " + std::to_string(method.stateBytesPerPixel) + " B/pixel");
+        window.text("Image difference uses raw path-traced reference and includes transport differences.");
     }
     if (!mBundleFailures.empty()) window.text("Rejected bundles: " + std::to_string(mBundleFailures.size()) + " (see log/status for details)");
 
     window.text("Reference: " + std::string(mReferenceSource.familyId()));
     window.var("Samples per frame", mSamplesPerFrame, 1u, 16u);
+    if (mpScene && window.var("Max scene bounces", mMaxSceneBounces, 0u, 16u))
+        resetReference(false, false);
     if (mReferenceSource.family == ncls::ReferenceFamily::LayerStack
-        && window.var("Max random-walk depth", mMaxReferenceDepth, 4u, 128u)) resetReference(false, false);
+        && window.var("Max layer-walk depth", mMaxLayerWalkDepth, 4u, 128u))
+        resetReference(false, false);
     window.checkbox("Freeze reference", mFreezeReference);
+    window.checkbox("Denoised preview (raw remains authoritative)", mUseDenoisedPreview);
     if (window.button("Clear accumulation")) resetReference(false, false);
     window.text("spp: " + std::to_string(mReferenceSpp) + ", elapsed: " + fmt::format("{:.2f}s", mAccumulationSeconds));
-    window.text("Noise proxy 1/sqrt(spp): " + fmt::format("{:.4f}", 1.f / std::sqrt(float(std::max(mReferenceSpp, 1u)))));
+    if (mpScene)
+        window.text("Estimated mean relative standard error: "
+            + fmt::format("{:.2f}%", 100.f * mEstimatedRelativeStandardError));
+    else
+        window.text("Analytic fallback noise proxy: "
+            + fmt::format("{:.4f}", 1.f / std::sqrt(float(std::max(mReferenceSpp, 1u)))));
 
     bool physicalChanged = false;
     if (mReferenceSource.family == ncls::ReferenceFamily::MaterialX)
@@ -1220,7 +1471,11 @@ void NclsViewer::onGuiRender(Gui* pGui)
     if (window.button("Load HDRI"))
     {
         std::filesystem::path path;
-        if (openFileDialog(Bitmap::getFileDialogFilters(ResourceFormat::RGBA32Float), path)) loadEnvironment(path);
+        if (openFileDialog(Bitmap::getFileDialogFilters(ResourceFormat::RGBA32Float), path))
+        {
+            try { loadEnvironment(path); }
+            catch (const std::exception& error) { mStatus = "Failed to load HDRI: " + std::string(error.what()); }
+        }
     }
     lightChanged |= window.checkbox("Directional light", mLighting.useSun);
     lightChanged |= window.var("Directional-light direction", mLighting.sunDirection, -1.f, 1.f, 0.01f);
@@ -1282,6 +1537,11 @@ void NclsViewer::loadMaterial(const std::filesystem::path& path)
         auto gpu = createSourceGpuResources(source);
         mReferenceSource = std::move(source);
         mSourceGpu = std::move(gpu);
+        if (mpScene)
+        {
+            rebuildReferenceMaterialMetadata();
+            createSceneReferencePass();
+        }
         logInfo("Loaded source metadata: family='{}' hash='{}'", mReferenceSource.familyId(), shortId(mReferenceSource.sourceSha256));
         mMaterialDisplayName = mReferenceSource.displayName;
         mMaterialPath = path;
@@ -1307,8 +1567,8 @@ void NclsViewer::loadMaterial(const std::filesystem::path& path)
             mObjectMode = 0u; // Only used by the analytic fallback when no replay scene is present.
             selectMethod(-1);
             resetReference(true, true);
-            mStatus = "Loaded MaterialX standard_surface from the source .mtlx and 4K textures into the Falcor reference pass; "
-                + (mReferenceGeometryPath.empty() ? std::string("currently using the analytic-sphere fallback: ") : std::string("currently rasterizing the replay scene: "))
+            mStatus = "Loaded MaterialX standard_surface and connected source textures into the Falcor reference pass; "
+                + (mReferenceGeometryPath.empty() ? std::string("currently using the analytic-sphere fallback: ") : std::string("currently path tracing the Falcor scene: "))
                 + path.string();
         }
         if (!allMaterialsSupportCurrentCompiler()) selectMethod(-1);
@@ -1335,16 +1595,30 @@ void NclsViewer::saveMaterial(const std::filesystem::path& path)
 
 void NclsViewer::loadEnvironment(const std::filesystem::path& path)
 {
-    auto texture = Texture::createFromFile(getDevice(), path, true, false);
-    if (!texture)
-    {
-        mStatus = "Failed to load HDRI: " + path.string();
-        return;
-    }
+    const auto resolvedPath = std::filesystem::absolute(path).lexically_normal();
+    if (!std::filesystem::is_regular_file(resolvedPath))
+        throw std::runtime_error("HDRI does not exist: " + resolvedPath.string());
+    const std::string environmentSha256 = ncls::sha256FileHex(resolvedPath);
+    if (!mOptions.environmentSha256.empty() && environmentSha256 != mOptions.environmentSha256)
+        throw std::runtime_error("HDRI SHA-256 does not match the fixed preset/replay: " + resolvedPath.string());
+    auto texture = Texture::createFromFile(getDevice(), resolvedPath, true, false);
+    if (!texture) throw std::runtime_error("Falcor failed to load HDRI: " + resolvedPath.string());
     mpEnvironment = texture;
-    mEnvironmentPath = path;
+    std::string extension = resolvedPath.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+        [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+    if (extension == ".exr")
+    {
+        uint32_t width = 0u;
+        uint32_t height = 0u;
+        const auto pixels = readHalfRgbaExrPixels(resolvedPath, width, height);
+        rebuildEnvironmentSampling(pixels, width, height);
+    }
+    else rebuildEnvironmentSampling({}, 0u, 0u);
+    mEnvironmentPath = resolvedPath;
+    mEnvironmentSha256 = environmentSha256;
     resetReference(false, false);
-    mStatus = "Loaded HDRI: " + path.string();
+    mStatus = "Loaded HDRI: " + resolvedPath.string();
 }
 
 void NclsViewer::applyReplaySettings(const std::filesystem::path& path)
@@ -1357,8 +1631,10 @@ void NclsViewer::applyReplaySettings(const std::filesystem::path& path)
         return float3(value[0].get<float>(), value[1].get<float>(), value[2].get<float>());
     };
     mObjectMode = replay.value("object_mode", 0u);
-    mSamplesPerFrame = replay.value("reference_samples_per_frame", 1u);
-    mMaxReferenceDepth = replay.value("reference_max_depth", 24u);
+    mSamplesPerFrame = std::clamp(replay.value("reference_samples_per_frame", 1u), 1u, 16u);
+    mMaxSceneBounces = std::clamp(replay.value("reference_scene_max_bounces", 4u), 0u, 16u);
+    mMaxLayerWalkDepth = std::clamp(replay.value(
+        "reference_layer_walk_max_depth", replay.value("reference_max_depth", 24u)), 4u, 128u);
     const auto& camera = replay.at("camera");
     mCamera.target = vector3(camera.at("target"));
     mCamera.yaw = camera.at("yaw").get<float>();
@@ -1370,6 +1646,7 @@ void NclsViewer::applyReplaySettings(const std::filesystem::path& path)
     mSplit = display.at("split").get<float>();
     mExposure = display.at("exposure_ev").get<float>();
     mDifferenceScale = display.at("difference_scale").get<float>();
+    mUseDenoisedPreview = display.value("denoised_preview", true);
     const auto& lighting = replay.at("lighting");
     mLighting.useEnvironment = lighting.at("use_environment").get<bool>();
     mLighting.environmentRotation = lighting.at("environment_rotation").get<float>();
@@ -1398,6 +1675,7 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
     if (!manifestPath.parent_path().empty()) fs::create_directories(manifestPath.parent_path());
     const fs::path stem = manifestPath.parent_path() / manifestPath.stem();
     const fs::path referencePath = stem.string() + "-reference.exr";
+    const fs::path denoisedReferencePath = stem.string() + "-reference-denoised.exr";
     const fs::path approximationPath = stem.string() + "-approximation.exr";
     const fs::path comparisonPath = stem.string() + "-comparison.exr";
     const fs::path displayPath = stem.string() + "-display.png";
@@ -1407,6 +1685,12 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
     const fs::path metricsPath = stem.string() + "-metrics.csv";
 
     getDevice()->wait();
+    if (mpScene)
+    {
+        const auto stats = getRenderContext()->readBuffer<uint32_t>(mpReferenceNoiseStats.get(), 0u, 2u);
+        if (stats.size() == 2u && stats[1] > 0u)
+            mEstimatedRelativeStandardError = float(stats[0]) / (4096.f * float(stats[1]));
+    }
     const auto refreshTiming = [](PassTiming& timing) {
         if (timing.sampleIndex > 0) timing.milliseconds = timing.timers[timing.activeSlot]->getElapsedTime();
     };
@@ -1419,6 +1703,8 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
     if (mReferenceSource.family == ncls::ReferenceFamily::LayerStack)
         ncls::saveMaterialProgram(materialPath, mMaterial, mMaterialDisplayName);
     mpReference[mReferencePing]->captureToFile(0, 0, referencePath, Bitmap::FileFormat::ExrFile, Bitmap::ExportFlags::None, false);
+    mpDenoisedReference[1]->captureToFile(
+        0, 0, denoisedReferencePath, Bitmap::FileFormat::ExrFile, Bitmap::ExportFlags::None, false);
     if (approximationAvailable)
         mpApproximation->captureToFile(0, 0, approximationPath, Bitmap::FileFormat::ExrFile, Bitmap::ExportFlags::None, false);
     mpComparisonLinear->captureToFile(0, 0, comparisonPath, Bitmap::FileFormat::ExrFile, Bitmap::ExportFlags::None, false);
@@ -1466,9 +1752,12 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         for (const auto& [materialId, binding] : mInactiveSceneMaterials)
             appendBinding(materialId, binding.source, false);
     }
+    const bool sceneMaterialBindingsReplayable = mpScene
+        && mpScene->getMaterialCount() == 1u
+        && mInactiveSceneMaterials.empty();
     nlohmann::json manifest = {
         {"format_name", "ncls.viewer-capture"},
-        {"format_version", 2},
+        {"format_version", 3},
         {"method_id", methodId},
         {"method_bundle", methodRoot},
         {"bundle_root", std::filesystem::absolute(mOptions.bundleRoot).string()},
@@ -1481,22 +1770,40 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         {"material_program", mReferenceSource.family == ncls::ReferenceFamily::LayerStack ? materialPath.filename().string() : std::string()},
         {"approximation_available", approximationAvailable},
         {"environment", mEnvironmentPath.empty() ? std::string() : std::filesystem::absolute(mEnvironmentPath).string()},
+        {"environment_sha256", mEnvironmentSha256},
         {"reference_geometry", mReferenceGeometryPath.empty() ? std::string() : std::filesystem::absolute(mReferenceGeometryPath).string()},
         {"reference_geometry_sha256", mReferenceGeometrySha256},
         {"scene_material_bindings", sceneMaterialBindings},
-        {"scene_material_bindings_replayable", false},
+        {"scene_material_bindings_replayable", sceneMaterialBindingsReplayable},
         {"resolution", {mOutputWidth, mOutputHeight}},
         {"view_resolution", {mViewWidth, mOutputHeight}},
         {"object_mode", mObjectMode},
         {"reference_spp", mReferenceSpp},
         {"reference_samples_per_frame", mSamplesPerFrame},
-        {"reference_max_depth", mMaxReferenceDepth},
+        {"reference_scene_max_bounces", mMaxSceneBounces},
+        {"reference_layer_walk_max_depth", mMaxLayerWalkDepth},
+        {"reference_integrator", "ncls.scene-path-tracer@1"},
+        {"reference_estimator", {
+            {"raw_authoritative", true},
+            {"raw_accumulation", "arithmetic_mean_of_independent_monte_carlo_samples"},
+            {"environment_sampling", "luminance_sin_theta_importance_sampling_with_mis"},
+            {"finite_depth_transport", true},
+            {"scene_bounce_cap", mMaxSceneBounces},
+            {"layer_walk_cap", mMaxLayerWalkDepth},
+            {"denoised_preview_authoritative", false},
+            {"denoised_preview_bias", "display_only_cross_bilateral_atrous_filter"},
+        }},
+        {"estimated_mean_relative_standard_error", mEstimatedRelativeStandardError},
+        {"comparison_semantics", approximationAvailable
+            ? "visual_system_difference_full_path_reference_vs_realtime_deferred_method"
+            : "reference_only"},
         {"camera", {
             {"target", {mCamera.target.x, mCamera.target.y, mCamera.target.z}},
             {"yaw", mCamera.yaw}, {"pitch", mCamera.pitch}, {"distance", mCamera.distance},
             {"vertical_fov_degrees", mCamera.verticalFovDegrees},
         }},
-        {"display", {{"comparison_mode", mComparisonMode}, {"split", mSplit}, {"exposure_ev", mExposure}, {"difference_scale", mDifferenceScale}}},
+        {"display", {{"comparison_mode", mComparisonMode}, {"split", mSplit}, {"exposure_ev", mExposure},
+            {"difference_scale", mDifferenceScale}, {"denoised_preview", mUseDenoisedPreview}}},
         {"lighting", {
             {"use_environment", mLighting.useEnvironment},
             {"environment_rotation", mLighting.environmentRotation},
@@ -1523,6 +1830,7 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         }},
         {"files", {
             {"reference_linear", referencePath.filename().string()},
+            {"reference_denoised_preview", denoisedReferencePath.filename().string()},
             {"approximation_linear", approximationAvailable ? approximationPath.filename().string() : std::string()},
             {"comparison_linear", comparisonPath.filename().string()},
             {"display", displayPath.filename().string()},
@@ -1537,9 +1845,9 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
     stream << manifest.dump(2) << '\n';
     std::ofstream metrics(metricsPath, std::ios::binary | std::ios::trunc);
     if (!metrics) throw std::runtime_error("cannot write capture metrics: " + metricsPath.string());
-    metrics << "method_id,width,height,reference_spp,visibility_ms,reference_ms,prepare_ms,lighting_ms,composite_ms\n";
+    metrics << "method_id,width,height,reference_spp,estimated_mean_relative_standard_error,visibility_ms,reference_ms,prepare_ms,lighting_ms,composite_ms\n";
     metrics << methodId << ',' << mOutputWidth << ',' << mOutputHeight << ',' << mReferenceSpp << ','
-            << mVisibilityTiming.milliseconds << ',' << mReferenceTiming.milliseconds << ','
+            << mEstimatedRelativeStandardError << ',' << mVisibilityTiming.milliseconds << ',' << mReferenceTiming.milliseconds << ','
             << mPrepareTiming.milliseconds << ',' << mLightingTiming.milliseconds << ','
             << mCompositeTiming.milliseconds << '\n';
     mStatus = "Capture saved: " + manifestPath.string();

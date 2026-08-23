@@ -43,17 +43,17 @@ MaterialProgram + MethodBundle → Windows viewer
 
 第一版 viewer 当前具备：
 
-- Falcor `Scene` 多格式导入、单一 orbit/pan/dolly 相机与共享主可见性；
+- Falcor `Scene` 多格式导入、单一 orbit/pan/dolly 相机、右侧 raster 主可见性与左侧独立 path-traced primary ray；
 - instance/material ID 拾取，以及每个 Falcor material slot 独立的源材质绑定；
 - LayerStack、MERL、OpenPBR 和 MaterialX 的 reference 与族专属编辑 UI；
 - 方法为空时全宽 reference；显式选择方法后，右侧运行无跨帧累计、无随帧噪声的 deferred prepare/lighting；
-- 解析 fallback 物体、HDRI、方向光、点光、矩形面光；
+- 固定 `studio-v1` MaterialX shaderball/Poly Haven HDRI/默认材质，以及方向光、点光、矩形面光；
 - 方法切换、共同曝光和差异显示；
 - 全文件哈希、平台/合同检查和 GPU parity 后才接纳方法；
-- EXR/PNG/材质/指标/manifest capture 与命令行 replay 基础入口；
+- raw reference、显示专用去噪结果、EXR/PNG/材质/指标/capture v3 与命令行 replay；
 - 固定相机路径 JSON/CSV benchmark 入口。
 
-当前左侧仍是表面局部光照 reference，不是完整场景 path tracer；右侧也尚未加入场景阴影和全局间接光。多 material slot 的交互状态尚未形成稳定的完整 capture/replay 合同。任何更强的正确性或逐字节一致性结论都必须由当前版本重新运行测试产生，不能引用已清理的历史报告替代。
+当前左侧已覆盖场景相交、阴影、直接光、环境 MIS 和跨物体间接反弹，是受 scene/layer 深度上限约束的完整场景 path tracer；raw Monte Carlo 均值保持权威，默认 a-trous 去噪仅用于显示。右侧仍未加入 path-traced 全局传输，因此图像差异是完整 reference 与实时系统的视觉差异，不能替代方向域 closure 指标。多 material slot 的交互状态尚未形成稳定的完整 capture/replay 合同；固定单材质 studio-v1 可以回放。任何更强的正确性或逐字节一致性结论都必须由当前版本重新运行测试产生，不能引用已清理的历史报告替代。
 
 ## 最终回归门槛
 

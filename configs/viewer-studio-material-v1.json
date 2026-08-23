@@ -1,0 +1,38 @@
+{
+  "schema_name": "ncls.material-program",
+  "schema_version": 1,
+  "color_model": "linear-srgb",
+  "metadata": {"display_name": "Studio anisotropic bronze"},
+  "nodes": [
+    {
+      "id": "interface-0",
+      "operation": {"namespace": "ncls.interface", "name": "rough_conductor", "version": 1},
+      "inputs": {},
+      "parameters": {
+        "alpha_x": {"source": "constant", "type": "Float", "value": 0.12},
+        "alpha_y": {"source": "constant", "type": "Float", "value": 0.28},
+        "eta": {"source": "constant", "type": "Color3", "value": [0.18, 0.48, 1.25]},
+        "k": {"source": "constant", "type": "Color3", "value": [3.85, 2.35, 1.85]},
+        "tangent_rotation": {"source": "constant", "type": "Float", "value": 0.35}
+      }
+    },
+    {
+      "id": "surface",
+      "operation": {"namespace": "ncls.composition", "name": "layer_stack", "version": 1},
+      "inputs": {
+        "interfaces": [{"node": "interface-0", "port": "interface"}],
+        "media": []
+      },
+      "parameters": {}
+    }
+  ],
+  "outputs": {
+    "surface": {"node": "surface", "port": "surface"},
+    "displacement": null,
+    "emission": null,
+    "opacity": null,
+    "interior_medium": null,
+    "exterior_medium": null
+  },
+  "resources": []
+}

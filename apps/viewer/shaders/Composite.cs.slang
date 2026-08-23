@@ -1,6 +1,7 @@
 #include "ViewerCommon.slang"
 
 Texture2D<float4> gReference;
+Texture2D<float4> gDisplayReference;
 Texture2D<float4> gApproximation;
 SamplerState gLinearSampler;
 RWTexture2D<float4> gComparisonLinear;
@@ -24,21 +25,25 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     if (any(pixel >= gOutputDim)) return;
     const float2 uv = (float2(pixel) + 0.5f) / float2(gOutputDim);
     float3 linear;
+    float3 comparisonLinear;
     if (gHasApproximation == 0u)
     {
-        linear = gReference.SampleLevel(gLinearSampler, uv, 0.0f).rgb;
+        comparisonLinear = gReference.SampleLevel(gLinearSampler, uv, 0.0f).rgb;
+        linear = gDisplayReference.SampleLevel(gLinearSampler, uv, 0.0f).rgb;
     }
     else if (gComparisonMode == 0u)
     {
         if (uv.x < gSplit)
         {
             const float2 sourceUv = float2(uv.x / max(gSplit, 1e-4f), uv.y);
-            linear = gReference.SampleLevel(gLinearSampler, sourceUv, 0.0f).rgb;
+            comparisonLinear = gReference.SampleLevel(gLinearSampler, sourceUv, 0.0f).rgb;
+            linear = gDisplayReference.SampleLevel(gLinearSampler, sourceUv, 0.0f).rgb;
         }
         else
         {
             const float2 sourceUv = float2((uv.x - gSplit) / max(1.0f - gSplit, 1e-4f), uv.y);
-            linear = gApproximation.SampleLevel(gLinearSampler, sourceUv, 0.0f).rgb;
+            comparisonLinear = gApproximation.SampleLevel(gLinearSampler, sourceUv, 0.0f).rgb;
+            linear = comparisonLinear;
         }
     }
     else
@@ -46,11 +51,12 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         const float3 reference = gReference.SampleLevel(gLinearSampler, uv, 0.0f).rgb;
         const float3 approximation = gApproximation.SampleLevel(gLinearSampler, uv, 0.0f).rgb;
         const float3 absoluteDifference = abs(reference - approximation);
-        if (gComparisonMode == 1u) linear = absoluteDifference;
-        else if (gComparisonMode == 2u) linear = absoluteDifference / max(max(abs(reference), abs(approximation)), 0.01f);
-        else linear = absoluteDifference * gDifferenceScale;
+        if (gComparisonMode == 1u) comparisonLinear = absoluteDifference;
+        else if (gComparisonMode == 2u) comparisonLinear = absoluteDifference / max(max(abs(reference), abs(approximation)), 0.01f);
+        else comparisonLinear = absoluteDifference * gDifferenceScale;
+        linear = comparisonLinear;
     }
-    gComparisonLinear[pixel] = float4(linear, 1.0f);
+    gComparisonLinear[pixel] = float4(comparisonLinear, 1.0f);
     float3 display = nclsViewerAces(max(linear, 0.0f) * exp2(gExposure));
     display = pow(display, 1.0f / 2.2f);
     if (gHasApproximation != 0u && gComparisonMode == 0u && abs(uv.x - gSplit) < 1.5f / float(gOutputDim.x))

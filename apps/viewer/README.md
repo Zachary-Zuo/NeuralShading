@@ -1,26 +1,41 @@
 # NclsViewer
 
-`NclsViewer` 是 Windows/D3D12 原生材质查看器。界面统一使用英文和 Falcor 默认字体。左侧显示当前源材质族的 reference；只有用户显式选择通过完整性检查与 GPU parity 的 `MethodBundle` 后，右侧才显示该方法的实时结果。方法为空时 reference 使用整个视口，不再生成空白或伪造的右侧图像。
+`NclsViewer` 是 Windows/D3D12 原生材质查看器。左侧现在由独立的 Falcor Scene path tracer 生成源材质 reference：从相机射线开始，经过场景相交、可见性/阴影、环境或解析光直接采样、材质散射、跨物体间接反弹和 Russian roulette，再逐帧累计 raw Monte Carlo 均值。它不再是只在首个可见表面计算局部光照的预览 pass。
 
-当前接入的源材质族包括 LayerStack、MERL、OpenPBR 和 MaterialX。切换源文件后，UI 会按材质族显示其原生可调参数：LayerStack 编辑界面/介质，OpenPBR 编辑 resolved native inputs，MaterialX 编辑当前 reference subset 中未被纹理连接占用的 `standard_surface` 输入；MERL 测量表通过切换原始文件更换。源材质不会先被改写成 LayerStack 或简单 PBR。
+当前接入 LayerStack、MERL、OpenPBR 和 MaterialX 四种源材质族。每一次 path 命中都按 Falcor material slot 分派到该 slot 自己的源材质 reference，不会先改写成 LayerStack 或简单 PBR。LayerStack 在层内继续使用原生随机游走；MaterialX 纹理和 normal map 使用由 path ray cone 推导的 mip LOD。
 
-viewer 使用 Falcor `Scene` 导入器加载场景，不再维护只支持单个 OBJ 的自建 VAO 路径。文件对话框展示当前 Falcor 插件实际支持的格式（通常包括 OBJ、glTF/GLB、FBX 等）；命令行保留兼容参数 `--reference-geometry SCENE`。主可见性 pass 输出 instance/material ID，单击物体会选择其 Falcor material slot；各 slot 独立保存源材质族、原生参数、纹理与 GPU reference 资源，后续编辑只作用于选中的 slot。
+“完整 path tracing”指 viewer 覆盖了上述完整场景传输路径，不表示计算无限深度。capture 会明确记录 `reference_scene_max_bounces` 与 `reference_layer_walk_max_depth`；raw 结果是相对于这两个有限上限的 Monte Carlo 估计。单界面、MERL、OpenPBR 和 MaterialX 的 HDRI 采样使用亮度 × `sin(theta)` importance sampling 与 MIS，可较快压低噪声。深层 LayerStack 暂无可直接求值的完整方向 PDF，因此环境路径仍保持 raw 有限深度估计，但收敛会慢于单界面材质。
 
-需要明确当前积分边界：左侧是共享主可见性表面上的源材质局部 reference 光照积分，不是包含物体间遮挡、间接反弹和穿物体传输的完整场景 path tracer。右侧是固定成本 deferred prepare + lighting；它没有 spp、跨帧样本累计或随帧变化的噪声。当前环境光使用固定的确定性方向集合，解析灯直接求值。场景阴影、全局间接光以及更完整的 Falcor RenderGraph 仍是后续工作。
+默认勾选的去噪结果只用于观看。raw reference 始终单独累计并作为 comparison、difference、噪声估计和 `*-reference.exr` 的权威输入；a-trous cross-bilateral 去噪预览写入 `*-reference-denoised.exr`，manifest 明确标记它有偏且不具权威性。
+
+右侧只有在用户显式选择通过完整性检查与 GPU parity 的 `MethodBundle` 后才出现，仍是固定成本 deferred 实时方法。因而 viewer 的左右差图是“完整 path-traced reference 与实时系统”的视觉系统差异，会同时包含材质近似和全局传输差异；它不能替代方向响应数据集上的 closure 误差指标。
+
+## 固定 studio-v1 场景
+
+无 replay、也没有显式 `--reference-geometry` 时，viewer 固定加载 `configs/viewer-studio-v1.json`：
+
+- 几何：锁定 MaterialX 1.39.4 commit 中的 `shaderball.glb`，Apache-2.0；
+- 环境：Poly Haven `studio_small_03_1k.exr`，CC0；
+- 默认材质：`configs/viewer-studio-material-v1.json` 中的各向异性粗糙导体；
+- 相机、曝光、环境旋转、积分深度和所有资产 SHA-256 均由 preset 固定。
+
+`scripts/fetch_viewer_assets.ps1` 把 shaderball 放到 `data/source-materials/viewer-scenes/studio-v1/`，并验证 `data/hdris/polyhaven_1k/` 中的 HDRI；构建再把固定资源复制到 viewer runtime 的 `data/ncls-viewer/`。因此默认启动、无窗口捕获和 benchmark 看到的是同一个标准场景，而不是依赖当前工作目录的临时资产。
 
 ## 构建与运行
 
-构建脚本临时把根仓库的 `apps/viewer/` overlay 到锁定的 Falcor 8.0 Samples 树，结束后在 `finally` 中反向应用补丁并验证 `external/Falcor` 恢复干净：
+只使用项目构建脚本。它先验证固定资产，再临时把 `apps/viewer/` overlay 到锁定的 Falcor 8.0 Samples 树，结束后反向应用补丁并验证 `external/Falcor` 恢复干净：
 
 ```powershell
 .\scripts\build_viewer.ps1 -Configuration Release
 .\scripts\build_viewer.ps1 -Configuration Release -Run --bundle-root artifacts\exports
 
 .\scripts\build_viewer.ps1 -Configuration Release -Run `
-  --reference-geometry data\source-materials\scenes\example.glb
+  --reference-geometry data\source-materials\scenes\example.glb `
+  --material data\source-materials\example.mtlx `
+  --environment data\hdris\example.exr
 ```
 
-常用交互：单击选择物体/material slot；左键拖动 orbit；中键或右键拖动 pan；滚轮 dolly；拖动分割线；`Space` 暂停/继续 reference 累积；`R` 重置相机。
+常用交互：单击选择物体/material slot；左键拖动 orbit；中键或右键拖动 pan；滚轮 dolly；拖动分割线；`Space` 暂停/继续 raw reference 累积；`R` 重置相机。UI 中可切换 raw/denoised preview，但该开关不重置或修改 raw 累积。
 
 ## 无窗口捕获和回放
 
@@ -34,7 +49,7 @@ external\Falcor\build\windows-vs2022\bin\Release\NclsViewer.exe `
   --capture artifacts\captures\replayed
 ```
 
-方法为空时 capture 只写 reference、共同显示图、当前选中材质快照、GPU 时间和 manifest；存在方法时才额外写 approximation 与 difference。当前 manifest 仍以选中的源材质 slot 作为回放入口，多 slot 的完整编辑状态尚未形成稳定序列化合同，因此不能把交互式多材质场景 capture 描述为逐 slot 完整回放。
+capture v3 记录固定场景、环境、相机、材质、积分上限、raw 噪声估计、显示去噪语义、方法和文件角色。单材质场景可以完整回放；交互式多 slot 场景虽会逐 slot 记录来源，但在形成稳定的多 slot 序列化合同前仍标记为不可完整回放。
 
 ## 固定路径 benchmark
 
@@ -45,4 +60,4 @@ external\Falcor\build\windows-vs2022\bin\Release\NclsViewer.exe `
   -OutputDirectory artifacts\benchmarks\viewer
 ```
 
-preset 固定分辨率、场景、灯光、reference 设置、预热帧和相机路径。输出位于被 Git 忽略的 `artifacts/`，不把单次 benchmark 或正确性验证结果持久化到根仓库。
+benchmark preset 固定 studio-v1 几何/HDRI/默认材质的路径与哈希，以及分辨率、相机路径、reference 上限和帧数。输出只进入被 Git 忽略的 `artifacts/`。

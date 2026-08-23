@@ -23,6 +23,7 @@ struct ViewerOptions
     std::filesystem::path bundleRoot = "artifacts/exports";
     std::filesystem::path materialPath;
     std::filesystem::path environmentPath;
+    std::string environmentSha256;
     std::filesystem::path referenceGeometryPath;
     std::string referenceGeometrySha256;
     std::filesystem::path replayPath;
@@ -108,9 +109,12 @@ private:
 
     void createPasses();
     void createDefaultEnvironment();
+    void rebuildEnvironmentSampling(const std::vector<Falcor::float4>& pixels, uint32_t width, uint32_t height);
     void resizeResources(uint32_t width, uint32_t height);
     void loadScene(const std::filesystem::path& path);
+    void createSceneReferencePass();
     void rebuildSceneFbo();
+    void rebuildReferenceMaterialMetadata();
     void syncSceneCamera();
     bool pickSceneObject(const Falcor::float2& screenPosition);
     void updateMaterialBuffer();
@@ -127,6 +131,7 @@ private:
     void bindLighting(Falcor::ShaderVar root, const char* constantBufferName);
     void renderVisibility(Falcor::RenderContext* pRenderContext);
     void renderReference(Falcor::RenderContext* pRenderContext);
+    void renderDenoisedReference(Falcor::RenderContext* pRenderContext);
     void renderPrepare(Falcor::RenderContext* pRenderContext);
     void renderApproximation(Falcor::RenderContext* pRenderContext);
     void renderComposite(Falcor::RenderContext* pRenderContext);
@@ -153,6 +158,7 @@ private:
     uint32_t mActiveSceneMaterial = std::numeric_limits<uint32_t>::max();
     std::filesystem::path mMaterialPath;
     std::filesystem::path mEnvironmentPath;
+    std::string mEnvironmentSha256;
     std::filesystem::path mReferenceGeometryPath;
     std::string mReferenceGeometrySha256;
     std::string mMaterialDisplayName = "Default layered material";
@@ -163,11 +169,17 @@ private:
     int32_t mSelectedMethod = -1;
     uint32_t mMethodUiValue = 0;
     Falcor::ref<Falcor::Buffer> mpWeights;
+    Falcor::ref<Falcor::Buffer> mpReferenceMaterialMetadata;
+    Falcor::ref<Falcor::Buffer> mpReferenceNoiseStats;
+    Falcor::ref<Falcor::Buffer> mpEnvironmentMarginalCdf;
+    Falcor::ref<Falcor::Buffer> mpEnvironmentConditionalCdf;
 
     Falcor::ref<Falcor::ComputePass> mpVisibilityPass;
     Falcor::ref<Falcor::Scene> mpScene;
     Falcor::ref<Falcor::RasterPass> mpSceneVisibilityPass;
     Falcor::ref<Falcor::ComputePass> mpReferencePass;
+    Falcor::ref<Falcor::ComputePass> mpReferencePathPass;
+    Falcor::ref<Falcor::ComputePass> mpDenoisePass;
     Falcor::ref<Falcor::ComputePass> mpPreparePass;
     Falcor::ref<Falcor::ComputePass> mpApproximationPass;
     Falcor::ref<Falcor::ComputePass> mpCompositePass;
@@ -186,12 +198,14 @@ private:
     Falcor::ref<Falcor::Texture> mpSceneDepth;
     Falcor::ref<Falcor::Fbo> mpSceneFbo;
     std::array<Falcor::ref<Falcor::Texture>, 2> mpReference;
+    std::array<Falcor::ref<Falcor::Texture>, 2> mpDenoisedReference;
     Falcor::ref<Falcor::Texture> mpApproximation;
     Falcor::ref<Falcor::Texture> mpComparisonLinear;
     Falcor::ref<Falcor::Texture> mpDisplay;
     Falcor::ref<Falcor::Texture> mpEnvironment;
     Falcor::ref<Falcor::Sampler> mpLinearSampler;
     Falcor::ref<Falcor::Sampler> mpMaterialXSampler;
+    Falcor::uint2 mEnvironmentSamplingDimensions{0u, 0u};
 
     PassTiming mVisibilityTiming;
     PassTiming mReferenceTiming;
@@ -210,18 +224,21 @@ private:
     std::string mSelectedSceneGeometryName;
     std::string mSelectedSceneMaterialName;
     uint32_t mSamplesPerFrame = 1;
-    uint32_t mMaxReferenceDepth = 24;
+    uint32_t mMaxSceneBounces = 4;
+    uint32_t mMaxLayerWalkDepth = 24;
     uint32_t mObjectMode = 0;
     uint32_t mSelectedInterface = 0;
     uint32_t mComparisonMode = 0;
     float mSplit = 0.5f;
     float mExposure = 0.f;
     float mDifferenceScale = 8.f;
+    float mEstimatedRelativeStandardError = 1.f;
     double mAccumulationSeconds = 0.0;
     bool mResetAccumulation = true;
     bool mVisibilityDirty = true;
     bool mPrepareDirty = true;
     bool mFreezeReference = false;
+    bool mUseDenoisedPreview = true;
     bool mCameraDragging = false;
     bool mCameraDragMoved = false;
     bool mPanDragging = false;
