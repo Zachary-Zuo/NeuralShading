@@ -154,6 +154,8 @@ target transform 的统计量只能由 source train × query train 生成并带 
 
 LayerStack 不再等待随机 prior 偶然采到边界状态。provider-local 的 `ncls.e0-layer-stack-boundary@1` 固定六个 coverage case：极窄 dielectric、极窄各向异性 conductor、旋转各向异性 dielectric、色吸收 slab、符合当前 v0 同消光实现约束的色散射 slab，以及多界面移动峰。它要求 6 个 family、每个 1 个状态，并把 profile/case ID 写进原生 payload 与 provider metadata。该集合是 E0 probe，不替代后续连续研究 prior；改动案例必须升级 profile ID。
 
+首个 boundary v4 probe 使用合并总样本 8,192。全局 relative SE p95 为 `0.0188`、replica normalized L1 p95 为 `0.0411`，但多界面 case 的最坏 query-group relative SE p95 为 `0.1375`。因此不能用全局 p95 宣告 noise 通过；`ncls.supervision-audit@4` 与 `ncls.e0-supervision-entry@4` 增加最坏 query-group 的 `0.1` 阈值，并要求 LayerStack E0 数据显式使用六状态 boundary profile。该 probe 还显示 128-direction 下极窄各向异性 conductor 的加权能量估计不稳定，必须另做更高方向数 proposal 收敛检查后再冻结能量 gate。
+
 三组 LayerStack 的相同 state/query 在四档自适应预算下测得以下 noise 曲线；`sample_count` 是合并两个 replica 后的总样本数上限：
 
 | 最大总样本数 | relative SE p95 | replica normalized L1 p95 | gate |

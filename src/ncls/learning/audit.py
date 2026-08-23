@@ -14,7 +14,7 @@ from ncls.learning.gates import evaluate_supervision_gate, load_supervision_gate
 
 
 AUDIT_FORMAT = "ncls.supervision-audit"
-AUDIT_VERSION = 3
+AUDIT_VERSION = 4
 TRANSFORM_STATISTICS_FORMAT = "ncls.target-transform-statistics"
 TRANSFORM_STATISTICS_VERSION = 2
 _SPLIT_CODES = {name: index for index, name in enumerate(SPLIT_NAMES)}
@@ -184,6 +184,7 @@ def _audit_markdown(audit: dict[str, Any]) -> str:
         f"- 当前 proposal：{proposal_names or '无'}。",
         f"- peak/grazing/transmission 高分辨率 profile：{json.dumps(high_resolution, ensure_ascii=False)}。",
         f"- replica normalized L1 p95：{uncertainty['replica_normalized_l1'].get('p95', 0.0):.6g}；相对 standard error p95：{uncertainty['relative_standard_error'].get('p95', 0.0):.6g}。",
+        f"- 最坏 query group 的 relative SE p95：{uncertainty['worst_query_group']['relative_standard_error_p95']:.6g}；replica normalized L1：{uncertainty['worst_query_group']['replica_normalized_l1']:.6g}。",
         "",
         "## 下一步",
         "",
@@ -504,6 +505,7 @@ def audit_supervision(
                 "generator_git_commit": dataset.manifest.generator_git_commit,
                 "query_profile_ids": list(dataset.manifest.query_profile_ids),
                 "generation_config": dict(dataset.manifest.generation_config),
+                "provider_metadata": [dict(item) for item in dataset.manifest.provider_metadata],
                 "counts": dict(dataset.manifest.counts),
                 "content_hash_verified": verify_hashes,
             },
@@ -573,6 +575,10 @@ def audit_supervision(
                 },
                 "by_state": uncertainty_by_state,
                 "by_integrated_energy": uncertainty_by_energy,
+                "worst_query_group": {
+                    "relative_standard_error_p95": float(np.max(group_relative_p95)),
+                    "replica_normalized_l1": float(np.max(replica_delta)),
+                },
                 "highest_relative_standard_error_groups": worst_uncertainty_groups,
             },
             "coverage": {

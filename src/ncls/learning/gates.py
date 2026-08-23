@@ -121,11 +121,53 @@ def evaluate_supervision_gate(audit: Mapping[str, Any], gate: Mapping[str, Any])
         max_replica = float(base["maximum_stochastic_replica_normalized_l1_p95"])
         check("noise.relative_standard_error_p95", relative_p95, {"maximum": max_relative}, relative_p95 <= max_relative)
         check("noise.replica_normalized_l1_p95", replica_p95, {"maximum": max_replica}, replica_p95 <= max_replica)
+        maximum_worst_relative = base.get("maximum_stochastic_worst_query_group_relative_standard_error_p95")
+        if maximum_worst_relative is not None:
+            actual = float(uncertainty["worst_query_group"]["relative_standard_error_p95"])
+            maximum = float(maximum_worst_relative)
+            check(
+                "noise.worst_query_group_relative_standard_error_p95",
+                actual,
+                {"maximum": maximum},
+                actual <= maximum,
+            )
+        maximum_worst_replica = base.get("maximum_stochastic_worst_query_group_replica_normalized_l1")
+        if maximum_worst_replica is not None:
+            actual = float(uncertainty["worst_query_group"]["replica_normalized_l1"])
+            maximum = float(maximum_worst_replica)
+            check(
+                "noise.worst_query_group_replica_normalized_l1",
+                actual,
+                {"maximum": maximum},
+                actual <= maximum,
+            )
 
     dataset_families = set(audit["state_distribution"])
     for family_id, requirements in gate["family_requirements"].items():
         if family_id not in dataset_families:
             continue
+        required_state_profile = requirements.get("required_state_profile_id")
+        if required_state_profile is not None:
+            actual = sorted({
+                str(item.get("provider_config", {}).get("state_profile_id", ""))
+                for item in audit["dataset"].get("provider_metadata", [])
+                if str(item.get("family_id", "")) == family_id
+            })
+            check(
+                f"family.{family_id}.state_profile_id",
+                actual,
+                required_state_profile,
+                actual == [str(required_state_profile)],
+            )
+        minimum_source_states = requirements.get("minimum_source_state_count")
+        if minimum_source_states is not None:
+            actual = int(sum(audit["state_distribution"][family_id].values()))
+            check(
+                f"family.{family_id}.source_state_count",
+                actual,
+                {"minimum": int(minimum_source_states)},
+                actual >= int(minimum_source_states),
+            )
         for profile in requirements.get("required_adversarial_profiles", []):
             actual = bool(adversarial[profile])
             check(f"family.{family_id}.adversarial.{profile}", actual, True, actual)
