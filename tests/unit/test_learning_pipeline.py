@@ -12,7 +12,7 @@ from ncls.data import CollectionConfig, collect_reference_dataset
 from ncls.data.providers import LayerStackProvider, LayerStackProviderConfig
 from ncls.learning.data import LayerStackReferenceStore, ReferenceQueryStore
 from ncls.learning.direct_fit import DirectFitConfig, run_direct_fit
-from ncls.learning.evaluation import evaluate_checkpoint
+from ncls.learning.evaluation import evaluate_checkpoint, evaluate_evaluator_gate
 from ncls.learning.features import CONTINUOUS_FEATURE_COUNT, FEATURE_CONTRACT_ID, encode_layer_stack
 from ncls.learning.training import TrainingConfig, train
 from ncls.learning.training.checkpoint import load_checkpoint
@@ -256,6 +256,7 @@ def test_dense_e1_pipeline_fits_transform_from_selected_train_queries_only(tmp_p
         dataset_path,
         run_path / "checkpoints" / "best.pt",
         split="test",
+        output_path=run_path / "test_metrics.json",
         device_name="cpu",
     )
     metrics = result["metrics"]
@@ -279,10 +280,21 @@ def test_dense_e1_pipeline_fits_transform_from_selected_train_queries_only(tmp_p
         dataset_path,
         run_path / "checkpoints" / "best.pt",
         split="adversarial_probe",
+        output_path=run_path / "adversarial_metrics.json",
         device_name="cpu",
     )
     assert adversarial["evaluation_role"] == "adversarial_probe"
     assert adversarial["metrics"]["query_group_count"] == 1
+    gate = evaluate_evaluator_gate(
+        run_path / "run_manifest.json",
+        run_path / "test_metrics.json",
+        run_path / "adversarial_metrics.json",
+        Path(__file__).parents[2] / "configs" / "research" / "e1-evaluator-gates-v1.json",
+        run_path / "gate_result.json",
+    )
+    assert gate["passed"] is False
+    assert gate["gate_id"] == "ncls.e1-single-material-evaluator-acceptance@1"
+    assert (run_path / "gate_result.json").is_file()
 
 
 def test_direct_fit_is_a_separate_representation_ceiling_run(tmp_path: Path) -> None:

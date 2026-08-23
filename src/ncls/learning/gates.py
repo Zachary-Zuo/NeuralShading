@@ -44,11 +44,21 @@ def evaluate_supervision_gate(audit: Mapping[str, Any], gate: Mapping[str, Any])
         check(f"split.{field}", actual, {"maximum": maximum}, actual <= maximum)
     parent_actual = int(split["parent_child_cross_split_count"])
     check("split.parent_child", parent_actual, {"maximum": 0}, parent_actual == 0)
-    for split_name, count in split["query_group_counts"].items():
+    required_source_splits = tuple(base.get("required_source_splits", split["query_group_counts"]))
+    for split_name in required_source_splits:
+        count = int(split["query_group_counts"].get(split_name, 0))
         check(f"source_split.nonempty.{split_name}", int(count), {"minimum": 1}, int(count) >= 1)
     for role_name in base["required_query_roles"]:
         count = int(split["query_role_counts"].get(role_name, 0))
         check(f"query_role.nonempty.{role_name}", count, {"minimum": 1}, count >= 1)
+    for role_name, minimum in base.get("minimum_query_group_count_by_role", {}).items():
+        actual = int(split["query_role_counts"].get(role_name, 0))
+        check(
+            f"query_role.minimum_count.{role_name}",
+            actual,
+            {"minimum": int(minimum)},
+            actual >= int(minimum),
+        )
     required_query_profile = base.get("required_query_profile_id")
     if required_query_profile is not None:
         actual = list(map(str, audit["dataset"]["query_profile_ids"]))
@@ -120,6 +130,19 @@ def evaluate_supervision_gate(audit: Mapping[str, Any], gate: Mapping[str, Any])
             {"maximum": maximum_spacing},
             actual_spacing is not None and actual_spacing <= maximum_spacing,
         )
+        for role_name, maximum_value in base.get(
+            "maximum_peak_relevant_spacing_p95_degrees_by_query_role", {}
+        ).items():
+            role_peak = audit["response"]["by_query_role"][role_name]["peak_relevant"]
+            spacing_value = role_peak["peak_nearest_neighbor_angle_degrees"].get("p95")
+            actual = float(spacing_value) if spacing_value is not None else None
+            maximum = float(maximum_value)
+            check(
+                f"coverage.{role_name}.peak_relevant_spacing_p95_degrees",
+                actual,
+                {"maximum": maximum},
+                actual is not None and actual <= maximum,
+            )
     adversarial_coverage = audit["coverage"]["by_query_role"]["adversarial_probe"]
     grazing_fraction = float(adversarial_coverage["wi_grazing_fraction_abs_cos_below_sin_5deg"])
     minimum_grazing = float(base["minimum_adversarial_wi_grazing_fraction"])
@@ -129,6 +152,19 @@ def evaluate_supervision_gate(audit: Mapping[str, Any], gate: Mapping[str, Any])
         {"minimum": minimum_grazing},
         grazing_fraction >= minimum_grazing,
     )
+    for role_name, minimum_value in base.get(
+        "minimum_wo_grazing_fraction_by_query_role", {}
+    ).items():
+        actual = float(audit["coverage"]["by_query_role"][role_name][
+            "wo_grazing_fraction_abs_cos_below_sin_5deg"
+        ])
+        minimum = float(minimum_value)
+        check(
+            f"coverage.{role_name}.wo_grazing_fraction",
+            actual,
+            {"minimum": minimum},
+            actual >= minimum,
+        )
 
     transform = audit["target_transform_statistics"]
     expected_source_split = str(base["target_transform_fit_source_split"])
@@ -224,6 +260,15 @@ def evaluate_supervision_gate(audit: Mapping[str, Any], gate: Mapping[str, Any])
                 actual,
                 {"minimum": int(minimum_source_states)},
                 actual >= int(minimum_source_states),
+            )
+        maximum_source_states = requirements.get("maximum_source_state_count")
+        if maximum_source_states is not None:
+            actual = int(sum(audit["state_distribution"][family_id].values()))
+            check(
+                f"family.{family_id}.maximum_source_state_count",
+                actual,
+                {"maximum": int(maximum_source_states)},
+                actual <= int(maximum_source_states),
             )
         for profile in requirements.get("required_adversarial_profiles", []):
             actual = bool(adversarial[profile])

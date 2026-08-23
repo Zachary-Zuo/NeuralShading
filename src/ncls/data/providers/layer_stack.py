@@ -13,9 +13,11 @@ from ncls.data.contract import EvaluatedBlock, PositionKind, QueryPlan, Referenc
 from ncls.data.priors import (
     E0_LAYER_STACK_BOUNDARY_CASE_IDS,
     E0_LAYER_STACK_BOUNDARY_PROFILE_ID,
+    E1_LAYER_STACK_NARROW_CONDUCTOR_PROFILE_ID,
     LAYER_STACK_RESEARCH_PRIOR_ID,
     LAYER_STACK_STATE_PROFILE_IDS,
     e0_layer_stack_boundary_cases,
+    e1_layer_stack_narrow_conductor_cases,
     sample_stack_families,
 )
 from ncls.data.reference import FalcorReferenceEvaluator, evaluate_reference_adaptive, evaluate_reference_fixed
@@ -50,14 +52,18 @@ class LayerStackProviderConfig:
             raise ValueError("relative_standard_error must lie in (0, 1)")
         if self.state_profile_id not in LAYER_STACK_STATE_PROFILE_IDS:
             raise ValueError(f"unknown LayerStack state profile {self.state_profile_id!r}")
-        if self.state_profile_id == E0_LAYER_STACK_BOUNDARY_PROFILE_ID:
-            if self.family_count != len(E0_LAYER_STACK_BOUNDARY_CASE_IDS):
+        fixed_profile_counts = {
+            E0_LAYER_STACK_BOUNDARY_PROFILE_ID: len(E0_LAYER_STACK_BOUNDARY_CASE_IDS),
+            E1_LAYER_STACK_NARROW_CONDUCTOR_PROFILE_ID: 1,
+        }
+        if self.state_profile_id in fixed_profile_counts:
+            expected = fixed_profile_counts[self.state_profile_id]
+            if self.family_count != expected:
                 raise ValueError(
-                    f"{E0_LAYER_STACK_BOUNDARY_PROFILE_ID} requires "
-                    f"family_count={len(E0_LAYER_STACK_BOUNDARY_CASE_IDS)}"
+                    f"{self.state_profile_id} requires family_count={expected}"
                 )
             if self.local_state_count != 1:
-                raise ValueError(f"{E0_LAYER_STACK_BOUNDARY_PROFILE_ID} requires local_state_count=1")
+                raise ValueError(f"{self.state_profile_id} requires local_state_count=1")
 
 
 class LayerStackProvider(BaseProvider):
@@ -72,6 +78,9 @@ class LayerStackProvider(BaseProvider):
         self.provider_config = config
         source_paths = (
             Path(__file__),
+            PROJECT_ROOT / "src/ncls/data/providers/base.py",
+            PROJECT_ROOT / "src/ncls/data/directions.py",
+            PROJECT_ROOT / "src/ncls/data/priors.py",
             PROJECT_ROOT / "src/ncls/data/reference.py",
             PROJECT_ROOT / "shaders/ncls/contracts/layer_stack_ir.slang",
             PROJECT_ROOT / "shaders/ncls/reference/sampling.slang",
@@ -91,9 +100,19 @@ class LayerStackProvider(BaseProvider):
         )
         if config.state_profile_id == E0_LAYER_STACK_BOUNDARY_PROFILE_ID:
             cases = e0_layer_stack_boundary_cases()
+        elif config.state_profile_id == E1_LAYER_STACK_NARROW_CONDUCTOR_PROFILE_ID:
+            cases = e1_layer_stack_narrow_conductor_cases()
+        else:
+            cases = ()
+        if cases:
             case_ids = [case_id for case_id, _ in cases]
             families = [[stack] for _, stack in cases]
-            group_ids = [f"layer-stack-boundary-{case_id}" for case_id in case_ids]
+            group_prefix = (
+                "layer-stack-boundary"
+                if config.state_profile_id == E0_LAYER_STACK_BOUNDARY_PROFILE_ID
+                else "layer-stack-e1"
+            )
+            group_ids = [f"{group_prefix}-{case_id}" for case_id in case_ids]
         else:
             families = sample_stack_families(config.family_count, config.local_state_count, collection.seed)
             case_ids = [f"sampled-family-{index:06d}" for index in range(config.family_count)]

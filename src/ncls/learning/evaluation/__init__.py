@@ -12,4 +12,10 @@ def evaluate_model(*args, **kwargs):
 
     return run(*args, **kwargs)
 
-__all__ = ["evaluate_checkpoint", "evaluate_model", "response_loss"]
+
+def evaluate_evaluator_gate(*args, **kwargs):
+    from .gates import evaluate_evaluator_gate as run
+
+    return run(*args, **kwargs)
+
+__all__ = ["evaluate_checkpoint", "evaluate_evaluator_gate", "evaluate_model", "response_loss"]

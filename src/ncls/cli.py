@@ -185,6 +185,23 @@ def _list_learning_pipelines() -> int:
     return 0
 
 
+def _gate_evaluator(args: argparse.Namespace) -> int:
+    from .learning.evaluation import evaluate_evaluator_gate
+
+    result = evaluate_evaluator_gate(
+        args.run_manifest,
+        args.test_metrics,
+        args.adversarial_metrics,
+        args.gate,
+        args.output,
+    )
+    print(
+        f"Evaluator gate {result['gate_id']}: "
+        f"{'passed' if result['passed'] else 'failed'} ({result['result_sha256']})"
+    )
+    return 0
+
+
 def _direct_fit(args: argparse.Namespace) -> int:
     from .learning.direct_fit import DirectFitConfig, run_direct_fit
 
@@ -274,7 +291,11 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--local-states", type=int, default=4)
     generate.add_argument(
         "--layer-stack-state-profile",
-        choices=("ncls.layer-stack-research-prior@1", "ncls.e0-layer-stack-boundary@1"),
+        choices=(
+            "ncls.layer-stack-research-prior@1",
+            "ncls.e0-layer-stack-boundary@1",
+            "ncls.e1-layer-stack-narrow-conductor@1",
+        ),
         default="ncls.layer-stack-research-prior@1",
         help="LayerStack provider-local 的版本化状态分布",
     )
@@ -295,7 +316,11 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--seed", type=int, default=20260822)
     generate.add_argument(
         "--query-profile",
-        choices=("ncls.uniform-split-independent@1", "ncls.e0-peak-grazing-mixture@2"),
+        choices=(
+            "ncls.uniform-split-independent@1",
+            "ncls.e0-peak-grazing-mixture@2",
+            "ncls.e1-independent-peak-grazing-mixture@1",
+        ),
         default="ncls.uniform-split-independent@1",
     )
     generate.add_argument("--max-depth", type=int, default=64)
@@ -338,6 +363,15 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--output", type=Path)
     evaluate.add_argument("--device", type=str)
     evaluate.add_argument("--max-query-groups", type=int)
+
+    evaluator_gate = learn_commands.add_parser(
+        "gate-evaluator", help="用冻结 gate 检查独立 test、adversarial 与静态成本"
+    )
+    evaluator_gate.add_argument("--run-manifest", type=Path, required=True)
+    evaluator_gate.add_argument("--test-metrics", type=Path, required=True)
+    evaluator_gate.add_argument("--adversarial-metrics", type=Path, required=True)
+    evaluator_gate.add_argument("--gate", type=Path, required=True)
+    evaluator_gate.add_argument("--output", type=Path, required=True)
 
     direct_fit = learn_commands.add_parser("direct-fit", help="逐 query group 优化参数，测量方向切片上界")
     direct_fit.add_argument("--dataset", type=Path, required=True)
@@ -383,6 +417,8 @@ def main(argv: list[str] | None = None) -> int:
         return _audit_learning(args)
     if args.command == "learn" and args.learn_command == "list-pipelines":
         return _list_learning_pipelines()
+    if args.command == "learn" and args.learn_command == "gate-evaluator":
+        return _gate_evaluator(args)
     if args.command == "learn" and args.learn_command == "evaluate":
         return _evaluate_learning(args)
     if args.command == "learn" and args.learn_command == "direct-fit":

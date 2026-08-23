@@ -9,6 +9,7 @@ HEMISPHERE_PARAMETERIZATION_ID = "equal-area-fibonacci-hemisphere@2"
 SPHERE_PARAMETERIZATION_ID = "equal-area-fibonacci-sphere@1"
 VIEW_PARAMETERIZATION_ID = "grazing-weighted-fibonacci-hemisphere@2"
 MIXTURE_QUERY_PROFILE_ID = "ncls.e0-peak-grazing-mixture@2"
+E1_MIXTURE_QUERY_PROFILE_ID = "ncls.e1-independent-peak-grazing-mixture@1"
 _PEAK_ANGULAR_SCALES = (0.0025, 0.0125, 0.06)
 
 

@@ -167,6 +167,19 @@ conda run -n neural-shading ncls learn evaluate `
 
 `adversarial_probe` 不参与 checkpoint 选优。viewer capture 又是另一类独立证据，不能用这里的 query 指标代替。
 
+E1 正式 run 在 test 与 adversarial 文件都生成后，用预先冻结的数值和静态成本 gate 复核：
+
+```powershell
+conda run -n neural-shading ncls learn gate-evaluator `
+  --run-manifest artifacts\runs\e1-dense-001\run_manifest.json `
+  --test-metrics artifacts\runs\e1-dense-001\test_metrics.json `
+  --adversarial-metrics artifacts\runs\e1-dense-001\adversarial_metrics.json `
+  --gate configs\research\e1-evaluator-gates-v1.json `
+  --output artifacts\runs\e1-dense-001\gate_result.json
+```
+
+`ncls.e1-single-material-evaluator-acceptance@1` 在正式 sweep 前冻结 normalized L1、log、能量、peak ratio/角度、top-energy recall、相对 reference standard error、互易性、finite/nonnegative 和 `B_asset/C_prepare/C_eval` 上限。失败命令本身仍返回成功并写出逐项检查，表示可复现的研究淘汰证据；只有合同、hash 或输入不一致才抛出错误。E4 的真实 GPU 时间、显存、带宽和 viewer 视觉 gate 不能被这些静态 MAC/byte 上限替代。
+
 ## Direct fit 的三种结论范围
 
 direct fit 必须在 manifest 中记录 scope：

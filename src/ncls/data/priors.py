@@ -14,9 +14,11 @@ from ncls.core.material import (
 
 LAYER_STACK_RESEARCH_PRIOR_ID = "ncls.layer-stack-research-prior@1"
 E0_LAYER_STACK_BOUNDARY_PROFILE_ID = "ncls.e0-layer-stack-boundary@1"
+E1_LAYER_STACK_NARROW_CONDUCTOR_PROFILE_ID = "ncls.e1-layer-stack-narrow-conductor@1"
 LAYER_STACK_STATE_PROFILE_IDS = (
     LAYER_STACK_RESEARCH_PRIOR_ID,
     E0_LAYER_STACK_BOUNDARY_PROFILE_ID,
+    E1_LAYER_STACK_NARROW_CONDUCTOR_PROFILE_ID,
 )
 E0_LAYER_STACK_BOUNDARY_CASE_IDS = (
     "narrow-dielectric-over-diffuse",
@@ -281,3 +283,16 @@ def e0_layer_stack_boundary_cases() -> tuple[tuple[str, LayerStackIR], ...]:
             ),
         ),
     )
+
+
+def e1_layer_stack_narrow_conductor_cases() -> tuple[tuple[str, LayerStackIR], ...]:
+    """返回 E1 首个容量压力材质；独立 profile 防止把 E0 六案例外形当训练合同。"""
+
+    selected = tuple(
+        (case_id, stack)
+        for case_id, stack in e0_layer_stack_boundary_cases()
+        if case_id == "narrow-anisotropic-conductor"
+    )
+    if len(selected) != 1:
+        raise RuntimeError("E1 narrow conductor case is absent from the frozen E0 boundary set")
+    return selected

@@ -119,8 +119,11 @@ def evaluator_metric_distributions(
 
 def summarize(values: np.ndarray) -> dict[str, float]:
     return {
+        "minimum": float(np.min(values)),
+        "p5": float(np.quantile(values, 0.05)),
         "mean": float(np.mean(values)),
         "median": float(np.median(values)),
         "p90": float(np.quantile(values, 0.9)),
         "p95": float(np.quantile(values, 0.95)),
+        "maximum": float(np.max(values)),
     }

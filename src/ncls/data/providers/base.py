@@ -18,6 +18,7 @@ from ncls.data.contract import (
     SurfaceSample,
 )
 from ncls.data.directions import (
+    E1_MIXTURE_QUERY_PROFILE_ID,
     MIXTURE_QUERY_PROFILE_ID,
     equal_area_hemisphere,
     equal_area_sphere,
@@ -98,9 +99,15 @@ class BaseProvider:
                 else 0
             )
             role_offset = np.mod(partition_index * 0.2718281828459045, 2.0) * np.pi
-            views = stratified_view_directions(count, azimuth_offset=role_offset)
+            views = stratified_view_directions(
+                count,
+                max_theta_degrees=(
+                    89.0 if self.config.query_profile_id == E1_MIXTURE_QUERY_PROFILE_ID else 82.0
+                ),
+                azimuth_offset=role_offset,
+            )
             role_seed = query_seed ^ ((role + 1) * 0x9E3779B1)
-            use_mixture = (
+            use_mixture = self.config.query_profile_id == E1_MIXTURE_QUERY_PROFILE_ID or (
                 self.config.query_profile_id == MIXTURE_QUERY_PROFILE_ID
                 and role in {int(QueryRole.TRAIN), int(QueryRole.ADVERSARIAL_PROBE)}
             )

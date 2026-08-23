@@ -31,6 +31,8 @@ conda run -n neural-shading python -m pytest tests\unit -q
 6. integration head：与同一 evaluator 的高样本环境/面光积分对照；
 7. 系统阶段：多灯 scaling、viewer capture 和 Falcor/UE 式工作负载。
 
+E1 的监督入口与 evaluator acceptance 分别由 `configs/research/e1-supervision-gates-v1.json` 和 `configs/research/e1-evaluator-gates-v1.json` 固定。前者运行 `learn audit`，后者运行 `learn gate-evaluator`；gate 失败是实验结果，不应通过调高阈值让一次 run 事后通过。
+
 E0 pilot audit 与冻结 gate：
 
 ```powershell

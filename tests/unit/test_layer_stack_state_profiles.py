@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from ncls.core.material import (
@@ -12,7 +13,9 @@ from ncls.data import CollectionConfig
 from ncls.data.priors import (
     E0_LAYER_STACK_BOUNDARY_CASE_IDS,
     E0_LAYER_STACK_BOUNDARY_PROFILE_ID,
+    E1_LAYER_STACK_NARROW_CONDUCTOR_PROFILE_ID,
     e0_layer_stack_boundary_cases,
+    e1_layer_stack_narrow_conductor_cases,
 )
 from ncls.data.providers import LayerStackProvider, LayerStackProviderConfig
 
@@ -68,3 +71,32 @@ def test_e0_boundary_profile_rejects_unversioned_shape_changes() -> None:
             local_state_count=2,
             state_profile_id=E0_LAYER_STACK_BOUNDARY_PROFILE_ID,
         )
+
+
+def test_e1_narrow_conductor_profile_is_one_explicit_capacity_state() -> None:
+    cases = e1_layer_stack_narrow_conductor_cases()
+    assert tuple(case_id for case_id, _ in cases) == ("narrow-anisotropic-conductor",)
+    config = CollectionConfig(
+        view_count=8,
+        validation_view_count=2,
+        test_view_count=2,
+        adversarial_view_count=2,
+        light_count=32,
+        query_profile_id="ncls.e1-independent-peak-grazing-mixture@1",
+    )
+    provider = LayerStackProvider(
+        config,
+        LayerStackProviderConfig(
+            family_count=1,
+            local_state_count=1,
+            state_profile_id=E1_LAYER_STACK_NARROW_CONDUCTOR_PROFILE_ID,
+        ),
+        evaluator=object(),
+    )
+    assert len(provider.source_states()) == 1
+    state = provider.source_states()[0]
+    assert state.split == 0
+    plan = provider.query_plan(state)
+    assert plan.query_roles.tolist() == [0] * 8 + [1] * 2 + [2] * 2 + [3] * 2
+    assert all("peak" in proposal for proposal in plan.proposal_id)
+    assert np.min(plan.view_directions[:, 2]) < np.sin(np.deg2rad(5.0))

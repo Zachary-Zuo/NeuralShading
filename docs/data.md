@@ -37,6 +37,8 @@ E0 的定向覆盖诊断使用版本化的 `ncls.e0-peak-grazing-mixture@2`。�
 
 该 profile 先用于 E0 probe 和 proposal 对比，不自动成为后续正式训练分布。只有 audit 证明覆盖、估计方差与加权积分均满足冻结 gate 后，才会用明确配置生成正式 H5。
 
+E1 的第一个单材质容量数据使用独立的 `ncls.e1-layer-stack-narrow-conductor@1` state profile 和 `ncls.e1-independent-peak-grazing-mixture@1` query profile。前者只包含一个固定极窄各向异性 conductor，不把 E0 六案例的集合外形提升为训练接口；后者让 train、validation、test 和 adversarial 四个 role 都使用不同 seed 的 uniform + 移动 peak + grazing mixture，并把 `wo` 扩展到 89°，使 held-out test 本身也能检验窄峰和掠射。对应监督入口由 `configs/research/e1-supervision-gates-v1.json` 冻结；它要求 64/16/16/16 个互不碰撞的 query group，并不代替模型质量 gate。
+
 ## 单 provider 与指定资产
 
 `--provider` 可以重复，`--material-id` 只允许在恰好一个 provider 时使用：
