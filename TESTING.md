@@ -8,7 +8,7 @@
 conda run -n neural-shading python -m pytest tests\unit -q
 ```
 
-覆盖 `MaterialProgram`/`LayerStackIR`、HDF5 固定合同与内容哈希、材质无关 reader、散射合同、`legacy-ltc-k2` 私有状态、训练/评测/checkpoint/TensorBoard、MethodBundle 导出与内容哈希。
+覆盖 `MaterialProgram`/`LayerStackIR`、HDF5 固定合同与内容哈希、材质无关 reader、散射合同、`legacy-ltc-k2` 私有状态、candidate-neutral 训练/评测/checkpoint/TensorBoard、E1 单材质 train-only transform 与独立 adversarial probe、MethodBundle 导出与内容哈希。
 
 ## Slang/GPU 与随机游走参考
 
@@ -37,7 +37,7 @@ E0 pilot audit 与冻结 gate：
 conda run -n neural-shading python -m ncls.cli learn audit `
   --dataset data\reference-responses\layer-stack-evaluator-pilot-v3.h5 `
   --output artifacts\research\supervision-audit\<dataset-id> `
-  --gate configs\research\e0-supervision-gates-v3.json
+  --gate configs\research\e0-supervision-gates-v6.json
 ```
 
 `gate_result.json` 失败是可执行研究结果，不是测试进程错误；只有合同、hash 或 audit 自身错误才返回非零。训练入口应显式检查 gate 证据，不能把失败 pilot 当作正式 E1 数据。

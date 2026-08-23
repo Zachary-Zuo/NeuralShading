@@ -42,6 +42,13 @@ def _git_commit() -> str:
     return value if result.returncode == 0 and value else "unknown"
 
 
+def _sha256_json(value: Any) -> str:
+    payload = json.dumps(
+        value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def _checkpoint_payload(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
@@ -52,6 +59,7 @@ def _checkpoint_payload(
     step: int,
     validation_metrics: dict[str, Any] | None,
     numpy_rng: np.random.Generator,
+    fitted_training_state: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "format_name": CHECKPOINT_FORMAT,
@@ -65,6 +73,8 @@ def _checkpoint_payload(
         "dataset_id": store.dataset.manifest.dataset_id,
         "training_config": config.to_dict(),
         "training_config_sha256": config.resolved_sha256,
+        "fitted_training_state": fitted_training_state,
+        "fitted_training_state_sha256": _sha256_json(fitted_training_state),
         "step": step,
         "model_state": model.state_dict(),
         "optimizer_state": optimizer.state_dict(),
@@ -102,11 +112,16 @@ def train(
         raise ValueError("training config research_stage does not match the registered pipeline role")
     store = pipeline.open_store(str(dataset_path))
     lifecycle_indices = {
-        role: pipeline.lifecycle_indices(store, role)
+        role: store.select_indices(
+            pipeline.lifecycle_indices(store, role),
+            config.dataset_selection,
+        )
         for role in ("train", "validation", "test")
     }
     if len(lifecycle_indices["train"]) == 0 or len(lifecycle_indices["validation"]) == 0:
         raise ValueError("training requires nonempty train and validation lifecycle partitions")
+    fitted_training_state = dict(pipeline.fit_training_state(store, lifecycle_indices["train"]))
+    pipeline.load_training_state(fitted_training_state)
     model = pipeline.create_model(config.model_parameters).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -119,7 +134,7 @@ def train(
     ).hexdigest()
     manifest: dict[str, Any] = {
         "format_name": "ncls.training-run",
-        "format_version": 2,
+        "format_version": 3,
         "run_id": run_id,
         "status": "running",
         "created_at": created_at,
@@ -134,7 +149,13 @@ def train(
         "architecture_id": pipeline.descriptor.architecture_id,
         "representation_id": pipeline.descriptor.representation_id,
         "feature_contract": dict(pipeline.feature_contract),
+        "dataset_selection": {
+            name: list(values) for name, values in config.dataset_selection.items()
+        },
+        "fitted_training_state": fitted_training_state,
+        "fitted_training_state_sha256": _sha256_json(fitted_training_state),
         "training_config_sha256": config.resolved_sha256,
+        "model_costs": dict(pipeline.parameter_costs(model)),
         "parameter_count": sum(parameter.numel() for parameter in model.parameters()),
         "device": str(device),
         "selection_split": "validation",
@@ -186,7 +207,10 @@ def train(
                     if not isinstance(summary, dict):
                         continue
                     for summary_name, value in summary.items():
-                        writer.add_scalar(f"validation/{metric_name}_{summary_name}", value, step)
+                        if isinstance(value, (int, float)):
+                            writer.add_scalar(
+                                f"validation/{metric_name}_{summary_name}", value, step
+                            )
                 metric_name, summary_name = config.selection_metric.split(".", 1)
                 score = float(latest_validation[metric_name][summary_name])
                 if score < best_score:
@@ -202,6 +226,7 @@ def train(
                             step=step,
                             validation_metrics=latest_validation,
                             numpy_rng=np_rng,
+                            fitted_training_state=fitted_training_state,
                         ),
                     )
 
@@ -217,6 +242,7 @@ def train(
                         step=step,
                         validation_metrics=latest_validation,
                         numpy_rng=np_rng,
+                        fitted_training_state=fitted_training_state,
                     ),
                 )
         writer.flush()
@@ -244,4 +270,5 @@ def train(
         raise
     finally:
         writer.close()
+        store.close()
     return manifest

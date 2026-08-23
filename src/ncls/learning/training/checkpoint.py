@@ -9,7 +9,7 @@ import torch
 
 
 CHECKPOINT_FORMAT = "ncls.learning-checkpoint"
-CHECKPOINT_VERSION = 2
+CHECKPOINT_VERSION = 3
 
 
 def sha256_file(path: Path) -> str:

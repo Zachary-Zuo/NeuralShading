@@ -142,9 +142,14 @@ def _evaluate_learning(args: argparse.Namespace) -> int:
         device_name=args.device,
         max_query_groups=args.max_query_groups,
     )
-    relative = result["metrics"]["relative_l1"]
+    metric_name = (
+        "solid_angle_normalized_l1"
+        if "solid_angle_normalized_l1" in result["metrics"]
+        else "relative_l1"
+    )
+    relative = result["metrics"][metric_name]
     print(
-        f"{args.split}: relative-L1 median={relative['median']:.6f}, "
+        f"{args.split}: {metric_name} median={relative['median']:.6f}, "
         f"p90={relative['p90']:.6f}"
     )
     return 0
@@ -322,10 +327,14 @@ def build_parser() -> argparse.ArgumentParser:
     train_command.add_argument("--seed", type=int, default=20260822)
     train_command.add_argument("--device", type=str)
 
-    evaluate = learn_commands.add_parser("evaluate", help="显式评测 validation 或 held-out test")
+    evaluate = learn_commands.add_parser(
+        "evaluate", help="显式评测 validation、held-out test 或 adversarial probe"
+    )
     evaluate.add_argument("--dataset", type=Path, required=True)
     evaluate.add_argument("--checkpoint", type=Path, required=True)
-    evaluate.add_argument("--split", choices=("train", "validation", "test"), required=True)
+    evaluate.add_argument(
+        "--split", choices=("train", "validation", "test", "adversarial_probe"), required=True
+    )
     evaluate.add_argument("--output", type=Path)
     evaluate.add_argument("--device", type=str)
     evaluate.add_argument("--max-query-groups", type=int)

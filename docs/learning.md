@@ -2,9 +2,9 @@
 
 训练、direct fit、独立评测和部署导出是项目的长期功能层。具体 representation、网络结构、latent 获取方式和 loss 通过版本化配置与注册实现替换；更换研究候选不会删除或重定义这些生命周期。
 
-公共 runner 现在只依赖 `ncls.learning-pipeline@2`：它从 registry 取得 response reader、dataset partition policy、source adapter、feature/target transform、representation/model、latent inference、compiler、loss、metric suite 和 exporter 的版本化身份，再执行训练、validation、checkpoint 与独立评测。candidate-specific 实现负责把公共 response batch 变成自己的模型输入；runner 不再导入 LayerStack 或某个 backend 的预测函数。机器可读合同和配置 schema 分别位于 `src/ncls/learning/schemas/learning_pipeline_v2.schema.json` 与 `training_config_v3.schema.json`。
+公共 runner 现在只依赖 `ncls.learning-pipeline@2`：它从 registry 取得 response reader、dataset partition policy、source adapter、feature/target transform、representation/model、latent inference、compiler、loss、metric suite 和 exporter 的版本化身份，再执行训练、validation、checkpoint 与独立评测。candidate-specific 实现负责把公共 response batch 变成自己的模型输入；runner 不再导入 LayerStack 或某个 backend 的预测函数。机器可读合同和配置 schema 分别位于 `src/ncls/learning/schemas/learning_pipeline_v2.schema.json` 与 `training_config_v4.schema.json`。
 
-当前唯一已注册项是 `legacy-ltc-k2-p1-deployment-regression@1`。它被明确标为 `deployment-regression`，只负责保留既有 compiler、MethodBundle、Slang 和 viewer 生命周期，不进入 E1 目标 neural evaluator 的候选排名。它是迁移适配而不是第二套 runner：E1 pipeline 建立并迁移部署回归后，删除条件是没有 checkpoint/export/viewer 调用仍需直接依赖 legacy feature/prediction 入口。
+当前正式 registry 同时包含 E1 的 `dense-latent-small-mlp-linear-e1@1`、`dense-latent-small-mlp-log1p-e1@1` 和部署回归项 `legacy-ltc-k2-p1-deployment-regression@1`。两个 E1 pipeline 共用材质无关的 `ReferenceQueryStore`，固定一个 source state 后按 query role 划分 train、validation、test；它们分别验证正值 linear 输出和只从最终 train query 拟合 channel scale 的 `log1p` target transform。部署回归项只负责保留既有 compiler、MethodBundle、Slang 和 viewer 生命周期，不进入目标 neural evaluator 排名。legacy 适配的删除条件仍是没有 checkpoint/export/viewer 调用依赖其专用 feature/prediction 入口。
 
 ## 三条路径的边界
 
@@ -66,13 +66,14 @@ p  = Proposal.pdf(proposal_parameters, wi)
 
 ## TrainingConfig
 
-所有超参数先解析为 `ncls.training-config@3`，并将完整 JSON、pipeline contract 与各自 SHA-256 写入 run。最小示例：
+所有超参数先解析为 `ncls.training-config@4`，并将完整 JSON、pipeline contract、最终 dataset selection、train-only fitted state 与各自 SHA-256 写入 run。`dataset_selection` 只负责从 H5 选择明确的 state、asset 或 family，不改变落盘 split；E1 单材质 pipeline 要求选择后恰好只有一个 source state。最小示例：
 
 ```json
 {
   "pipeline_id": "legacy-ltc-k2-p1-deployment-regression@1",
   "research_stage": "deployment-regression",
   "model_parameters": {"width": 64},
+  "dataset_selection": {},
   "steps": 10000,
   "batch_size": 256,
   "learning_rate": 0.0003,
@@ -86,7 +87,7 @@ p  = Proposal.pdf(proposal_parameters, wi)
   "deterministic": true,
   "selection_metric": "relative_l1.median",
   "schema_name": "ncls.training-config",
-  "schema_version": 3
+  "schema_version": 4
 }
 ```
 
@@ -114,7 +115,7 @@ run/
     last.pt.sha256
 ```
 
-checkpoint 保存 architecture、representation、feature contract、dataset ID、模型/optimizer/RNG 状态和 validation 证据。loader 总是先验证 sidecar hash。
+checkpoint 保存 architecture、representation、feature contract、dataset ID、模型/optimizer/RNG 状态、只由最终 train query 拟合的 transform/codebook 状态及 validation 证据。loader 先验证 sidecar hash，再验证 training config、pipeline contract 和 fitted state 的内容哈希；validation/test 不会重新拟合这些状态。
 
 ## E0 supervision audit
 
@@ -131,7 +132,7 @@ conda run -n neural-shading ncls learn audit `
 
 ## TensorBoard
 
-训练记录 `train/loss`、gradient norm、learning rate，以及 validation loss、median/p90/p95 relative-L1。不会写入 `test/*` tag。
+训练记录 `train/loss`、gradient norm、learning rate，以及 validation loss 和各 evaluator 指标的 mean/median/p90/p95。指标包括立体角加权 normalized L1、linear/log error、积分能量、峰值比例、峰位角、top-energy recall、相对 reference standard error、互易性、finite 与非负比例；不会写入 `test/*` 或 adversarial tag。
 
 ```powershell
 conda run -n neural-shading tensorboard `
@@ -153,6 +154,18 @@ conda run -n neural-shading ncls learn evaluate `
 ```
 
 评测拒绝 dataset ID 或 feature contract 不一致的 checkpoint。test 结果是独立文件，不回写训练选择记录。
+
+对抗性 query 同样只能在 checkpoint 固定后显式运行，并写到不同文件：
+
+```powershell
+conda run -n neural-shading ncls learn evaluate `
+  --dataset data\reference-responses\layer-stack-e1-v4.h5 `
+  --checkpoint artifacts\runs\e1-dense-001\checkpoints\best.pt `
+  --split adversarial_probe `
+  --output artifacts\runs\e1-dense-001\adversarial_metrics.json
+```
+
+`adversarial_probe` 不参与 checkpoint 选优。viewer capture 又是另一类独立证据，不能用这里的 query 指标代替。
 
 ## Direct fit 的三种结论范围
 

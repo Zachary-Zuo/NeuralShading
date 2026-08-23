@@ -254,7 +254,12 @@ def eval_direct_top(
     """Evaluate the exact top-interface reflection as f*cos(theta_l)."""
     tile_count = len(view_directions)
     view = _to_layer_frame(view_directions, state.tangent_rotation)
-    lights = light_directions[None, :, :].expand(tile_count, -1, -1)
+    if light_directions.ndim == 2:
+        lights = light_directions[None, :, :].expand(tile_count, -1, -1)
+    elif light_directions.ndim == 3 and light_directions.shape[0] == tile_count:
+        lights = light_directions
+    else:
+        raise ValueError("light_directions must be [light, 3] or [tile, light, 3]")
     light = _to_layer_frame(lights, state.tangent_rotation[:, None])
     wi = view[:, None, :].expand_as(light)
     positive = (wi[..., 2] > 1e-6) & (light[..., 2] > 1e-6)
@@ -308,7 +313,7 @@ def eval_direct_top(
         torch.where(layer_type == 1, conductor, torch.where(layer_type == 2, diffuse, sheen)),
     )
     result = torch.where(positive[..., None], result, torch.zeros_like(result))
-    return result * torch.clamp(light_directions[None, :, 2:3], min=0.0)
+    return result * torch.clamp(lights[..., 2:3], min=0.0)
 
 
 def evaluate_state_response_cos(

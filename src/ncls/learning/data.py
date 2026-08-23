@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, Mapping
 
 import numpy as np
 
@@ -49,6 +50,37 @@ class ReferenceQueryStore:
         query_role = lifecycle_role if policy_id != "ncls.source-state-split@1" else None
         return self.dataset.group_indices(source_split=source_split, query_role=query_role)
 
+    def select_indices(
+        self,
+        indices: np.ndarray,
+        selection: Mapping[str, Any],
+    ) -> np.ndarray:
+        requested = np.asarray(indices, dtype=np.int64)
+        if requested.ndim != 1:
+            raise ValueError("selection indices must be one-dimensional")
+        if not selection:
+            return requested
+        allowed = {"state_ids", "asset_ids", "family_ids"}
+        unknown = set(selection) - allowed
+        if unknown:
+            raise ValueError(f"unsupported dataset selection fields: {sorted(unknown)}")
+        query_states = np.asarray(self.dataset.stream["queries/state_index"], dtype=np.int64)[requested]
+        keep = np.ones(len(requested), dtype=bool)
+        for field, state_field in (
+            ("state_ids", "state_id"),
+            ("asset_ids", "asset_id"),
+            ("family_ids", "family_id"),
+        ):
+            if field not in selection:
+                continue
+            available = self.dataset.state_strings(state_field)
+            accepted = set(map(str, selection[field]))
+            unknown_values = accepted - set(map(str, available.tolist()))
+            if unknown_values:
+                raise ValueError(f"dataset selection contains unknown {field}: {sorted(unknown_values)}")
+            keep &= np.asarray([str(available[state]) in accepted for state in query_states])
+        return requested[keep]
+
     @staticmethod
     def sample_batch_indices(candidates: np.ndarray, batch_size: int, rng: np.random.Generator) -> np.ndarray:
         if batch_size < 1:
@@ -74,12 +106,14 @@ class LayerStackReferenceStore(ReferenceQueryStore):
         super().__init__(dataset_path, verify_hashes=verify_hashes)
         self.features: StackFeatureTable = load_feature_table(self.dataset)
         first = self.dataset.group_batch((0,))["wi"][0]
+        shared = True
         for start in range(0, self.query_group_count, 4096):
             stop = min(start + 4096, self.query_group_count)
             batch_lights = np.asarray(self.dataset.stream["queries/wi"][start:stop], dtype=np.float32)
             if not np.all(batch_lights == first[None, ...]):
-                raise ValueError("current LayerStack baseline requires one shared incident-direction grid")
-        self.lights = np.array(first, dtype=np.float32, copy=True)
+                shared = False
+                break
+        self.lights = np.array(first, dtype=np.float32, copy=True) if shared else None
 
     def batch(self, query_group_indices: np.ndarray) -> dict[str, np.ndarray]:
         result = super().batch(query_group_indices)

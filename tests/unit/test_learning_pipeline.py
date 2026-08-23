@@ -15,6 +15,7 @@ from ncls.learning.direct_fit import DirectFitConfig, run_direct_fit
 from ncls.learning.evaluation import evaluate_checkpoint
 from ncls.learning.features import CONTINUOUS_FEATURE_COUNT, FEATURE_CONTRACT_ID, encode_layer_stack
 from ncls.learning.training import TrainingConfig, train
+from ncls.learning.training.checkpoint import load_checkpoint
 
 
 class _ConstantEvaluator:
@@ -56,6 +57,36 @@ def _dataset(path: Path) -> None:
             max_depth=4,
         ),
         evaluator=_ConstantEvaluator(4),
+    )
+    collect_reference_dataset(
+        path,
+        [provider],
+        collection,
+        created_at="2026-08-24T00:00:00+00:00",
+        generator_git_commit="test",
+    )
+
+
+def _e1_dataset(path: Path) -> None:
+    collection = CollectionConfig(
+        view_count=2,
+        validation_view_count=1,
+        test_view_count=1,
+        adversarial_view_count=1,
+        light_count=8,
+        seed=41,
+        split_direction_scramble=True,
+    )
+    provider = LayerStackProvider(
+        collection,
+        LayerStackProviderConfig(
+            family_count=3,
+            local_state_count=1,
+            samples_per_replica=4,
+            query_group_batch=3,
+            max_depth=4,
+        ),
+        evaluator=_ConstantEvaluator(8),
     )
     collect_reference_dataset(
         path,
@@ -165,6 +196,93 @@ def test_training_writes_tensorboard_best_last_and_keeps_test_held_out(tmp_path:
     weight_path.write_bytes(weight_path.read_bytes() + b"corrupt")
     with np.testing.assert_raises_regex(ValueError, "content hash mismatch"):
         MethodBundle.open(bundle_path)
+
+
+def test_dense_e1_pipeline_fits_transform_from_selected_train_queries_only(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "e1-dataset.h5"
+    run_path = tmp_path / "e1-run"
+    _e1_dataset(dataset_path)
+    with ReferenceQueryStore(dataset_path) as store:
+        state_id = str(store.dataset.state_strings("state_id")[0])
+        expected_train = store.select_indices(
+            store.partition_indices("ncls.query-role-within-state@1", "train"),
+            {"state_ids": [state_id]},
+        )
+        response = np.asarray(
+            store.dataset.stream["responses/mean"][expected_train], dtype=np.float64
+        ).reshape(-1, 3)
+        peak = np.max(np.abs(response), axis=0)
+        expected_scale = np.maximum(
+            np.quantile(np.maximum(response, 0.0), 0.9, axis=0),
+            np.maximum(1e-3 * peak, 1e-6),
+        )
+
+    config = TrainingConfig(
+        pipeline_id="dense-latent-small-mlp-log1p-e1@1",
+        research_stage="e1-single-material-capacity",
+        model_parameters={
+            "latent_dimension": 4,
+            "width": 8,
+            "prepare_layer_count": 1,
+            "evaluate_layer_count": 1,
+            "direction_encoding_id": "ncls.local-cartesian-directions@1",
+            "fourier_band_count": 1,
+        },
+        dataset_selection={"state_ids": [state_id]},
+        steps=2,
+        batch_size=2,
+        learning_rate=1e-3,
+        validation_interval=1,
+        checkpoint_interval=1,
+        max_validation_query_groups=1,
+        seed=43,
+        device="cpu",
+        selection_metric="solid_angle_normalized_l1.median",
+    )
+    manifest = train(dataset_path, run_path, config)
+    assert manifest["status"] == "complete"
+    assert manifest["lifecycle_query_group_counts"] == {"train": 2, "validation": 1, "test": 1}
+    assert manifest["dataset_selection"] == {"state_ids": [state_id]}
+    assert manifest["fitted_training_state"]["fit_scope"] == "final-train-query-groups-only"
+    np.testing.assert_allclose(
+        manifest["fitted_training_state"]["target_channel_scale"], expected_scale
+    )
+    assert manifest["model_costs"]["B_shared_fp32"] == 0
+    assert manifest["model_costs"]["B_asset_fp32"] > 0
+
+    checkpoint = load_checkpoint(run_path / "checkpoints" / "best.pt")
+    assert checkpoint["fitted_training_state_sha256"] == manifest["fitted_training_state_sha256"]
+    result = evaluate_checkpoint(
+        dataset_path,
+        run_path / "checkpoints" / "best.pt",
+        split="test",
+        device_name="cpu",
+    )
+    metrics = result["metrics"]
+    assert metrics["query_group_count"] == 1
+    for name in (
+        "solid_angle_normalized_l1",
+        "linear_relative_l1",
+        "log_l1",
+        "energy_relative_error",
+        "peak_ratio",
+        "peak_angle_degrees",
+        "top_5_percent_energy_recall",
+        "model_error_over_reference_standard_error",
+        "finite_rate",
+        "nonnegative_rate",
+        "reciprocity_relative_l1",
+    ):
+        assert name in metrics
+    assert "ncls.layer-stack@1" in metrics["by_family"]
+    adversarial = evaluate_checkpoint(
+        dataset_path,
+        run_path / "checkpoints" / "best.pt",
+        split="adversarial_probe",
+        device_name="cpu",
+    )
+    assert adversarial["evaluation_role"] == "adversarial_probe"
+    assert adversarial["metrics"]["query_group_count"] == 1
 
 
 def test_direct_fit_is_a_separate_representation_ceiling_run(tmp_path: Path) -> None:

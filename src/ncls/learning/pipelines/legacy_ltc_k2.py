@@ -43,7 +43,11 @@ class LegacyLtcK2Pipeline(LearningPipeline):
     feature_contract = FEATURE_CONTRACT
 
     def open_store(self, dataset_path: str) -> ReferenceQueryStore:
-        return LayerStackReferenceStore(dataset_path)
+        store = LayerStackReferenceStore(dataset_path)
+        if store.lights is None:
+            store.close()
+            raise ValueError("legacy deployment regression requires one shared incident-direction grid")
+        return store
 
     def create_model(self, model_parameters: Mapping[str, Any]) -> nn.Module:
         allowed = {"width"}
@@ -61,6 +65,8 @@ class LegacyLtcK2Pipeline(LearningPipeline):
     ) -> torch.Tensor:
         if not isinstance(store, LayerStackReferenceStore):
             raise TypeError("legacy pipeline requires LayerStackReferenceStore")
+        if store.lights is None:
+            raise ValueError("legacy deployment regression requires one shared incident-direction grid")
         lights = torch.as_tensor(store.lights, dtype=torch.float32, device=device)
         return predict_legacy_ltc_k2_response(model, dict(batch), lights)
 

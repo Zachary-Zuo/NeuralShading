@@ -91,6 +91,43 @@ class LearningPipeline(ABC):
     def lifecycle_indices(self, store: ReferenceQueryStore, lifecycle_role: str) -> np.ndarray:
         return store.partition_indices(self.descriptor.partition_policy_id, lifecycle_role)
 
+    def evaluation_indices(self, store: ReferenceQueryStore, evaluation_role: str) -> np.ndarray:
+        if evaluation_role == "adversarial_probe":
+            return store.dataset.group_indices(query_role=evaluation_role)
+        return self.lifecycle_indices(store, evaluation_role)
+
+    def fit_training_state(
+        self,
+        store: ReferenceQueryStore,
+        train_indices: np.ndarray,
+    ) -> Mapping[str, Any]:
+        """只允许从最终 train partition 拟合 transform/codebook 等压缩期状态。"""
+
+        return {}
+
+    def load_training_state(self, state: Mapping[str, Any]) -> None:
+        if state:
+            raise ValueError(f"pipeline {self.descriptor.pipeline_id} does not accept fitted training state")
+
+    def parameter_costs(self, model: nn.Module) -> Mapping[str, Any]:
+        total = sum(parameter.numel() for parameter in model.parameters())
+        return {
+            "parameter_count": total,
+            "B_asset_fp32": 0,
+            "B_shared_fp32": 4 * total,
+            "C_prepare_macs": None,
+            "C_eval_macs": None,
+        }
+
+    def additional_metric_distributions(
+        self,
+        model: nn.Module,
+        batch: Mapping[str, torch.Tensor],
+        store: ReferenceQueryStore,
+        device: torch.device,
+    ) -> Mapping[str, np.ndarray]:
+        return {}
+
     @abstractmethod
     def create_model(self, model_parameters: Mapping[str, Any]) -> nn.Module:
         raise NotImplementedError
