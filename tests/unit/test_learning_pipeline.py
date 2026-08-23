@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
@@ -140,6 +141,8 @@ def test_training_writes_tensorboard_best_last_and_keeps_test_held_out(tmp_path:
         steps=2,
         batch_size=2,
         learning_rate=1e-3,
+        learning_rate_schedule="cosine",
+        final_learning_rate_fraction=0.1,
         validation_interval=1,
         checkpoint_interval=1,
         max_validation_query_groups=1,
@@ -161,6 +164,9 @@ def test_training_writes_tensorboard_best_last_and_keeps_test_held_out(tmp_path:
     events.Reload()
     scalar_tags = set(events.Tags()["scalars"])
     assert "train/loss" in scalar_tags
+    learning_rates = [event.value for event in events.Scalars("train/learning_rate")]
+    assert learning_rates[0] == pytest.approx(1e-3)
+    assert learning_rates[-1] < learning_rates[0]
     assert "validation/relative_l1_median" in scalar_tags
     assert not any(tag.startswith("test/") for tag in scalar_tags)
 

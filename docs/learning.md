@@ -2,7 +2,9 @@
 
 训练、direct fit、独立评测和部署导出是项目的长期功能层。具体 representation、网络结构、latent 获取方式和 loss 通过版本化配置与注册实现替换；更换研究候选不会删除或重定义这些生命周期。
 
-公共 runner 现在只依赖 `ncls.learning-pipeline@2`：它从 registry 取得 response reader、dataset partition policy、source adapter、feature/target transform、representation/model、latent inference、compiler、loss、metric suite 和 exporter 的版本化身份，再执行训练、validation、checkpoint 与独立评测。candidate-specific 实现负责把公共 response batch 变成自己的模型输入；runner 不再导入 LayerStack 或某个 backend 的预测函数。机器可读合同和配置 schema 分别位于 `src/ncls/learning/schemas/learning_pipeline_v2.schema.json` 与 `training_config_v4.schema.json`。
+公共 runner 现在只依赖 `ncls.learning-pipeline@2`：它从 registry 取得 response reader、dataset partition policy、source adapter、feature/target transform、representation/model、latent inference、compiler、loss、metric suite 和 exporter 的版本化身份，再执行训练、validation、checkpoint 与独立评测。candidate-specific 实现负责把公共 response batch 变成自己的模型输入；runner 不再导入 LayerStack 或某个 backend 的预测函数。机器可读 pipeline 合同位于 `src/ncls/learning/schemas/learning_pipeline_v2.schema.json`；新训练配置使用 `training_config_v5.schema.json`。
+
+TrainingConfig v5 把 `constant` 或 `cosine` 学习率策略、以及最终学习率相对初值的比例写入 manifest 与 checkpoint hash。它来自多界面 residual 在固定学习率后段振荡的实际证据，不是 architecture-specific 分支。v4 的语义保持为 constant，读取时不会把 v5 字段混入其 canonical payload，因此既有 run 仍可按原 hash 追溯；新配置不得再使用 v4。v4 兼容读取只用于复现实验，删除条件是所有被实验索引引用的 v4 配置和 checkpoint 已迁入带可执行环境的只读归档，且没有当前调用方再加载它。
 
 当前正式 registry 同时包含 E1 的 linear、q90-scale `log1p` 和 train-only standardized `log1p` dense evaluator，以及部署回归项 `legacy-ltc-k2-p1-deployment-regression@1`。E1 pipeline 共用材质无关的 `ReferenceQueryStore`，固定一个 source state 后按 query role 划分 train、validation、test；standardized 版本的 channel scale/mean/std 只由最终 train query 拟合，并在训练时加入固定权重的互易性约束。q90 版本保留为 target-transform 对照，不因 standardized 版本存在就改写其既有语义。部署回归项只负责保留既有 compiler、MethodBundle、Slang 和 viewer 生命周期，不进入目标 neural evaluator 排名。legacy 适配的删除条件仍是没有 checkpoint/export/viewer 调用依赖其专用 feature/prediction 入口。
 

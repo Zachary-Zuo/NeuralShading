@@ -128,6 +128,15 @@ def train(
         lr=config.learning_rate,
         weight_decay=config.weight_decay,
     )
+    scheduler = (
+        torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=config.steps,
+            eta_min=config.learning_rate * config.final_learning_rate_fraction,
+        )
+        if config.learning_rate_schedule == "cosine"
+        else None
+    )
     created_at = datetime.now(timezone.utc).isoformat()
     run_id = hashlib.sha256(
         f"{store.dataset.manifest.dataset_id}\0{config.resolved_sha256}\0{created_at}".encode("utf-8")
@@ -188,6 +197,8 @@ def train(
             writer.add_scalar("train/loss", float(loss.detach()), step)
             writer.add_scalar("train/gradient_norm", float(gradient_norm), step)
             writer.add_scalar("train/learning_rate", optimizer.param_groups[0]["lr"], step)
+            if scheduler is not None:
+                scheduler.step()
 
             should_validate = step % config.validation_interval == 0 or step == config.steps
             if should_validate:

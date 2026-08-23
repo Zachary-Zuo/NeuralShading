@@ -18,6 +18,8 @@ class TrainingConfig:
     steps: int = 10000
     batch_size: int = 256
     learning_rate: float = 3e-4
+    learning_rate_schedule: str = "constant"
+    final_learning_rate_fraction: float = 1.0
     weight_decay: float = 1e-5
     gradient_clip: float = 5.0
     validation_interval: int = 250
@@ -28,11 +30,20 @@ class TrainingConfig:
     deterministic: bool = True
     selection_metric: str = "relative_l1.median"
     schema_name: str = "ncls.training-config"
-    schema_version: int = 4
+    schema_version: int = 5
 
     def __post_init__(self) -> None:
-        if self.schema_name != "ncls.training-config" or self.schema_version != 4:
+        if self.schema_name != "ncls.training-config" or self.schema_version not in (4, 5):
             raise ValueError("unsupported training config schema")
+        if self.schema_version == 4 and (
+            self.learning_rate_schedule != "constant"
+            or self.final_learning_rate_fraction != 1.0
+        ):
+            raise ValueError("training config v4 only supports a constant learning rate")
+        if self.learning_rate_schedule not in {"constant", "cosine"}:
+            raise ValueError("unsupported learning rate schedule")
+        if not 0.0 <= self.final_learning_rate_fraction <= 1.0:
+            raise ValueError("final_learning_rate_fraction must lie in [0, 1]")
         if "@" not in self.pipeline_id or not self.research_stage or self.selection_metric.count(".") != 1:
             raise ValueError("training config requires a versioned pipeline, research stage and selection metric")
         if not isinstance(self.model_parameters, Mapping):
@@ -63,6 +74,9 @@ class TrainingConfig:
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
+        if self.schema_version == 4:
+            value.pop("learning_rate_schedule")
+            value.pop("final_learning_rate_fraction")
         value["model_parameters"] = dict(self.model_parameters)
         value["dataset_selection"] = {
             name: list(values) for name, values in self.dataset_selection.items()
