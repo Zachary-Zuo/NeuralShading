@@ -160,6 +160,12 @@ LayerStack 不再等待随机 prior 偶然采到边界状态。provider-local �
 
 极窄各向异性 conductor 的 16-seed proposal 重复实验进一步证伪了旧 `ncls.e0-peak-grazing-mixture@1`：在 128/1,024/8,192 directions 下，四个固定 `wo` 的最大能量 estimator 变异系数分别为 `1.446/0.715/0.241`。根因是分离的 `z/方位角` peak 在近法线退化为环状覆盖，也不能跟随旋转各向异性窄轴。`@2` 改用以真实镜面方向为中心、折叠到目标半球的三尺度球面 vMF，保持解析归一化 PDF；相同实验降为 `1.381/0.578/0.109`，8,192-direction 最大 RGB 总能量从 `3.518` 降到 `2.721`。`@1` 已停止作为当前采集入口，历史 H5 只由其原生成提交复现。
 
+MaterialX 的第一轮三资产 spatial probe 进一步说明 peak gate 不能只看全体 query 的离散最大值。denim 的 top-1% 积分能量占比约 `0.065`，宽响应中的最大采样点没有窄峰位置语义；metal_plate 的集中响应却因 normal map 相对几何镜面移动最多约 `9°`，128-direction 几何镜面 proposal 的集中 query peak spacing p95 为 `5.352°`。把方向数提高到 1,024/2,048/4,096 后，该值仍分别为约 `2.234/2.043/2.171°`，并不单调稳定。因此没有继续扩大 H5，而是让 `QueryPlan` 支持按 `(surface, wo)` 的方向表，并发布 `ncls.materialx-local-normal-peak@1`：它用与 GT 相同的 normal texture filtering 求出逐 UV/footprint shading normal，再生成有解析 PDF 的局部峰 proposal。
+
+`ncls.supervision-audit@6` 仍报告全体 peak spacing，但正式 2° gate 只作用于 top-1% 积分能量占比至少 `0.1` 的 query，并要求至少 4 个这类 adversarial query，防止“没有集中峰”自动通过。三资产 MaterialX local-normal 1,024-direction H5 有 19 个集中 query，p95 `1.926°`；同时实测 5 个 footprint 尺度、4 个旋转、U/V seam 两轴配对、掠射比例 `0.1218`，且 split/hash/finite/确定性 reference 检查均通过。LayerStack、MERL、OpenPBR 在相同 `ncls.e0-supervision-entry@6` 下的集中 peak p95 分别为 `0.063/0.232/0.066°`，OpenPBR 透射比例 `0.480`，四族当前 E0 H5 全部通过。
+
+这标志 E0 入口 gate 已成形，不表示后续表示或 viewer 已通过。MaterialX 固定 spatial probe 只验证真实 filtering supervision 与 coverage；spatial latent、LOD、zoom temporal stability、alias/overblur 和 seam 视觉一致性仍属于 E5。E1 从通过 v6 的 LayerStack boundary 数据开始做单材质完整 `wo×wi` evaluator 容量实验，test 继续与 validation/model selection 分离。
+
 三组 LayerStack 的相同 state/query 在四档自适应预算下测得以下 noise 曲线；`sample_count` 是合并两个 replica 后的总样本数上限：
 
 | 最大总样本数 | relative SE p95 | replica normalized L1 p95 | gate |
@@ -171,10 +177,10 @@ LayerStack 不再等待随机 prior 偶然采到边界状态。provider-local �
 
 因此冻结 noise gate 可达，但百万样本是高方差状态的诊断上界，不是所有正式数据的默认预算。一次把单 batch 提高到 16,384 触发 Windows D3D12 TDR；保持 8,192 batch、增加迭代次数可稳定完成。audit v2 必须先按 state/split/积分能量列出最坏 query，再决定哪些状态需要高预算或更好的 reference proposal。
 
-1. ~~扩展 query plan，使每个 `wo` 可以拥有独立的 `wi` proposal，并让 train/validation/test 使用互不重合但测度明确的方向 probe；~~ 已完成逐 `wo` proposal、ReferenceDataset v4 query role 与三种版本化 partition policy；
-2. 对 LayerStack 极低 roughness、MERL 高光材质和 OpenPBR transmission 做高分辨率 peak probe；
-3. 把默认均匀 proposal 扩展成带显式 mixture component 的训练 proposal，并保持固定 validation/test proposal；
-4. 针对 LayerStack reference noise 调整自适应采样后，只重生成最小必要 H5，并重新执行合同、hash、split 与 gate；
+1. ~~扩展 query plan，使每个 `wo`/surface 可以拥有独立的 `wi` proposal，并让 train/validation/test 使用互不重合但测度明确的方向 probe；~~ 已完成逐 `wo`、逐 surface proposal、ReferenceDataset v4 query role 与三种版本化 partition policy；
+2. ~~对 LayerStack 极低 roughness、MERL 高光、OpenPBR transmission 和 MaterialX normal-map 移动峰做高分辨率 probe；~~ 已完成并进入 v6 gate；
+3. ~~把默认均匀 proposal 扩展成带显式 mixture component 的训练 proposal，并保持固定 validation/test proposal；~~ 已完成球面 vMF `@2` 与 MaterialX local-normal adapter；
+4. ~~针对 LayerStack reference noise 调整自适应采样后，只重生成最小必要 H5，并重新执行合同、hash、split 与 gate；~~ 六状态 boundary adaptive H5 已通过 v6；
 5. 用通过 E0 的 LayerStack v4 数据完成 E1 的方向编码、target transform 与 evaluator 容量比较；
 6. 在同一公共 reader 上把 MERL/OpenPBR 加入 target-visible shared decoder 实验；
 7. evaluator 成形后再进入 MaterialX spatial latent、sampler 和 integration。
