@@ -4,7 +4,7 @@
 
 公共 runner 现在只依赖 `ncls.learning-pipeline@2`：它从 registry 取得 response reader、dataset partition policy、source adapter、feature/target transform、representation/model、latent inference、compiler、loss、metric suite 和 exporter 的版本化身份，再执行训练、validation、checkpoint 与独立评测。candidate-specific 实现负责把公共 response batch 变成自己的模型输入；runner 不再导入 LayerStack 或某个 backend 的预测函数。机器可读合同和配置 schema 分别位于 `src/ncls/learning/schemas/learning_pipeline_v2.schema.json` 与 `training_config_v4.schema.json`。
 
-当前正式 registry 同时包含 E1 的 `dense-latent-small-mlp-linear-e1@1`、`dense-latent-small-mlp-log1p-e1@1` 和部署回归项 `legacy-ltc-k2-p1-deployment-regression@1`。两个 E1 pipeline 共用材质无关的 `ReferenceQueryStore`，固定一个 source state 后按 query role 划分 train、validation、test；它们分别验证正值 linear 输出和只从最终 train query 拟合 channel scale 的 `log1p` target transform。部署回归项只负责保留既有 compiler、MethodBundle、Slang 和 viewer 生命周期，不进入目标 neural evaluator 排名。legacy 适配的删除条件仍是没有 checkpoint/export/viewer 调用依赖其专用 feature/prediction 入口。
+当前正式 registry 同时包含 E1 的 linear、q90-scale `log1p` 和 train-only standardized `log1p` dense evaluator，以及部署回归项 `legacy-ltc-k2-p1-deployment-regression@1`。E1 pipeline 共用材质无关的 `ReferenceQueryStore`，固定一个 source state 后按 query role 划分 train、validation、test；standardized 版本的 channel scale/mean/std 只由最终 train query 拟合，并在训练时加入固定权重的互易性约束。q90 版本保留为 target-transform 对照，不因 standardized 版本存在就改写其既有语义。部署回归项只负责保留既有 compiler、MethodBundle、Slang 和 viewer 生命周期，不进入目标 neural evaluator 排名。legacy 适配的删除条件仍是没有 checkpoint/export/viewer 调用依赖其专用 feature/prediction 入口。
 
 ## 三条路径的边界
 

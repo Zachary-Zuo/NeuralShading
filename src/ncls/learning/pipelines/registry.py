@@ -3,7 +3,11 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from .base import LearningPipeline, LearningPipelineDescriptor
-from .dense_evaluator import DenseLinearE1Pipeline, DenseLog1pE1Pipeline
+from .dense_evaluator import (
+    DenseLinearE1Pipeline,
+    DenseLog1pE1Pipeline,
+    DenseStandardizedLog1pE1Pipeline,
+)
 from .legacy_ltc_k2 import LegacyLtcK2Pipeline
 
 
@@ -32,3 +36,4 @@ def pipeline_descriptors() -> tuple[LearningPipelineDescriptor, ...]:
 register_pipeline(LegacyLtcK2Pipeline)
 register_pipeline(DenseLinearE1Pipeline)
 register_pipeline(DenseLog1pE1Pipeline)
+register_pipeline(DenseStandardizedLog1pE1Pipeline)

@@ -14,6 +14,7 @@ from ncls.learning.data import LayerStackReferenceStore, ReferenceQueryStore
 from ncls.learning.direct_fit import DirectFitConfig, run_direct_fit
 from ncls.learning.evaluation import evaluate_checkpoint, evaluate_evaluator_gate
 from ncls.learning.features import CONTINUOUS_FEATURE_COUNT, FEATURE_CONTRACT_ID, encode_layer_stack
+from ncls.learning.pipelines import create_pipeline
 from ncls.learning.training import TrainingConfig, train
 from ncls.learning.training.checkpoint import load_checkpoint
 
@@ -295,6 +296,31 @@ def test_dense_e1_pipeline_fits_transform_from_selected_train_queries_only(tmp_p
     assert gate["passed"] is False
     assert gate["gate_id"] == "ncls.e1-single-material-evaluator-acceptance@1"
     assert (run_path / "gate_result.json").is_file()
+
+
+def test_standardized_log1p_state_matches_train_only_response_statistics(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "standardized-dataset.h5"
+    _e1_dataset(dataset_path)
+    pipeline = create_pipeline("dense-latent-small-mlp-standardized-log1p-e1@1")
+    with pipeline.open_store(str(dataset_path)) as store:
+        state_id = str(store.dataset.state_strings("state_id")[0])
+        indices = store.select_indices(
+            pipeline.lifecycle_indices(store, "train"), {"state_ids": [state_id]}
+        )
+        response = np.maximum(
+            np.asarray(store.dataset.stream["responses/mean"][indices], dtype=np.float64), 0.0
+        ).reshape(-1, 3)
+        scale = np.maximum(np.quantile(response, 0.5, axis=0), 1e-8)
+        transformed = np.log1p(response / scale)
+        state = pipeline.fit_training_state(store, indices)
+        assert state["format_version"] == 2
+        np.testing.assert_allclose(state["target_channel_scale"], scale)
+        np.testing.assert_allclose(state["target_channel_mean"], np.mean(transformed, axis=0))
+        np.testing.assert_allclose(
+            state["target_channel_standard_deviation"],
+            np.maximum(np.std(transformed, axis=0), 1e-6),
+        )
+        pipeline.load_training_state(state)
 
 
 def test_direct_fit_is_a_separate_representation_ceiling_run(tmp_path: Path) -> None:
