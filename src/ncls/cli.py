@@ -296,6 +296,7 @@ def build_parser() -> argparse.ArgumentParser:
             "ncls.e0-layer-stack-boundary@1",
             "ncls.e1-layer-stack-narrow-conductor@1",
             "ncls.e1-layer-stack-multi-interface@1",
+            "ncls.e2-layer-stack-shared-decoder@1",
         ),
         default="ncls.layer-stack-research-prior@1",
         help="LayerStack provider-local 的版本化状态分布",

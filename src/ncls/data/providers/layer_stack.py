@@ -15,11 +15,15 @@ from ncls.data.priors import (
     E0_LAYER_STACK_BOUNDARY_PROFILE_ID,
     E1_LAYER_STACK_MULTI_INTERFACE_PROFILE_ID,
     E1_LAYER_STACK_NARROW_CONDUCTOR_PROFILE_ID,
+    E2_LAYER_STACK_SHARED_DECODER_FAMILY_COUNT,
+    E2_LAYER_STACK_SHARED_DECODER_LOCAL_STATE_COUNT,
+    E2_LAYER_STACK_SHARED_DECODER_PROFILE_ID,
     LAYER_STACK_RESEARCH_PRIOR_ID,
     LAYER_STACK_STATE_PROFILE_IDS,
     e0_layer_stack_boundary_cases,
     e1_layer_stack_multi_interface_cases,
     e1_layer_stack_narrow_conductor_cases,
+    e2_layer_stack_shared_decoder_families,
     sample_stack_families,
 )
 from ncls.data.reference import FalcorReferenceEvaluator, evaluate_reference_adaptive, evaluate_reference_fixed
@@ -58,6 +62,7 @@ class LayerStackProviderConfig:
             E0_LAYER_STACK_BOUNDARY_PROFILE_ID: len(E0_LAYER_STACK_BOUNDARY_CASE_IDS),
             E1_LAYER_STACK_NARROW_CONDUCTOR_PROFILE_ID: 1,
             E1_LAYER_STACK_MULTI_INTERFACE_PROFILE_ID: 1,
+            E2_LAYER_STACK_SHARED_DECODER_PROFILE_ID: E2_LAYER_STACK_SHARED_DECODER_FAMILY_COUNT,
         }
         if self.state_profile_id in fixed_profile_counts:
             expected = fixed_profile_counts[self.state_profile_id]
@@ -65,8 +70,15 @@ class LayerStackProviderConfig:
                 raise ValueError(
                     f"{self.state_profile_id} requires family_count={expected}"
                 )
-            if self.local_state_count != 1:
-                raise ValueError(f"{self.state_profile_id} requires local_state_count=1")
+            expected_local_states = (
+                E2_LAYER_STACK_SHARED_DECODER_LOCAL_STATE_COUNT
+                if self.state_profile_id == E2_LAYER_STACK_SHARED_DECODER_PROFILE_ID
+                else 1
+            )
+            if self.local_state_count != expected_local_states:
+                raise ValueError(
+                    f"{self.state_profile_id} requires local_state_count={expected_local_states}"
+                )
 
 
 class LayerStackProvider(BaseProvider):
@@ -109,7 +121,17 @@ class LayerStackProvider(BaseProvider):
             cases = e1_layer_stack_multi_interface_cases()
         else:
             cases = ()
-        if cases:
+        if config.state_profile_id == E2_LAYER_STACK_SHARED_DECODER_PROFILE_ID:
+            families = e2_layer_stack_shared_decoder_families(collection.seed)
+            case_ids = [
+                f"shared-decoder-family-{index:04d}"
+                for index in range(E2_LAYER_STACK_SHARED_DECODER_FAMILY_COUNT)
+            ]
+            group_ids = [
+                f"layer-stack-e2-family-{index:04d}"
+                for index in range(E2_LAYER_STACK_SHARED_DECODER_FAMILY_COUNT)
+            ]
+        elif cases:
             case_ids = [case_id for case_id, _ in cases]
             families = [[stack] for _, stack in cases]
             group_prefix = (

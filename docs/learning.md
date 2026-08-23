@@ -72,7 +72,7 @@ p  = Proposal.pdf(proposal_parameters, wi)
 
 ## TrainingConfig
 
-所有超参数先解析为 `ncls.training-config@4`，并将完整 JSON、pipeline contract、最终 dataset selection、train-only fitted state 与各自 SHA-256 写入 run。`dataset_selection` 只负责从 H5 选择明确的 state、asset 或 family，不改变落盘 split；E1 单材质 pipeline 要求选择后恰好只有一个 source state。最小示例：
+所有新实验超参数先解析为 `ncls.training-config@5`，并将完整 JSON、pipeline contract、最终 dataset selection、train-only fitted state 与各自 SHA-256 写入 run。`dataset_selection` 只负责从 H5 选择明确的 state、asset 或 family，不改变落盘 split；E1 单材质 pipeline 要求选择后恰好只有一个 source state。最小示例：
 
 ```json
 {
@@ -83,6 +83,8 @@ p  = Proposal.pdf(proposal_parameters, wi)
   "steps": 10000,
   "batch_size": 256,
   "learning_rate": 0.0003,
+  "learning_rate_schedule": "constant",
+  "final_learning_rate_fraction": 1.0,
   "weight_decay": 0.00001,
   "gradient_clip": 5.0,
   "validation_interval": 250,
@@ -93,7 +95,7 @@ p  = Proposal.pdf(proposal_parameters, wi)
   "deterministic": true,
   "selection_metric": "relative_l1.median",
   "schema_name": "ncls.training-config",
-  "schema_version": 4
+  "schema_version": 5
 }
 ```
 

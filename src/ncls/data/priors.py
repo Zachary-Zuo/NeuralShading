@@ -16,11 +16,15 @@ LAYER_STACK_RESEARCH_PRIOR_ID = "ncls.layer-stack-research-prior@1"
 E0_LAYER_STACK_BOUNDARY_PROFILE_ID = "ncls.e0-layer-stack-boundary@1"
 E1_LAYER_STACK_NARROW_CONDUCTOR_PROFILE_ID = "ncls.e1-layer-stack-narrow-conductor@1"
 E1_LAYER_STACK_MULTI_INTERFACE_PROFILE_ID = "ncls.e1-layer-stack-multi-interface@1"
+E2_LAYER_STACK_SHARED_DECODER_PROFILE_ID = "ncls.e2-layer-stack-shared-decoder@1"
+E2_LAYER_STACK_SHARED_DECODER_FAMILY_COUNT = 12
+E2_LAYER_STACK_SHARED_DECODER_LOCAL_STATE_COUNT = 2
 LAYER_STACK_STATE_PROFILE_IDS = (
     LAYER_STACK_RESEARCH_PRIOR_ID,
     E0_LAYER_STACK_BOUNDARY_PROFILE_ID,
     E1_LAYER_STACK_NARROW_CONDUCTOR_PROFILE_ID,
     E1_LAYER_STACK_MULTI_INTERFACE_PROFILE_ID,
+    E2_LAYER_STACK_SHARED_DECODER_PROFILE_ID,
 )
 E0_LAYER_STACK_BOUNDARY_CASE_IDS = (
     "narrow-dielectric-over-diffuse",
@@ -196,6 +200,30 @@ def sample_stack_families(family_count: int, local_state_count: int, seed: int) 
             ]
         )
     return families
+
+
+def e2_layer_stack_shared_decoder_families(seed: int) -> list[list[LayerStackIR]]:
+    """返回 E2 固定结构覆盖的多状态材质族。"""
+
+    rng = np.random.default_rng(seed)
+    templates = [
+        sample_stack(rng, min_interfaces=count, max_interfaces=count)
+        for count in range(1, 9)
+    ]
+    templates.extend(
+        sample_stack(rng)
+        for _ in range(E2_LAYER_STACK_SHARED_DECODER_FAMILY_COUNT - len(templates))
+    )
+    return [
+        [
+            LayerStackIR(
+                tuple(_perturb_interface(rng, item) for item in template.interfaces),
+                tuple(_perturb_medium(rng, item) for item in template.media),
+            )
+            for _ in range(E2_LAYER_STACK_SHARED_DECODER_LOCAL_STATE_COUNT)
+        ]
+        for template in templates
+    ]
 
 
 def e0_layer_stack_boundary_cases() -> tuple[tuple[str, LayerStackIR], ...]:

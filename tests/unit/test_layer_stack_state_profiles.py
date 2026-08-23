@@ -15,9 +15,13 @@ from ncls.data.priors import (
     E0_LAYER_STACK_BOUNDARY_PROFILE_ID,
     E1_LAYER_STACK_MULTI_INTERFACE_PROFILE_ID,
     E1_LAYER_STACK_NARROW_CONDUCTOR_PROFILE_ID,
+    E2_LAYER_STACK_SHARED_DECODER_FAMILY_COUNT,
+    E2_LAYER_STACK_SHARED_DECODER_LOCAL_STATE_COUNT,
+    E2_LAYER_STACK_SHARED_DECODER_PROFILE_ID,
     e0_layer_stack_boundary_cases,
     e1_layer_stack_multi_interface_cases,
     e1_layer_stack_narrow_conductor_cases,
+    e2_layer_stack_shared_decoder_families,
 )
 from ncls.data.providers import LayerStackProvider, LayerStackProviderConfig
 
@@ -138,6 +142,56 @@ def test_e1_multi_interface_profile_rejects_shape_changes() -> None:
             family_count=1,
             local_state_count=2,
             state_profile_id=E1_LAYER_STACK_MULTI_INTERFACE_PROFILE_ID,
+        )
+
+
+def test_e2_shared_decoder_profile_freezes_topology_coverage() -> None:
+    families = e2_layer_stack_shared_decoder_families(20260824)
+    assert len(families) == E2_LAYER_STACK_SHARED_DECODER_FAMILY_COUNT
+    assert all(len(family) == E2_LAYER_STACK_SHARED_DECODER_LOCAL_STATE_COUNT for family in families)
+    assert [len(family[0].interfaces) for family in families[:8]] == list(range(1, 9))
+    assert {
+        type(family[0].interfaces[-1]).__name__ for family in families
+    } == {"DiffuseInterface", "RoughConductorInterface", "SheenInterface"}
+    for family in families:
+        signature = tuple(type(item) for item in family[0].interfaces)
+        assert all(tuple(type(item) for item in state.interfaces) == signature for state in family)
+
+
+def test_e2_shared_decoder_profile_keeps_families_in_source_splits() -> None:
+    provider = LayerStackProvider(
+        CollectionConfig(view_count=1, light_count=4, seed=20260824),
+        LayerStackProviderConfig(
+            family_count=E2_LAYER_STACK_SHARED_DECODER_FAMILY_COUNT,
+            local_state_count=E2_LAYER_STACK_SHARED_DECODER_LOCAL_STATE_COUNT,
+            state_profile_id=E2_LAYER_STACK_SHARED_DECODER_PROFILE_ID,
+        ),
+        evaluator=object(),
+    )
+    states = provider.source_states()
+    assert len(states) == 24
+    assert np.bincount([state.split for state in states], minlength=3).tolist() == [20, 2, 2]
+    for start in range(0, len(states), E2_LAYER_STACK_SHARED_DECODER_LOCAL_STATE_COUNT):
+        family = states[start : start + E2_LAYER_STACK_SHARED_DECODER_LOCAL_STATE_COUNT]
+        assert len({state.split_group_id for state in family}) == 1
+        assert len({state.split for state in family}) == 1
+        for state in family:
+            program = MaterialProgram.from_json(state.native_payload.decode("utf-8"))
+            assert program.metadata["state_profile_id"] == E2_LAYER_STACK_SHARED_DECODER_PROFILE_ID
+
+
+def test_e2_shared_decoder_profile_rejects_shape_changes() -> None:
+    with pytest.raises(ValueError, match="family_count=12"):
+        LayerStackProviderConfig(
+            family_count=11,
+            local_state_count=2,
+            state_profile_id=E2_LAYER_STACK_SHARED_DECODER_PROFILE_ID,
+        )
+    with pytest.raises(ValueError, match="local_state_count=2"):
+        LayerStackProviderConfig(
+            family_count=12,
+            local_state_count=1,
+            state_profile_id=E2_LAYER_STACK_SHARED_DECODER_PROFILE_ID,
         )
 
 
