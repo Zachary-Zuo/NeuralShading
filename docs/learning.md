@@ -127,7 +127,7 @@ conda run -n neural-shading ncls learn audit `
   --gate configs\research\e0-supervision-gates-v1.json
 ```
 
-输出包含 `audit.json`、中文 `report.md`、只由 train split 拟合且带内容哈希的 `target_transform_statistics.json`，以及可选的 `gate_result.json`。audit 检查 state/source/split 泄漏、train/validation/test 方向表复用、proposal、peak/掠射/透射/footprint profile、reference standard error 与 replica 差异、response 长尾、积分能量和 top-energy 集中度。validation/test 不参与 transform scale、均值、方差或 codebook 统计。
+输出包含 `audit.json`、中文 `report.md`、只由 train split 拟合且带内容哈希的 `target_transform_statistics.json`，以及可选的 `gate_result.json`。`ncls.supervision-audit@2` 检查 state/source/split 泄漏、train/validation/test 方向表复用、proposal、peak/掠射/透射/footprint profile、reference standard error 与 replica 差异、response 长尾、积分能量和 top-energy 集中度。noise 除全局分位数外，还按 state、split 和积分能量分档，并列出最坏 query 的 state/asset、`wo`、能量和样本数；正式采样预算应由这些分档决定，不能因少量高方差状态而无差别提高全部 H5 的样本数。validation/test 不参与 transform scale、均值、方差或 codebook 统计。
 
 ## TensorBoard
 

@@ -62,6 +62,7 @@ def test_supervision_audit_is_family_neutral_and_transform_stats_are_train_only(
     result = audit_supervision(dataset_path, output, max_distribution_query_groups=4)
 
     assert result["format_name"] == "ncls.supervision-audit"
+    assert result["format_version"] == 2
     assert result["dataset"]["content_hash_verified"] is True
     assert result["split_audit"]["split_group_id"]["leak_count"] == 0
     assert result["split_audit"]["source_sha256"]["leak_count"] == 0
@@ -69,6 +70,13 @@ def test_supervision_audit_is_family_neutral_and_transform_stats_are_train_only(
     assert result["coverage"]["proposals"][0]["proposal_id"].startswith("uniform-solid-angle")
     assert result["coverage"]["direction_grid_independence"]["wi_grid"]["train_test_overlap_count"] == 0
     assert "ncls.layer-stack@1" in result["response"]["by_family"]
+    assert len(result["reference_uncertainty"]["by_state"]) == 3
+    assert sum(
+        item["query_group_count"]
+        for item in result["reference_uncertainty"]["by_split"].values()
+    ) == 4
+    assert result["reference_uncertainty"]["by_integrated_energy"]["high_ge_p90"]["query_group_count"] >= 1
+    assert result["reference_uncertainty"]["highest_relative_standard_error_groups"][0]["asset_id"]
 
     statistics = json.loads((output / "target_transform_statistics.json").read_text(encoding="utf-8"))
     assert statistics["fit_split"] == "train"

@@ -14,7 +14,7 @@ from ncls.learning.gates import evaluate_supervision_gate, load_supervision_gate
 
 
 AUDIT_FORMAT = "ncls.supervision-audit"
-AUDIT_VERSION = 1
+AUDIT_VERSION = 2
 TRANSFORM_STATISTICS_FORMAT = "ncls.target-transform-statistics"
 TRANSFORM_STATISTICS_VERSION = 1
 _SPLIT_CODES = {name: index for index, name in enumerate(SPLIT_NAMES)}
@@ -316,11 +316,85 @@ def audit_supervision(
         valid = np.asarray(batch["valid"], dtype=bool)
         group_peak = np.max(np.abs(target), axis=(1, 2), keepdims=True)
         denominator = np.maximum(np.abs(target), np.maximum(0.005 * group_peak, 1e-8))
-        relative_standard_error = (standard_error / denominator)[valid]
+        relative_standard_error_rows = standard_error / denominator
+        relative_standard_error = relative_standard_error_rows[valid]
         replica_delta = np.sum(
             np.abs(np.asarray(batch["replica_mean_a"], dtype=np.float64) - np.asarray(batch["replica_mean_b"], dtype=np.float64)),
             axis=(1, 2),
         ) / np.maximum(np.sum(np.abs(target), axis=(1, 2)), 1e-8)
+        group_weights = np.asarray(batch["solid_angle_weight"], dtype=np.float64)
+        group_energy = np.sum(np.abs(target) * group_weights[..., None] * valid[..., None], axis=(1, 2))
+        group_sample_count = np.max(np.asarray(batch["sample_count"], dtype=np.float64), axis=1)
+        group_relative_p95 = np.asarray([
+            float(np.quantile(relative_standard_error_rows[index][valid[index]], 0.95))
+            if np.any(valid[index]) else 0.0
+            for index in range(len(selected))
+        ])
+
+        def grouped_uncertainty(mask: np.ndarray) -> dict[str, Any]:
+            selected_mask = np.asarray(mask, dtype=bool)
+            relative = relative_standard_error_rows[selected_mask]
+            selected_valid = valid[selected_mask]
+            return {
+                "query_group_count": int(np.sum(selected_mask)),
+                "relative_standard_error": _percentiles(
+                    relative[selected_valid], (0.5, 0.9, 0.95, 0.99)
+                ),
+                "query_group_relative_standard_error_p95": _percentiles(
+                    group_relative_p95[selected_mask], (0.5, 0.9, 0.95, 0.99)
+                ),
+                "replica_normalized_l1": _percentiles(
+                    replica_delta[selected_mask], (0.5, 0.9, 0.95, 0.99)
+                ),
+                "integrated_absolute_energy": _distribution(group_energy[selected_mask]),
+                "maximum_sample_count": _distribution(group_sample_count[selected_mask]),
+            }
+
+        selected_state_indices = np.asarray(batch["state_index"], dtype=np.int64)
+        uncertainty_by_state: list[dict[str, Any]] = []
+        for state in np.unique(selected_state_indices):
+            state_mask = selected_state_indices == state
+            uncertainty_by_state.append({
+                "state_id": str(state_ids[state]),
+                "asset_id": str(asset_ids[state]),
+                "family_id": str(family_ids[state]),
+                "split": SPLIT_NAMES[int(state_splits[state])],
+                **grouped_uncertainty(state_mask),
+            })
+        uncertainty_by_state.sort(
+            key=lambda item: item["replica_normalized_l1"].get("p95", 0.0),
+            reverse=True,
+        )
+        energy_p50, energy_p90 = np.quantile(group_energy, (0.5, 0.9))
+        uncertainty_by_energy = {
+            "low_lt_p50": {
+                "energy_range": {"maximum_exclusive": float(energy_p50)},
+                **grouped_uncertainty(group_energy < energy_p50),
+            },
+            "middle_p50_to_lt_p90": {
+                "energy_range": {"minimum": float(energy_p50), "maximum_exclusive": float(energy_p90)},
+                **grouped_uncertainty((group_energy >= energy_p50) & (group_energy < energy_p90)),
+            },
+            "high_ge_p90": {
+                "energy_range": {"minimum": float(energy_p90)},
+                **grouped_uncertainty(group_energy >= energy_p90),
+            },
+        }
+        worst_uncertainty_groups = []
+        for selected_position in np.argsort(group_relative_p95)[-16:][::-1]:
+            state = int(selected_state_indices[selected_position])
+            worst_uncertainty_groups.append({
+                "query_group_id": int(selected[selected_position]),
+                "state_id": str(state_ids[state]),
+                "asset_id": str(asset_ids[state]),
+                "family_id": str(family_ids[state]),
+                "split": SPLIT_NAMES[int(selected_splits[selected_position])],
+                "wo": np.asarray(batch["wo"][selected_position]).astype(float).tolist(),
+                "integrated_absolute_energy": float(group_energy[selected_position]),
+                "relative_standard_error_p95": float(group_relative_p95[selected_position]),
+                "replica_normalized_l1": float(replica_delta[selected_position]),
+                "maximum_sample_count": int(group_sample_count[selected_position]),
+            })
 
         train_available = np.flatnonzero(query_splits == _SPLIT_CODES["train"])
         train_selected = _select_evenly(train_available, max_distribution_query_groups)
@@ -439,6 +513,13 @@ def audit_supervision(
                 "replica_normalized_l1": _percentiles(replica_delta, (0.5, 0.9, 0.95, 0.99)),
                 "deterministic_query_fraction": float(np.mean(np.asarray(batch["variance"]) == 0.0)),
                 "sample_count": _distribution(np.asarray(batch["sample_count"], dtype=np.float64)),
+                "by_split": {
+                    name: grouped_uncertainty(selected_splits == code)
+                    for name, code in _SPLIT_CODES.items()
+                },
+                "by_state": uncertainty_by_state,
+                "by_integrated_energy": uncertainty_by_energy,
+                "highest_relative_standard_error_groups": worst_uncertainty_groups,
             },
             "coverage": {
                 "proposals": proposals,

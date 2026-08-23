@@ -146,6 +146,19 @@ target transform 的统计量只能由 train split 生成并带 hash 保存。�
 
 逐 `wo` 查询合同已经实现并通过 CPU 与 Falcor GPU 回归：`QueryPlan` 支持 `[view, light, 3]`，LayerStack shader 和四个 provider 都按 query group 消费真实方向。`ncls.e0-peak-grazing-mixture@1` 提供有显式归一化 PDF 的 uniform、三尺度 peak、grazing，以及完整球面的 transmission peak；uniform 基线也对不同 state split 使用确定性方位扰动。该结果只说明采集机制成立，尚不说明 E0 gate 已通过。同一 state 内 train/validation/test query 角色仍需在 E1 正式数据前显式建模，不能用 state split 方向扰动替代 held-out query。
 
+真实 targeted probe 给出了两项稳定结果。MERL `black-obsidian` 使用 8 个 `wo`、每个 512 个 mixture query 后，peak 最近邻角 p95 从 pilot 的约 `8.73°` 降至 `1.15°`；OpenPBR `open_pbr_glass` 从约 `12.25°` 降至 `0.52°`，并实际包含约 `47.1%` 透射侧 query 与 `11.4%` 的五度内掠射 query。两个单资产 probe 的 proposal/profile 检查通过，gate 只因它们故意没有 validation/test state 而失败，不能把该预期失败解释为 proposal 失败。
+
+三组 LayerStack 的相同 state/query 在四档自适应预算下测得以下 noise 曲线；`sample_count` 是合并两个 replica 后的总样本数上限：
+
+| 最大总样本数 | relative SE p95 | replica normalized L1 p95 | gate |
+|---:|---:|---:|---|
+| `16,384` | `0.3445` | `0.3634` | 失败 |
+| `131,072` | `0.1953` | `0.1649` | 失败 |
+| `524,288` | `0.1152` | `0.0930` | 仅 relative SE 失败 |
+| `1,048,576` | `0.0849` | `0.0624` | 通过 |
+
+因此冻结 noise gate 可达，但百万样本是高方差状态的诊断上界，不是所有正式数据的默认预算。一次把单 batch 提高到 16,384 触发 Windows D3D12 TDR；保持 8,192 batch、增加迭代次数可稳定完成。audit v2 必须先按 state/split/积分能量列出最坏 query，再决定哪些状态需要高预算或更好的 reference proposal。
+
 1. ~~扩展 query plan，使每个 `wo` 可以拥有独立的 `wi` proposal，并让 train/validation/test 使用互不重合但测度明确的方向 probe；~~ 已完成逐 `wo` proposal 与 state-split 独立方向，query role 合同仍待单独冻结；
 2. 对 LayerStack 极低 roughness、MERL 高光材质和 OpenPBR transmission 做高分辨率 peak probe；
 3. 把默认均匀 proposal 扩展成带显式 mixture component 的训练 proposal，并保持固定 validation/test proposal；
