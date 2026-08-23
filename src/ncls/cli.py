@@ -284,7 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--seed", type=int, default=20260822)
     generate.add_argument(
         "--query-profile",
-        choices=("ncls.uniform-split-independent@1", "ncls.e0-peak-grazing-mixture@1"),
+        choices=("ncls.uniform-split-independent@1", "ncls.e0-peak-grazing-mixture@2"),
         default="ncls.uniform-split-independent@1",
     )
     generate.add_argument("--max-depth", type=int, default=64)

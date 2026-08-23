@@ -18,6 +18,7 @@ from ncls.data.contract import (
     SurfaceSample,
 )
 from ncls.data.directions import (
+    MIXTURE_QUERY_PROFILE_ID,
     equal_area_hemisphere,
     equal_area_sphere,
     peak_grazing_mixture_query,
@@ -96,7 +97,7 @@ class BaseProvider:
             views = stratified_view_directions(count, azimuth_offset=role_offset)
             role_seed = query_seed ^ ((role + 1) * 0x9E3779B1)
             use_mixture = (
-                self.config.query_profile_id == "ncls.e0-peak-grazing-mixture@1"
+                self.config.query_profile_id == MIXTURE_QUERY_PROFILE_ID
                 and role in {int(QueryRole.TRAIN), int(QueryRole.ADVERSARIAL_PROBE)}
             )
             if use_mixture:
@@ -107,7 +108,7 @@ class BaseProvider:
                     seed=role_seed,
                 )
                 transmission = "-transmission-critical" if full_sphere else ""
-                proposal = f"{role_name}-uniform-peak-grazing-{domain}{transmission}@1"
+                proposal = f"{role_name}-uniform-peak-grazing-{domain}{transmission}@2"
             else:
                 measure = 4.0 * np.pi if full_sphere else 2.0 * np.pi
                 direction_rows = []

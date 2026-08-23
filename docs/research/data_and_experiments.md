@@ -144,7 +144,7 @@ target transform 的统计量只能由 source train × query train 生成并带 
 
 因此这些文件只保留为 provider/合同 smoke，E1 不得直接消费。下一步先让 query plan 支持按 `wo` 的 peak-aware 方向与 split 独立 probe，再生成最小的 targeted H5；不能用扩大同一均匀表代替修正 proposal。完整运行结果位于 `artifacts/research/supervision-audit/<dataset-id>/`。
 
-逐 `wo` 查询合同已经实现并通过 CPU 与 Falcor GPU 回归：`QueryPlan` 支持 `[view, light, 3]`，LayerStack shader 和四个 provider 都按 query group 消费真实方向。`ncls.e0-peak-grazing-mixture@1` 提供有显式归一化 PDF 的 uniform、三尺度 peak、grazing，以及完整球面的 transmission peak；uniform 基线也对不同 partition 使用确定性方位扰动。随后 v4 加入显式 query role：train/adversarial 使用 mixture，validation/test 使用独立 fixed uniform probe。source split 与 query role 的独立性由 audit 和 `ncls.e0-supervision-entry@3` 分别检查，不能再用 state split 方位扰动替代 held-out query。
+逐 `wo` 查询合同已经实现并通过 CPU 与 Falcor GPU 回归：`QueryPlan` 支持 `[view, light, 3]`，LayerStack shader 和四个 provider 都按 query group 消费真实方向。当前 `ncls.e0-peak-grazing-mixture@2` 提供有显式归一化 PDF 的 uniform、以真实镜面方向为中心的三尺度球面 vMF peak、grazing，以及完整球面的 transmission peak；uniform 基线也对不同 partition 使用确定性方位扰动。随后 v4 加入显式 query role：train/adversarial 使用 mixture，validation/test 使用独立 fixed uniform probe。source split 与 query role 的独立性由 audit 和 `ncls.e0-supervision-entry@3` 分别检查，不能再用 state split 方位扰动替代 held-out query。
 
 首个三资产 MERL v4 smoke 暴露了 source test × adversarial 与 source train × train 的三个精确 `wo` 碰撞；没有放宽 gate，而是改为由 `(source split, query role)` 联合生成非碰撞确定性方位。修复后全部 source/query partition 的 `wo/wi` overlap 为 0，adversarial raw-response peak 最近邻角 p95 为 `0.532°`，五度内 `wi` 掠射比例为 `0.119`。E0 gate v3 因而冻结 peak spacing p95 ≤ `2°`、掠射比例 ≥ `0.08`，并为 OpenPBR 冻结 adversarial 透射比例 ≥ `0.25`。
 
@@ -155,6 +155,10 @@ target transform 的统计量只能由 source train × query train 生成并带 
 LayerStack 不再等待随机 prior 偶然采到边界状态。provider-local 的 `ncls.e0-layer-stack-boundary@1` 固定六个 coverage case：极窄 dielectric、极窄各向异性 conductor、旋转各向异性 dielectric、色吸收 slab、符合当前 v0 同消光实现约束的色散射 slab，以及多界面移动峰。它要求 6 个 family、每个 1 个状态，并把 profile/case ID 写进原生 payload 与 provider metadata。该集合是 E0 probe，不替代后续连续研究 prior；改动案例必须升级 profile ID。
 
 首个 boundary v4 probe 使用合并总样本 8,192。全局 relative SE p95 为 `0.0188`、replica normalized L1 p95 为 `0.0411`，但多界面 case 的最坏 query-group relative SE p95 为 `0.1375`。因此不能用全局 p95 宣告 noise 通过；`ncls.supervision-audit@4` 与 `ncls.e0-supervision-entry@4` 增加最坏 query-group 的 `0.1` 阈值，并要求 LayerStack E0 数据显式使用六状态 boundary profile。该 probe 还显示 128-direction 下极窄各向异性 conductor 的加权能量估计不稳定，必须另做更高方向数 proposal 收敛检查后再冻结能量 gate。
+
+固定把所有状态翻倍到合并 16,384 样本后，最坏 query relative SE 仍为 `0.1355`。改用 query-group adaptive 后，五个低方差 case 都在合并 16,384 样本停止；多界面 case 的六个 query 按需使用 40,960–262,144 个合并样本，最终全局 relative SE p95 `0.0117`、最坏 query relative SE `0.0534`、最坏 replica normalized L1 `0.0179`，通过 v4 gate。该配置中 8,192-sample 单 dispatch 触发一次 Windows TDR；降到 4,096 batch、保持总预算不变后稳定完成，因此安全 batch 结论必须同时记录 directions、query-group 数与 stack 深度。
+
+极窄各向异性 conductor 的 16-seed proposal 重复实验进一步证伪了旧 `ncls.e0-peak-grazing-mixture@1`：在 128/1,024/8,192 directions 下，四个固定 `wo` 的最大能量 estimator 变异系数分别为 `1.446/0.715/0.241`。根因是分离的 `z/方位角` peak 在近法线退化为环状覆盖，也不能跟随旋转各向异性窄轴。`@2` 改用以真实镜面方向为中心、折叠到目标半球的三尺度球面 vMF，保持解析归一化 PDF；相同实验降为 `1.381/0.578/0.109`，8,192-direction 最大 RGB 总能量从 `3.518` 降到 `2.721`。`@1` 已停止作为当前采集入口，历史 H5 只由其原生成提交复现。
 
 三组 LayerStack 的相同 state/query 在四档自适应预算下测得以下 noise 曲线；`sample_count` 是合并两个 replica 后的总样本数上限：
 

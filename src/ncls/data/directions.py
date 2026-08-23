@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-from statistics import NormalDist
 
 import numpy as np
 
@@ -9,9 +8,8 @@ import numpy as np
 HEMISPHERE_PARAMETERIZATION_ID = "equal-area-fibonacci-hemisphere@2"
 SPHERE_PARAMETERIZATION_ID = "equal-area-fibonacci-sphere@1"
 VIEW_PARAMETERIZATION_ID = "grazing-weighted-fibonacci-hemisphere@2"
-MIXTURE_QUERY_PROFILE_ID = "ncls.e0-peak-grazing-mixture@1"
-_PEAK_SCALES = ((0.0025, 384.0), (0.0125, 96.0), (0.06, 24.0))
-_STANDARD_NORMAL = NormalDist()
+MIXTURE_QUERY_PROFILE_ID = "ncls.e0-peak-grazing-mixture@2"
+_PEAK_ANGULAR_SCALES = (0.0025, 0.0125, 0.06)
 
 
 def equal_area_hemisphere(bin_count: int = 128, *, azimuth_offset: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
@@ -74,46 +72,80 @@ def stratified_uv(sample_count: int, seed: int) -> np.ndarray:
     return ((cells[:sample_count] + jitter[:sample_count]) / side).astype(np.float32)
 
 
-def _truncated_normal_samples(
-    center: float,
-    sigma: float,
-    count: int,
-    rng: np.random.Generator,
-) -> np.ndarray:
-    lower = _STANDARD_NORMAL.cdf((0.0 - center) / sigma)
-    upper = _STANDARD_NORMAL.cdf((1.0 - center) / sigma)
-    quantiles = lower + (upper - lower) * ((np.arange(count) + rng.random(count)) / count)
-    return np.asarray(
-        [center + sigma * _STANDARD_NORMAL.inv_cdf(float(np.clip(value, 1e-12, 1.0 - 1e-12))) for value in quantiles],
+def _peak_center(view: np.ndarray, sign: float) -> np.ndarray:
+    center = np.asarray(
+        (-float(view[0]), -float(view[1]), sign * abs(float(view[2]))),
         dtype=np.float64,
     )
+    return center / np.linalg.norm(center)
 
 
-def _truncated_normal_pdf(values: np.ndarray, center: float, sigma: float) -> np.ndarray:
-    lower = _STANDARD_NORMAL.cdf((0.0 - center) / sigma)
-    upper = _STANDARD_NORMAL.cdf((1.0 - center) / sigma)
-    normalization = max(upper - lower, np.finfo(np.float64).tiny)
-    standardized = (values - center) / sigma
-    return np.exp(-0.5 * standardized * standardized) / (
-        sigma * math.sqrt(2.0 * math.pi) * normalization
+def _vmf_pdf(directions: np.ndarray, center: np.ndarray, kappa: float) -> np.ndarray:
+    """返回数值稳定的三维 von Mises–Fisher 球面 PDF。"""
+
+    dots = np.clip(
+        np.sum(np.asarray(directions, dtype=np.float64) * center, axis=-1),
+        -1.0,
+        1.0,
     )
+    log_normalization = (
+        math.log(kappa)
+        - math.log(2.0 * math.pi)
+        - math.log1p(-math.exp(-2.0 * kappa))
+    )
+    return np.exp(log_normalization + kappa * (dots - 1.0))
+
+
+def _folded_vmf_pdf(
+    directions: np.ndarray,
+    center: np.ndarray,
+    kappa: float,
+    sign: float,
+) -> np.ndarray:
+    """把完整球 vMF 折到指定半球；原方向与镜像 PDF 之和仍严格归一。"""
+
+    values = np.asarray(directions, dtype=np.float64)
+    reflected = values.copy()
+    reflected[..., 2] *= -1.0
+    result = _vmf_pdf(values, center, kappa) + _vmf_pdf(reflected, center, kappa)
+    return np.where(values[..., 2] * sign > 0.0, result, 0.0)
 
 
 def _peak_component_pdf(directions: np.ndarray, view: np.ndarray, sign: float) -> np.ndarray:
-    values = np.asarray(directions, dtype=np.float64)
-    absolute_z = np.abs(values[..., 2])
-    correct_side = values[..., 2] * sign > 0.0
-    center_z = float(np.clip(view[2], 0.0, 1.0))
-    center_phi = math.atan2(-float(view[1]), -float(view[0]))
-    phi = np.arctan2(values[..., 1], values[..., 0])
-    radial = max(0.0, 1.0 - center_z * center_z)
-    result = np.zeros_like(absolute_z)
-    for sigma, base_kappa in _PEAK_SCALES:
-        kappa = base_kappa * radial
-        z_pdf = _truncated_normal_pdf(absolute_z, center_z, sigma)
-        phi_pdf = np.exp(kappa * np.cos(phi - center_phi)) / (2.0 * math.pi * np.i0(kappa))
-        result += z_pdf * phi_pdf / len(_PEAK_SCALES)
-    return np.where(correct_side, result, 0.0)
+    center = _peak_center(view, sign)
+    result = np.zeros(np.asarray(directions).shape[:-1], dtype=np.float64)
+    for sigma in _PEAK_ANGULAR_SCALES:
+        result += _folded_vmf_pdf(directions, center, 1.0 / (sigma * sigma), sign)
+    return result / len(_PEAK_ANGULAR_SCALES)
+
+
+def _sample_vmf(
+    center: np.ndarray,
+    kappa: float,
+    count: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    u = (np.arange(count, dtype=np.float64) + rng.random(count)) / count
+    rng.shuffle(u)
+    tail = math.exp(-2.0 * kappa)
+    cosine = 1.0 + np.log(
+        np.maximum(u + (1.0 - u) * tail, np.finfo(np.float64).tiny)
+    ) / kappa
+    cosine = np.clip(cosine, -1.0, 1.0)
+    phi = 2.0 * math.pi * ((np.arange(count, dtype=np.float64) + rng.random(count)) / count)
+    rng.shuffle(phi)
+    sine = np.sqrt(np.maximum(0.0, 1.0 - cosine * cosine))
+    helper = np.asarray(
+        (0.0, 0.0, 1.0) if abs(center[2]) < 0.9 else (1.0, 0.0, 0.0)
+    )
+    tangent = np.cross(helper, center)
+    tangent /= np.linalg.norm(tangent)
+    bitangent = np.cross(center, tangent)
+    return (
+        sine[:, None] * np.cos(phi)[:, None] * tangent
+        + sine[:, None] * np.sin(phi)[:, None] * bitangent
+        + cosine[:, None] * center
+    )
 
 
 def _sample_peak_component(
@@ -124,21 +156,16 @@ def _sample_peak_component(
 ) -> np.ndarray:
     if count < 1:
         return np.empty((0, 3), dtype=np.float64)
-    center_z = float(np.clip(view[2], 0.0, 1.0))
-    center_phi = math.atan2(-float(view[1]), -float(view[0]))
-    scale_indices = np.arange(count) % len(_PEAK_SCALES)
+    center = _peak_center(view, sign)
+    scale_indices = np.arange(count) % len(_PEAK_ANGULAR_SCALES)
     rng.shuffle(scale_indices)
     result = np.empty((count, 3), dtype=np.float64)
-    radial_factor = max(0.0, 1.0 - center_z * center_z)
-    for scale_index, (sigma, base_kappa) in enumerate(_PEAK_SCALES):
+    for scale_index, sigma in enumerate(_PEAK_ANGULAR_SCALES):
         selected = np.flatnonzero(scale_indices == scale_index)
         if not len(selected):
             continue
-        z = _truncated_normal_samples(center_z, sigma, len(selected), rng)
-        kappa = base_kappa * radial_factor
-        phi = rng.vonmises(center_phi, kappa, size=len(selected)) if kappa > 1e-8 else rng.uniform(-math.pi, math.pi, len(selected))
-        radius = np.sqrt(np.maximum(0.0, 1.0 - z * z))
-        result[selected] = np.stack((radius * np.cos(phi), radius * np.sin(phi), sign * z), axis=1)
+        result[selected] = _sample_vmf(center, 1.0 / (sigma * sigma), len(selected), rng)
+    result[:, 2] = sign * np.abs(result[:, 2])
     return result
 
 

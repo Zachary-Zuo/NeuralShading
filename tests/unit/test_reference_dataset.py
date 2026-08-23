@@ -30,6 +30,7 @@ from ncls.data import (
     stratified_view_directions,
 )
 from ncls.data.providers import LayerStackProvider, LayerStackProviderConfig
+from ncls.data.directions import _folded_vmf_pdf
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -165,9 +166,19 @@ def test_peak_grazing_mixture_is_per_view_and_has_normalized_pdf() -> None:
 
     quadrature, solid_angle = equal_area_hemisphere(65536)
     integrated_pdf = np.sum(
-        peak_grazing_mixture_pdf(quadrature, views[1], full_sphere=False) * solid_angle
+        peak_grazing_mixture_pdf(
+            quadrature,
+            views[1],
+            full_sphere=False,
+            component_weights=(0.99, 0.01, 0.0),
+        ) * solid_angle
     )
     assert integrated_pdf == pytest.approx(1.0, rel=0.02, abs=0.02)
+
+    center = np.asarray((0.2, -0.3, 0.9327379053), dtype=np.float64)
+    center /= np.linalg.norm(center)
+    folded_integral = np.sum(_folded_vmf_pdf(quadrature, center, 8.0, 1.0) * solid_angle)
+    assert folded_integral == pytest.approx(1.0, rel=2e-3, abs=2e-3)
 
 
 def test_full_sphere_mixture_includes_reflection_transmission_and_grazing() -> None:
@@ -192,7 +203,7 @@ def test_e0_query_suite_separates_train_validation_test_and_adversarial_roles() 
         adversarial_view_count=2,
         light_count=32,
         seed=67,
-        query_profile_id="ncls.e0-peak-grazing-mixture@1",
+        query_profile_id="ncls.e0-peak-grazing-mixture@2",
     )
     provider = LayerStackProvider(
         collection,

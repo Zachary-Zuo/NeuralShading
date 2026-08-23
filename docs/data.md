@@ -25,12 +25,12 @@ Falcor Python 必须由项目脚本启动。下面命令把当前四个正式 pr
 
 这条命令的方向数可以用于工程 smoke，但不是最终训练密度的默认结论。正式数据生成前应先完成 peak/掠射角监督审计，再冻结每个 provider 的 query proposal 和 state distribution。
 
-E0 的定向覆盖诊断使用版本化的 `ncls.e0-peak-grazing-mixture@1`。它对每个 `wo` 分别生成 uniform、与镜面反射峰对齐的多尺度 peak，以及掠射角分量；完整球面的 OpenPBR 还包含透射侧 peak。每个落盘 `wi` 都保存 mixture 的真实 PDF，并使用 `1 / (N p(wi))` 作为 Monte Carlo 积分权重：
+E0 的定向覆盖诊断使用版本化的 `ncls.e0-peak-grazing-mixture@2`。它对每个 `wo` 分别生成 uniform、围绕真实镜面方向的多尺度球面 vMF peak，以及掠射角分量；完整球面的 OpenPBR 还包含透射侧 peak。vMF 是球面上的集中概率分布，半球版本把完整球 PDF 折叠后相加，因此近法线不会退化成环状采样，且仍有解析归一化 PDF。每个落盘 `wi` 都保存 mixture 的真实 PDF，并使用 `1 / (N p(wi))` 作为 Monte Carlo 积分权重：
 
 ```powershell
 .\scripts\run_falcor_python.ps1 -m ncls.cli data collect-reference `
   --provider openpbr --material-id <transmission-asset-id> `
-  --query-profile ncls.e0-peak-grazing-mixture@1 `
+  --query-profile ncls.e0-peak-grazing-mixture@2 `
   --views 8 --lights 256 `
   --output artifacts\research\learning-goal\e0\openpbr-mixture-probe.h5
 ```
@@ -71,7 +71,7 @@ LayerStack 的默认 `ncls.layer-stack-research-prior@1` 仍用于随机结构/�
   --provider layer-stack `
   --layer-stack-state-profile ncls.e0-layer-stack-boundary@1 `
   --families 6 --local-states 1 `
-  --query-profile ncls.e0-peak-grazing-mixture@1 `
+  --query-profile ncls.e0-peak-grazing-mixture@2 `
   --views 2 --validation-views 1 --test-views 1 --adversarial-views 2 `
   --lights 128 --samples-per-replica 4096 `
   --output artifacts\research\learning-goal\e0\probes\layer-stack-boundary-v4.h5
@@ -112,7 +112,7 @@ response-only learning 使用 `ReferenceQueryStore`。当前 LayerStack baseline
 
 `QueryPlan` 允许共享的 `[light, 3]` 方向表，也允许按 `wo` 提供 `[view, light, 3]`，内部统一为后者。因此 peak 能随 `wo` 移动，而不需要在公共 collector 中加入材质族或网络分支。v4 还为每个 `wo` 保存 query role；`--views` 是 train query 数，其他三类由 `--validation-views`、`--test-views`、`--adversarial-views` 明确给出。计数为零只适用于快速 provider/legacy smoke，不能通过正式 E0 gate。
 
-选择 `ncls.e0-peak-grazing-mixture@1` 时，train 与 adversarial role 使用 mixture；validation/test 使用不同方位与种子的固定 uniform probe。这样模型不会在与训练完全相同的离散方向表上被选择或宣称 held-out。source state split 与 query role 仍是两个独立轴，公共 reader 可按任一轴或交集随机访问。
+选择 `ncls.e0-peak-grazing-mixture@2` 时，train 与 adversarial role 使用 mixture；validation/test 使用不同方位与种子的固定 uniform probe。这样模型不会在与训练完全相同的离散方向表上被选择或宣称 held-out。source state split 与 query role 仍是两个独立轴，公共 reader 可按任一轴或交集随机访问。`@1` 的分离 `z/方位角` peak 在极窄、旋转各向异性材质上出现高方差，已停止作为当前入口；历史 H5 自带其方向/PDF，并由对应生成提交复现，不能用 `@2` 冒充重生。
 
 ## 新增材质族
 

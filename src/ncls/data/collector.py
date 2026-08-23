@@ -37,7 +37,7 @@ class CollectionConfig:
             raise ValueError("footprint width and seed must be nonnegative")
         if self.query_profile_id not in {
             "ncls.uniform-split-independent@1",
-            "ncls.e0-peak-grazing-mixture@1",
+            "ncls.e0-peak-grazing-mixture@2",
         }:
             raise ValueError("unsupported query profile")
 

@@ -123,7 +123,7 @@ RGB f(wo, wi) × |dot(Ns, wi)|
 
 `proposal_pdf` 描述采集 `wi` 的分布，`solid_angle_weight` 描述当前离散积分权重，二者不能互相替代。固定 probe、均匀采样、microfacet/peak proposal 和自适应 query 都通过这两个字段保留真实语义。
 
-版本化 E0 mixture `ncls.e0-peak-grazing-mixture@1` 是按 `wo` 构造的 uniform + 多尺度反射 peak + grazing 混合分布；完整球面时另含透射 peak。它使用可计算的归一化 PDF 和 `1/(N p)` 权重，目标是诊断 peak、掠射与透射覆盖，不预先宣告为最终训练分布。train/adversarial 使用 mixture，validation/test 使用独立 uniform probe；文件仍须由 supervision audit 检查实际 query role 与方向哈希，不能只相信 profile 名称。
+版本化 E0 mixture `ncls.e0-peak-grazing-mixture@2` 是按 `wo` 构造的 uniform + 多尺度球面 vMF 反射 peak + grazing 混合分布；完整球面时另含透射 peak。vMF peak 以真实镜面方向为球面中心，并把完整球分布折叠到目标半球，PDF 等于原方向与镜像方向的 PDF 之和。它使用可计算的归一化 PDF 和 `1/(N p)` 权重，目标是诊断 peak、掠射与透射覆盖，不预先宣告为最终训练分布。train/adversarial 使用 mixture，validation/test 使用独立 uniform probe；文件仍须由 supervision audit 检查实际 query role 与方向哈希，不能只相信 profile 名称。旧 `@1` 在近法线与旋转各向异性窄峰上方差过高，历史文件只能由其锁定生成提交复现。
 
 `rng_seed` 由 provider 返回，必须是 reference 实际执行该 query 使用的随机流 seed，writer 不得根据 query 行号再合成。确定性 reference 写 0；LayerStack 当前按 `(state, wo)` 使用一个 query-group seed，再在 shader 内结合 `wi` 索引派生随机流，因此同组各方向记录相同的 seed。
 

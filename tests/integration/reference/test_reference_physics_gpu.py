@@ -147,7 +147,7 @@ def test_reference_generator_supports_per_view_peak_grazing_queries(tmp_path: Pa
         adversarial_view_count=1,
         light_count=32,
         seed=31,
-        query_profile_id="ncls.e0-peak-grazing-mixture@1",
+        query_profile_id="ncls.e0-peak-grazing-mixture@2",
     )
     config = LayerStackProviderConfig(
         family_count=1,
