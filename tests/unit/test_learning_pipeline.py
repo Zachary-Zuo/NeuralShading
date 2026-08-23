@@ -378,6 +378,24 @@ def test_multiscale_half_slope_encoding_has_fixed_small_evaluate_input() -> None
     assert model.evaluate_network[0].in_features == model.prepared_dimension + 30
 
 
+def test_energy_shape_loss_penalizes_missing_integrated_response() -> None:
+    pipeline = create_pipeline("dense-latent-small-mlp-energy-shape-e1@1")
+    pipeline._training_state = {
+        "target_channel_scale": [0.1, 0.1, 0.1],
+        "target_channel_mean": [0.0, 0.0, 0.0],
+        "target_channel_standard_deviation": [1.0, 1.0, 1.0],
+    }
+    target = torch.tensor([[[1.0, 0.5, 0.25], [0.1, 0.05, 0.025]]])
+    batch = {
+        "mean": target,
+        "standard_error": torch.zeros_like(target),
+        "solid_angle_weight": torch.ones((1, 2)),
+    }
+    matching = pipeline.training_loss(target.clone(), batch)
+    missing = pipeline.training_loss(torch.full_like(target, 1e-6), batch)
+    assert matching < missing
+
+
 def test_direct_fit_is_a_separate_representation_ceiling_run(tmp_path: Path) -> None:
     dataset_path = tmp_path / "dataset.h5"
     output = tmp_path / "direct-fit"
