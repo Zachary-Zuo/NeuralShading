@@ -68,11 +68,6 @@ class BaseProvider:
         self.config = config
 
     def query_plan(self, state: SourceState) -> QueryPlan:
-        split_offset = (
-            (0.0, 0.371, 0.743)[state.split] * np.pi
-            if self.config.split_direction_scramble
-            else 0.0
-        )
         full_sphere = self.descriptor.incident_domain == "full-sphere"
         domain = "full-sphere" if full_sphere else "upper-hemisphere"
         query_seed = self.config.seed ^ int(state.state_id[:16], 16)
@@ -92,7 +87,12 @@ class BaseProvider:
             if count == 0:
                 continue
             role_name = QUERY_ROLE_NAMES[role]
-            role_offset = split_offset + role * 0.419 * np.pi
+            partition_index = role + (
+                state.split * len(QUERY_ROLE_NAMES)
+                if self.config.split_direction_scramble
+                else 0
+            )
+            role_offset = np.mod(partition_index * 0.2718281828459045, 2.0) * np.pi
             views = stratified_view_directions(count, azimuth_offset=role_offset)
             role_seed = query_seed ^ ((role + 1) * 0x9E3779B1)
             use_mixture = (

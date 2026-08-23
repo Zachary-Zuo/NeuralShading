@@ -196,7 +196,7 @@ def test_e0_query_suite_separates_train_validation_test_and_adversarial_roles() 
     )
     provider = LayerStackProvider(
         collection,
-        LayerStackProviderConfig(family_count=1, local_state_count=1),
+        LayerStackProviderConfig(family_count=3, local_state_count=1),
     )
     plan = provider.query_plan(provider.source_states()[0])
     role_names = [QUERY_ROLE_NAMES[int(role)] for role in plan.query_roles]
@@ -210,6 +210,9 @@ def test_e0_query_suite_separates_train_validation_test_and_adversarial_roles() 
         rtol=1e-6,
         atol=1e-7,
     )
+    all_plans = [provider.query_plan(state) for state in provider.source_states()]
+    assert {state.split for state in provider.source_states()} == {0, 1, 2}
+    assert len({direction.tobytes() for item in all_plans for direction in item.view_directions}) == 18
 
 
 def test_layer_stack_provider_wraps_per_view_seeds_to_uint32() -> None:
