@@ -8,12 +8,14 @@ from .dense_evaluator import (
     STANDARDIZED_LOG1P_PIPELINE_ID,
 )
 from .legacy_ltc_k2 import PIPELINE_ID
+from .plane_factorized import PIPELINE_ID as PLANE_FACTORIZED_PIPELINE_ID
 from .registry import create_pipeline, pipeline_descriptors, register_pipeline
 
 __all__ = [
     "LearningPipeline",
     "LearningPipelineDescriptor",
     "PIPELINE_ID",
+    "PLANE_FACTORIZED_PIPELINE_ID",
     "LINEAR_PIPELINE_ID",
     "ANALYTIC_RESIDUAL_ENERGY_SHAPE_PIPELINE_ID",
     "ANALYTIC_RESIDUAL_PIPELINE_ID",

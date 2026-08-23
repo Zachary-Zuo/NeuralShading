@@ -407,6 +407,41 @@ def test_energy_shape_loss_penalizes_missing_integrated_response() -> None:
     assert matching < missing
 
 
+def test_plane_factorized_pipeline_uses_the_common_e1_lifecycle(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "plane-factorized-dataset.h5"
+    _e1_dataset(dataset_path)
+    pipeline = create_pipeline("plane-factorized-small-mlp-energy-shape-e1@1")
+    assert pipeline.descriptor.candidate_id == "ncls.plane-tensor-factorization@1"
+    with pipeline.open_store(str(dataset_path)) as store:
+        state_id = str(store.dataset.state_strings("state_id")[0])
+        indices = store.select_indices(
+            pipeline.lifecycle_indices(store, "train"), {"state_ids": [state_id]}
+        )
+        pipeline.load_training_state(pipeline.fit_training_state(store, indices))
+        model = pipeline.create_model({
+            "plane_resolution": 8,
+            "plane_feature_dimension": 2,
+            "material_latent_dimension": 4,
+            "width": 8,
+            "evaluate_layer_count": 1,
+            "activation": "gelu",
+            "output_bias": 0.0,
+        })
+        batch = {
+            name: torch.as_tensor(value)
+            for name, value in store.batch(indices[:1]).items()
+        }
+        prediction = pipeline.predict(model, batch, store, torch.device("cpu"))
+        loss = pipeline.training_loss(prediction, batch)
+        assert prediction.shape == batch["mean"].shape
+        assert torch.isfinite(loss)
+        loss.backward()
+        costs = pipeline.parameter_costs(model)
+        assert costs["plane_texel_fetches_prepare"] == 4
+        assert costs["plane_texel_fetches_eval"] == 20
+        assert costs["B_shared_fp32"] == 0
+
+
 def test_direct_fit_is_a_separate_representation_ceiling_run(tmp_path: Path) -> None:
     dataset_path = tmp_path / "dataset.h5"
     output = tmp_path / "direct-fit"

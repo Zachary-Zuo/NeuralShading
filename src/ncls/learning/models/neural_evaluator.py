@@ -54,6 +54,15 @@ def _mlp(
     return nn.Sequential(*layers)
 
 
+class SingleMaterialEvaluatorModel(nn.Module):
+    """E1 单材质 evaluator 的最小模型接口；具体表示仍由各 pipeline 决定。"""
+
+    architecture_id: str
+
+    def cost_summary(self) -> dict[str, int]:
+        raise NotImplementedError
+
+
 @dataclass(frozen=True)
 class NeuralEvaluatorModelConfig:
     latent_dimension: int = 16
@@ -91,7 +100,7 @@ class NeuralEvaluatorModelConfig:
             raise ValueError(f"unsupported direction encoding {self.direction_encoding_id!r}")
 
 
-class SingleMaterialNeuralEvaluator(nn.Module):
+class SingleMaterialNeuralEvaluator(SingleMaterialEvaluatorModel):
     """一个 material latent、可复用 view prepare 和逐 wi 小 MLP。"""
 
     architecture_id = ARCHITECTURE_ID

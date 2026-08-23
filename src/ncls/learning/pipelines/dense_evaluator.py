@@ -15,6 +15,7 @@ from ncls.learning.evaluation.metrics import evaluator_metric_distributions, res
 from ncls.learning.models.neural_evaluator import (
     ARCHITECTURE_ID,
     NeuralEvaluatorModelConfig,
+    SingleMaterialEvaluatorModel,
     SingleMaterialNeuralEvaluator,
     positive_response,
 )
@@ -162,8 +163,8 @@ class _DenseE1Pipeline(LearningPipeline):
     ) -> torch.Tensor:
         del device
         self._require_batch_state(batch, store)
-        if not isinstance(model, SingleMaterialNeuralEvaluator):
-            raise TypeError("dense E1 pipeline requires SingleMaterialNeuralEvaluator")
+        if not isinstance(model, SingleMaterialEvaluatorModel):
+            raise TypeError("dense E1 pipeline requires SingleMaterialEvaluatorModel")
         return self._decode(model(batch["view"].float(), batch["lights"].float()))
 
     def training_loss(
@@ -214,8 +215,8 @@ class _DenseE1Pipeline(LearningPipeline):
         device: torch.device,
     ) -> Mapping[str, np.ndarray]:
         self._require_batch_state(batch, store)
-        if not isinstance(model, SingleMaterialNeuralEvaluator):
-            raise TypeError("dense E1 pipeline requires SingleMaterialNeuralEvaluator")
+        if not isinstance(model, SingleMaterialEvaluatorModel):
+            raise TypeError("dense E1 pipeline requires SingleMaterialEvaluatorModel")
         wo = batch["view"].float()
         wi = batch["lights"].float()
         group_count, direction_count, _ = wi.shape
@@ -241,18 +242,22 @@ class _DenseE1Pipeline(LearningPipeline):
         return {"reciprocity_relative_l1": reciprocity.detach().cpu().numpy()}
 
     def parameter_costs(self, model: nn.Module) -> Mapping[str, Any]:
-        if not isinstance(model, SingleMaterialNeuralEvaluator):
+        if not isinstance(model, SingleMaterialEvaluatorModel):
             return super().parameter_costs(model)
         costs = model.cost_summary()
         total = int(costs["parameter_count"])
-        return {
+        result = {
             **costs,
             "B_asset_fp32": 4 * total,
             "B_shared_fp32": 0,
-            "optimized_material_latent_bytes_fp32": 4 * model.material_latent.numel(),
-            "optimized_material_network_bytes_fp32": 4 * (total - model.material_latent.numel()),
             "cost_scope": "single-material-capacity; all fitted parameters are asset-specific",
         }
+        if isinstance(model, SingleMaterialNeuralEvaluator):
+            result.update({
+                "optimized_material_latent_bytes_fp32": 4 * model.material_latent.numel(),
+                "optimized_material_network_bytes_fp32": 4 * (total - model.material_latent.numel()),
+            })
+        return result
 
 
 class DenseLinearE1Pipeline(_DenseE1Pipeline):
@@ -409,7 +414,7 @@ class DenseStandardizedLog1pE1Pipeline(_DenseE1Pipeline):
 
     def _reciprocity_penalty(
         self,
-        model: SingleMaterialNeuralEvaluator,
+        model: SingleMaterialEvaluatorModel,
         batch: Mapping[str, torch.Tensor],
         forward: torch.Tensor,
     ) -> torch.Tensor:
@@ -444,7 +449,7 @@ class DenseStandardizedLog1pE1Pipeline(_DenseE1Pipeline):
     ) -> torch.Tensor:
         prediction = super().predict(model, batch, store, device)
         if model.training:
-            if not isinstance(model, SingleMaterialNeuralEvaluator) or not isinstance(batch, dict):
+            if not isinstance(model, SingleMaterialEvaluatorModel) or not isinstance(batch, dict):
                 raise TypeError("standardized log1p training requires mutable tensor batches")
             batch["_reciprocity_penalty"] = self._reciprocity_penalty(model, batch, prediction)
         return prediction
