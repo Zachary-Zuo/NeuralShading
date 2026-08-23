@@ -2,7 +2,7 @@
 
 ## 定位与当前结论
 
-`apps/viewer/` 是 Windows/D3D12 原生材质查看器，用于把源材质 reference 和固定成本实时方法放到同一场景、相机与显示管线中观察。它不是训练 UI，也不是数据集 tile 浏览器。
+`apps/viewer/` 是 Windows/D3D12 原生材质查看器，用于把源材质 reference 和有界成本实时方法放到同一场景、相机与显示管线中观察。它不是训练 UI，也不是数据集 tile 浏览器。
 
 左侧 reference 已升级为独立的完整场景 path tracer，不再复用 deferred G-buffer 后只计算首个表面的局部响应。当前实现追踪相机射线、Falcor Scene 几何相交、阴影、环境与解析光直接采样、材质散射、跨物体间接反弹和 Russian roulette，并累计线性 HDR raw 均值。LayerStack、MERL、OpenPBR、MaterialX 都在每次命中时以各自原生 reference 参与路径，不需要先转换为统一层模型。
 
@@ -32,7 +32,7 @@
 - 支持 split、线性绝对差、相对差和放大误差显示；
 - 左右不能分别自动曝光，显示操作不能修改任一侧物理输入。
 
-右侧目前没有 path-traced 全局传输，因此图像 difference 是 reference 与完整实时系统的视觉差异，会混入可见性和间接光差异。它适合发现系统级伪影，不是 closure 表示误差的定量替代；closure 的核心指标仍由固定方向响应数据计算。
+右侧目前没有 path-traced 全局传输，因此图像 difference 是 reference 与完整实时系统的视觉差异，会混入可见性和间接光差异。它适合发现系统级伪影，不是 neural evaluator 表示误差的定量替代；核心材质指标仍由固定方向响应和匹配入射光/可见性的局部图像计算。
 
 ## Reference estimator 与噪声语义
 
@@ -81,11 +81,21 @@ viewer 只有一个相机状态。orbit、pan、dolly、滚轮缩放、键盘移
 
 点击场景物体选择其 Falcor material slot；修改只作用于选中 slot。UI 按源材质族显示原生可编辑参数。MERL 通过更换测量文件修改，不能伪造并不存在的自由参数。
 
+UI 的 `Source material family` 明确列出当前 viewer reference 真正接入的四族：LayerStack、MERL、OpenPBR 1.1.1 和 MaterialX `standard_surface` subset。LayerStack 与 OpenPBR 可以从族默认状态新建；MERL 与 MaterialX 必须选择原生测量表或 `.mtlx` 文档，因为这些资源本身就是 GT 的一部分。切换 family 只替换当前选中的 material slot，不影响其他 slot。
+
+OpenPBR UI 编辑 resolved native parameter；来自 scene 命中点的 `geometry_normal/tangent` binding 继续由局部 shading frame 提供。MaterialX UI 只编辑当前正式 subset 中没有被纹理连接驱动的 constant input；纹理驱动项必须保留原图连接。两族的 UI 修改都形成新的 source-material state hash，不能继续把原始文件 hash 冒充成编辑后状态的 identity。
+
+光照 UI 中方向光向量的语义是“从着色点指向光源的方向”。矩形灯由 center 与两个 half-axis 定义，`normalize(cross(U,V))` 是发光面法线；reference 与实时侧使用同一方向约定。默认 preset 的 SHA-256 只约束启动时加载的固定资产，不得阻止用户随后显式加载另一份 scene 或 HDRI。
+
 ## MethodBundle
 
 viewer 只列出通过 manifest、全文件 hash、平台、散射合同与 GPU parity 的实时 bundle。切换方法允许重建右侧 pipeline 和 backend-specific `ScatteringState`；不得把某个 backend 的 packet 布局提升为公共接口。
 
 逐 tile direct fit 只对离散 `(材质, 观察方向)` 有效，不属于自由相机 MethodBundle。
+
+目标 neural MethodBundle 在每个可见像素获取/过滤 latent，并由 `prepare` 形成 view-conditioned state；deferred lighting 对每个已知光照方向调用 evaluator MLP。viewer 需要分别计时 prepare 与 evaluate，不能把网络只放在 prepare 后输出固定 closure 的基线称为已经验证了 direct neural evaluator。
+
+viewer 是阶段 C 之后的部署与系统验证工具。阶段 A–B 的模型选择先在方向响应数据上完成；evaluator 尚未确定时，不使用当前 viewer 的多灯、PT variance 或完整场景差异作为前置 kill test。matched sampler 完成后可以增加“同一 neural material 在 PT 中运行”的独立 comparison mode，但不能用左侧源材质 reference 的 sampler 冒充被测方法能力。
 
 ## Capture 与 replay
 
@@ -97,10 +107,17 @@ capture v3 至少记录：
 - MethodBundle、GPU timing 与 comparison 语义；
 - raw reference、denoised preview、approximation、comparison、display 和 metrics 文件角色。
 
-固定 studio-v1 是单材质场景，可以完整 replay。多 slot 场景会记录所有当前绑定，但在稳定的逐 slot 源材质序列化合同落地前必须标记 `scene_material_bindings_replayable=false`。
+`ncls.viewer-scene@1` 是 authoring state sidecar，保存 Falcor scene 与 HDRI 的 URI/SHA-256、相机、物理光照、reference 上限，以及每个 material slot 的源材质族和原生状态。逐族保存方式如下：
+
+- LayerStack：内嵌完整 `MaterialProgram`；
+- OpenPBR：保存颜色空间和按名称记录的 resolved native parameters，同时保留原始 source asset provenance；
+- MERL：保存测量表 URI 与内容 identity；它没有伪造的连续参数；
+- MaterialX：保存 `.mtlx`/纹理整体 identity、原生文档 URI，以及没有被纹理连接驱动的 editable input override。
+
+viewer scene 加载时要求 material ID 无重复、无遗漏，并验证几何、HDRI、resource-backed source asset 和每个材质状态的 SHA-256。capture v3 额外写出 `*-scene.json` 并通过 `viewer_scene` 字段引用它；因此单 slot 与多 slot scene 都可以完整 replay，`scene_material_bindings_replayable=true`。完整字段合同见 `docs/contracts/viewer_scene.md`。
 
 ## 自动 benchmark
 
 `configs/viewer-benchmark-v1.json` 与 `scripts/benchmark_viewer.ps1` 必须复用 studio-v1 几何、HDRI、默认材质及其 hash，并固定三段相机路径、分辨率、reference 上限和帧数。输出写入 `artifacts/`，包含 preset/viewer/source/Falcor/scene/environment/material provenance，不把单次运行结果提交到根仓库。
 
-最终性能与质量门槛应依据首个正式 backend 的实测 Pareto 曲线制定；不能沿用旧 K2 状态布局作为预算，也不能用去噪预览掩盖 raw estimator 的收敛问题。
+最终性能与质量门槛应在 evaluator 形成 Slang 最小部署后，依据正式 backend 的实测 Pareto 曲线制定。预算分别记录 latent/compiled material bytes、state bytes、prepare、单次/逐灯 evaluate、可选 sampler 和专用积分成本；去噪预览不能掩盖 raw estimator 的收敛问题。

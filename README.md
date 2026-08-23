@@ -1,10 +1,12 @@
 # NeuralShading
 
-NeuralShading 研究如何把多种保持原生语义的源材质族编译为统一、固定成本、可直接参与实时光照积分的散射实现。源材质可以是纯数学模型、可编辑材质图、程序材质、高分辨率纹理或测量外观；每个材质族保留自己的权威 reference，后续方法按最终散射和呈现结果学习与评测，而不要求 GT 先被分解成某种层参数。
+NeuralShading 研究如何把多种保持原生语义的源材质族编译为统一、随机访问、运行成本有界的 neural material program。目标方法用小型 MLP 直接实现逐方向 `evaluate(wo, wi)`，让同一份编译材质进入 deferred、hybrid ray tracing 和 path tracing 的材质求值位置。源材质可以是纯数学模型、可编辑材质图、程序材质、高分辨率纹理或测量外观；每个材质族保留自己的权威 reference，不要求 GT 先被分解成某种层参数或固定 closure。
 
-项目已经形成三段可运行闭环：Falcor 数据采集、带 TensorBoard 的 Python 训练/测试、Windows/D3D12 材质查看器。三段只通过带版本的公共合同交换 `MaterialProgram`、`ReferenceDataset` 和 `MethodBundle`；K2 只是一个可替换的历史拟合后端，不是公共接口。当前随机游走 `LayerStackIR` 是第一种已实现的源材质族和 reference，不是所有 GT 的统一内部表示。
+项目已经形成三段可运行闭环：Falcor 数据采集、带 TensorBoard 的 Python 训练/测试、Windows/D3D12 材质查看器。三段只通过带版本的公共合同交换 `MaterialProgram`、`ReferenceDataset` 和 `MethodBundle`。当前随机游走 `LayerStackIR` 是第一种已实现的源材质族和 reference，不是所有 GT 的统一内部表示。
 
-当前基线为“精确顶层界面 + 两个 LTC 残差瓣”，方向域 relative-L1 为 median 6.73%、p90 31.20%。粗糙导体基底和深层栈仍有明显长尾，因此表示尚未定稿；接下来的研究重点是降低长尾，再确定结构化网络最终应输出什么。
+目标运行时分成三个清晰阶段：`compile_material()` 生成 view-independent latent 资产；`prepare()` 在每个 raster pixel 或 ray hit 获取、过滤并编码 latent、footprint 与 `wo`；小型 evaluator MLP 对每个 `wi` 直接输出散射。Path tracing profile 在 evaluator 成形后再增加匹配且具有可计算密度的 `sample()/pdf()`；环境光和面光积分作为后续独立能力研究。
+
+当前首先要确定 neural representation，而不是先做空泛的系统 kill test。研究按“evaluator 建模与监督审计 → 单材质容量 → 共享 decoder + 材质 latent → 未见状态 compiler → Slang 最小部署 → sampler 与环境积分 → Falcor/UE 式系统验收”推进。现有解析 backend 继续承担回归、成本对照和可选物理 core/sampling proposal。
 
 源材质 reference 已扩展为五个 active package：LayerStack 随机游走、pbrt coated 独立验证、OpenPBR 1.1.1、MERL 测量 BRDF，以及 8 个原生 MaterialX/Poly Haven 4K 纹理材质。它们从 `references/registry.json` 统一发现，但各自保留原始参数、测量表或图/纹理 GT。
 
@@ -44,8 +46,9 @@ conda run -n neural-shading ncls bundle export-legacy-ltc-k2 `
 
 ## 文档入口
 
+- [这个问题是什么、如何进入 UE 式实时管线](docs/realtime_material_compilation.md)
 - [架构与边界](docs/architecture.md)
-- [源材质族与统一表示](docs/material_scope.md)
+- [源材质族与统一神经材质程序](docs/material_scope.md)
 - [Reference package 固定入口](references/README.md)
 - [数据采集](docs/data.md)
 - [训练、评测与导出](docs/learning.md)
@@ -53,5 +56,6 @@ conda run -n neural-shading ncls bundle export-legacy-ltc-k2 `
 - [稳定合同](docs/contracts/)
 - [分层测试](TESTING.md)
 - [仓库边界](docs/repository_policy.md)
+- [早期调研与研究过程](docs/research/README.md)
 
 Falcor 8.0、pbrt-v4、OpenPBR、openpbr-bsdf、GLM 和 MaterialX 位于被 Git 忽略的 `external/` 独立克隆，固定提交见 `AGENTS.md`。本项目源码不会把未说明修改留在上游工作树。

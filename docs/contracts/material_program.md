@@ -2,7 +2,7 @@
 
 ## 它是什么
 
-`MaterialProgram` 是项目唯一的公共材质描述。它面向编辑、数据生成、训练输入和 viewer，不与 K2、LTC、latent 维数或任何拟合后端绑定。
+`MaterialProgram` 是项目唯一的公共材质描述。它面向编辑、数据生成、neural compiler 输入和 viewer，不与 latent 维数、evaluator 结构、sampler family、解析参数或任何运行时 backend 绑定。目标 compiler 从这里保存的原生语义生成 neural material asset；运行时 latent 不是作者层 GT，不能回写后冒充源材质。
 
 迁移前的固定数组式 `LayerStack` 已被内部 `LayerStackIR` 取代。它仍是第一阶段研究范围的中心，但不承担顶层材质文件格式。
 
@@ -164,7 +164,7 @@ family split 和数据去重都使用规范化后的物理语义哈希，不能�
 - 节点注册信息和中文语义说明；
 - 规范化规则；
 - 一个直接保持源材质原生语义的 reference，或明确的 reference capability；
-- approximation backend 可以暂时不支持，但必须返回清晰的 capability error，不能因此拒绝源材质及其 reference 作为 GT 接入；
+- neural material backend 可以暂时不支持，但必须返回清晰的 capability error，不能因此拒绝源材质及其 reference 作为 GT 接入；
 - schema、round-trip 和 shader ABI 测试。
 
 非局部 BSSRDF、完整 volume、displacement 等使用预留输出连接独立 renderer 阶段，不伪装成局部 `Surface` 节点。

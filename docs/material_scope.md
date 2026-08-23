@@ -1,10 +1,10 @@
-# 源材质族、reference 与统一表示
+# 源材质族、reference 与统一神经材质程序
 
 ## 真实需求
 
 项目要处理的输入不是预先被归约成某一种层参数的材质，而是多个保持原生语义的**源材质族**。源材质可以是纯数学散射模型、可编辑 shader graph、程序材质、带高分辨率纹理的空间变化材质、测量 BRDF/BSDF/BTF，或以后接入的非局部材质系统。
 
-每个源材质族用适合自己的 reference 实现产生 ground truth（GT，真实目标）外观或散射。后续研究方法再把这些不同来源编译成一种统一、固定成本的近似表示：
+每个源材质族用适合自己的 reference 实现产生 ground truth（GT，真实目标）外观或散射。后续研究方法再把这些不同来源编译成统一、随机访问、运行成本有界的 neural material program：
 
 ```text
 源材质资产
@@ -16,10 +16,10 @@
         ↓
 训练 / direct fit / 评测
         ↓
-跨源材质族的统一近似表示与 MethodBundle
+跨源材质族的 neural evaluator、latent 与 MethodBundle
 ```
 
-这里统一的是后续方法的表示和 renderer 使用的查询合同，不是 reference 内部的材质表示。不同 reference 不需要共享 `LayerStackIR`、参数布局、求值算法或资源类型。
+这里统一的是目标运行时的查询方式：`compile_material → prepare → neural evaluate`，以及按 capability 增加的 matched `sample/pdf` 和专用积分。它不统一 reference 内部的材质表示；不同 reference 不需要共享 `LayerStackIR`、参数布局、求值算法或资源类型。
 
 ## GT 原则
 
@@ -48,7 +48,7 @@
 - 测量 BRDF/BSDF/BTF 的查表和重建 reference；
 - 以后为 BSSRDF、纤维或参与介质提供的专用 reference。
 
-reference adapter 只负责把共同查询所需的几何、方向、光谱/颜色、随机流和输出测度对齐。它不得改变源材质的物理语义，也不得先经过项目的统一近似表示。
+reference adapter 只负责把共同查询所需的几何、方向、光谱/颜色、随机流和输出测度对齐。它不得改变源材质的物理语义，也不得先经过项目要研究的 neural material program。
 
 同一源材质族可以保留多个独立 reference 实现用于交叉验证。数据和报告必须记录实际使用的 reference 身份、版本、资源哈希和适用范围。
 
@@ -58,7 +58,7 @@ reference adapter 只负责把共同查询所需的几何、方向、光谱/颜�
 
 1. **源材质资产/源材质语料**：原始材质定义、可编辑参数、图、纹理、测量表和其他原生资源；
 2. **reference 响应数据**：reference 对查询采样后产生的方向响应、方差、图像或其他监督；
-3. **方法产物**：direct fit 状态、网络 checkpoint、统一近似表示、`MethodBundle` 和评测结果。
+3. **方法产物**：direct-fit latent/evaluator、共享 decoder、compiler checkpoint、matched sampler、`MethodBundle` 和评测结果；解析 closure 产物属于对照或可选 physical core。
 
 `ncls.reference-dataset@2` 只属于第二类。它不是源材质库，也不规定第一类必须如何表达。
 
@@ -84,7 +84,7 @@ reference adapter 只负责把共同查询所需的几何、方向、光谱/颜�
 
 高分辨率 PBR/SVBRDF 纹理集可以作为一种源材质族，但纹理 map 本身不完整定义外观；必须同时固定其原生 closure、颜色空间、单位、切线约定、过滤和位移语义。类似地，光学常数数据库可以给解析或薄膜源材质提供原生参数，但不自动定义粗糙度、纹理或材质结构。
 
-## 本轮完成顺序与下一步
+## 已完成的源材质接入与当前优先级
 
 本轮不按层数或材质名称堆功能，而用少量语义差异明显的源材质族验证完整架构。以下 1–5 已按顺序完成：
 
@@ -93,8 +93,10 @@ reference adapter 只负责把共同查询所需的几何、方向、光谱/颜�
 3. **OpenPBR 1.1.1 纯数学、原生可编辑材质族**：完整 resolved input 字段、83 个官方 MaterialX 示例索引、常量编辑 round-trip、直接纹理 binding、独立 `eval/sample/pdf` CPU reference 和离线预览已经接入。任意图节点保留原生连接，未实现图求值时显式拒绝。
 4. **MERL 测量 BRDF 材质族**：100 个原始密集表、发布包身份、官方 Rusinkiewicz 参数化、RGB scale、向量化查表和离线预览已经接入；没有制造不存在的解析 GT 参数。
 5. **原生 MaterialX 高分辨率纹理小集**：8 个 Poly Haven CC0 4K 材质已经锁定并下载，完整保留 `.mtlx`、纹理、物理尺寸、颜色空间、切线 normal 和 displacement 语义；均已在 Falcor 中直接呈现，并通过上游 MaterialX float renderer 的共同相机线性 HDR 图像验收。当前 surface-response 验收不移动 displacement 几何，但没有从原始 GT 删除该图或参数。
-6. **再选择 microflake/汽车漆或 BTF**：两者分别增加统计微结构和位置相关方向外观，是对统一表示更强的下一轮压力测试。
-7. **BSSRDF、纤维和完整参与介质最后按独立 renderer capability 接入**：它们需要先扩展共同查询域，不能只向局部 BSDF tile 增加字段。
+6. **先完成 LayerStack neural evaluator 的最小研究闭环**：定义 latent/方向编码/MLP 候选，依次验证单材质容量、共享 decoder、未见状态 compiler 和 Slang 最小部署。现有多个源材质族先用于检查合同边界和后续泛化，不在建模尚未确定时继续堆新 reference。
+7. **evaluator 成形后扩展 sampling 与环境积分**：matched sampler 必须提供同一 proposal 的 `sample/pdf`；环境/面光能力必须近似 evaluator 定义的积分。
+8. **再选择 microflake/汽车漆或 BTF 作为表示压力测试**：两者分别增加统计微结构和位置相关方向外观；空间 latent 测试需要先扩展 UV/footprint/LOD 监督合同。
+9. **BSSRDF、纤维和完整参与介质最后按独立 renderer capability 接入**：它们需要先扩展共同查询域，不能只向局部 BSDF tile 增加字段。
 
 OpenPBR 在这里是一个源材质族，不是项目统一方法的目标结构；MERL 和纹理 MaterialX 也各自保留原生 GT，不转换成 OpenPBR 后再冒充原始材质。
 
@@ -140,4 +142,4 @@ coated conductor 验证已经完成；“通用 pbrt N 层 probe”仍不进入�
 6. reference 身份、源资源和参数状态可被数据集逐项追溯；
 7. 后续统一方法按输出行为评测，不把内部参数是否相似当作正确性标准。
 
-源材质族可以先于统一 approximation backend 接入。backend 尚未覆盖时必须报告 capability 缺失，但这不影响该源材质及其 reference 作为 GT 存在。
+源材质族可以先于统一 neural material backend 接入。backend 尚未覆盖时必须报告 capability 缺失，但这不影响该源材质及其 reference 作为 GT 存在。

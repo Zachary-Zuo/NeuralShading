@@ -2,11 +2,15 @@
 
 ## 它是什么
 
-`ncls.reference-dataset@2` 是训练、逐样本直接拟合和回归测试共用的方向响应数据合同。每个 tile 对应一个源材质状态与一个观察方向，保存全部入射光方向上的 `response_cos = f(wo, wi) * max(dot(Ns, wi), 0)`、统计方差、总样本数和可选的独立随机流均值。
+`ncls.reference-dataset@2` 是 neural evaluator 建模、direct fit、编译器训练和回归测试共用的方向响应数据合同。每个 tile 对应一个源材质状态与一个观察方向，保存全部入射光方向上的 `response_cos = f(wo, wi) * max(dot(Ns, wi), 0)`、统计方差、总样本数和可选的独立随机流均值。
 
-它不包含 K2、LTC、latent 或网络参数。拟合表示发生变化时，只要 reference 和源材质语义没有变化，就不需要重新采集。
+它不包含任何 neural material backend 的状态、latent 或网络参数。evaluator、compiler 或 sampler 发生变化时，只要 reference 和源材质语义没有变化，就不需要重新采集。
 
 它也不是源材质资产合同。源材质的原生参数、图、程序、纹理、测量表和其他资源必须独立保存并可追溯；本数据集只记录 reference 对这些源材质状态执行查询后得到的监督。完整边界见 `docs/material_scope.md`。
+
+当前 v2 数据足以把同一 `material_state` 的多个 view tile 组合起来，训练或 direct-fit 一个覆盖 `wo × wi` 的常量材质 evaluator；训练代码不得把 tile 边界误当成每个 `wo` 都拥有独立材质 latent。它尚不携带表面位置、UV footprint、mip/LOD 和空间 latent 邻域，因此不能直接证明 random-access spatial material 或纹理过滤。进入空间变化 neural material 阶段时应新增带版本的数据合同或伴随查询表，不能把这些输入伪造成常量材质字段。
+
+磁盘保存 `response_cos` 是为了稳定统计和直接做半球积分，不规定 evaluator MLP 必须输出这个量。公共运行时 `evaluate()` 返回不含余弦的 `f`。建模配置必须明确网络输出与 loss：可以预测 `f` 并在 `response_cos` 测度下加权训练；若预测 `f*cos`，则必须定义接近 grazing angle 时如何稳定恢复运行时 `f`，不能让 renderer 重复乘余弦。
 
 ## 生成
 

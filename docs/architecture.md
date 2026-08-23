@@ -2,7 +2,7 @@
 
 ## 状态
 
-本文记录已经实现并冻结边界的项目架构。它约束新增实现，但不把当前 K2 基线提升为最终表示，也不冻结任何具体拟合方法的内部参数。
+本文同时记录已经实现的生命周期边界和下一阶段目标方法。MaterialProgram、ReferenceDataset、MethodBundle、viewer 与散射语义已经形成基础闭环；以小型 MLP 直接实现 `evaluate(wo, wi)` 的 neural material program 尚处于建模阶段。架构不冻结 latent 布局、网络规模、sampler family 或 backend 的物理状态。
 
 详细合同见：
 
@@ -10,21 +10,23 @@
 - `docs/contracts/scattering_backend.md`；
 - `docs/contracts/reference_dataset.md`；
 - `docs/contracts/method_bundle.md`；
+- 面向初学者的问题定义与 UE/Substrate 映射见 `docs/realtime_material_compilation.md`；
 - 源材质、reference 与统一表示的边界见 `docs/material_scope.md`；
 - viewer 行为见 `docs/viewer_spec.md`；
 - 执行顺序见 `docs/migration_plan.md`。
 
-项目的根本目标是：接入多种保持原生语义的源材质族，用各材质族自己的 reference 产生 GT，再把它们编译为一种统一、固定成本、可由实时光照系统使用的近似表示，并验证它在未见材质和参数状态上的误差。源材质不需要先被分解成层参数；当前多层随机游走只是第一种已实现的源材质族。
+项目的根本目标是：接入多种保持原生语义的源材质族，用各材质族自己的 reference 产生 GT，再把它们编译为统一、随机访问、运行成本有界的 neural material program，并验证它在未见材质和参数状态上的质量—时间—内存 Pareto。源材质不需要先被分解成层参数或固定 closure；当前多层随机游走只是第一种已实现的源材质族。
 
 ## 统一术语
 
 - **源材质族**（source material family）：共享一种原生材质语义和求值规则的一组材质。它可以由公式、图、程序、纹理、测量表、微几何或其他资源定义。
 - **reference**：对某个源材质族具有权威语义的求值实现，用来生成监督和提供 viewer 的 GT 图像。随机游走、解析公式、原生材质图、纹理求值和测量数据查表都可以分别成为 reference；它们只统一查询与输出合同，不统一内部表示。新代码和文档不再使用 `teacher` 作为名称。
-- **逐样本直接拟合**（direct fit）：不经过通用预测网络，直接对一个 `(材质, 观察方向)` 优化表示参数，用来测量某种表示的上界。新文档不再把它称为 `oracle`，旧路径只在迁移说明中保留。
-- **拟合后端**（approximation backend）：K2 LTC、其他解析 closure、latent 表示、参数预测网络或直接神经求值器等可替换实现。
+- **直接拟合**（direct fit）：不经过通用 feed-forward compiler，直接优化候选表示的 latent 或参数，用于拆分表示容量与编译器泛化误差。拟合单位必须明确：单个方向 tile 只能测量方向切片；逐材质跨全部 `wo/wi` 的拟合才能测量 view-conditioned evaluator；共享 decoder + 多材质 latent 才能测量统一 neural representation。
+- **神经材质后端**（neural material backend）：把编译结果变成可运行 neural material program 的实现，以小型 MLP 直接求值方向散射，可以包含解析 physical core、neural residual、matched sampler 和专用积分 head。
+- **解析基线**（analytic baseline）：用于质量、成本、能量和退化关系对照的 closure/固定基方法，也可以为神经后端提供 physical core 或 sampling proposal；它不定义目标表示的公共字段。
 - **材质程序**（`MaterialProgram`）：面向编辑、存储和交换的可扩展有类型材质图。
-- **散射状态**（scattering state）：拟合后端在一个着色点和观察方向上准备出的不透明运行时状态。renderer 不读取其字段。
-- **方法包**（`MethodBundle`）：可由评测程序和 viewer 加载的完整方法交付物，包含材质编译器、拟合后端、权重、shader、合同版本和成本信息。
+- **散射状态**（scattering state）：运行时 backend 在一个着色点和观察方向上准备出的不透明、可复用状态。renderer 不读取其字段。
+- **方法包**（`MethodBundle`）：可由评测程序和 viewer 加载的完整方法交付物，包含材质编译器、neural material backend、权重、shader、合同版本和成本信息。
 
 ## 三个业务块和公共核心
 
@@ -64,8 +66,8 @@ src/ncls/
   source_materials/        OpenPBR、MERL、MaterialX 原生源材质 adapter
   bundle/                  MethodBundle manifest、导出和 loader
   learning/
-    direct_fit/            表示上界实验
-    models/                通用材质编译器
+    direct_fit/            neural representation 容量与 latent 实验
+    models/                evaluator、sampler 与通用材质编译器
     training/              训练循环、TensorBoard、checkpoint
     evaluation/            held-out 测试和图像/方向指标
     export/                MethodBundle 导出
@@ -74,7 +76,7 @@ shaders/ncls/
   contracts/               共用语义结构和生成的 ABI
   reference/               当前随机游走及后续族专属 reference 共用实现
   data/                    数据生成 compute 入口
-  backends/                可替换的拟合后端
+  backends/                neural material backend 与解析基线
 
 apps/viewer/                Windows/Falcor 查看器
 references/                 reference package registry、身份和轻量 adapter
@@ -109,26 +111,37 @@ Git 中只保存源码、合同、配置、测试、人工整理的中文结论�
 
 ### 规范化层：内部 IR
 
-数据采集和拟合后端不直接解释任意作者图。公共核心先验证节点和资源，再按源材质族规范化为带版本的内部 IR。不同材质族可以使用不同 IR；规范化只消除无关序列化差异，不能改变原生物理语义。第一阶段的主要 IR 是 `LayerStackIR`，它既不是公共材质格式，也不是其他 GT 必须采用的中间表示。
+数据采集和运行时 backend 不直接解释任意作者图。公共核心先验证节点和资源，再按源材质族规范化为带版本的内部 IR。不同材质族可以使用不同 IR；规范化只消除无关序列化差异，不能改变原生物理语义。第一阶段的主要 IR 是 `LayerStackIR`，它既不是公共材质格式，也不是其他 GT 必须采用的中间表示。
 
 ### Reference 层：族专属权威求值
 
 每种源材质族可以拥有独立 reference 和资源求值路径。reference 只需遵守共同的方向、测度、颜色/光谱、随机性和统计输出合同，不要求共享 shader、参数布局或输运算法。同一材质族也可以保留多个 reference 做交叉验证。
 
-reference 必须直接求值源材质原生语义，不能先经过项目要研究的统一近似表示。源材质族可以在尚无 approximation backend 支持时先接入；此时 backend 明确返回 capability 缺失。
+reference 必须直接求值源材质原生语义，不能先经过项目要研究的 neural material program。源材质族可以在尚无 neural material backend 支持时先接入；此时 backend 明确返回 capability 缺失。
 
-### 实现层：ApproximationBackend
+### 实现层：NeuralMaterialBackend
 
-每种拟合方法实现同一散射合同，但可以拥有不同的：
+每种目标方法实现同一散射合同，但可以拥有不同的：
 
 - 材质静态编译结果；
 - 每个着色点/观察方向的状态布局；
-- 解析公式或 neural decoder；
+- latent 获取和 view-conditioned `prepare`；
+- 直接执行方向散射的 neural evaluator；
+- 可选的解析 physical core、matched sampler 或 integration head；
 - shader specialization；
 - 面光、环境光等专用积分能力；
 - GPU 内存和时间成本。
 
-renderer 只使用不透明状态和统一散射操作，不读取 K2、lobe 数量或 latent 维数。
+renderer 只使用不透明状态、capability 和统一散射操作，不读取 lobe 数量、latent 维数或其他 method-specific 字段。
+
+目标 neural backend 的所有权边界固定为：
+
+- `CompiledMaterial/NeuralMaterialAsset` 保存材质专属 latent texture、material code、LOD metadata 和 source provenance；
+- `MethodBundle/BackendRuntime` 保存共享 evaluator/sampler weights、shader 和 capability；
+- `ScatteringState h` 是对某个 pixel 或 ray hit、footprint、frame 和 `wo` 的短生命周期准备结果；
+- `evaluate(h, wi)` 是核心逐方向 MLP；可选 `sample/pdf/integrate` 只消费同一个 `h`，不重新定义另一份材质外观。
+
+完整操作定义以 `docs/realtime_material_compilation.md` 为唯一叙述入口，ABI 和测度约束以 `docs/contracts/scattering_backend.md` 为准。架构文档不复制新的变体定义，避免三处内容互相引用后漂移。
 
 ## Deferred 数据流
 
@@ -139,12 +152,15 @@ renderer 只使用不透明状态和统一散射操作，不读取 K2、lobe 数
   → SurfaceInteraction + MaterialInstanceID
   → 材质资源求值与 backend.prepare()
   → method-specific opaque scattering state
-  → deferred lighting：evaluate / sample / pdf / optional integration
+  → deferred lighting：evaluate / optional integration
+  → optional sampling path：sample / pdf
   → 线性 HDR 合成
   → 统一曝光和 tone mapping
 ```
 
-`prepare()` 是稳定扩展点：解析 K2 可以直接构造解析状态；参数网络可以在这里输出物理参数；小 neural decoder 可以输出 latent，随后在 `evaluate()` 中执行；直接 neural BSDF 也可以把网络完全放在 `evaluate/sample/pdf` 内部。
+`prepare()` 是稳定的共享编码阶段：它获取和过滤 material/spatial latent，编码 shading frame、footprint 与 `wo`，形成同一着色点多次查询可复用的 state。主要 neural shading 发生在 `evaluate()`：小型 MLP 接收 state 与 `wi`，直接输出方向散射。实现可以把 prepare inline 到 lighting 或 ray-hit shader，不要求一定写入独立 buffer。单次 `prepare` 和单次 `evaluate` 都必须有明确上界，整帧成本可以按可见像素、实际灯数和固定环境积分预算自然增长。
+
+所有实时表面 backend 都提供 `prepare + evaluate`。只有声明 scattering sampling、path-tracing compatibility 或相应次级光线能力的方法才必须提供与 evaluator 共享 state 且密度可计算的 `sample + pdf`；面光和环境光可以通过专用积分 capability 或固定预算的 `evaluate` 查询实现。
 
 ## 第一阶段范围
 
@@ -156,7 +172,7 @@ renderer 只使用不透明状态和统一散射操作，不读取 K2、lobe 数
 - RGB 线性工作流；材质程序显式记录 `color_model`。
 - 支持各向异性，切线坐标系是标准 `SurfaceInteraction` 的一部分。
 - 该材质族的随机游走 reference、数据采集和 viewer 左侧复用同一套 reference shader。
-- K2 只作为 `legacy-ltc-k2` 后端和对照，不是接口默认值。
+- 当前方法阶段先定义 latent、方向编码、evaluator MLP、输出参数化和共享方式，再依次验证单材质容量、共享 decoder + 材质 latent、未见状态 compiler 和 Slang 最小部署。sampler、环境积分和完整系统 benchmark 在 evaluator 成形后展开。
 
 ## 非局部能力
 

@@ -5,14 +5,14 @@
 根 Git 仓库只保存由本项目维护、需要审阅和长期复现的内容：
 
 - `src/ncls/` 中的正式 Python package；
-- `shaders/ncls/` 中的公共合同、随机游走 reference 和拟合后端；
+- `shaders/ncls/` 中的公共合同、随机游走 reference、neural material backend 和解析基线；
 - `references/` 中的 reference registry、package 说明、轻量 manifest 和项目 adapter；
 - `apps/viewer/`、`patches/` 与构建/benchmark 脚本；
 - `tests/unit/`、`tests/gpu/`、`tests/integration/`；
 - 环境声明、显式配置、中文文档和人工整理的实验结论；
 - 作为稳定验收合同的阈值、资产清单和人工整理结论。
 
-根仓库不维持迁移前的 `schema/`、`datagen/`、固定 K2 packet、泛化 `model/` 或旧 Python lookup viewer。旧数据只通过 `ncls.core.material.legacy_v0` 和 `ncls.data.legacy_v0` 的一次性 reader 转换，不保留第二套 writer。
+根仓库不维持迁移前的 `schema/`、`datagen/`、通用 backend packet、泛化 `model/` 或旧 Python lookup viewer。旧数据只通过 `ncls.core.material.legacy_v0` 和 `ncls.data.legacy_v0` 的一次性 reader 转换，不保留第二套 writer。
 
 ## 根仓库不保存什么
 

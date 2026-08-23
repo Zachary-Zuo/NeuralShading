@@ -1,8 +1,8 @@
-# 随机游走参考数据合同
+# Reference 方向响应数据合同
 
 ## 目的
 
-参考数据只描述 `MaterialProgram` 的散射响应和统计不确定性，不包含 K2、lobe、latent 或任何拟合后端参数。表示发生变化时，不应重新生成随机游走监督。
+参考数据只描述源材质在公共查询语义下的散射响应和统计不确定性，不包含 neural material backend 的状态、latent 或网络参数。evaluator、compiler 或 sampler 发生变化时，不应重新生成语义未变的 reference 监督。
 
 ## 查询语义
 
@@ -27,6 +27,8 @@ response_cos = f(wo, wi) * max(dot(Ns, wi), 0)
 ```
 
 文件字段必须使用 `view_direction`、`light_direction` 和 `response_cos` 等角色明确的名称，不能直接用含义依赖调用方的 `wi/wo` 作为磁盘字段名。
+
+`response_cos` 是监督与积分测度，不改变散射合同：运行时 `evaluate()` 仍返回不含余弦的 `f`。neural model 可以用 `response_cos` 构造 loss，但必须在 feature/output contract 中声明实际输出和 grazing-angle 处理，Falcor adapter 仍只能乘一次余弦。
 
 ## 统计结果
 
@@ -110,6 +112,18 @@ manifest 不保存开发机绝对路径。所有文件 URI 相对于数据集根
 - `tile`：一个 material state 与一个 view direction 的全部入射方向响应。
 
 同一 family 的全部 state 和 view 必须位于同一 split。writer 可以任意分片，但逻辑 tile ID 和 split 不依赖物理 shard。
+
+neural evaluator 使用 v2 时，属于同一 `material_state` 的全部 view tile 必须共享同一个 material latent identity。逐 tile 独立优化只能标记为 `direction-slice` 诊断；它不能被报告为完整 `f(wo, wi)` neural representation 的 direct fit。
+
+## 当前 v2 对空间变化材质的限制
+
+v2 的核心查询是常量局部材质状态与方向，不保存 surface position、UV、方向微分、texture footprint、mip/LOD 或 latent filtering 邻域。因此：
+
+- 它足以建立 LayerStack 等常量材质的 view-conditioned evaluator；
+- 它可以保存纹理材质在已解析局部状态上的方向监督，但不能单独训练或验证 random-access latent texture 的过滤行为；
+- 空间 neural material 阶段需要新增带版本的 spatial query/asset contract，记录 UV、footprint、原生资源 identity 和采样语义；不能在不提升合同的情况下复用无含义字段。
+
+这个限制属于监督域，不影响 v2 作为方向响应数据的权威性。
 
 ## 方向集合和积分权重
 

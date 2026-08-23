@@ -8,7 +8,9 @@
 
 默认勾选的去噪结果只用于观看。raw reference 始终单独累计并作为 comparison、difference、噪声估计和 `*-reference.exr` 的权威输入；a-trous cross-bilateral 去噪预览写入 `*-reference-denoised.exr`，manifest 明确标记它有偏且不具权威性。
 
-右侧只有在用户显式选择通过完整性检查与 GPU parity 的 `MethodBundle` 后才出现，仍是固定成本 deferred 实时方法。因而 viewer 的左右差图是“完整 path-traced reference 与实时系统”的视觉系统差异，会同时包含材质近似和全局传输差异；它不能替代方向响应数据集上的 closure 误差指标。
+右侧只有在用户显式选择通过完整性检查与 GPU parity 的 `MethodBundle` 后才出现，运行有界成本的 deferred 实时方法。目标 neural bundle 在每个可见像素由 `prepare` 获取/编码 latent 与观察状态，再在 lighting query 中用小型 MLP 直接执行 `evaluate(wo, wi)`；当前解析 bundle 继续作为部署回归和成本对照。viewer 的左右差图是“完整 path-traced reference 与实时系统”的视觉系统差异，会同时包含材质表示、实时积分和全局传输差异，不能替代方向响应数据集上的 evaluator 指标。
+
+viewer 不是当前 neural 模型结构的搜索工具。先在完整 `wo × wi` 监督上确定单材质 evaluator、共享 decoder/latent 和 compiler，再导出 Slang MethodBundle 进入这里做 GPU 与系统验证；matched sampler 和环境积分同样在 evaluator 成形后接入。
 
 ## 固定 studio-v1 场景
 
@@ -37,6 +39,12 @@
 
 常用交互：单击选择物体/material slot；左键拖动 orbit；中键或右键拖动 pan；滚轮 dolly；拖动分割线；`Space` 暂停/继续 raw reference 累积；`R` 重置相机。UI 中可切换 raw/denoised preview，但该开关不重置或修改 raw 累积。
 
+`Source material family` 可以在当前 slot 上明确切换 LayerStack、MERL、OpenPBR 与 MaterialX。LayerStack/OpenPBR 可直接建立默认实例；MERL 必须选择 `.binary` 测量表，MaterialX 必须选择 `.mtlx` 及其原生纹理资源。OpenPBR 可另存 resolved native parameter JSON；MaterialX 的图/纹理和 MERL 测量表不由 viewer 改写，编辑后的 override 随 viewer scene 保存。
+
+`Save viewer scene` 写出 `ncls.viewer-scene@1` sidecar。它逐 material slot 保存 family 与状态：LayerStack 内嵌 `MaterialProgram`，OpenPBR 保存具名参数，MERL 保存测量表 URI/hash，MaterialX 保存文档/纹理 identity 与可编辑 constant override；同时保存几何、HDRI、相机、物理光照和 reference 上限。`Load viewer scene` 会按 URI、hash 和 slot 覆盖关系验证并重建 GPU 资源。详细合同见 [viewer scene 合同](../../docs/contracts/viewer_scene.md)。
+
+光照方向也有明确约定：方向光向量是 surface-to-light；矩形灯法线为 `normalize(cross(U,V))`。固定 studio preset 的资产 hash 只用于验证默认启动，不会再拦截交互式加载另一份 scene 或 HDRI。
+
 ## 无窗口捕获和回放
 
 ```powershell
@@ -47,9 +55,12 @@ external\Falcor\build\windows-vs2022\bin\Release\NclsViewer.exe `
 external\Falcor\build\windows-vs2022\bin\Release\NclsViewer.exe `
   --replay artifacts\captures\example\capture.json --headless `
   --capture artifacts\captures\replayed
+
+external\Falcor\build\windows-vs2022\bin\Release\NclsViewer.exe `
+  --viewer-scene artifacts\captures\example\capture-scene.json
 ```
 
-capture v3 记录固定场景、环境、相机、材质、积分上限、raw 噪声估计、显示去噪语义、方法和文件角色。单材质场景可以完整回放；交互式多 slot 场景虽会逐 slot 记录来源，但在形成稳定的多 slot 序列化合同前仍标记为不可完整回放。
+capture v3 记录固定场景、环境、相机、材质、积分上限、raw 噪声估计、显示去噪语义、方法和文件角色，并写出 `*-scene.json`。capture 的 `viewer_scene` 字段让单材质和多 slot scene 都从同一份逐 slot 状态回放；`source_material_sha256` 保留源资产 identity，`source_material_state_sha256` 单独标识 UI 编辑后的实际状态。
 
 ## 固定路径 benchmark
 

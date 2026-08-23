@@ -4,9 +4,9 @@
 
 - 阶段 0–4 的正式目录和基础闭环已经落地：合同、Python package、随机游走参考数据、训练/评测/导出和 Windows/Falcor viewer 均有正式入口。
 - 旧源码删除、文档入口和仓库边界已经收敛；一次性正确性报告不再持久化，具体状态以当前测试与 `artifacts/` 中的运行输出为准。
-- 当前 `legacy-ltc-k2-p1@2` 已有 PyTorch/Slang compiler parity，可导出不依赖 Python 运行时的 realtime `MethodBundle`；它仍只是长尾未达标的历史基线。
+- 当前已有 PyTorch/Slang compiler parity 和不依赖 Python 运行时的 realtime `MethodBundle`，证明了逐像素编译网络、backend 与 viewer 的部署闭环；它没有证明目标 neural `evaluate(wo, wi)` 已经建模完成。
 
-迁移不维持旧 import、旧 CLI 或通用 K2 packet ABI。可信算法和结论已经迁入新位置；错误、重复和过时内容由 Git 历史追溯。
+迁移不维持旧 import、旧 CLI 或通用 backend packet ABI。可信算法和结论已经迁入新位置；错误、重复和过时内容由 Git 历史追溯。
 
 ## 已冻结的边界
 
@@ -19,9 +19,23 @@ MaterialProgram + MethodBundle → Windows viewer
 ```
 
 - `MaterialProgram` 是公共作者格式，`LayerStackIR` 是当前规范化内部 IR。
-- `prepare/evaluate/sample/pdf` 是 renderer 面向拟提方法的稳定散射合同。
+- `prepare/evaluate` 是所有实时表面方法的基础散射合同。目标 neural backend 在 `prepare` 中获取/编码共享 state，在 `evaluate` 中运行主要 MLP；`sample/pdf` 与专用积分器按 capability 提供。
 - `CompiledMaterial` 和 `ScatteringState` 完全由 backend 私有。
-- 以后把 `evaluate()` 换成小 neural decoder、latent 或新解析表示，不改变数据集、viewer 主可见性或顶层材质接口。
+- 加入小型 neural evaluator、material/spatial latent、matched sampler 或 integration head，不改变 viewer 主可见性或顶层材质接口；若训练需要 UV/footprint/LOD，必须版本化扩展数据合同。
+
+## 迁移后的研究执行顺序
+
+基础工程迁移完成后，当前方法研究按以下依赖推进：
+
+1. 定义少量 latent、方向编码、`prepare` shared trunk 和 evaluator MLP 候选，并审计监督覆盖；
+2. 验证单材质完整 `wo × wi` 容量；
+3. 验证共享 decoder + 材质 latent；
+4. 训练未见材质状态的 feed-forward compiler；
+5. 导出 Slang 最小 neural evaluator 并测量单次查询；
+6. 在 evaluator 固定后增加 matched sampler；
+7. 研究多灯、环境/面光积分和 Falcor/UE 式工作流。
+
+多灯 scaling、PT variance 和 UE 集成属于后半段系统验收，不能在表示与执行图未确定时作为当前 kill test。
 
 ## 目录迁移结果
 
@@ -29,7 +43,7 @@ MaterialProgram + MethodBundle → Windows viewer
 |---|---|
 | 固定 `schema/` | MaterialProgram schema、LayerStackIR ABI 和一次性 v0 reader 进入 `src/ncls/core/material/` |
 | 随机游走旧源码与采集脚本 | 进入 `shaders/ncls/reference/`、`shaders/ncls/data/` 和 `src/ncls/data/` |
-| 通用 K2 packet | 删除；私有实现进入 `core/representations/legacy_ltc_k2` 与对应 shader backend |
+| 通用 legacy packet | 删除；具体布局进入对应 representation 与 shader backend |
 | 表示拟合脚本 | 可信部分进入 `learning/direct_fit/`，重复/过时实验入口删除 |
 | 泛化 `model/` | 重写为 `learning/models`、`training`、`evaluation` 和 `export` |
 | Python lookup viewer | 删除；真正应用进入 `apps/viewer/` |
@@ -53,7 +67,7 @@ MaterialProgram + MethodBundle → Windows viewer
 - raw reference、显示专用去噪结果、EXR/PNG/材质/指标/capture v3 与命令行 replay；
 - 固定相机路径 JSON/CSV benchmark 入口。
 
-当前左侧已覆盖场景相交、阴影、直接光、环境 MIS 和跨物体间接反弹，是受 scene/layer 深度上限约束的完整场景 path tracer；raw Monte Carlo 均值保持权威，默认 a-trous 去噪仅用于显示。右侧仍未加入 path-traced 全局传输，因此图像差异是完整 reference 与实时系统的视觉差异，不能替代方向域 closure 指标。多 material slot 的交互状态尚未形成稳定的完整 capture/replay 合同；固定单材质 studio-v1 可以回放。任何更强的正确性或逐字节一致性结论都必须由当前版本重新运行测试产生，不能引用已清理的历史报告替代。
+当前左侧已覆盖场景相交、阴影、直接光、环境 MIS 和跨物体间接反弹，是受 scene/layer 深度上限约束的完整场景 path tracer；raw Monte Carlo 均值保持权威，默认 a-trous 去噪仅用于显示。右侧仍未加入 path-traced 全局传输，因此图像差异是完整 reference 与实时系统的视觉差异，不能替代方向域 evaluator 指标。逐 material slot 的 authoring/capture 状态使用 `ncls.viewer-scene@1` 保存和验证。任何更强的正确性或逐字节一致性结论都必须由当前版本重新运行测试产生，不能引用已清理的历史报告替代。
 
 ## 最终回归门槛
 

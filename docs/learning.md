@@ -1,14 +1,62 @@
-# 逐样本直接拟合、训练与评测
+# Neural evaluator 建模、编译器训练与评测
 
 ## 三条路径的边界
 
-Python 侧现在明确分成三条互不混用的路径：
+Python 侧的工具生命周期仍分成三条路径，但必须记录拟合对象和结论范围：
 
-- `direct-fit`：每个 tile 单独优化表示参数，测量某种固定成本表示能达到的上界；它不产生通用预测网络。
-- `train`：只读取 train tile 更新网络，只用 validation 选择 best checkpoint。
+- `direct-fit`：不经过 feed-forward compiler，直接优化候选表示的参数或 latent；它不自动等于“逐 tile 拟合”，也不产生通用编译器。
+- `train`：训练共享 evaluator、材质 latent、compiler 或后续 sampler；只读取 train 数据，只用 validation 选择 best checkpoint。
 - `evaluate`：从一个不可变 checkpoint 显式评测 validation 或 held-out test；训练循环不会读取 test 指标。
 
-当前唯一注册的网络是 `legacy-ltc-k2-p1@2`，对应历史的“精确顶层界面 + 两个 LTC 残差瓣”基线。名称中的 `legacy` 和 `P1` 是有意保留的限制说明；它不是 `default` 或 `final`，不会阻止后续换成小 neural decoder 或其他表示。
+目标方法的小型 MLP 直接实现 `evaluate(wo, wi)`。`prepare()` 获取和过滤 latent，并编码 footprint、局部 frame 与 `wo`，供多个 `wi` 查询复用。当前已注册网络是端到端可部署基线，用来验证训练、导出、Slang compiler 和 viewer 生命周期；它不代表目标 neural evaluator 已经确定。
+
+## 当前建模顺序
+
+在模型结构未确定前，不做多灯、PT 方差或 UE 环境积分的系统 kill test。学习侧先按以下层次推进：
+
+### 1. 单材质 neural evaluator 容量
+
+对一个源材质状态覆盖多个 `wo` 和 `wi`，直接优化小型 evaluator 及其材质 latent，回答“给定网络和 latent 预算能否表达完整方向函数”。候选只覆盖少量可部署设计轴：
+
+- material latent 的维数和精度；
+- `wo/wi` 的局部方向编码；
+- `prepare` shared trunk 与逐方向 evaluate head 的划分；
+- MLP 深度、宽度、激活和输出参数化；
+- direct response 与 analytic-core + neural-residual；
+- 非负、动态范围、互易性和能量处理。
+
+这个阶段不训练通用 compiler，也不声称未见材质泛化。
+
+第一轮 LayerStack 是常量局部材质，`prepare` 原型可以只编码 material latent、局部 frame 和 `wo`；不能因为接口预留了 UV footprint/mip/LOD，就在没有 spatial supervision 时声称已学会纹理过滤。空间变化阶段再加入 latent texture fetch、mip/LOD 与 footprint，并使用版本化的 spatial query 数据。
+
+### 2. 共享 decoder 与材质专属 latent
+
+在多个材质状态间共享 evaluator 权重，只优化每个材质的 latent。它回答“统一 neural runtime 是否有足够容量”，并把网络共享能力与 compiler 泛化分开。
+
+### 3. Feed-forward compiler
+
+固定或联合微调共享 evaluator，让 compiler 从源材质的原生参数、图或资源产生 latent。train/validation/test 必须按材质 family/state 正确隔离，评测未见参数组合、编辑后的状态和跨源材质族适配。此阶段才回答“能否自动编译和保持编辑工作流”。
+
+### 4. Slang 最小部署
+
+只有 evaluator 在前述局部实验中成立后，才导出共享权重和 latent，验证 Python/Slang parity，并测量 `prepare`、单次 `evaluate`、state/latent bytes。此时解析方法作为 iso-time/iso-byte 对照。
+
+### 5. Sampler 与 integration 扩展
+
+evaluator 固定后再训练匹配的 proposal head。sampler 必须能生成方向并计算同一分布的 PDF；先验证 sample/PDF 与 MIS 语义，再比较固定时间下的方差。环境/面光 integration head 同样在 evaluator 之后研究，并与高样本 evaluator 积分对照。
+
+推荐的逻辑分解是：
+
+```text
+h = PrepareTrunk(material_latent, footprint, frame, wo)
+f = EvaluateHead(h, wi)
+
+proposal_parameters = SamplerHead(h)
+wi = Proposal.sample(proposal_parameters, ξ)
+p  = Proposal.pdf(proposal_parameters, wi)
+```
+
+`SamplerHead` 可以在 prepare 时预计算并缓存 proposal parameters，也可以在第一次 sampling query 时执行；训练和成本报告必须说明选择。无论放置位置如何，`sample` 与 `pdf` 必须对应同一个 proposal，evaluator 与 sampler 必须共享同一个 `h` 和 material latent。
 
 ## TrainingConfig
 
@@ -86,9 +134,19 @@ conda run -n neural-shading ncls learn evaluate `
 
 评测拒绝 dataset ID 或 feature contract 不一致的 checkpoint。test 结果是独立文件，不回写训练选择记录。
 
-## 表示上界
+## Direct fit 的三种结论范围
 
-例如重新测量当前 K2 基线：
+direct fit 必须在 manifest 中记录 scope：
+
+| scope | 优化对象 | 能支持的结论 |
+|---|---|---|
+| `direction-slice` | 单个 `(material, wo)` 的方向响应 | 某个 `wi` 切片的局部容量诊断 |
+| `material-function` | 一个材质跨全部训练 `wo/wi` 的 latent/evaluator | 单材质完整方向函数的容量 |
+| `shared-decoder` | 多材质共享 evaluator + 每材质 latent | 统一 neural representation 的容量 |
+
+只有后二者直接服务当前 neural material program。随后把 feed-forward compiler 的预测结果与相同 evaluator 下的 optimized latent 比较，才能把“表示不够”与“compiler 学不到”分开。
+
+下面的旧命令只重跑当前可部署基线的 `direction-slice` 诊断：
 
 ```powershell
 conda run -n neural-shading ncls learn direct-fit `
@@ -98,7 +156,7 @@ conda run -n neural-shading ncls learn direct-fit `
   --steps 800 --restarts 3
 ```
 
-输出 `ncls.representation-ceiling@1` manifest、TensorBoard 和 `parameters.npz`。这里的参数是逐 tile 直接优化结果，只能用来判断表示上界，不能当成通用材质编译器。
+输出 `ncls.representation-ceiling@1` manifest、TensorBoard 和 `parameters.npz`。这里的参数是逐 tile 直接优化结果，只能判断一张方向切片，不能证明目标 view-conditioned evaluator，也不能当成通用材质编译器。新的 neural direct-fit manifest 必须新增并锁定上述 scope。
 
 ## MethodBundle
 
@@ -116,4 +174,4 @@ conda run -n neural-shading ncls bundle validate `
 
 P1 compiler 已有无 Python 运行时依赖的 Slang 实现：它读取 bundle 中按小端 float32 规范化的 `weights/model.bin`，执行与 PyTorch 相同的 token MLP、GRUCell、view 编码和参数 head，再生成私有的 `legacy-ltc-k2` scattering state。逐层 PyTorch/Slang parity、固定 bundle probe 和 viewer GPU parity 均已通过，因此 exporter 输出 `runtime_class=realtime`。
 
-这个可部署状态只证明完整的 compiler+backend 链路已经跑通，不表示 K2 误差已经达标。viewer 仍只通过公共 `prepare/evaluate/sample/pdf` 合同调用它；后续把 `evaluate()` 换成小 neural decoder 时不改变数据合同、viewer 的主可见性或 MethodBundle 生命周期。
+这条可部署链路让后续研究可以集中在 latent、共享 `prepare` state 和逐方向 neural evaluator 上。viewer 对所有方法使用公共 `prepare/evaluate` 和 capability；目标 evaluator、后续 matched `sample/pdf` 与 integration head 不改变主可见性或 MethodBundle 生命周期，但各自必须扩展准确的 feature、cost 和 capability 声明。

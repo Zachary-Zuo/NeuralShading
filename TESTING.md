@@ -17,7 +17,19 @@ conda run -n neural-shading python -m pytest tests\unit -q
   tests\gpu tests\integration\reference -q
 ```
 
-覆盖 Python/Slang ABI、方向和余弦语义、`evaluate/sample/pdf`、各向异性、P1 compiler 的 PyTorch/Slang parity、解析 diffuse、互易性、八层执行、统计量和数据生成 smoke。
+覆盖 Python/Slang ABI、方向和余弦语义、`prepare/evaluate`、sampling-capable backend 的 `sample/pdf`、各向异性、P1 compiler 的 PyTorch/Slang parity、解析 diffuse、互易性、八层执行、统计量和数据生成 smoke。
+
+## Neural material 方法的分阶段门槛
+
+目标 evaluator 尚在建模阶段，测试随能力形成而增加，不能预先把未实现的 sampler、环境积分或 UE 性能写成已存在门槛：
+
+1. 建模原型：完整 `wo × wi` 覆盖、方向/余弦测度、有限非负、动态范围和 reference 响应误差；
+2. 共享 decoder/latent：latent identity、跨 view 共享、材质 split 与 optimized-latent 对照；
+3. compiler：未见材质状态、参数编辑和 compiler-vs-optimized-latent 差距；
+4. Slang 最小部署：Python/Slang parity、bundle hash、prepare/evaluate 分项成本；
+5. matched sampler：sample/PDF 分布一致性、MIS 测度和固定时间方差；
+6. integration head：与同一 evaluator 的高样本环境/面光积分对照；
+7. 系统阶段：多灯 scaling、viewer capture 和 Falcor/UE 式工作负载。
 
 ## pbrt-v4 外部交叉验证
 
