@@ -251,6 +251,6 @@ analytic core + neural residual                  长尾与采样友好候选
 plane/tensor factorization                       高维分解对照
 ```
 
-当前 E1 证据没有改变这八类候选清单，但已经缩小两个适用范围：在 `alpha_x=0.002` 极窄单界面与冻结小 MLP 成本内，direct dense 因无法保持峰值能量而淘汰；在固定多界面 LayerStack 上，analytic core + neural residual 使用 energy/shape、multiscale half-slope、GELU 与 cosine 后通过数值容量 gate。后者仍是 optimized-latent 单材质上界，不能替代 E2 的 shared decoder、E3 的 source compiler 或 E4 的部署/视觉验证。逐项数值与 hash 见 `artifacts/research/learning-goal/e1/comparisons/`；下一项 E1 表示对照是 plane/tensor factorization，而不是继续无界扩大同一 MLP。
+当前 E1 证据没有改变这八类候选清单，但已经缩小三个适用范围：在 `alpha_x=0.002` 极窄单界面与冻结小 MLP 成本内，direct dense 因无法保持峰值能量而淘汰；在固定多界面 LayerStack 上，analytic core + neural residual 使用 energy/shape、multiscale half-slope、GELU 与 cosine 后通过数值容量 gate；raw-direction 六成对 plane v1 在 32² 时对未见 query 过拟合、16² 时欠拟合，当前淘汰。通过项仍是 optimized-latent 单材质上界，不能替代 E2 的 shared decoder、E3 的 source compiler 或 E4 的部署/视觉验证；淘汰的 plane v1 也不否定带物理 warp 或空间语义轴的新 factorization。逐项数值与 hash 见 `artifacts/research/learning-goal/e1/comparisons/`。
 
 下一步的权威数据与实验设计见 [`data_and_experiments.md`](data_and_experiments.md)，各相关工作能提供的具体机制见 [`prior_art.md`](prior_art.md)。

@@ -10,6 +10,8 @@ TrainingConfig v5 把 `constant` 或 `cosine` 学习率策略、以及最终学�
 
 LayerStack 另注册 `analytic-core-neural-residual-standardized-e1@1` 和带能量/shape 联合监督的 `analytic-core-neural-residual-energy-shape-e1@1`：它们用 source adapter 精确求值顶层界面的直接散射，把剩余 response 以只由 train query 拟合的 standardized `asinh` 残差交给同一小型 neural evaluator。analytic core 是显式候选组成部分，不是公共输出词汇，也不能被其他 source family 强制提供。每个 run 额外报告 core-only normalized L1，防止单界面案例中“残差几乎为零”的结果被误写成多层 neural residual 已经成立。多界面容量实验中，energy/shape + GELU + cosine 的 64,603 参数候选通过冻结数值 gate；这仍只是 optimized-latent 单材质上界，不能据此宣称 shared decoder 或 source compiler 已成立。
 
+E1 还注册了可复现淘汰用的 `plane-factorized-small-mlp-energy-shape-e1@1` 与 analytic-residual 变体。v1 每个 texel 只存一个 RGBA-width feature，prepare/evaluate 固定读取 4/20 个 plane texel；额外成本不会伪装成 MLP MAC。32² direct/residual 和 16² residual 都未通过 held-out query gate，因此 raw-direction 六成对 plane v1 已停止作为当前 Pareto 候选。保留这些版本化 pipeline/config 是为了复现实验，不代表 runner 维护第二套训练路径；删除条件是淘汰报告与 checkpoint 已进入可执行只读归档，且 registry/config 不再被复现入口引用。
+
 ## 三条路径的边界
 
 Python 侧的工具生命周期仍分成三条路径，但必须记录拟合对象和结论范围：

@@ -170,7 +170,11 @@ E1 当前已有两个独立的一状态容量合同。极窄各向异性 conduct
 
 第二个 `ncls.e1-layer-stack-multi-interface@1` 数据固定三界面、两 slab 的移动峰状态；adaptive reference 实际使用 16,384–36,864 个合并样本，relative SE p95 `0.0277`、最坏 query-group `0.0510`，通过独立监督 gate。core-only test normalized L1 median 为 `0.866`；64-wide neural residual 降到 `0.217`，同预算 direct dense 为 `0.290`，证明 residual 有非零贡献。加入 energy+shape、扩大到 64,603 参数、使用 cosine 后，SiLU 为 `0.0690`；同参数 GELU 为 `0.0462`，并通过 `ncls.e1-single-material-evaluator-acceptance@1` 的全部 31 项检查。GELU 候选的 test p95 `0.0576`、energy p95 `0.0204`、peak angle p95 `0.278°`、top-energy recall p5 `0.9463`、model/reference-SE p95 `2.835`；adversarial median/p95 `0.0462/0.0562`。静态成本 `B_asset=258,412 bytes`、`B_shared=0`、`C_prepare=13,716`、`C_eval=50,220` MAC。
 
-这项通过只建立“固定多界面材质的 optimized-latent 容量候选”。它还不是 shared decoder、source compiler、Slang parity、GPU timing 或 viewer 证据；`prepare2/evaluate3` 同参数对照的 test median `0.0916`，因此保留 `prepare1/evaluate4`。下一步先补 plane/tensor factorization 的 E1 同路径 smoke，再进入 E2 shared decoder 与 target-visible latent inference，不以这个单状态结果跳过候选或泛化 gate。完整逐 run 对比位于 `artifacts/research/learning-goal/e1/comparisons/multi-interface-residual-capacity.json`。
+这项通过只建立“固定多界面材质的 optimized-latent 容量候选”。它还不是 shared decoder、source compiler、Slang parity、GPU timing 或 viewer 证据；`prepare2/evaluate3` 同参数对照的 test median `0.0916`，因此保留 `prepare1/evaluate4`。完整逐 run 对比位于 `artifacts/research/learning-goal/e1/comparisons/multi-interface-residual-capacity.json`。
+
+plane/tensor factorization 的 E1 smoke 已通过同一 lifecycle 完成。`ncls.pairwise-direction-plane-factorization@1` 把 `(wo.x,wo.y,wi.x,wi.y)` 组成六个成对 2D plane；32² direct 的 train/test median 为 `0.271/0.779`，改为 analytic residual 后为 `0.134/0.571`。降到 16² 后 test 改善为 `0.377`，但 train 退到 `0.328`，证明 v1 在高分辨率对未见 query 过拟合、低分辨率欠拟合。当前淘汰 raw-direction pairwise-plane v1，不继续扩大网格；这个结论不否定带 microfacet/half-difference warp 的新 factorization，也不涉及 E5 的 UV/spatial plane。
+
+至此 E1 对实际候选需要的方向编码、target transform、direct/energy-shape/analytic residual、宽深/激活、prepare/evaluate 划分和 plane v1 都已有可复现结论，并保留一个通过冻结数值/静态成本 gate 的 optimized-latent 候选。下一步进入 E2 shared decoder + material latent；不能把 E1 的全部 asset-specific 网络 bytes 误写成最终 `B_shared/B_asset` Pareto。
 
 三组 LayerStack 的相同 state/query 在四档自适应预算下测得以下 noise 曲线；`sample_count` 是合并两个 replica 后的总样本数上限：
 
@@ -187,8 +191,8 @@ E1 当前已有两个独立的一状态容量合同。极窄各向异性 conduct
 2. ~~对 LayerStack 极低 roughness、MERL 高光、OpenPBR transmission 和 MaterialX normal-map 移动峰做高分辨率 probe；~~ 已完成并进入 v6 gate；
 3. ~~把默认均匀 proposal 扩展成带显式 mixture component 的训练 proposal，并保持固定 validation/test proposal；~~ 已完成球面 vMF `@2` 与 MaterialX local-normal adapter；
 4. ~~针对 LayerStack reference noise 调整自适应采样后，只重生成最小必要 H5，并重新执行合同、hash、split 与 gate；~~ 六状态 boundary adaptive H5 已通过 v6；
-5. 继续完成 E1：极窄 direct MLP 已限定淘汰，多界面 analytic residual 已有首个数值 gate 通过候选；仍需 plane/tensor factorization smoke 和最终 E1 Pareto/适用范围冻结；
-6. 在同一公共 reader 上把 MERL/OpenPBR 加入 target-visible shared decoder 实验；
+5. ~~完成 E1 的方向编码、target transform、容量和 factorization 比较；~~ 已保留一个通过数值/静态成本 gate 的多界面 analytic residual 候选，并淘汰极窄 direct MLP 与 raw-direction pairwise-plane v1 的限定范围；
+6. 在同一公共 reader 上进入 E2 shared decoder，依次比较 optimized dense latent、target encoder、encoder initialization + bounded refinement、dictionary 和 factorized latent；
 7. evaluator 成形后再进入 MaterialX spatial latent、sampler 和 integration。
 
 单次数据、audit、训练和报告都位于 `data/reference-responses/` 或 `artifacts/`，不进入根 Git。本文只维护稳定结论、实验依赖和验收逻辑。
