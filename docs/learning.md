@@ -8,7 +8,7 @@ TrainingConfig v5 把 `constant` 或 `cosine` 学习率策略、以及最终学�
 
 当前正式 registry 同时包含 E1 的 linear、q90-scale `log1p` 和 train-only standardized `log1p` dense evaluator，以及部署回归项 `legacy-ltc-k2-p1-deployment-regression@1`。E1 pipeline 共用材质无关的 `ReferenceQueryStore`，固定一个 source state 后按 query role 划分 train、validation、test；standardized 版本的 channel scale/mean/std 只由最终 train query 拟合，并在训练时加入固定权重的互易性约束。q90 版本保留为 target-transform 对照，不因 standardized 版本存在就改写其既有语义。部署回归项只负责保留既有 compiler、MethodBundle、Slang 和 viewer 生命周期，不进入目标 neural evaluator 排名。legacy 适配的删除条件仍是没有 checkpoint/export/viewer 调用依赖其专用 feature/prediction 入口。
 
-LayerStack 另注册 `analytic-core-neural-residual-standardized-e1@1`：它用 source adapter 精确求值顶层界面的直接散射，把剩余 response 以只由 train query 拟合的 standardized `asinh` 残差交给同一小型 neural evaluator。analytic core 是显式候选组成部分，不是公共输出词汇，也不能被其他 source family 强制提供。每个 run 额外报告 core-only normalized L1，防止单界面案例中“残差几乎为零”的结果被误写成多层 neural residual 已经成立。
+LayerStack 另注册 `analytic-core-neural-residual-standardized-e1@1` 和带能量/shape 联合监督的 `analytic-core-neural-residual-energy-shape-e1@1`：它们用 source adapter 精确求值顶层界面的直接散射，把剩余 response 以只由 train query 拟合的 standardized `asinh` 残差交给同一小型 neural evaluator。analytic core 是显式候选组成部分，不是公共输出词汇，也不能被其他 source family 强制提供。每个 run 额外报告 core-only normalized L1，防止单界面案例中“残差几乎为零”的结果被误写成多层 neural residual 已经成立。多界面容量实验中，energy/shape + GELU + cosine 的 64,603 参数候选通过冻结数值 gate；这仍只是 optimized-latent 单材质上界，不能据此宣称 shared decoder 或 source compiler 已成立。
 
 ## 三条路径的边界
 
