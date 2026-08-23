@@ -17,7 +17,7 @@ target_sources(NclsViewer PRIVATE
     NclsViewer.h
     shaders/Approximation.cs.slang
     shaders/Composite.cs.slang
-    shaders/MeshVisibility.3d.slang
+    shaders/SceneVisibility.3d.slang
     shaders/Parity.cs.slang
     shaders/Prepare.cs.slang
     shaders/Reference.cs.slang

@@ -13,7 +13,8 @@ cbuffer CompositeCB
     uint gComparisonMode;
     float gExposure;
     float gDifferenceScale;
-    uint2 _padding;
+    uint gHasApproximation;
+    uint _padding;
 };
 
 [numthreads(8, 8, 1)]
@@ -23,7 +24,11 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     if (any(pixel >= gOutputDim)) return;
     const float2 uv = (float2(pixel) + 0.5f) / float2(gOutputDim);
     float3 linear;
-    if (gComparisonMode == 0u)
+    if (gHasApproximation == 0u)
+    {
+        linear = gReference.SampleLevel(gLinearSampler, uv, 0.0f).rgb;
+    }
+    else if (gComparisonMode == 0u)
     {
         if (uv.x < gSplit)
         {
@@ -48,6 +53,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     gComparisonLinear[pixel] = float4(linear, 1.0f);
     float3 display = nclsViewerAces(max(linear, 0.0f) * exp2(gExposure));
     display = pow(display, 1.0f / 2.2f);
-    if (gComparisonMode == 0u && abs(uv.x - gSplit) < 1.5f / float(gOutputDim.x)) display = float3(0.85f);
+    if (gHasApproximation != 0u && gComparisonMode == 0u && abs(uv.x - gSplit) < 1.5f / float(gOutputDim.x))
+        display = float3(0.85f);
     gDisplay[pixel] = float4(display, 1.0f);
 }

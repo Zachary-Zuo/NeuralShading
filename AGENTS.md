@@ -25,12 +25,12 @@
 - 不为追求字面上的“全中文”制造生硬译名。判断标准是读者能否迅速明白“它是什么、为什么需要、结论是什么”。
 - 写作顺序优先为“它是什么 → 为什么需要 → 当前结论 → 下一步做什么”。避免只堆缩写和指标。
 - 物理或工程限制必须说明适用范围，不能写得像普遍定律。例如 v0 为了让 RGB 三通道共用一次自由飞行采样，在有体散射时令三个通道的总消光系数相同；颜色差异仍可由各通道散射反照率表达。这是 v0 的实现约束，不是一般介质都满足的物理性质。
-- 新代码、稳定文档和用户入口统一使用 `reference`（对某个源材质族具有权威语义的求值实现）、`direct fit`（逐样本直接拟合）和 backend-specific `ScatteringState`。随机游走是当前层栈材质族的 reference，不是该术语的唯一实现。迁移前的历史报告允许在文件名或原始实验字段中保留旧名称，但必须标明它不代表当前接口。
+- 新代码、稳定文档和用户入口统一使用 `reference`（对某个源材质族具有权威语义的求值实现）、`direct fit`（逐样本直接拟合）和 backend-specific `ScatteringState`。随机游走是当前层栈材质族的 reference，不是该术语的唯一实现。迁移前报告若从 Git 历史或外部归档中恢复，其原始字段可以保留旧名称，但必须标明它不代表当前接口；这不构成把报告重新持久化到根仓库的理由。
 
 ## 根 Git 仓库边界
 
-- 根仓库包含项目自有源码、测试、环境声明、中文文档、轻量 Markdown/JSON 实验结果、资产清单，以及 `references/` 中的 reference registry/package 说明。
-- 根仓库不包含 `external/`、`data/`、`build/`、`artifacts/`、缓存，以及报告中的 `.npy`、`.npz`、`.pt` 等可重新生成的二进制。第三方 reference 源码固定在 `external/`；原始源材质大资源固定在 `data/source-materials/`；派生响应固定在 `data/reference-responses/`；它们都由 `references/` 中的 package/manifest 追溯。
+- 根仓库包含项目自有源码、测试、环境声明、中文稳定文档、版本化验收门槛、资产清单，以及 `references/` 中的 reference registry/package 说明。
+- 根仓库不包含 `external/`、`data/`、`build/`、`artifacts/`、`reports/` 和缓存。单次正确性验证、实验报告与运行摘要统一进入 `artifacts/`；第三方 reference 源码固定在 `external/`；原始源材质大资源固定在 `data/source-materials/`；派生响应固定在 `data/reference-responses/`；它们都由 `references/` 中的 package/manifest 追溯。
 - 完整规则见 `docs/repository_policy.md`。
 - `external/Falcor`、`external/pbrt-v4`、`external/OpenPBR`、`external/openpbr-bsdf`、`external/glm` 和 `external/MaterialX` 是固定提交的独立克隆。当前均为干净工作树，本项目没有修改上游源码。MaterialX viewer 所需的 NanoGUI 及其依赖使用上游 gitlink 固定提交，由获取脚本初始化。
 - 若以后确实需要修改上游，先把改动保存为根仓库中的显式补丁和应用脚本，并更新本文件；不得把未说明的修改留在 `external/`。

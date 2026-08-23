@@ -2,8 +2,8 @@
 
 ## 当前状态
 
-- 阶段 0–4 已完成：合同、正式 Python package、随机游走参考数据、训练/评测/导出和 Windows/Falcor viewer 均已落地。
-- 阶段 5 已完成：旧源码删除、文档入口收敛、全量回归和仓库边界审计均已通过。
+- 阶段 0–4 的正式目录和基础闭环已经落地：合同、Python package、随机游走参考数据、训练/评测/导出和 Windows/Falcor viewer 均有正式入口。
+- 旧源码删除、文档入口和仓库边界已经收敛；一次性正确性报告不再持久化，具体状态以当前测试与 `artifacts/` 中的运行输出为准。
 - 当前 `legacy-ltc-k2-p1@2` 已有 PyTorch/Slang compiler parity，可导出不依赖 Python 运行时的 realtime `MethodBundle`；它仍只是长尾未达标的历史基线。
 
 迁移不维持旧 import、旧 CLI 或通用 K2 packet ABI。可信算法和结论已经迁入新位置；错误、重复和过时内容由 Git 历史追溯。
@@ -35,23 +35,25 @@ MaterialProgram + MethodBundle → Windows viewer
 | Python lookup viewer | 删除；真正应用进入 `apps/viewer/` |
 | 外部 pbrt probe | 进入 `tools/reference/pbrt_probe/` |
 | 根级旧测试 | 重组为 `tests/unit`、`tests/gpu`、`tests/integration/reference` |
-| 根级阶段计划和 v0 操作文档 | 删除；有效结论进入稳定文档，原始指标保留在明确标注的历史报告中 |
+| 根级阶段计划和 v0 操作文档 | 删除；有效结论进入稳定文档，逐次运行指标只保存在被忽略的 `artifacts/` 中 |
 
 旧 `ncls-direction-tiles@1` 数据仍能通过 `ncls data convert-legacy-v0` 一次性转换，但项目不再保留第二套 writer 或旧包级 import shim。
 
-## viewer 验证结果
+## viewer 当前实现
 
-第一版 viewer 已完成：
+第一版 viewer 当前具备：
 
-- 单一 orbit/pan/dolly 相机与共享主可见性；
-- 左侧随机游走 reference 停止移动后累积，右侧 realtime MethodBundle deferred 结果；
-- 球体、shader ball、hero 物体，HDRI、方向光、点光、矩形面光；
-- MaterialProgram 常量层栈编辑、方法切换、共同曝光和差异显示；
+- Falcor `Scene` 多格式导入、单一 orbit/pan/dolly 相机与共享主可见性；
+- instance/material ID 拾取，以及每个 Falcor material slot 独立的源材质绑定；
+- LayerStack、MERL、OpenPBR 和 MaterialX 的 reference 与族专属编辑 UI；
+- 方法为空时全宽 reference；显式选择方法后，右侧运行无跨帧累计、无随帧噪声的 deferred prepare/lighting；
+- 解析 fallback 物体、HDRI、方向光、点光、矩形面光；
+- 方法切换、共同曝光和差异显示；
 - 全文件哈希、平台/合同检查和 GPU parity 后才接纳方法；
-- EXR/PNG/材质/指标/manifest capture 与命令行 replay；
-- 固定三段相机路径 JSON/CSV benchmark。
+- EXR/PNG/材质/指标/manifest capture 与命令行 replay 基础入口；
+- 固定相机路径 JSON/CSV benchmark 入口。
 
-真实 P1 bundle 的 capture/replay 中，reference、approximation、comparison、difference、display 和 MaterialProgram 快照均逐字节一致。篡改 `weights/model.bin` 的期望哈希后，锁定方法 ID 的 replay 被明确拒绝并返回非零状态。
+当前左侧仍是表面局部光照 reference，不是完整场景 path tracer；右侧也尚未加入场景阴影和全局间接光。多 material slot 的交互状态尚未形成稳定的完整 capture/replay 合同。任何更强的正确性或逐字节一致性结论都必须由当前版本重新运行测试产生，不能引用已清理的历史报告替代。
 
 ## 最终回归门槛
 
@@ -63,4 +65,4 @@ MaterialProgram + MethodBundle → Windows viewer
 - Python compileall、`git diff --check`、无旧 import/路径引用；
 - `external/Falcor` 和 `external/pbrt-v4` 均保持锁定提交与干净工作树。
 
-上述项目均已通过。本文件只作为已完成迁移的决策记录，不再承担待办计划。
+这些项目是每次稳定发布前应重新执行的门槛。本文件记录迁移决策，不保存某一次运行的“已通过”报告。

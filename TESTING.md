@@ -82,7 +82,7 @@ conda run -n neural-shading python tools\reference\materialx_preview.py
 conda run -n neural-shading python tools\reference\materialx_parity.py --suite
 ```
 
-MaterialX suite 先生成一次 `common-sphere.obj`，让上游 renderer 与 Falcor 光栅管线加载同一路径，并在报告/capture 中核对几何 SHA-256；随后用无纹理核心 probe 检查 closure 公式，再验证全部 8 个原始 4K 材质。报告位于 `artifacts/validation/materialx-parity/suite/report.json`；验收门槛由 `references/acceptance.json` 版本化，逐材质通过证据保存在 `references/materialx-polyhaven-v1/falcor-parity.json`。
+MaterialX suite 先生成一次 `common-sphere.obj`，让上游 renderer 与 Falcor 光栅管线加载同一路径，并在报告/capture 中核对几何 SHA-256；随后用无纹理核心 probe 检查 closure 公式，再验证全部 8 个原始 4K 材质。验收门槛由 `references/acceptance.json` 版本化；逐次运行的完整指标和图像统一写入 `artifacts/validation/materialx-parity/suite/`，不在 Git 中持久化。
 
 ## Windows viewer
 

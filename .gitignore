@@ -12,8 +12,5 @@ __pycache__/
 /external/
 /artifacts/
 
-# 报告中的文字和 JSON 指标进入 Git；可重新生成的二进制不进入。
-/reports/generated/
-reports/**/*.npy
-reports/**/*.npz
-reports/**/*.pt
+# 单次正确性验证、实验报告和运行摘要均可再生，不进入根仓库。
+/reports/

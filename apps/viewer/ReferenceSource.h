@@ -34,7 +34,7 @@ struct ReferenceSource
     std::filesystem::path materialXNormalTexture;
     std::filesystem::path materialXDisplacementTexture;
     std::filesystem::path sourcePath;
-    std::string displayName = "默认多层材质";
+    std::string displayName = "Default layered material";
     std::string sourceSha256;
 
     bool supportsCurrentCompiler() const { return family == ReferenceFamily::LayerStack; }

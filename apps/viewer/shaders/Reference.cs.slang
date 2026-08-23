@@ -18,6 +18,7 @@ Texture2D<float4> gTangent;
 Texture2D<float4> gViewDirection;
 Texture2D<float4> gMaterialXTexCoord;
 Texture2D<float4> gMaterialXTexCoordGrad;
+Texture2D<uint> gMaterialId;
 Texture2D<float4> gPreviousReference;
 Texture2D<float4> gEnvironment;
 SamplerState gLinearSampler;
@@ -30,6 +31,8 @@ cbuffer ReferenceCB
     uint gFrameIndex;
     uint gReferenceFamily;
     uint gUseRasterGeometry;
+    uint gTargetMaterialId;
+    uint gInitializeOutput;
     uint gOpenPbrColorSpace;
     uint gReferenceSpp;
     uint gSamplesThisFrame;
@@ -120,6 +123,15 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     const uint2 pixel = dispatchThreadID.xy;
     if (any(pixel >= gFrameDim)) return;
+    if (gUseRasterGeometry != 0u)
+    {
+        const uint encodedMaterialId = gMaterialId[pixel];
+        if (encodedMaterialId == 0u)
+        {
+            if (gInitializeOutput == 0u) return;
+        }
+        else if (encodedMaterialId != gTargetMaterialId + 1u) return;
+    }
     const float4 positionDepth = gPositionDepth[pixel];
     const float3 viewWorld = normalize(gViewDirection[pixel].xyz);
     if (positionDepth.w < 0.0f)

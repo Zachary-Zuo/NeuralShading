@@ -4,6 +4,7 @@
 #include "Core/SampleApp.h"
 #include "Core/API/GpuTimer.h"
 #include "Core/Pass/RasterPass.h"
+#include "Scene/Scene.h"
 
 #include "MaterialProgram.h"
 #include "MethodBundle.h"
@@ -12,7 +13,9 @@
 
 #include <array>
 #include <filesystem>
+#include <limits>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 struct ViewerOptions
@@ -83,12 +86,38 @@ private:
         uint32_t activeSlot = 0;
     };
 
+    struct SourceGpuResources
+    {
+        Falcor::ref<Falcor::Buffer> pMaterial;
+        Falcor::ref<Falcor::Buffer> pMerlBrdf;
+        Falcor::ref<Falcor::Buffer> pOpenPbrInputs;
+        Falcor::ref<Falcor::Buffer> pMaterialXInputs;
+        Falcor::ref<Falcor::Texture> pMaterialXBaseColor;
+        Falcor::ref<Falcor::Texture> pMaterialXRoughness;
+        Falcor::ref<Falcor::Texture> pMaterialXMetalness;
+        Falcor::ref<Falcor::Texture> pMaterialXNormalMap;
+    };
+
+    struct MaterialSlotBinding
+    {
+        ncls::ReferenceSource source;
+        SourceGpuResources gpu;
+        std::filesystem::path materialPath;
+        std::string displayName = "Default layered material";
+    };
+
     void createPasses();
     void createDefaultEnvironment();
     void resizeResources(uint32_t width, uint32_t height);
-    void loadReferenceGeometry(const std::filesystem::path& path);
-    void rebuildReferenceGeometryFbo();
+    void loadScene(const std::filesystem::path& path);
+    void rebuildSceneFbo();
+    void syncSceneCamera();
+    bool pickSceneObject(const Falcor::float2& screenPosition);
     void updateMaterialBuffer();
+    void updateReferenceSourceBuffer();
+    SourceGpuResources createSourceGpuResources(const ncls::ReferenceSource& source);
+    void activateSceneMaterial(uint32_t materialId);
+    const MaterialSlotBinding* inactiveSceneMaterial(uint32_t materialId) const;
     void resetReference(bool visibilityChanged, bool prepareChanged = true);
     void resetCamera();
     Falcor::float3 cameraPosition() const;
@@ -109,17 +138,24 @@ private:
     void applyReplaySettings(const std::filesystem::path& path);
     void capture(const std::filesystem::path& manifestPath);
     void renderMaterialUi(Falcor::Gui::Window& window);
+    void renderOpenPbrUi(Falcor::Gui::Window& window);
+    void renderMaterialXUi(Falcor::Gui::Window& window);
+    bool allMaterialsSupportCurrentCompiler() const;
+    bool hasActiveMethod() const;
 
     ViewerOptions mOptions;
     CameraState mCamera;
     LightingState mLighting;
     ncls::ReferenceSource mReferenceSource = ncls::makeDefaultReferenceSource();
     ncls::LayerStackIR& mMaterial = mReferenceSource.layerStack;
+    SourceGpuResources mSourceGpu;
+    std::unordered_map<uint32_t, MaterialSlotBinding> mInactiveSceneMaterials;
+    uint32_t mActiveSceneMaterial = std::numeric_limits<uint32_t>::max();
     std::filesystem::path mMaterialPath;
     std::filesystem::path mEnvironmentPath;
     std::filesystem::path mReferenceGeometryPath;
     std::string mReferenceGeometrySha256;
-    std::string mMaterialDisplayName = "默认多层材质";
+    std::string mMaterialDisplayName = "Default layered material";
     std::string mStatus;
 
     std::vector<ncls::ViewerMethod> mMethods;
@@ -129,17 +165,14 @@ private:
     Falcor::ref<Falcor::Buffer> mpWeights;
 
     Falcor::ref<Falcor::ComputePass> mpVisibilityPass;
-    Falcor::ref<Falcor::RasterPass> mpMeshVisibilityPass;
+    Falcor::ref<Falcor::Scene> mpScene;
+    Falcor::ref<Falcor::RasterPass> mpSceneVisibilityPass;
     Falcor::ref<Falcor::ComputePass> mpReferencePass;
     Falcor::ref<Falcor::ComputePass> mpPreparePass;
     Falcor::ref<Falcor::ComputePass> mpApproximationPass;
     Falcor::ref<Falcor::ComputePass> mpCompositePass;
     Falcor::ref<Falcor::ComputePass> mpParityPass;
 
-    Falcor::ref<Falcor::Buffer> mpMaterial;
-    Falcor::ref<Falcor::Buffer> mpMerlBrdf;
-    Falcor::ref<Falcor::Buffer> mpOpenPbrInputs;
-    Falcor::ref<Falcor::Buffer> mpMaterialXInputs;
     ncls::OpenPbrLuts mOpenPbrLuts;
     Falcor::ref<Falcor::Buffer> mpStates;
     Falcor::ref<Falcor::Texture> mpPositionDepth;
@@ -148,9 +181,10 @@ private:
     Falcor::ref<Falcor::Texture> mpViewDirection;
     Falcor::ref<Falcor::Texture> mpMaterialXTexCoord;
     Falcor::ref<Falcor::Texture> mpMaterialXTexCoordGrad;
-    Falcor::ref<Falcor::Texture> mpReferenceGeometryDepth;
-    Falcor::ref<Falcor::Fbo> mpReferenceGeometryFbo;
-    Falcor::ref<Falcor::Vao> mpReferenceGeometryVao;
+    Falcor::ref<Falcor::Texture> mpInstanceId;
+    Falcor::ref<Falcor::Texture> mpSceneMaterialId;
+    Falcor::ref<Falcor::Texture> mpSceneDepth;
+    Falcor::ref<Falcor::Fbo> mpSceneFbo;
     std::array<Falcor::ref<Falcor::Texture>, 2> mpReference;
     Falcor::ref<Falcor::Texture> mpApproximation;
     Falcor::ref<Falcor::Texture> mpComparisonLinear;
@@ -158,10 +192,6 @@ private:
     Falcor::ref<Falcor::Texture> mpEnvironment;
     Falcor::ref<Falcor::Sampler> mpLinearSampler;
     Falcor::ref<Falcor::Sampler> mpMaterialXSampler;
-    Falcor::ref<Falcor::Texture> mpMaterialXBaseColor;
-    Falcor::ref<Falcor::Texture> mpMaterialXRoughness;
-    Falcor::ref<Falcor::Texture> mpMaterialXMetalness;
-    Falcor::ref<Falcor::Texture> mpMaterialXNormalMap;
 
     PassTiming mVisibilityTiming;
     PassTiming mReferenceTiming;
@@ -175,7 +205,10 @@ private:
     uint32_t mFrameIndex = 0;
     uint32_t mReferenceSpp = 0;
     uint32_t mReferencePing = 0;
-    uint32_t mReferenceGeometryIndexCount = 0;
+    uint32_t mSelectedSceneInstance = std::numeric_limits<uint32_t>::max();
+    uint32_t mSelectedSceneMaterial = std::numeric_limits<uint32_t>::max();
+    std::string mSelectedSceneGeometryName;
+    std::string mSelectedSceneMaterialName;
     uint32_t mSamplesPerFrame = 1;
     uint32_t mMaxReferenceDepth = 24;
     uint32_t mObjectMode = 0;
@@ -190,8 +223,10 @@ private:
     bool mPrepareDirty = true;
     bool mFreezeReference = false;
     bool mCameraDragging = false;
+    bool mCameraDragMoved = false;
     bool mPanDragging = false;
     bool mDividerDragging = false;
     Falcor::float2 mLastMouse{0.f, 0.f};
+    Falcor::float2 mMousePressScreen{0.f, 0.f};
     uint32_t mRenderedFrames = 0;
 };

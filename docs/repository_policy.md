@@ -10,7 +10,7 @@
 - `apps/viewer/`、`patches/` 与构建/benchmark 脚本；
 - `tests/unit/`、`tests/gpu/`、`tests/integration/`；
 - 环境声明、显式配置、中文文档和人工整理的实验结论；
-- 体积较小的 JSON 指标与资产清单。
+- 作为稳定验收合同的阈值、资产清单和人工整理结论。
 
 根仓库不维持迁移前的 `schema/`、`datagen/`、固定 K2 packet、泛化 `model/` 或旧 Python lookup viewer。旧数据只通过 `ncls.core.material.legacy_v0` 和 `ncls.data.legacy_v0` 的一次性 reader 转换，不保留第二套 writer。
 
@@ -23,12 +23,12 @@
 | `data/reference-responses/` | reference 查询后生成的响应数据，可由源材质、reference 和采集配置复现 |
 | `data/` 其他内容 | 迁移前参考数据、HDRI 和缓存体积大，不进入根 Git |
 | `build/` | CMake、viewer 和 pbrt probe 构建产物 |
-| `artifacts/` | training run、checkpoint、MethodBundle、capture、benchmark 和临时实验输出 |
-| `reports/generated/` | 可重新生成的图像和中间文件 |
-| `reports/**/*.npy`、`*.npz`、`*.pt` | 数组、逐样本拟合参数和模型权重属于派生产物 |
+| `artifacts/` | training run、checkpoint、MethodBundle、capture、benchmark、验证报告和临时实验输出 |
+| `reports/` | 正确性验证结果、运行摘要和实验报告均可由代码、配置与锁定输入再生，不在根仓库持久化 |
+| `*.npy`、`*.npz`、`*.pt` | 数组、逐样本拟合参数和模型权重属于派生产物 |
 | Python/pytest/ruff 缓存 | 与源码无关 |
 
-历史报告中的 Markdown 和轻量 JSON 可以进入 Git，但必须由 `reports/README.md` 标明其接口年代；原始字段名不会成为当前代码合同。
+稳定结论写入对应的中文设计文档，验收门槛写入版本化配置；某次运行的 Markdown/JSON 报告统一输出到 `artifacts/`。报告中的原始字段名和某个 backend 的临时状态布局都不是公共接口。
 
 ## 上游源码状态
 

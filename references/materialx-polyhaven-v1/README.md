@@ -17,7 +17,7 @@
 | 无纹理核心 `standard_surface` | 0.498% | 79.91 dB | 0.0000492 | ≤2%、≥40 dB、≤0.0001 | 通过 |
 | 8 个原始 4K 材质 | 最高 9.510% | 最低 54.95 dB | 最高 0.001392 | ≤10%、≥50 dB、≤0.002 | 全部通过 |
 
-两种门槛刻意分开：核心 probe 用严格门槛约束 closure 公式；原始纹理组保留 MaterialX/OpenGL 与 Falcor/D3D12 各自的 mip 构建和 16x 各向异性采样 footprint，因此只放宽纹理足迹差异，不能用它掩盖公式误差。逐材质证据保存在 `falcor-parity.json`，完整可再生图像位于被 Git 忽略的 `artifacts/validation/materialx-parity/suite/`。
+两种门槛刻意分开：核心 probe 用严格门槛约束 closure 公式；原始纹理组保留 MaterialX/OpenGL 与 Falcor/D3D12 各自的 mip 构建和 16x 各向异性采样 footprint，因此只放宽纹理足迹差异，不能用它掩盖公式误差。门槛保存在 `references/acceptance.json`；逐材质指标和完整可再生图像由 suite 写入被 Git 忽略的 `artifacts/validation/materialx-parity/suite/`。
 
 源 `.mtlx` 中的 displacement 图仍属于原始 GT，并被资产清单保留；当前本地 surface-response 验收不移动球体几何。这表示 Falcor 接入的几何 capability 尚未覆盖 displacement，不表示原始材质不应包含或编辑该参数。
 

@@ -7,6 +7,7 @@ Texture2D<float4> gPositionDepth;
 Texture2D<float4> gNormal;
 Texture2D<float4> gTangent;
 Texture2D<float4> gViewDirection;
+Texture2D<uint> gMaterialId;
 RWStructuredBuffer<NclsLegacyLtcK2PackedState> gStates;
 
 cbuffer PrepareCB
@@ -14,6 +15,8 @@ cbuffer PrepareCB
     uint2 gFrameDim;
     uint gMethodMode;
     uint gWidth;
+    uint gUseScene;
+    uint gTargetMaterialId;
 };
 
 [numthreads(8, 8, 1)]
@@ -21,6 +24,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     const uint2 pixel = dispatchThreadID.xy;
     if (any(pixel >= gFrameDim)) return;
+    if (gUseScene != 0u && gMaterialId[pixel] != gTargetMaterialId + 1u) return;
     const uint index = pixel.y * gFrameDim.x + pixel.x;
     NclsLegacyLtcK2PackedState state = {};
     if (gPositionDepth[pixel].w >= 0.0f)

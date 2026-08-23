@@ -2,9 +2,9 @@
 
 ## 实现状态
 
-`apps/viewer/` 已实现本规格的第一版闭环，并在锁定 Falcor 8.0/D3D12 上用真实 P1 realtime `MethodBundle` 验证：bundle 全文件哈希、平台/合同检查、GPU parity、左右像素对齐捕获、逐字节 replay 和三段固定相机 benchmark 均已通过。构建、运行与捕获命令见 `apps/viewer/README.md`。
+`apps/viewer/` 已实现第一版可运行骨架：bundle 全文件哈希、平台/合同检查、GPU parity、共享可见性、reference 累积、deferred prepare/lighting 和共同 composite 已接通。单次验证结果不在根仓库持久化；构建、运行与当前边界见 `apps/viewer/README.md`。
 
-当前已经接入 viewer 的 reference 是 `LayerStackIR` 材质族的随机游走实现。它计算共享主可见性表面上的局部多层材质直接光照响应，不包含物体间投影、全场景间接光或穿物体传输；这与该材质族第一阶段“先不做投射物体”的范围一致，不应把它描述成完整场景 path tracer。后续源材质族可以提供不同的 reference pipeline，viewer 统一它们的场景输入、输出图像和比较语义，不统一内部材质表示。
+当前接入 viewer 的 reference 包括 LayerStack 随机游走、MERL 测量表、OpenPBR resolved native inputs 和 MaterialX `standard_surface` subset。它们计算共享主可见性表面上的局部材质光照响应，不包含物体间投影、全场景间接光或穿物体传输，不应描述成完整场景 path tracer。viewer 统一场景输入、输出图像和比较语义，不统一各源材质族的内部表示。
 
 ## 定位
 
@@ -14,8 +14,8 @@ viewer 是仅支持 Windows/D3D12 的原生交互应用，用来观察材质在�
 
 ## 画面合同
 
-- 左侧：当前源材质族的权威 reference 输出；现阶段 `LayerStackIR` 使用随机游走累积；
-- 右侧：当前选中 MethodBundle 的 deferred/实时结果；
+- 左侧：当前源材质族的权威 reference 输出；LayerStack 使用随机游走累积；
+- 右侧：当前显式选中 MethodBundle 的 deferred/实时结果；方法未指定或材质族不兼容时不创建伪结果，reference 改为全宽显示；
 - 两侧使用同一场景、相机、材质程序、几何法线/切线、灯光、环境旋转、曝光和 tone mapping；
 - 两个 renderer 生成像素对齐的线性 HDR 图像，再由 composite pass 按垂直分割线选取，最后统一 tone map；
 - 默认左/右各占 50%，分割线可拖动；
@@ -27,12 +27,7 @@ viewer 是仅支持 Windows/D3D12 的原生交互应用，用来观察材质在�
 
 viewer 只有一个相机状态。orbit、pan、dolly、滚轮缩放、键盘移动和 UI 数值编辑都修改这一个状态，因此左右天然同步，不做两个相机之间的追随复制。
 
-第一版提供：
-
-- 球体；
-- shader ball；
-- 一个带曲率、掠射和细节尺度的 hero mesh；
-- 后续增加 glTF/USD 导入，不阻塞首个闭环。
+没有加载场景时提供球体、shader ball 和解析 detail hero fallback。加载场景时统一使用 Falcor `Scene` 和当前 importer 插件声明的格式，不再限制为单个 OBJ；主可见性同时保存 instance/material ID，单击物体选择对应材质槽。
 
 ## 参考累积
 
@@ -58,8 +53,8 @@ viewer 只有一个相机状态。orbit、pan、dolly、滚轮缩放、键盘移
 当前 pass 划分：
 
 ```text
-PrimaryVisibility / shared scene state
-  ├─ ReferencePathTracer → ReferenceAccumulation
+PrimaryVisibility / Falcor Scene G-buffer
+  ├─ FamilyReferenceIntegrator → ReferenceAccumulation
   └─ ApproximationPrepare → DeferredLighting
 
 ReferenceAccumulation + DeferredLighting
@@ -78,18 +73,19 @@ viewer 扫描用户指定的 bundle 目录。只有通过 manifest、hash、平�
 
 逐样本直接拟合结果不属于自由相机 MethodBundle，因为它只对离散 `(材质, 观察方向)` 有效。它可以在单独的锁定 tile 诊断工具中显示，不进入主 viewer 方法列表。
 
-## MaterialProgram 编辑
+## 源材质与对象材质槽编辑
 
-第一版 `LayerStackIR` UI 支持：
+UI 按当前源材质族动态切换参数。第一版支持：
 
 - 打开和保存 MaterialProgram JSON；
 - 增加、删除、重排 LayerStack 内的界面和介质；
-- 编辑 v1 常量参数；
-- 显示节点版本、单位、范围和不支持原因；
-- 在修改后同时重新编译 reference 与右侧方法；
-- 显示当前规范化 IR 哈希和 MethodBundle 支持状态。
+- 编辑 OpenPBR resolved native inputs；
+- 编辑 MaterialX reference subset 中未由纹理连接占用的 literal 输入；
+- 通过切换原始测量文件更换 MERL；
+- 显示源材质族、原始文件、哈希和 MethodBundle 支持状态；
+- 点击场景物体后，只修改该 Falcor material slot；各 slot 独立保存源材质与 GPU reference 资源。
 
-viewer 编辑的是 MaterialProgram，不直接编辑某个 backend 的 packet。backend 状态只允许在开发调试窗口中只读查看。
+viewer 编辑的是各源材质族的原生参数或其正式输入合同，不直接编辑某个 backend 的 packet。backend 状态只允许在开发调试窗口中只读查看。
 
 ## 灯光
 
@@ -100,7 +96,7 @@ viewer 编辑的是 MaterialProgram，不直接编辑某个 backend 的 packet�
 - 点光；
 - 矩形面光。
 
-右侧优先使用 backend 声明的专用积分能力；没有专用能力时使用标准 `evaluate/sample/pdf` 路径并明确显示 fallback。reference 侧直接使用该源材质族的权威求值和积分路径；当前随机游走 reference 使用无偏路径采样，解析或测量材质 reference 不需要伪装成随机游走。
+右侧当前使用固定成本的 deferred prepare/lighting：解析灯直接求值，环境光使用固定的确定性方向集合；没有 spp、跨帧样本累计或随帧变化的噪声。reference 侧直接使用该源材质族的权威求值和积分路径；随机游走 reference 使用随机采样，解析或测量材质 reference 不需要伪装成随机游走。场景阴影和全局间接光尚未接入，不能把当前两侧描述为完整场景传输。
 
 ## UI 信息
 
@@ -123,7 +119,7 @@ viewer 支持保存：
 - 完整 capture manifest；
 - GPU profiler 摘要。
 
-capture manifest 必须足以通过命令行重放同一场景。截图不能只把参数写在文件名里。
+capture manifest 必须记录场景、环境、相机、方法和 reference 设置。当前实现只序列化选中的源材质槽；在形成稳定的多 slot 源材质序列化合同前，不能宣称交互式多材质 capture 可以逐 slot 完整重放。截图不能只把参数写在文件名里。
 
 ## 自动 benchmark
 

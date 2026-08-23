@@ -6,6 +6,8 @@ RWTexture2D<float4> gTangent;
 RWTexture2D<float4> gViewDirection;
 RWTexture2D<float4> gMaterialXTexCoord;
 RWTexture2D<float4> gMaterialXTexCoordGrad;
+RWTexture2D<uint> gInstanceId;
+RWTexture2D<uint> gMaterialId;
 
 cbuffer VisibilityCB
 {
@@ -41,6 +43,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         gViewDirection[pixel] = float4(-rayDirection, 0.0f);
         gMaterialXTexCoord[pixel] = float4(0.0f);
         gMaterialXTexCoordGrad[pixel] = float4(0.0f);
+        gInstanceId[pixel] = 0u;
+        gMaterialId[pixel] = 0u;
         return;
     }
     float distance;
@@ -52,6 +56,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         gViewDirection[pixel] = float4(-rayDirection, 0.0f);
         gMaterialXTexCoord[pixel] = float4(0.0f);
         gMaterialXTexCoordGrad[pixel] = float4(0.0f);
+        gInstanceId[pixel] = 0u;
+        gMaterialId[pixel] = 0u;
         return;
     }
     const float3 position = gCameraPosition + distance * rayDirection;
@@ -63,4 +69,6 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     gViewDirection[pixel] = float4(-rayDirection, 0.0f);
     gMaterialXTexCoord[pixel] = float4(0.0f);
     gMaterialXTexCoordGrad[pixel] = float4(0.0f);
+    gInstanceId[pixel] = 1u;
+    gMaterialId[pixel] = 1u;
 }

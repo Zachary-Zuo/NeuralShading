@@ -131,14 +131,14 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
     if (gUseEnvironment != 0u)
     {
-        static const uint kEnvironmentSamples = 24u;
+        // A shared deterministic quadrature avoids pixel-scrambled salt-and-pepper noise
+        // on the realtime side. This is bounded lighting work, not temporal accumulation.
+        static const uint kEnvironmentSamples = 64u;
         float3 environmentIntegral = float3(0.0f);
-        const uint scramble = nclsViewerHash(pixel.x + pixel.y * gFrameDim.x);
         [unroll]
         for (uint sampleIndex = 0u; sampleIndex < kEnvironmentSamples; ++sampleIndex)
         {
-            float2 u = nclsViewerHammersley(sampleIndex, kEnvironmentSamples);
-            u.y = frac(u.y + nclsViewerHashFloat(scramble));
+            const float2 u = nclsViewerHammersley(sampleIndex, kEnvironmentSamples);
             const float3 wiWorld = nclsViewerToWorld(nclsViewerUniformHemisphere(u), normal, tangent);
             environmentIntegral += nclsApproximationDirection(state, woLocal, wiWorld, normal, tangent)
                 * nclsEnvironment(wiWorld);
