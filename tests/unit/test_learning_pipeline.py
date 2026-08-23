@@ -8,8 +8,9 @@ from tensorboard.backend.event_processing.event_accumulator import EventAccumula
 
 from ncls.bundle import MethodBundle, export_legacy_ltc_k2_checkpoint
 from ncls.core.material import DiffuseInterface, HomogeneousMedium, LayerStackIR, RoughDielectricInterface
-from ncls.data.generator import ReferenceGenerationConfig, generate_reference_dataset
-from ncls.learning.data import ReferenceTileStore
+from ncls.data import CollectionConfig, collect_reference_dataset
+from ncls.data.providers import LayerStackProvider, LayerStackProviderConfig
+from ncls.learning.data import LayerStackReferenceStore, ReferenceQueryStore
 from ncls.learning.direct_fit import DirectFitConfig, run_direct_fit
 from ncls.learning.evaluation import evaluate_checkpoint
 from ncls.learning.features import CONTINUOUS_FEATURE_COUNT, FEATURE_CONTRACT_ID, encode_layer_stack
@@ -20,13 +21,13 @@ class _ConstantEvaluator:
     def __init__(self, light_count: int) -> None:
         self.light_count = light_count
 
-    def evaluate_tiles(
+    def evaluate_query_groups(
         self,
         materials,
         view_directions,
         *,
         sample_count_per_replica: int,
-        tile_seeds: np.ndarray,
+        query_group_seeds: np.ndarray,
         sample_offset: int = 0,
     ):
         shape = (len(materials), self.light_count, 3)
@@ -38,40 +39,45 @@ class _ConstantEvaluator:
 
 
 def _dataset(path: Path) -> None:
-    config = ReferenceGenerationConfig(
-        family_count=3,
-        local_state_count=1,
-        view_count=1,
-        light_count=4,
-        samples_per_replica=4,
-        tile_batch=3,
-        shard_tiles=3,
-        seed=29,
-        max_depth=4,
-    )
-    generate_reference_dataset(
-        path,
-        config,
+    collection = CollectionConfig(view_count=1, light_count=4, seed=29)
+    provider = LayerStackProvider(
+        collection,
+        LayerStackProviderConfig(
+            family_count=3,
+            local_state_count=1,
+            samples_per_replica=4,
+            query_group_batch=3,
+            max_depth=4,
+        ),
         evaluator=_ConstantEvaluator(4),
-        created_at="2026-08-23T00:00:00+00:00",
+    )
+    collect_reference_dataset(
+        path,
+        [provider],
+        collection,
+        created_at="2026-08-24T00:00:00+00:00",
         generator_git_commit="test",
     )
 
 
-def test_v2_learning_store_uses_explicit_features_statistics_and_family_splits(tmp_path: Path) -> None:
-    dataset_path = tmp_path / "dataset"
+def test_learning_base_store_is_source_independent_and_layer_stack_decode_is_explicit(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "dataset.h5"
     _dataset(dataset_path)
-    store = ReferenceTileStore(dataset_path)
-    assert store.features.continuous.shape == (3, 8, CONTINUOUS_FEATURE_COUNT)
-    assert {name: len(indices) for name, indices in store.split_indices.items()} == {
-        "train": 1,
-        "validation": 1,
-        "test": 1,
-    }
-    batch = store.batch(np.asarray([0, 1, 2]))
-    assert batch["mean"].shape == (3, 4, 3)
-    assert batch["standard_error"].shape == (3, 4, 3)
-    np.testing.assert_allclose(batch["standard_error"], np.sqrt(0.0101 / 8.0), rtol=2e-5)
+    with ReferenceQueryStore(dataset_path) as common:
+        batch = common.batch(np.asarray([0, 1, 2]))
+        assert "interface_kinds" not in batch
+        assert batch["mean"].shape == (3, 4, 3)
+        assert batch["lights"].shape == (3, 4, 3)
+    with LayerStackReferenceStore(dataset_path) as store:
+        assert store.features.continuous.shape == (3, 8, CONTINUOUS_FEATURE_COUNT)
+        assert {name: len(indices) for name, indices in store.split_indices.items()} == {
+            "train": 1,
+            "validation": 1,
+            "test": 1,
+        }
+        batch = store.batch(np.asarray([0, 1, 2]))
+        assert batch["standard_error"].shape == (3, 4, 3)
+        np.testing.assert_allclose(batch["standard_error"], np.sqrt(0.0101 / 8.0), rtol=2e-5)
 
     _, encoded, _ = encode_layer_stack(
         LayerStackIR(
@@ -83,7 +89,7 @@ def test_v2_learning_store_uses_explicit_features_statistics_and_family_splits(t
 
 
 def test_training_writes_tensorboard_best_last_and_keeps_test_held_out(tmp_path: Path) -> None:
-    dataset_path = tmp_path / "dataset"
+    dataset_path = tmp_path / "dataset.h5"
     run_path = tmp_path / "run"
     _dataset(dataset_path)
     config = TrainingConfig(
@@ -93,7 +99,7 @@ def test_training_writes_tensorboard_best_last_and_keeps_test_held_out(tmp_path:
         learning_rate=1e-3,
         validation_interval=1,
         checkpoint_interval=1,
-        max_validation_tiles=1,
+        max_validation_query_groups=1,
         seed=31,
         device="cpu",
     )
@@ -120,7 +126,7 @@ def test_training_writes_tensorboard_best_last_and_keeps_test_held_out(tmp_path:
         device_name="cpu",
     )
     assert result["split"] == "test"
-    assert result["metrics"]["tile_count"] == 1
+    assert result["metrics"]["query_group_count"] == 1
     persisted_manifest = json.loads((run_path / "run_manifest.json").read_text(encoding="utf-8"))
     assert persisted_manifest["held_out_test_accessed"] is False
 
@@ -134,9 +140,7 @@ def test_training_writes_tensorboard_best_last_and_keeps_test_held_out(tmp_path:
     assert bundle.manifest.backend_id == "legacy-ltc-k2"
     assert bundle.manifest.runtime_class == "realtime"
     assert bundle.manifest.compiler["runtime_implementation"] == "slang"
-    assert bundle.manifest.backend_descriptor["shader_entry_points"]["prepare"] == (
-        "LegacyLtcK2P1Backend.prepare"
-    )
+    assert bundle.manifest.backend_descriptor["shader_entry_points"]["prepare"] == "LegacyLtcK2P1Backend.prepare"
     layout = json.loads(bundle.file("weight_layout").read_text(encoding="utf-8"))
     assert bundle.file("weights").stat().st_size == 4 * layout["total_floats"]
     assert bundle.file("compiler_shader").is_file()
@@ -146,16 +150,12 @@ def test_training_writes_tensorboard_best_last_and_keeps_test_held_out(tmp_path:
 
     weight_path = bundle.file("weights")
     weight_path.write_bytes(weight_path.read_bytes() + b"corrupt")
-    try:
+    with np.testing.assert_raises_regex(ValueError, "content hash mismatch"):
         MethodBundle.open(bundle_path)
-    except ValueError as error:
-        assert "content hash mismatch" in str(error)
-    else:
-        raise AssertionError("corrupted MethodBundle must not load")
 
 
 def test_direct_fit_is_a_separate_representation_ceiling_run(tmp_path: Path) -> None:
-    dataset_path = tmp_path / "dataset"
+    dataset_path = tmp_path / "dataset.h5"
     output = tmp_path / "direct-fit"
     _dataset(dataset_path)
     result = run_direct_fit(
@@ -172,9 +172,10 @@ def test_direct_fit_is_a_separate_representation_ceiling_run(tmp_path: Path) -> 
             seed=37,
             device="cpu",
         ),
-        max_tiles=1,
+        max_query_groups=1,
     )
     assert result["format_name"] == "ncls.representation-ceiling"
     assert result["representation_id"] == "legacy-ltc-k2@1"
+    assert result["query_group_count"] == 1
     assert (output / "parameters.npz").is_file()
     assert any((output / "tensorboard").iterdir())

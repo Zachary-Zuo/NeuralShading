@@ -6,7 +6,7 @@
 
 Python 侧的工具生命周期仍分成三条路径，但必须记录拟合对象和结论范围：
 
-- `direct-fit`：不经过 feed-forward compiler，直接优化候选表示的参数或 latent；它不自动等于“逐 tile 拟合”，也不产生通用编译器。
+- `direct-fit`：不经过 feed-forward compiler，直接优化候选表示的参数或 latent；当前基线逐 query group 拟合，它不产生通用编译器。
 - `train`：训练共享 evaluator、材质 latent、compiler 或后续 sampler；只读取 train 数据，只用 validation 选择 best checkpoint。
 - `evaluate`：从一个不可变 checkpoint 显式评测 validation 或 held-out test；训练循环不会读取 test 指标。
 
@@ -62,7 +62,7 @@ p  = Proposal.pdf(proposal_parameters, wi)
 
 ## TrainingConfig
 
-所有超参数先解析为 `ncls.training-config@1`，并将完整 JSON 与 SHA-256 写入 run。最小示例：
+所有超参数先解析为 `ncls.training-config@2`，并将完整 JSON 与 SHA-256 写入 run。最小示例：
 
 ```json
 {
@@ -76,12 +76,12 @@ p  = Proposal.pdf(proposal_parameters, wi)
   "gradient_clip": 5.0,
   "validation_interval": 250,
   "checkpoint_interval": 250,
-  "max_validation_tiles": 4096,
+  "max_validation_query_groups": 4096,
   "seed": 20260822,
   "device": "cuda",
   "deterministic": true,
   "schema_name": "ncls.training-config",
-  "schema_version": 1
+  "schema_version": 2
 }
 ```
 
@@ -89,7 +89,7 @@ p  = Proposal.pdf(proposal_parameters, wi)
 
 ```powershell
 conda run -n neural-shading ncls learn train `
-  --dataset data\reference-v2 `
+  --dataset data\reference-responses\layer-stack-v3.h5 `
   --run artifacts\runs\legacy-ltc-k2-p1-001 `
   --config configs\legacy-ltc-k2-p1.json
 ```
@@ -128,7 +128,7 @@ best checkpoint 确定后，单独执行：
 
 ```powershell
 conda run -n neural-shading ncls learn evaluate `
-  --dataset data\reference-v2 `
+  --dataset data\reference-responses\layer-stack-v3.h5 `
   --checkpoint artifacts\runs\legacy-ltc-k2-p1-001\checkpoints\best.pt `
   --split test `
   --output artifacts\runs\legacy-ltc-k2-p1-001\test_metrics.json
@@ -152,13 +152,13 @@ direct fit 必须在 manifest 中记录 scope：
 
 ```powershell
 conda run -n neural-shading ncls learn direct-fit `
-  --dataset data\reference-v2 `
+  --dataset data\reference-responses\layer-stack-v3.h5 `
   --output artifacts\direct-fit\legacy-ltc-k2-test `
   --split test --family ltc --lobes 2 `
   --steps 800 --restarts 3
 ```
 
-输出 `ncls.representation-ceiling@1` manifest、TensorBoard 和 `parameters.npz`。这里的参数是逐 tile 直接优化结果，只能判断一张方向切片，不能证明目标 view-conditioned evaluator，也不能当成通用材质编译器。新的 neural direct-fit manifest 必须新增并锁定上述 scope。
+输出 `ncls.representation-ceiling@1` manifest、TensorBoard 和 `parameters.npz`。这里的参数是逐 query group 直接优化结果，只能判断一张方向切片，不能证明目标 view-conditioned evaluator，也不能当成通用材质编译器。新的 neural direct-fit manifest 必须新增并锁定上述 scope。
 
 ## MethodBundle
 

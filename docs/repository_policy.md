@@ -12,7 +12,7 @@
 - 环境声明、显式配置、中文文档和人工整理的实验结论；
 - 作为稳定验收合同的阈值、资产清单和人工整理结论。
 
-根仓库不维持迁移前的 `schema/`、`datagen/`、通用 backend packet、泛化 `model/` 或旧 Python lookup viewer。旧数据只通过 `ncls.core.material.legacy_v0` 和 `ncls.data.legacy_v0` 的一次性 reader 转换，不保留第二套 writer。
+根仓库不维持迁移前的 `schema/`、`datagen/`、通用 backend packet、泛化 `model/` 或旧 Python lookup viewer。数据层不保留旧 reader、转换器或第二套 writer；所有 reference response 从锁定输入重新生成。
 
 ## 根仓库不保存什么
 

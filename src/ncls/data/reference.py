@@ -13,7 +13,7 @@ from .statistics import ReplicaMoments, combine_replica_moments
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-REFERENCE_TILE_SHADER = PROJECT_ROOT / "shaders" / "ncls" / "data" / "reference_tile.cs.slang"
+REFERENCE_LAYER_STACK_SHADER = PROJECT_ROOT / "shaders" / "ncls" / "data" / "reference_layer_stack.cs.slang"
 
 
 @dataclass(frozen=True)
@@ -33,7 +33,7 @@ class FalcorReferenceEvaluator:
         light_directions: np.ndarray,
         *,
         max_depth: int = 64,
-        max_tile_batch: int = 64,
+        max_query_group_batch: int = 64,
         light_index_offset: int = 0,
     ) -> None:
         try:
@@ -43,31 +43,34 @@ class FalcorReferenceEvaluator:
                 "Falcor reference evaluation must run through scripts/run_falcor_python.ps1"
             ) from exc
         self._falcor = falcor
-        self.light_directions = np.asarray(light_directions, dtype=np.float32)
-        if self.light_directions.ndim != 2 or self.light_directions.shape[1] != 4:
-            raise ValueError("light_directions must have shape [light_count, 4]")
+        directions = np.asarray(light_directions, dtype=np.float32)
+        if directions.ndim != 2 or directions.shape[1] not in {3, 4}:
+            raise ValueError("light_directions must have shape [light_count, 3 or 4]")
+        self.light_directions = np.ascontiguousarray(directions[:, :3])
+        gpu_light_directions = np.zeros((len(directions), 4), dtype=np.float32)
+        gpu_light_directions[:, :3] = self.light_directions
         self.light_count = len(self.light_directions)
-        if max_tile_batch < 1 or max_depth < 1:
-            raise ValueError("max_tile_batch and max_depth must be positive")
-        self.max_tile_batch = max_tile_batch
-        self.query_capacity = self.light_count * max_tile_batch
+        if max_query_group_batch < 1 or max_depth < 1:
+            raise ValueError("max_query_group_batch and max_depth must be positive")
+        self.max_query_group_batch = max_query_group_batch
+        self.query_capacity = self.light_count * max_query_group_batch
         self.max_depth = max_depth
         self.device = falcor.Device(type=falcor.DeviceType.D3D12)
-        self.material_buffer = self._buffer(BINARY_SIZE, max_tile_batch)
-        self.view_buffer = self._buffer(16, max_tile_batch)
-        self.seed_buffer = self._buffer(4, max_tile_batch)
+        self.material_buffer = self._buffer(BINARY_SIZE, max_query_group_batch)
+        self.view_buffer = self._buffer(16, max_query_group_batch)
+        self.seed_buffer = self._buffer(4, max_query_group_batch)
         self.light_buffer = self._buffer(16, self.light_count)
         self.outputs = [self._buffer(16, self.query_capacity, writable=True) for _ in range(4)]
-        self.light_buffer.from_numpy(self.light_directions)
+        self.light_buffer.from_numpy(gpu_light_directions)
         self.compute = falcor.ComputePass(
             self.device,
-            file=REFERENCE_TILE_SHADER,
-            cs_entry="generateReferenceTileBatch",
+            file=REFERENCE_LAYER_STACK_SHADER,
+            cs_entry="evaluateReferenceQueryGroups",
         )
         self.compute.globals.gMaterialStates = self.material_buffer
         self.compute.globals.gViewDirections = self.view_buffer
         self.compute.globals.gLightDirections = self.light_buffer
-        self.compute.globals.gTileSeeds = self.seed_buffer
+        self.compute.globals.gQueryGroupSeeds = self.seed_buffer
         for name, output in zip(
             ("gMeanA", "gMeanSquareA", "gMeanB", "gMeanSquareB"),
             self.outputs,
@@ -88,37 +91,37 @@ class FalcorReferenceEvaluator:
             bind_flags=flags,
         )
 
-    def evaluate_tiles(
+    def evaluate_query_groups(
         self,
         materials: Sequence[LayerStackIR],
         view_directions: np.ndarray,
         *,
         sample_count_per_replica: int,
-        tile_seeds: np.ndarray,
+        query_group_seeds: np.ndarray,
         sample_offset: int = 0,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        tile_count = len(materials)
-        if not 1 <= tile_count <= self.max_tile_batch:
-            raise ValueError(f"tile batch must contain 1..{self.max_tile_batch} tiles")
+        query_group_count = len(materials)
+        if not 1 <= query_group_count <= self.max_query_group_batch:
+            raise ValueError(f"batch must contain 1..{self.max_query_group_batch} query groups")
         if sample_count_per_replica < 1 or sample_offset < 0:
             raise ValueError("sample count must be positive and offset nonnegative")
         views = np.asarray(view_directions, dtype=np.float32)
-        seeds = np.asarray(tile_seeds, dtype=np.uint32)
-        if views.shape != (tile_count, 4) or seeds.shape != (tile_count,):
-            raise ValueError("materials, view_directions and tile_seeds must have matching tile counts")
+        seeds = np.asarray(query_group_seeds, dtype=np.uint32)
+        if views.shape not in {(query_group_count, 3), (query_group_count, 4)} or seeds.shape != (query_group_count,):
+            raise ValueError("materials, view_directions and query_group_seeds must have matching counts")
 
-        packed = np.zeros(BINARY_SIZE * self.max_tile_batch, dtype=np.uint8)
-        packed[: BINARY_SIZE * tile_count] = np.frombuffer(
+        packed = np.zeros(BINARY_SIZE * self.max_query_group_batch, dtype=np.uint8)
+        packed[: BINARY_SIZE * query_group_count] = np.frombuffer(
             b"".join(pack_layer_stack(material) for material in materials), dtype=np.uint8
         )
-        padded_views = np.zeros((self.max_tile_batch, 4), dtype=np.float32)
-        padded_views[:tile_count] = views
-        padded_seeds = np.zeros(self.max_tile_batch, dtype=np.uint32)
-        padded_seeds[:tile_count] = seeds
+        padded_views = np.zeros((self.max_query_group_batch, 4), dtype=np.float32)
+        padded_views[:query_group_count, :3] = views[:, :3]
+        padded_seeds = np.zeros(self.max_query_group_batch, dtype=np.uint32)
+        padded_seeds[:query_group_count] = seeds
         self.material_buffer.from_numpy(packed)
         self.view_buffer.from_numpy(padded_views)
         self.seed_buffer.from_numpy(padded_seeds)
-        query_count = tile_count * self.light_count
+        query_count = query_group_count * self.light_count
         self.compute.globals.gQueryCount = query_count
         self.compute.globals.gSampleCountPerReplica = sample_count_per_replica
         self.compute.globals.gSampleOffset = sample_offset
@@ -126,7 +129,7 @@ class FalcorReferenceEvaluator:
         self.compute.execute(threads_x=query_count)
         result = [
             output.to_numpy().view(np.float32).reshape(self.query_capacity, 4)[:query_count, :3]
-            .reshape(tile_count, self.light_count, 3)
+            .reshape(query_group_count, self.light_count, 3)
             .copy()
             for output in self.outputs
         ]
@@ -155,7 +158,7 @@ def evaluate_reference_adaptive(
     materials: Sequence[LayerStackIR],
     view_directions: np.ndarray,
     *,
-    tile_seeds: np.ndarray,
+    query_group_seeds: np.ndarray,
     batch_samples: int = 256,
     min_samples: int = 512,
     max_samples: int = 16384,
@@ -163,35 +166,35 @@ def evaluate_reference_adaptive(
     relative_floor_fraction: float = 0.005,
     absolute_floor: float = 1e-5,
 ) -> EvaluatedReferenceBatch:
-    """按 tile 自适应采样，并用并行 Welford 合并每个 GPU batch。"""
+    """按 query group 自适应采样，并用并行 Welford 合并每个 GPU batch。"""
 
-    tile_count = len(materials)
+    query_group_count = len(materials)
     views = np.asarray(view_directions, dtype=np.float32)
-    seeds = np.asarray(tile_seeds, dtype=np.uint32)
-    if views.shape != (tile_count, 4) or seeds.shape != (tile_count,):
-        raise ValueError("materials, view_directions and tile_seeds must have matching tile counts")
+    seeds = np.asarray(query_group_seeds, dtype=np.uint32)
+    if views.shape not in {(query_group_count, 3), (query_group_count, 4)} or seeds.shape != (query_group_count,):
+        raise ValueError("materials, view_directions and query_group_seeds must have matching counts")
     if batch_samples < 1 or min_samples < 1 or max_samples < min_samples:
         raise ValueError("adaptive sample limits are invalid")
     if min_samples % batch_samples or max_samples % batch_samples:
         raise ValueError("min_samples and max_samples must be multiples of batch_samples")
     if not 0.0 < relative_standard_error < 1.0:
         raise ValueError("relative_standard_error must lie in (0, 1)")
-    shape = (tile_count, evaluator.light_count, 3)
+    shape = (query_group_count, evaluator.light_count, 3)
     means_a = np.zeros(shape, dtype=np.float64)
     means_b = np.zeros(shape, dtype=np.float64)
     m2_a = np.zeros(shape, dtype=np.float64)
     m2_b = np.zeros(shape, dtype=np.float64)
-    counts = np.zeros(tile_count, dtype=np.uint64)
-    active = np.arange(tile_count, dtype=np.int64)
+    counts = np.zeros(query_group_count, dtype=np.uint64)
+    active = np.arange(query_group_count, dtype=np.int64)
     while len(active):
         offsets = np.unique(counts[active])
         if len(offsets) != 1:
-            raise AssertionError("active adaptive tiles must share the same prefix length")
-        batch = evaluator.evaluate_tiles(
+            raise AssertionError("active adaptive query groups must share the same prefix length")
+        batch = evaluator.evaluate_query_groups(
             [materials[index] for index in active],
             views[active],
             sample_count_per_replica=batch_samples,
-            tile_seeds=seeds[active],
+            query_group_seeds=seeds[active],
             sample_offset=int(offsets[0]),
         )
         for name, values in zip(("mean_a", "second_a", "mean_b", "second_b"), batch, strict=True):
@@ -207,15 +210,15 @@ def evaluate_reference_adaptive(
         counts[active] += np.uint64(batch_samples)
 
         next_active: list[int] = []
-        for tile_index in active:
-            count = int(counts[tile_index])
+        for query_group_index in active:
+            count = int(counts[query_group_index])
             if count >= max_samples:
                 continue
             if count < min_samples:
-                next_active.append(int(tile_index))
+                next_active.append(int(query_group_index))
                 continue
-            replica_means = (means_a[tile_index], means_b[tile_index])
-            replica_m2 = (m2_a[tile_index], m2_b[tile_index])
+            replica_means = (means_a[query_group_index], means_b[query_group_index])
+            replica_m2 = (m2_a[query_group_index], m2_b[query_group_index])
             peak = max(float(np.max(np.abs(item))) for item in replica_means)
             denominator_floor = max(absolute_floor, relative_floor_fraction * peak)
             scores = []
@@ -225,7 +228,7 @@ def evaluate_reference_adaptive(
                 relative_error = standard_error / np.maximum(np.abs(mean), denominator_floor)
                 scores.append(float(np.quantile(relative_error, 0.95)))
             if max(scores) > relative_standard_error:
-                next_active.append(int(tile_index))
+                next_active.append(int(query_group_index))
         active = np.asarray(next_active, dtype=np.int64)
 
     count_view = counts[:, None, None].astype(np.float64)
@@ -246,14 +249,14 @@ def evaluate_reference_fixed(
     materials: Sequence[LayerStackIR],
     view_directions: np.ndarray,
     *,
-    tile_seeds: np.ndarray,
+    query_group_seeds: np.ndarray,
     samples_per_replica: int,
 ) -> EvaluatedReferenceBatch:
-    batch = evaluator.evaluate_tiles(
+    batch = evaluator.evaluate_query_groups(
         materials,
         view_directions,
         sample_count_per_replica=samples_per_replica,
-        tile_seeds=tile_seeds,
+        query_group_seeds=query_group_seeds,
     )
     mean_a, second_a, mean_b, second_b = (np.asarray(item, dtype=np.float64) for item in batch)
     for name, values in zip(("mean_a", "second_a", "mean_b", "second_b"), batch, strict=True):

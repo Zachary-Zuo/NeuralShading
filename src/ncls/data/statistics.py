@@ -7,7 +7,7 @@ import numpy as np
 
 @dataclass(frozen=True)
 class ReplicaMoments:
-    """一个独立随机流的总体均值、总体方差和逐 tile 样本数。"""
+    """一个独立随机流的总体均值、总体方差和逐 query group 样本数。"""
 
     mean: np.ndarray
     variance: np.ndarray
@@ -25,7 +25,7 @@ class ReplicaMoments:
         if count.ndim == 0 and mean.shape[0] == 1:
             count = count.reshape(1)
         if count.shape != expected_count_shape:
-            raise ValueError("sample_count must contain one value per leading tile")
+            raise ValueError("sample_count must contain one value per leading query group")
         if np.any(count == 0):
             raise ValueError("sample_count must be positive")
         if not np.all(np.isfinite(mean)) or not np.all(np.isfinite(variance)):

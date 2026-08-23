@@ -60,32 +60,30 @@ def _validate_dataset(path: Path, *, skip_hashes: bool) -> int:
     counts = dataset.manifest.counts
     print(f"ReferenceDataset OK: {dataset.manifest.dataset_id}")
     print(
-        f"{counts['material_state_count']} states, {counts['view_count']} views, "
-        f"{counts['light_count']} light directions, {counts['tile_count']} tiles"
+        f"{counts['state_count']} states, {counts['query_group_count']} query groups, "
+        f"{counts['direction_count']} directions per group"
     )
-    return 0
-
-
-def _convert_legacy_dataset(path: Path, output: Path, *, resume: bool) -> int:
-    from .data.legacy_v0 import convert_legacy_v0_dataset
-
-    manifest = convert_legacy_v0_dataset(path, output, resume=resume)
-    print(f"Wrote ReferenceDataset {manifest.dataset_id} to {output}")
+    dataset.close()
     return 0
 
 
 def _generate_dataset(args: argparse.Namespace) -> int:
-    from .data.generator import ReferenceGenerationConfig, generate_reference_dataset
+    from .data import CollectionConfig
+    from .data.generator import generate_reference_dataset
+    from .data.providers import LayerStackProviderConfig
 
-    config = ReferenceGenerationConfig(
-        family_count=args.families,
-        local_state_count=args.local_states,
+    collection = CollectionConfig(
         view_count=args.views,
         light_count=args.lights,
-        samples_per_replica=args.samples_per_replica,
-        tile_batch=args.tile_batch,
-        shard_tiles=args.shard_tiles,
+        spatial_sample_count=args.spatial_samples,
+        footprint_width=args.footprint_width,
         seed=args.seed,
+    )
+    layer_stack = LayerStackProviderConfig(
+        family_count=args.families,
+        local_state_count=args.local_states,
+        samples_per_replica=args.samples_per_replica,
+        query_group_batch=args.query_group_batch,
         max_depth=args.max_depth,
         adaptive=args.adaptive,
         batch_samples=args.batch_samples,
@@ -93,7 +91,13 @@ def _generate_dataset(args: argparse.Namespace) -> int:
         max_samples=args.max_samples,
         relative_standard_error=args.relative_standard_error,
     )
-    manifest = generate_reference_dataset(args.output, config, resume=args.resume)
+    manifest = generate_reference_dataset(
+        args.output,
+        args.provider,
+        collection,
+        material_ids=args.material_id,
+        layer_stack=layer_stack,
+    )
     print(f"Wrote ReferenceDataset {manifest.dataset_id} to {args.output}")
     return 0
 
@@ -125,7 +129,7 @@ def _evaluate_learning(args: argparse.Namespace) -> int:
         split=args.split,
         output_path=args.output,
         device_name=args.device,
-        max_tiles=args.max_tiles,
+        max_query_groups=args.max_query_groups,
     )
     relative = result["metrics"]["relative_l1"]
     print(
@@ -152,7 +156,7 @@ def _direct_fit(args: argparse.Namespace) -> int:
             seed=args.seed,
             device=args.device,
         ),
-        max_tiles=args.max_tiles,
+        max_query_groups=args.max_query_groups,
     )
     relative = result["relative_l1"]
     print(
@@ -203,27 +207,31 @@ def build_parser() -> argparse.ArgumentParser:
     pack.add_argument("path", type=Path)
     pack.add_argument("output", type=Path)
 
-    data = commands.add_parser("data", help="随机游走参考数据工具")
+    data = commands.add_parser("data", help="多源材质 reference 查询数据工具")
     data_commands = data.add_subparsers(dest="data_command", required=True)
 
-    validate_data = data_commands.add_parser("validate", help="验证 v2 manifest、数组结构和内容哈希")
+    validate_data = data_commands.add_parser("validate", help="验证 HDF5 合同、查询结构和语义内容哈希")
     validate_data.add_argument("path", type=Path)
     validate_data.add_argument("--skip-hashes", action="store_true", help="仅用于快速诊断，不验证内容哈希")
 
-    convert = data_commands.add_parser("convert-legacy-v0", help="把 ncls-direction-tiles@1 转为 v2")
-    convert.add_argument("path", type=Path)
-    convert.add_argument("output", type=Path)
-    convert.add_argument("--resume", action="store_true", help="校验并复用已经完成的分片")
-
-    generate = data_commands.add_parser("generate-reference", help="通过 Falcor 生成 v2 随机游走参考数据")
+    generate = data_commands.add_parser("collect-reference", help="通过统一 Falcor provider 采集 HDF5 reference 数据")
     generate.add_argument("--output", type=Path, required=True)
+    generate.add_argument(
+        "--provider",
+        action="append",
+        choices=("layer-stack", "merl", "openpbr", "materialx", "all"),
+        required=True,
+        help="可重复指定；all 导出当前全部正式 reference provider",
+    )
+    generate.add_argument("--material-id", action="append", default=[], help="单 provider 下只导出指定资产；可重复")
     generate.add_argument("--families", type=int, default=8)
     generate.add_argument("--local-states", type=int, default=4)
     generate.add_argument("--views", type=int, default=4)
     generate.add_argument("--lights", type=int, default=128)
+    generate.add_argument("--spatial-samples", type=int, default=1)
+    generate.add_argument("--footprint-width", type=float, default=1.0 / 4096.0)
     generate.add_argument("--samples-per-replica", type=int, default=64)
-    generate.add_argument("--tile-batch", type=int, default=64)
-    generate.add_argument("--shard-tiles", type=int, default=65536)
+    generate.add_argument("--query-group-batch", type=int, default=64)
     generate.add_argument("--seed", type=int, default=20260822)
     generate.add_argument("--max-depth", type=int, default=64)
     generate.add_argument("--adaptive", action="store_true")
@@ -231,7 +239,6 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--min-samples", type=int, default=512)
     generate.add_argument("--max-samples", type=int, default=16384)
     generate.add_argument("--relative-standard-error", type=float, default=0.03)
-    generate.add_argument("--resume", action="store_true")
 
     learn = commands.add_parser("learn", help="训练、validation 与 held-out test 工具")
     learn_commands = learn.add_subparsers(dest="learn_command", required=True)
@@ -254,9 +261,9 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--split", choices=("train", "validation", "test"), required=True)
     evaluate.add_argument("--output", type=Path)
     evaluate.add_argument("--device", type=str)
-    evaluate.add_argument("--max-tiles", type=int)
+    evaluate.add_argument("--max-query-groups", type=int)
 
-    direct_fit = learn_commands.add_parser("direct-fit", help="逐 tile 优化参数，测量表示上界")
+    direct_fit = learn_commands.add_parser("direct-fit", help="逐 query group 优化参数，测量方向切片上界")
     direct_fit.add_argument("--dataset", type=Path, required=True)
     direct_fit.add_argument("--output", type=Path, required=True)
     direct_fit.add_argument("--split", choices=("train", "validation", "test"), required=True)
@@ -268,7 +275,7 @@ def build_parser() -> argparse.ArgumentParser:
     direct_fit.add_argument("--learning-rate", type=float, default=0.03)
     direct_fit.add_argument("--seed", type=int, default=20260822)
     direct_fit.add_argument("--device", type=str)
-    direct_fit.add_argument("--max-tiles", type=int)
+    direct_fit.add_argument("--max-query-groups", type=int)
 
     bundle = commands.add_parser("bundle", help="MethodBundle 导出与验证")
     bundle_commands = bundle.add_subparsers(dest="bundle_command", required=True)
@@ -292,9 +299,7 @@ def main(argv: list[str] | None = None) -> int:
         return _pack_material(args.path, args.output)
     if args.command == "data" and args.data_command == "validate":
         return _validate_dataset(args.path, skip_hashes=args.skip_hashes)
-    if args.command == "data" and args.data_command == "convert-legacy-v0":
-        return _convert_legacy_dataset(args.path, args.output, resume=args.resume)
-    if args.command == "data" and args.data_command == "generate-reference":
+    if args.command == "data" and args.data_command == "collect-reference":
         return _generate_dataset(args)
     if args.command == "learn" and args.learn_command == "train":
         return _train_learning(args)

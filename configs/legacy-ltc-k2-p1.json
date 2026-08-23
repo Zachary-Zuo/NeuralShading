@@ -9,10 +9,10 @@
   "gradient_clip": 5.0,
   "validation_interval": 250,
   "checkpoint_interval": 250,
-  "max_validation_tiles": 4096,
+  "max_validation_query_groups": 4096,
   "seed": 20260822,
   "device": "cuda",
   "deterministic": true,
   "schema_name": "ncls.training-config",
-  "schema_version": 1
+  "schema_version": 2
 }

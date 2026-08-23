@@ -11,6 +11,8 @@ from ncls.core.material import (
     RoughConductorInterface,
     RoughDielectricInterface,
     SheenInterface,
+    MaterialProgram,
+    canonicalize_layer_stack,
 )
 from ncls.data import ReferenceDataset
 
@@ -129,7 +131,13 @@ def encode_layer_stack(stack: LayerStackIR) -> tuple[np.ndarray, np.ndarray, int
 
 
 def load_feature_table(dataset: ReferenceDataset) -> StackFeatureTable:
-    state_count = int(dataset.manifest.counts["material_state_count"])
+    family_ids = dataset.state_strings("family_id")
+    if np.any(family_ids != "ncls.layer-stack@1"):
+        raise ValueError("LayerStack feature decoding requires a pure ncls.layer-stack@1 dataset")
+    native_schema_ids = dataset.state_strings("native_schema_id")
+    if np.any(native_schema_ids != "ncls.material-program@1"):
+        raise ValueError("unsupported LayerStack source-state schema")
+    state_count = dataset.state_count
     interface_kinds = np.zeros((state_count, MAX_INTERFACES), dtype=np.int64)
     continuous = np.zeros((state_count, MAX_INTERFACES, CONTINUOUS_FEATURE_COUNT), dtype=np.float32)
     interface_counts = np.zeros(state_count, dtype=np.int64)
@@ -140,8 +148,9 @@ def load_feature_table(dataset: ReferenceDataset) -> StackFeatureTable:
     top_k = np.zeros((state_count, 3), dtype=np.float32)
     top_color = np.zeros((state_count, 3), dtype=np.float32)
     top_rotation = np.zeros(state_count, dtype=np.float32)
-    for state_index, state in enumerate(dataset.material_states):
-        stack = dataset.canonical_material_ir(int(state["canonical_ir_index"]))
+    for state_index in range(state_count):
+        program = MaterialProgram.from_json(dataset.state_payload(state_index).decode("utf-8"))
+        stack = canonicalize_layer_stack(program)
         kinds, values, count = encode_layer_stack(stack)
         interface_kinds[state_index] = kinds
         continuous[state_index] = values

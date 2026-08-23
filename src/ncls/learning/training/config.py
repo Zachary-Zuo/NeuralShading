@@ -21,15 +21,15 @@ class TrainingConfig:
     gradient_clip: float = 5.0
     validation_interval: int = 250
     checkpoint_interval: int = 250
-    max_validation_tiles: int = 4096
+    max_validation_query_groups: int = 4096
     seed: int = 20260822
     device: str | None = None
     deterministic: bool = True
     schema_name: str = "ncls.training-config"
-    schema_version: int = 1
+    schema_version: int = 2
 
     def __post_init__(self) -> None:
-        if self.schema_name != "ncls.training-config" or self.schema_version != 1:
+        if self.schema_name != "ncls.training-config" or self.schema_version != 2:
             raise ValueError("unsupported training config schema")
         if self.architecture_id != ARCHITECTURE_ID or self.representation_id != "legacy-ltc-k2@1":
             raise ValueError("only the explicitly named legacy-ltc-k2 P1 baseline is currently registered")
@@ -40,7 +40,7 @@ class TrainingConfig:
             self.learning_rate,
             self.validation_interval,
             self.checkpoint_interval,
-            self.max_validation_tiles,
+            self.max_validation_query_groups,
         )
         if min(positive) <= 0 or self.weight_decay < 0.0 or self.gradient_clip <= 0.0 or self.seed < 0:
             raise ValueError("training config contains invalid numeric values")

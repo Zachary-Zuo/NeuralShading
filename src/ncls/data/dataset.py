@@ -5,53 +5,34 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
+import h5py
 import numpy as np
 
-from ncls.core.material import BINARY_SIZE, MaterialProgram, unpack_layer_stack
-
-from .manifest import ReferenceDatasetManifest, ShardRecord, sha256_file
+from .contract import EvaluatedBlock, QueryPlan, SourceState, SurfaceSample
 
 
-MATERIAL_STATE_DTYPE = np.dtype(
-    [
-        ("family_index", "<u4"),
-        ("local_state_index", "<u4"),
-        ("program_index", "<u4"),
-        ("canonical_ir_index", "<u4"),
-        ("split", "u1"),
-        ("reserved", "u1", (15,)),
-    ],
-    align=False,
-)
-
-INDEX_DTYPE = np.dtype(
-    [
-        ("tile_id", "<u8"),
-        ("material_state_index", "<u4"),
-        ("view_index", "<u4"),
-        ("family_index", "<u4"),
-        ("split", "u1"),
-        ("reserved", "u1", (11,)),
-    ],
-    align=False,
-)
+FORMAT_NAME = "ncls.reference-dataset"
+FORMAT_VERSION = 3
+RESPONSE_MEASURE = "rgb-bsdf-times-absolute-shading-normal-light-cosine"
+COLOR_MODEL = "linear-srgb"
+_STRING = h5py.string_dtype(encoding="utf-8")
 
 
-def make_response_dtype(light_count: int) -> np.dtype:
-    if light_count < 1:
-        raise ValueError("light_count must be positive")
-    return np.dtype(
-        [
-            ("mean", "<f4", (light_count, 3)),
-            ("variance", "<f4", (light_count, 3)),
-            ("replica_mean_a", "<f4", (light_count, 3)),
-            ("replica_mean_b", "<f4", (light_count, 3)),
-            ("sample_count", "<u4", (light_count,)),
-        ],
-        align=False,
-    )
+@dataclass(frozen=True)
+class ReferenceDatasetManifest:
+    dataset_id: str
+    created_at: str
+    generator_git_commit: str
+    query_profile_ids: tuple[str, ...]
+    counts: Mapping[str, int]
+    generation_config: Mapping[str, Any]
+    provider_metadata: tuple[Mapping[str, Any], ...]
+    format_name: str = FORMAT_NAME
+    format_version: int = FORMAT_VERSION
+    response_measure: str = RESPONSE_MEASURE
+    color_model: str = COLOR_MODEL
 
 
 @dataclass(frozen=True)
@@ -60,357 +41,453 @@ class ReferenceStatistics:
     variance: np.ndarray
     standard_error: np.ndarray
     sample_count: np.ndarray
-    replica_mean_a: np.ndarray | None
-    replica_mean_b: np.ndarray | None
-    uncertainty_kind: str
+    replica_mean_a: np.ndarray
+    replica_mean_b: np.ndarray
 
 
-def _atomic_save(path: Path, value: np.ndarray) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    with temporary.open("wb") as stream:
-        np.save(stream, value, allow_pickle=False)
-        stream.flush()
-        os.fsync(stream.fileno())
-    os.replace(temporary, path)
+_STATE_DATASETS = (
+    "state_id", "family_id", "reference_id", "asset_id", "split_group_id",
+    "native_schema_id", "source_uri", "source_sha256", "parent_state_id", "split",
+    "payload_offsets", "payload_blob",
+)
+_QUERY_DATASETS = (
+    "state_index", "position_kind", "position", "uv", "uv_dx", "uv_dy",
+    "geometric_normal", "geometric_tangent", "wo", "wi", "proposal_code", "proposal_pdf",
+    "solid_angle_weight", "rng_seed",
+)
+_RESPONSE_DATASETS = (
+    "mean", "variance", "replica_mean_a", "replica_mean_b", "sample_count",
+    "valid", "event_flags", "reference_pdf",
+)
 
 
-def _atomic_write_bytes(path: Path, payload: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    with temporary.open("wb") as stream:
-        stream.write(payload)
-        stream.flush()
-        os.fsync(stream.fileno())
-    os.replace(temporary, path)
+def _json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
 
 
-def write_common_files(
-    root: Path,
-    *,
-    material_programs: Sequence[MaterialProgram],
-    canonical_material_irs: Sequence[bytes],
-    material_states: np.ndarray,
-    family_splits: np.ndarray,
-    view_directions: np.ndarray,
-    light_directions: np.ndarray,
-    solid_angle_weights: np.ndarray,
-    reuse_identical: bool = False,
-) -> tuple[dict[str, str], dict[str, str]]:
-    """写入 v2 公共文件，返回逻辑名到 URI 及 URI 到哈希的映射。"""
-
-    root.mkdir(parents=True, exist_ok=True)
-    states = np.asarray(material_states)
-    splits = np.asarray(family_splits, dtype=np.uint8)
-    views = np.asarray(view_directions, dtype=np.float32)
-    lights = np.asarray(light_directions, dtype=np.float32)
-    weights = np.asarray(solid_angle_weights, dtype=np.float32)
-    if states.dtype != MATERIAL_STATE_DTYPE:
-        raise ValueError("material_states uses an unexpected dtype")
-    if states.ndim != 1 or splits.ndim != 1:
-        raise ValueError("material states and family splits must be one-dimensional")
-    if views.ndim != 2 or views.shape[1] != 4 or lights.ndim != 2 or lights.shape[1] != 4:
-        raise ValueError("direction arrays must have shape [count, 4]")
-    if weights.shape != (len(lights),):
-        raise ValueError("solid angle weights must match light directions")
-    if len(material_programs) < 1 or len(canonical_material_irs) != len(material_programs):
-        raise ValueError("material programs and canonical IR payloads must have the same nonzero count")
-    if any(len(payload) != BINARY_SIZE for payload in canonical_material_irs):
-        raise ValueError("canonical IR payload has the wrong stride")
-    if np.any(states["reserved"] != 0):
-        raise ValueError("material state reserved bytes must be zero")
-
-    files = {
-        "material_programs": "material_programs.jsonl",
-        "canonical_material_ir": "canonical_material_ir.bin",
-        "material_states": "material_states.npy",
-        "family_splits": "family_splits.npy",
-        "view_directions": "view_directions.npy",
-        "light_directions": "light_directions.npy",
-        "solid_angle_weights": "solid_angle_weights.npy",
-    }
-    jsonl = "".join(program.to_json(indent=None) for program in material_programs).encode("utf-8")
-    binary_payloads = {
-        files["material_programs"]: jsonl,
-        files["canonical_material_ir"]: b"".join(canonical_material_irs),
-    }
-    for uri, payload in binary_payloads.items():
-        path = root / uri
-        if reuse_identical and path.is_file():
-            if path.read_bytes() != payload:
-                raise ValueError(f"existing common dataset file differs during resume: {uri}")
-        else:
-            _atomic_write_bytes(path, payload)
-    arrays = {
-        files["material_states"]: states,
-        files["family_splits"]: splits,
-        files["view_directions"]: views,
-        files["light_directions"]: lights,
-        files["solid_angle_weights"]: weights,
-    }
-    for uri, value in arrays.items():
-        path = root / uri
-        if reuse_identical and path.is_file():
-            existing = np.load(path, mmap_mode="r", allow_pickle=False)
-            if existing.dtype != value.dtype or existing.shape != value.shape or not np.array_equal(existing, value):
-                raise ValueError(f"existing common dataset file differs during resume: {uri}")
-        else:
-            _atomic_save(path, value)
-    hashes = {uri: sha256_file(root / uri) for uri in files.values()}
-    return files, hashes
+def _decode(value: Any) -> str:
+    return value.decode("utf-8") if isinstance(value, bytes) else str(value)
 
 
-def write_response_shard(
-    root: Path,
-    *,
-    shard_id: int,
-    tile_start: int,
-    index: np.ndarray,
-    response: np.ndarray,
-    resume: bool = False,
-) -> ShardRecord:
-    """以两个原子数组和最后一个完成标记写入一个可恢复分片。"""
+def _semantic_hash(stream: h5py.File) -> str:
+    digest = hashlib.sha256()
+    for name in (
+        "format_name", "format_version", "created_at", "generator_git_commit",
+        "response_measure", "color_model", "query_profile_ids_json",
+        "generation_config_json", "provider_metadata_json", "proposal_ids_json",
+    ):
+        value = stream.attrs[name]
+        payload = str(value).encode("utf-8")
+        digest.update(name.encode("ascii") + b"\0" + len(payload).to_bytes(8, "little") + payload)
+    for group_name, dataset_names in (
+        ("states", _STATE_DATASETS), ("queries", _QUERY_DATASETS), ("responses", _RESPONSE_DATASETS),
+    ):
+        group = stream[group_name]
+        for dataset_name in dataset_names:
+            dataset = group[dataset_name]
+            digest.update(f"{group_name}/{dataset_name}".encode("ascii") + b"\0")
+            digest.update(str(dataset.dtype).encode("ascii") + b"\0")
+            digest.update(np.asarray(dataset.shape, dtype="<u8").tobytes())
+            if h5py.check_string_dtype(dataset.dtype) is not None:
+                for item in dataset.asstr()[...].reshape(-1):
+                    payload = str(item).encode("utf-8")
+                    digest.update(len(payload).to_bytes(8, "little") + payload)
+                continue
+            if dataset.ndim == 0:
+                digest.update(np.asarray(dataset[()]).tobytes())
+                continue
+            step = max(1, min(dataset.shape[0], 4096))
+            for start in range(0, dataset.shape[0], step):
+                digest.update(np.ascontiguousarray(dataset[start : start + step]).tobytes())
+    return digest.hexdigest()
 
-    if shard_id < 0 or tile_start < 0:
-        raise ValueError("shard id and tile start must be nonnegative")
-    index_array = np.asarray(index)
-    response_array = np.asarray(response)
-    if index_array.dtype != INDEX_DTYPE or index_array.ndim != 1:
-        raise ValueError("index uses an unexpected dtype or shape")
-    if response_array.ndim != 1 or len(response_array) != len(index_array):
-        raise ValueError("response and index must contain the same number of tiles")
-    if len(index_array) < 1:
-        raise ValueError("a shard cannot be empty")
-    expected_ids = np.arange(tile_start, tile_start + len(index_array), dtype=np.uint64)
-    if not np.array_equal(index_array["tile_id"], expected_ids):
-        raise ValueError("index tile ids must match the shard range")
-    if np.any(index_array["reserved"] != 0):
-        raise ValueError("index reserved bytes must be zero")
-    required_response_fields = {"mean", "variance", "replica_mean_a", "replica_mean_b", "sample_count"}
-    if response_array.dtype.names is None or set(response_array.dtype.names) != required_response_fields:
-        raise ValueError("response uses an unexpected dtype")
-    for field in ("mean", "variance", "replica_mean_a", "replica_mean_b"):
-        if not np.all(np.isfinite(response_array[field])):
-            raise ValueError(f"response field {field} contains non-finite values")
-    if any(np.any(response_array[field] < 0.0) for field in ("mean", "replica_mean_a", "replica_mean_b")):
-        raise ValueError("reference response values must be nonnegative")
-    if np.any(response_array["variance"] < 0.0) or np.any(response_array["sample_count"] == 0):
-        raise ValueError("response variance and sample counts are invalid")
 
-    base = f"shard-{shard_id:05d}"
-    index_uri = f"shards/{base}.index.npy"
-    response_uri = f"shards/{base}.response.npy"
-    completion_uri = f"shards/{base}.complete.json"
-    completion_path = root / completion_uri
-    if resume:
-        completed = resume_response_shard(root, shard_id=shard_id, tile_start=tile_start, tile_count=len(index_array))
-        if completed is not None:
-            return completed
-
-    _atomic_save(root / index_uri, index_array)
-    _atomic_save(root / response_uri, response_array)
-    record = ShardRecord(
-        shard_id,
-        tile_start,
-        len(index_array),
-        index_uri,
-        response_uri,
-        completion_uri,
-        sha256_file(root / index_uri),
-        sha256_file(root / response_uri),
+def _create_extendible(group: h5py.Group, name: str, tail: tuple[int, ...], dtype: Any) -> h5py.Dataset:
+    chunk_first = 64 if not tail else max(1, min(256, 65536 // max(int(np.prod(tail)), 1)))
+    return group.create_dataset(
+        name,
+        shape=(0, *tail),
+        maxshape=(None, *tail),
+        chunks=(chunk_first, *tail),
+        dtype=dtype,
+        compression="gzip",
+        compression_opts=4,
+        shuffle=True,
     )
-    _atomic_write_bytes(completion_path, (json.dumps(record.to_dict(), sort_keys=True) + "\n").encode("utf-8"))
-    return record
 
 
-def resume_response_shard(
-    root: Path,
-    *,
-    shard_id: int,
-    tile_start: int,
-    tile_count: int,
-) -> ShardRecord | None:
-    """验证并返回已完成分片；不存在完成标记时返回 ``None``。"""
+class ReferenceDatasetWriter:
+    """原子写入唯一的 HDF5 合同；只接受公共 state/query/response 语义。"""
 
-    base = f"shard-{shard_id:05d}"
-    completion_path = root / f"shards/{base}.complete.json"
-    if not completion_path.exists():
-        return None
-    value = json.loads(completion_path.read_text(encoding="utf-8"))
-    record = ShardRecord.from_dict(value)
-    if record.shard_id != shard_id or record.tile_start != tile_start or record.tile_count != tile_count:
-        raise ValueError(f"completed shard {shard_id} does not match the requested range")
-    if sha256_file(root / record.index_uri) != record.index_sha256:
-        raise ValueError(f"completed shard {shard_id} index hash mismatch")
-    if sha256_file(root / record.response_uri) != record.response_sha256:
-        raise ValueError(f"completed shard {shard_id} response hash mismatch")
-    return record
+    def __init__(
+        self,
+        path: Path | str,
+        states: Sequence[SourceState],
+        *,
+        created_at: str,
+        generator_git_commit: str,
+        query_profile_ids: Sequence[str],
+        generation_config: Mapping[str, Any],
+        provider_metadata: Sequence[Mapping[str, Any]],
+    ) -> None:
+        self.path = Path(path)
+        if self.path.suffix.lower() not in {".h5", ".hdf5"}:
+            raise ValueError("ReferenceDataset output must be an .h5 or .hdf5 file")
+        if not states:
+            raise ValueError("ReferenceDataset requires at least one source state")
+        state_ids = [state.state_id for state in states]
+        if len(state_ids) != len(set(state_ids)):
+            raise ValueError("source state IDs must be unique")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.temporary = self.path.with_name(self.path.name + ".tmp")
+        if self.temporary.exists():
+            self.temporary.unlink()
+        self.stream = h5py.File(self.temporary, "w")
+        attrs = self.stream.attrs
+        attrs["format_name"] = FORMAT_NAME
+        attrs["format_version"] = FORMAT_VERSION
+        attrs["created_at"] = created_at
+        attrs["generator_git_commit"] = generator_git_commit
+        attrs["response_measure"] = RESPONSE_MEASURE
+        attrs["color_model"] = COLOR_MODEL
+        attrs["query_profile_ids_json"] = _json(sorted(set(query_profile_ids)))
+        attrs["generation_config_json"] = _json(dict(generation_config))
+        attrs["provider_metadata_json"] = _json([dict(item) for item in provider_metadata])
+        attrs["proposal_ids_json"] = _json({})
 
+        state_group = self.stream.create_group("states")
+        string_fields = (
+            "state_id", "family_id", "reference_id", "asset_id", "split_group_id",
+            "native_schema_id", "source_uri", "source_sha256", "parent_state_id",
+        )
+        for field in string_fields:
+            state_group.create_dataset(field, data=np.asarray([getattr(state, field) for state in states], dtype=object), dtype=_STRING)
+        state_group.create_dataset("split", data=np.asarray([state.split for state in states], dtype=np.uint8))
+        payload_offsets = np.zeros(len(states) + 1, dtype=np.uint64)
+        payload_parts = []
+        for index, state in enumerate(states):
+            part = np.frombuffer(state.native_payload, dtype=np.uint8)
+            payload_parts.append(part)
+            payload_offsets[index + 1] = payload_offsets[index] + len(part)
+        state_group.create_dataset("payload_offsets", data=payload_offsets)
+        state_group.create_dataset("payload_blob", data=np.concatenate(payload_parts), compression="gzip", compression_opts=4)
 
-def write_manifest_atomic(root: Path, manifest: ReferenceDatasetManifest) -> None:
-    _atomic_write_bytes(root / "manifest.json", manifest.to_json().encode("utf-8"))
+        query_group = self.stream.create_group("queries")
+        response_group = self.stream.create_group("responses")
+        self.direction_count: int | None = None
+        self.query_group_count = 0
+        self._query_group = query_group
+        self._response_group = response_group
+        self._proposal_codes: dict[str, int] = {}
+
+    def _initialize_query_datasets(self, direction_count: int) -> None:
+        self.direction_count = direction_count
+        for name, tail, dtype in (
+            ("state_index", (), "<u4"), ("position_kind", (), "u1"),
+            ("position", (3,), "<f4"), ("uv", (2,), "<f4"),
+            ("uv_dx", (2,), "<f4"), ("uv_dy", (2,), "<f4"),
+            ("geometric_normal", (3,), "<f4"), ("geometric_tangent", (3,), "<f4"),
+            ("wo", (3,), "<f4"), ("wi", (direction_count, 3), "<f4"),
+            ("proposal_pdf", (direction_count,), "<f4"),
+            ("solid_angle_weight", (direction_count,), "<f4"),
+            ("rng_seed", (direction_count,), "<u8"),
+        ):
+            _create_extendible(self._query_group, name, tail, dtype)
+        self._query_group.create_dataset("proposal_code", shape=(0,), maxshape=(None,), chunks=(256,), dtype="<u2")
+        for name, tail, dtype in (
+            ("mean", (direction_count, 3), "<f4"),
+            ("variance", (direction_count, 3), "<f4"),
+            ("replica_mean_a", (direction_count, 3), "<f4"),
+            ("replica_mean_b", (direction_count, 3), "<f4"),
+            ("sample_count", (direction_count,), "<u4"),
+            ("valid", (direction_count,), "u1"),
+            ("event_flags", (direction_count,), "<u4"),
+            ("reference_pdf", (direction_count,), "<f4"),
+        ):
+            _create_extendible(self._response_group, name, tail, dtype)
+
+    def append(
+        self,
+        state_index: int,
+        surfaces: Sequence[SurfaceSample],
+        plan: QueryPlan,
+        evaluated: EvaluatedBlock,
+    ) -> None:
+        if not 0 <= state_index < len(self.stream["states/state_id"]):
+            raise IndexError("state_index is outside the state table")
+        if not surfaces:
+            raise ValueError("each provider state requires at least one surface sample")
+        if self.direction_count is None:
+            self._initialize_query_datasets(len(plan.light_directions))
+        if len(plan.light_directions) != self.direction_count:
+            raise ValueError("all query groups in one HDF5 dataset must share direction_count")
+        expected = (len(surfaces), len(plan.view_directions), self.direction_count, 3)
+        if evaluated.mean.shape != expected:
+            raise ValueError(f"provider returned {evaluated.mean.shape}, expected {expected}")
+        group_count = len(surfaces) * len(plan.view_directions)
+        start = self.query_group_count
+        end = start + group_count
+        proposal_code = self._proposal_codes.setdefault(plan.proposal_id, len(self._proposal_codes))
+        surface_rows = [surface for surface in surfaces for _ in plan.view_directions]
+        views = np.tile(plan.view_directions, (len(surfaces), 1))
+        query_values: dict[str, np.ndarray] = {
+            "state_index": np.full(group_count, state_index, dtype=np.uint32),
+            "position_kind": np.asarray([surface.position_kind for surface in surface_rows], dtype=np.uint8),
+            "position": np.asarray([surface.position for surface in surface_rows], dtype=np.float32),
+            "uv": np.asarray([surface.uv for surface in surface_rows], dtype=np.float32),
+            "uv_dx": np.asarray([surface.uv_dx for surface in surface_rows], dtype=np.float32),
+            "uv_dy": np.asarray([surface.uv_dy for surface in surface_rows], dtype=np.float32),
+            "geometric_normal": np.asarray([surface.geometric_normal for surface in surface_rows], dtype=np.float32),
+            "geometric_tangent": np.asarray([surface.geometric_tangent for surface in surface_rows], dtype=np.float32),
+            "wo": views,
+            "wi": np.broadcast_to(plan.light_directions, (group_count, self.direction_count, 3)),
+            "proposal_pdf": np.broadcast_to(plan.proposal_pdf, (group_count, self.direction_count)),
+            "solid_angle_weight": np.broadcast_to(plan.solid_angle_weights, (group_count, self.direction_count)),
+        }
+        group_ids = np.arange(start, end, dtype=np.uint64)[:, None]
+        light_ids = np.arange(self.direction_count, dtype=np.uint64)[None, :]
+        query_values["rng_seed"] = (
+            np.uint64(plan.seed) + group_ids * np.uint64(0x9E3779B185EBCA87) + light_ids * np.uint64(0xC2B2AE3D27D4EB4F)
+        )
+        for name, values in query_values.items():
+            dataset = self._query_group[name]
+            dataset.resize(end, axis=0)
+            dataset[start:end] = values
+        codes = self._query_group["proposal_code"]
+        codes.resize(end, axis=0)
+        codes[start:end] = proposal_code
+        for name in _RESPONSE_DATASETS:
+            values = np.asarray(getattr(evaluated, name)).reshape(group_count, *getattr(evaluated, name).shape[2:])
+            dataset = self._response_group[name]
+            dataset.resize(end, axis=0)
+            dataset[start:end] = values
+        self.query_group_count = end
+
+    def finalize(self) -> ReferenceDatasetManifest:
+        if self.query_group_count < 1 or self.direction_count is None:
+            raise ValueError("ReferenceDataset requires at least one evaluated query group")
+        self.stream.attrs["proposal_ids_json"] = _json(
+            {str(code): name for name, code in sorted(self._proposal_codes.items(), key=lambda item: item[1])}
+        )
+        self.stream.attrs["state_count"] = len(self.stream["states/state_id"])
+        self.stream.attrs["query_group_count"] = self.query_group_count
+        self.stream.attrs["direction_count"] = self.direction_count
+        self.stream.flush()
+        dataset_id = _semantic_hash(self.stream)
+        self.stream.attrs["dataset_id"] = dataset_id
+        self.stream.flush()
+        self.stream.close()
+        os.replace(self.temporary, self.path)
+        with ReferenceDataset.open(self.path, verify_hashes=True) as dataset:
+            return dataset.manifest
+
+    def abort(self) -> None:
+        if self.stream:
+            self.stream.close()
+        if self.temporary.exists():
+            self.temporary.unlink()
 
 
 class ReferenceDataset:
-    """manifest 驱动、默认校验内容哈希的只读参考数据集。"""
-
-    def __init__(self, root: Path, manifest: ReferenceDatasetManifest, *, verify_hashes: bool) -> None:
-        self.root = root
+    def __init__(self, path: Path, stream: h5py.File, manifest: ReferenceDatasetManifest) -> None:
+        self.path = path
+        self.stream = stream
         self.manifest = manifest
-        self._verify_hashes = verify_hashes
-        if verify_hashes:
-            self._verify_common_hashes()
-            self._verify_shard_hashes()
-        self.material_states = np.load(root / manifest.files["material_states"], mmap_mode="r", allow_pickle=False)
-        self.family_splits = np.load(root / manifest.files["family_splits"], mmap_mode="r", allow_pickle=False)
-        self.view_directions = np.load(root / manifest.files["view_directions"], mmap_mode="r", allow_pickle=False)
-        self.light_directions = np.load(root / manifest.files["light_directions"], mmap_mode="r", allow_pickle=False)
-        self.solid_angle_weights = np.load(root / manifest.files["solid_angle_weights"], mmap_mode="r", allow_pickle=False)
-        self._programs: tuple[MaterialProgram, ...] | None = None
-        self._indices: dict[int, np.ndarray] = {}
-        self._responses: dict[int, np.ndarray] = {}
-        self.validate_structure()
 
     @classmethod
-    def open(cls, root: Path | str, *, verify_hashes: bool = True) -> ReferenceDataset:
-        path = Path(root)
-        manifest_path = path / "manifest.json"
-        manifest = ReferenceDatasetManifest.from_json(manifest_path.read_text(encoding="utf-8"))
-        return cls(path, manifest, verify_hashes=verify_hashes)
+    def open(cls, path: Path | str, *, verify_hashes: bool = True) -> "ReferenceDataset":
+        dataset_path = Path(path)
+        if not dataset_path.is_file():
+            raise FileNotFoundError(dataset_path)
+        stream = h5py.File(dataset_path, "r")
+        try:
+            if _decode(stream.attrs.get("format_name", "")) != FORMAT_NAME or int(stream.attrs.get("format_version", -1)) != FORMAT_VERSION:
+                raise ValueError("unsupported ReferenceDataset format; regenerate data with the current collector")
+            if _decode(stream.attrs.get("response_measure", "")) != RESPONSE_MEASURE:
+                raise ValueError("unsupported ReferenceDataset response measure")
+            if _decode(stream.attrs.get("color_model", "")) != COLOR_MODEL:
+                raise ValueError("unsupported ReferenceDataset color model")
+            for group_name, names in (
+                ("states", _STATE_DATASETS), ("queries", _QUERY_DATASETS), ("responses", _RESPONSE_DATASETS),
+            ):
+                if group_name not in stream or any(name not in stream[group_name] for name in names):
+                    raise ValueError(f"ReferenceDataset is missing required {group_name} datasets")
+            dataset_id = _decode(stream.attrs.get("dataset_id", ""))
+            if verify_hashes and _semantic_hash(stream) != dataset_id:
+                raise ValueError("ReferenceDataset semantic content hash mismatch")
+            manifest = ReferenceDatasetManifest(
+                dataset_id=dataset_id,
+                created_at=_decode(stream.attrs["created_at"]),
+                generator_git_commit=_decode(stream.attrs["generator_git_commit"]),
+                query_profile_ids=tuple(json.loads(_decode(stream.attrs["query_profile_ids_json"]))),
+                counts={
+                    "state_count": int(stream.attrs["state_count"]),
+                    "query_group_count": int(stream.attrs["query_group_count"]),
+                    "direction_count": int(stream.attrs["direction_count"]),
+                },
+                generation_config=json.loads(_decode(stream.attrs["generation_config_json"])),
+                provider_metadata=tuple(json.loads(_decode(stream.attrs["provider_metadata_json"]))),
+            )
+            result = cls(dataset_path, stream, manifest)
+            result.validate_structure()
+            return result
+        except Exception:
+            stream.close()
+            raise
 
-    def _verify_common_hashes(self) -> None:
-        for uri, expected in self.manifest.content_hashes.items():
-            path = self.root / uri
-            if not path.is_file() or sha256_file(path) != expected:
-                raise ValueError(f"dataset content hash mismatch: {uri}")
+    def close(self) -> None:
+        self.stream.close()
 
-    def _verify_shard_hashes(self) -> None:
-        for shard in self.manifest.shards:
-            completion = self.root / shard.completion_uri
-            if not completion.is_file():
-                raise ValueError(f"dataset shard is incomplete: {shard.shard_id}")
-            completed = ShardRecord.from_dict(json.loads(completion.read_text(encoding="utf-8")))
-            if completed != shard:
-                raise ValueError(f"dataset shard completion record mismatch: {shard.shard_id}")
-            if sha256_file(self.root / shard.index_uri) != shard.index_sha256:
-                raise ValueError(f"dataset shard index hash mismatch: {shard.shard_id}")
-            if sha256_file(self.root / shard.response_uri) != shard.response_sha256:
-                raise ValueError(f"dataset shard response hash mismatch: {shard.shard_id}")
+    def __enter__(self) -> "ReferenceDataset":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
 
     @property
-    def material_programs(self) -> tuple[MaterialProgram, ...]:
-        if self._programs is None:
-            path = self.root / self.manifest.files["material_programs"]
-            self._programs = tuple(MaterialProgram.from_json(line) for line in path.read_text(encoding="utf-8").splitlines() if line)
-        return self._programs
+    def state_count(self) -> int:
+        return self.manifest.counts["state_count"]
 
-    def canonical_material_ir(self, index: int):
-        path = self.root / self.manifest.files["canonical_material_ir"]
-        with path.open("rb") as stream:
-            stream.seek(index * BINARY_SIZE)
-            payload = stream.read(BINARY_SIZE)
-        return unpack_layer_stack(payload)
+    @property
+    def query_group_count(self) -> int:
+        return self.manifest.counts["query_group_count"]
 
-    def _load_shard(self, shard: ShardRecord) -> tuple[np.ndarray, np.ndarray]:
-        if shard.shard_id not in self._indices:
-            self._indices[shard.shard_id] = np.load(self.root / shard.index_uri, mmap_mode="r", allow_pickle=False)
-            self._responses[shard.shard_id] = np.load(self.root / shard.response_uri, mmap_mode="r", allow_pickle=False)
-        return self._indices[shard.shard_id], self._responses[shard.shard_id]
+    @property
+    def direction_count(self) -> int:
+        return self.manifest.counts["direction_count"]
 
-    def _find_shard(self, tile_id: int) -> ShardRecord:
-        if not 0 <= tile_id < int(self.manifest.counts["tile_count"]):
-            raise IndexError(tile_id)
-        for shard in self.manifest.shards:
-            if shard.tile_start <= tile_id < shard.tile_start + shard.tile_count:
-                return shard
-        raise AssertionError("manifest shard coverage was not validated")
+    def state_strings(self, field: str) -> np.ndarray:
+        return np.asarray(self.stream[f"states/{field}"].asstr()[...], dtype=object)
 
-    def tile_index(self, tile_id: int) -> np.void:
-        shard = self._find_shard(tile_id)
-        index, _ = self._load_shard(shard)
-        return index[tile_id - shard.tile_start]
+    @property
+    def state_splits(self) -> np.ndarray:
+        return np.asarray(self.stream["states/split"], dtype=np.uint8)
 
-    def statistics(self, tile_id: int) -> ReferenceStatistics:
-        shard = self._find_shard(tile_id)
-        _, response = self._load_shard(shard)
-        record = response[tile_id - shard.tile_start]
-        mean = np.asarray(record["mean"], dtype=np.float32)
-        variance = np.asarray(record["variance"], dtype=np.float32)
-        count = np.asarray(record["sample_count"], dtype=np.uint32)
-        denominator = np.maximum(count.astype(np.float32), 1.0)[:, None]
-        uncertainty_kind = str(self.manifest.statistics_encoding["uncertainty_kind"])
-        if uncertainty_kind == "sample-population-variance":
-            standard_error = np.sqrt(variance / denominator)
-        elif uncertainty_kind == "replica-mean-variance":
-            standard_error = np.sqrt(variance)
-        else:
-            raise ValueError(f"unsupported uncertainty kind {uncertainty_kind!r}")
+    def state_payload(self, index: int) -> bytes:
+        if not 0 <= index < self.state_count:
+            raise IndexError(index)
+        offsets = self.stream["states/payload_offsets"]
+        start, end = int(offsets[index]), int(offsets[index + 1])
+        return np.asarray(self.stream["states/payload_blob"][start:end], dtype=np.uint8).tobytes()
+
+    def group_indices(self, split: str) -> np.ndarray:
+        from .contract import SPLIT_NAMES
+
+        if split not in SPLIT_NAMES:
+            raise ValueError(f"split must be one of {SPLIT_NAMES}")
+        state_indices = np.asarray(self.stream["queries/state_index"], dtype=np.int64)
+        return np.flatnonzero(self.state_splits[state_indices] == SPLIT_NAMES.index(split)).astype(np.int64)
+
+    @staticmethod
+    def _read_rows(dataset: h5py.Dataset, indices: np.ndarray) -> np.ndarray:
+        requested = np.asarray(indices, dtype=np.int64)
+        if requested.ndim != 1 or np.any(requested < 0) or np.any(requested >= dataset.shape[0]):
+            raise IndexError("query group index is outside the dataset")
+        order = np.argsort(requested, kind="stable")
+        sorted_indices = requested[order]
+        unique, inverse = np.unique(sorted_indices, return_inverse=True)
+        sorted_values = np.asarray(dataset[unique])[inverse]
+        result = np.empty_like(sorted_values)
+        result[order] = sorted_values
+        return result
+
+    def group_batch(self, indices: Iterable[int]) -> dict[str, np.ndarray]:
+        requested = np.asarray(tuple(indices), dtype=np.int64)
+        result = {
+            name: self._read_rows(self.stream[f"queries/{name}"], requested)
+            for name in _QUERY_DATASETS
+        }
+        result.update({
+            name: self._read_rows(self.stream[f"responses/{name}"], requested)
+            for name in _RESPONSE_DATASETS
+        })
+        state_indices = result["state_index"].astype(np.int64)
+        result["split"] = self.state_splits[state_indices]
+        result["query_group_id"] = requested
+        denominator = np.maximum(result["sample_count"].astype(np.float32), 1.0)[..., None]
+        result["standard_error"] = np.sqrt(np.maximum(result["variance"], 0.0) / denominator).astype(np.float32)
+        return result
+
+    def statistics(self, group_index: int) -> ReferenceStatistics:
+        batch = self.group_batch((group_index,))
         return ReferenceStatistics(
-            mean,
-            variance,
-            standard_error,
-            count,
-            np.asarray(record["replica_mean_a"], dtype=np.float32),
-            np.asarray(record["replica_mean_b"], dtype=np.float32),
-            uncertainty_kind,
+            batch["mean"][0], batch["variance"][0], batch["standard_error"][0],
+            batch["sample_count"][0], batch["replica_mean_a"][0], batch["replica_mean_b"][0],
         )
 
     def validate_structure(self) -> None:
-        counts = self.manifest.counts
-        if self.material_states.dtype != MATERIAL_STATE_DTYPE or len(self.material_states) != counts["material_state_count"]:
-            raise ValueError("material_states does not match manifest")
-        if self.family_splits.dtype != np.dtype("uint8") or len(self.family_splits) != counts["family_count"]:
-            raise ValueError("family_splits does not match manifest")
-        if self.view_directions.shape != (counts["view_count"], 4):
-            raise ValueError("view_directions does not match manifest")
-        if self.light_directions.shape != (counts["light_count"], 4):
-            raise ValueError("light_directions does not match manifest")
-        if self.solid_angle_weights.shape != (counts["light_count"],):
-            raise ValueError("solid_angle_weights does not match manifest")
-        if not np.isclose(float(np.sum(self.solid_angle_weights, dtype=np.float64)), 2.0 * np.pi, rtol=1e-5):
-            raise ValueError("solid angle weights must integrate the hemisphere")
-        if np.any(self.material_states["family_index"] >= counts["family_count"]):
-            raise ValueError("material state references an invalid family")
-        if not np.array_equal(
-            self.material_states["split"], self.family_splits[self.material_states["family_index"]]
+        states = self.state_count
+        groups = self.query_group_count
+        directions = self.direction_count
+        if len(self.stream["states/state_id"]) != states or len(self.stream["states/payload_offsets"]) != states + 1:
+            raise ValueError("ReferenceDataset state table shape mismatch")
+        offsets = np.asarray(self.stream["states/payload_offsets"], dtype=np.uint64)
+        if offsets[0] != 0 or np.any(offsets[1:] < offsets[:-1]) or offsets[-1] != len(self.stream["states/payload_blob"]):
+            raise ValueError("ReferenceDataset state payload offsets are invalid")
+        if np.any(self.state_splits >= 3):
+            raise ValueError("ReferenceDataset contains an invalid split code")
+        state_ids = self.state_strings("state_id")
+        source_hashes = self.state_strings("source_sha256")
+        if len(set(state_ids.tolist())) != states:
+            raise ValueError("ReferenceDataset contains duplicate state IDs")
+        for name, values in (("state_id", state_ids), ("source_sha256", source_hashes)):
+            if any(
+                len(value) != 64 or any(character not in "0123456789abcdef" for character in value)
+                for value in values
+            ):
+                raise ValueError(f"states/{name} contains an invalid SHA-256 digest")
+        for name in _QUERY_DATASETS:
+            if self.stream[f"queries/{name}"].shape[0] != groups:
+                raise ValueError(f"queries/{name} group count mismatch")
+        for name in _RESPONSE_DATASETS:
+            if self.stream[f"responses/{name}"].shape[0] != groups:
+                raise ValueError(f"responses/{name} group count mismatch")
+        if self.stream["queries/wi"].shape != (groups, directions, 3):
+            raise ValueError("queries/wi shape mismatch")
+        if self.stream["responses/mean"].shape != (groups, directions, 3):
+            raise ValueError("responses/mean shape mismatch")
+        def chunks(path: str):
+            dataset = self.stream[path]
+            for start in range(0, len(dataset), 4096):
+                yield np.asarray(dataset[start : start + 4096])
+
+        if any(np.any(values >= states) for values in chunks("queries/state_index")):
+            raise ValueError("query group references an invalid source state")
+        proposal_ids = json.loads(_decode(self.stream.attrs["proposal_ids_json"]))
+        if any(
+            str(int(code)) not in proposal_ids
+            for values in chunks("queries/proposal_code")
+            for code in np.unique(values)
         ):
-            raise ValueError("material states violate family-level split assignment")
-        ir_size = (self.root / self.manifest.files["canonical_material_ir"]).stat().st_size
-        ir_count = ir_size // BINARY_SIZE
-        if ir_size % BINARY_SIZE or ir_count < len(self.material_states):
-            raise ValueError("canonical material IR file has an invalid size")
-        if np.any(self.material_states["canonical_ir_index"] >= ir_count):
-            raise ValueError("material state references an invalid canonical IR record")
-        expected_tile_id = 0
-        for shard in self.manifest.shards:
-            index, response = self._load_shard(shard)
-            if index.dtype != INDEX_DTYPE or len(index) != shard.tile_count or len(response) != shard.tile_count:
-                raise ValueError(f"shard {shard.shard_id} has an invalid dtype or shape")
-            ids = np.arange(expected_tile_id, expected_tile_id + shard.tile_count, dtype=np.uint64)
-            if not np.array_equal(index["tile_id"], ids):
-                raise ValueError(f"shard {shard.shard_id} tile ids are not contiguous")
-            if np.any(index["material_state_index"] >= counts["material_state_count"]):
-                raise ValueError(f"shard {shard.shard_id} references an invalid material state")
-            if np.any(index["view_index"] >= counts["view_count"]):
-                raise ValueError(f"shard {shard.shard_id} references an invalid view")
-            state_rows = self.material_states[index["material_state_index"]]
-            if not np.array_equal(index["family_index"], state_rows["family_index"]):
-                raise ValueError(f"shard {shard.shard_id} family index disagrees with material state")
-            if not np.array_equal(index["split"], state_rows["split"]):
-                raise ValueError(f"shard {shard.shard_id} split disagrees with material state")
-            if response.dtype != make_response_dtype(int(counts["light_count"])):
-                raise ValueError(f"shard {shard.shard_id} response dtype disagrees with manifest")
-            expected_tile_id += shard.tile_count
+            raise ValueError("query group references an unknown proposal code")
+        for path in ("queries/wo", "queries/wi", "queries/geometric_normal", "queries/geometric_tangent"):
+            dataset = self.stream[path]
+            for start in range(0, len(dataset), 4096):
+                values = np.asarray(dataset[start : start + 4096], dtype=np.float32)
+                lengths = np.linalg.norm(values, axis=-1)
+                if not np.all(np.isfinite(values)) or np.any(np.abs(lengths - 1.0) > 2e-4):
+                    raise ValueError(f"{path} contains an invalid direction")
+        for path in ("queries/position", "queries/uv", "queries/uv_dx", "queries/uv_dy"):
+            if any(not np.all(np.isfinite(values)) for values in chunks(path)):
+                raise ValueError(f"{path} contains a non-finite value")
+        for path in ("queries/proposal_pdf", "queries/solid_angle_weight"):
+            if any(not np.all(np.isfinite(values)) or np.any(values <= 0.0) for values in chunks(path)):
+                raise ValueError(f"{path} must be positive and finite")
+        for path in (
+            "responses/mean", "responses/variance", "responses/replica_mean_a",
+            "responses/replica_mean_b", "responses/reference_pdf",
+        ):
+            if any(not np.all(np.isfinite(values)) for values in chunks(path)):
+                raise ValueError(f"{path} contains a non-finite value")
+        if any(np.any(values < 0.0) for values in chunks("responses/variance")):
+            raise ValueError("responses/variance contains a negative value")
+        if any(np.any(values < 0.0) for values in chunks("responses/reference_pdf")):
+            raise ValueError("responses/reference_pdf contains a negative value")
+        if any(np.any(values < 1) for values in chunks("responses/sample_count")):
+            raise ValueError("responses/sample_count contains zero")
+        if any(np.any(values > 1) for values in chunks("responses/valid")):
+            raise ValueError("responses/valid must contain only zero or one")
 
 
-def validate_reference_dataset(root: Path | str, *, verify_hashes: bool = True) -> ReferenceDataset:
-    return ReferenceDataset.open(root, verify_hashes=verify_hashes)
-
-
-def dataset_identity(parts: Iterable[bytes]) -> str:
-    digest = hashlib.sha256()
-    digest.update(b"ncls.reference-dataset\0v2\0")
-    for part in parts:
-        digest.update(len(part).to_bytes(8, "little"))
-        digest.update(part)
-    return digest.hexdigest()
+def validate_reference_dataset(path: Path | str, *, verify_hashes: bool = True) -> ReferenceDataset:
+    return ReferenceDataset.open(path, verify_hashes=verify_hashes)

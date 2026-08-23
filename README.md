@@ -2,7 +2,7 @@
 
 NeuralShading 研究如何把多种保持原生语义的源材质族编译为统一、随机访问、运行成本有界的 neural material program。目标方法用小型 MLP 直接实现逐方向 `evaluate(wo, wi)`，让同一份编译材质进入 deferred、hybrid ray tracing 和 path tracing 的材质求值位置。源材质可以是纯数学模型、可编辑材质图、程序材质、高分辨率纹理或测量外观；每个材质族保留自己的权威 reference，不要求 GT 先被分解成某种层参数或固定 closure。
 
-项目已经形成三段可运行闭环：Falcor 数据采集、带 TensorBoard 的 Python 训练/测试、Windows/D3D12 材质查看器。三段只通过带版本的公共合同交换 `MaterialProgram`、`ReferenceDataset` 和 `MethodBundle`。当前随机游走 `LayerStackIR` 是第一种已实现的源材质族和 reference，不是所有 GT 的统一内部表示。
+项目已经形成三段可运行闭环：Falcor 数据采集、带 TensorBoard 的 Python 训练/测试、Windows/D3D12 材质查看器。三段只通过带版本的公共合同交换 `MaterialProgram`、HDF5 `ReferenceDataset` 和 `MethodBundle`。LayerStack、MERL、OpenPBR 与 MaterialX 已能通过相同 provider 接口导出固定 HDF5；各自仍保留原生语义和权威 reference，不归约到统一层模型。
 
 目标运行时分成三个清晰阶段：`compile_material()` 生成 view-independent latent 资产；`prepare()` 在每个 raster pixel 或 ray hit 获取、过滤并编码 latent、footprint 与 `wo`；小型 evaluator MLP 对每个 `wi` 直接输出散射。Path tracing profile 在 evaluator 成形后再增加匹配且具有可计算密度的 `sample()/pdf()`；环境光和面光积分作为后续独立能力研究。
 
@@ -23,12 +23,13 @@ conda run -n neural-shading python -m pip install -e .
 生成小型参考数据并训练 smoke 模型：
 
 ```powershell
-.\scripts\run_falcor_python.ps1 -m ncls.cli data generate-reference `
-  --output data\reference-smoke --families 1 --local-states 1 `
+.\scripts\run_falcor_python.ps1 -m ncls.cli data collect-reference `
+  --provider layer-stack `
+  --output data\reference-responses\reference-smoke.h5 --families 3 --local-states 1 `
   --views 1 --lights 16 --samples-per-replica 16 --max-depth 16
 
 conda run -n neural-shading ncls learn train `
-  --dataset data\reference-smoke --run artifacts\runs\smoke `
+  --dataset data\reference-responses\reference-smoke.h5 --run artifacts\runs\smoke `
   --width 8 --steps 2 --batch-size 1 --device cpu
 ```
 

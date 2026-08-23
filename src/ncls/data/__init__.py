@@ -1,45 +1,56 @@
-"""随机游走参考数据的稳定读写接口。"""
+"""材质族无关的 reference 查询采集与 HDF5 读写接口。"""
 
-from .dataset import (
-    INDEX_DTYPE,
-    MATERIAL_STATE_DTYPE,
-    ReferenceDataset,
-    ReferenceStatistics,
-    make_response_dtype,
-    resume_response_shard,
-    validate_reference_dataset,
-    write_common_files,
-    write_manifest_atomic,
-    write_response_shard,
+from .collector import CollectionConfig, collect_reference_dataset
+from .contract import (
+    EvaluatedBlock,
+    PositionKind,
+    QueryPlan,
+    ReferenceDescriptor,
+    ReferenceProvider,
+    SPLIT_NAMES,
+    SourceState,
+    SurfaceSample,
+    make_state_id,
 )
-from .directions import equal_area_hemisphere, stratified_view_directions
-from .manifest import (
+from .dataset import (
+    COLOR_MODEL,
     FORMAT_NAME,
     FORMAT_VERSION,
+    RESPONSE_MEASURE,
+    ReferenceDataset,
     ReferenceDatasetManifest,
-    ShardRecord,
-    sha256_file,
+    ReferenceDatasetWriter,
+    ReferenceStatistics,
+    validate_reference_dataset,
 )
+from .directions import equal_area_hemisphere, equal_area_sphere, stratified_uv, stratified_view_directions
 from .statistics import ReplicaMoments, combine_replica_moments
 
 __all__ = [
+    "COLOR_MODEL",
+    "CollectionConfig",
+    "EvaluatedBlock",
     "FORMAT_NAME",
     "FORMAT_VERSION",
-    "INDEX_DTYPE",
-    "MATERIAL_STATE_DTYPE",
+    "PositionKind",
+    "QueryPlan",
+    "RESPONSE_MEASURE",
+    "ReferenceDescriptor",
     "ReferenceDataset",
     "ReferenceDatasetManifest",
+    "ReferenceDatasetWriter",
+    "ReferenceProvider",
     "ReferenceStatistics",
     "ReplicaMoments",
-    "ShardRecord",
+    "SPLIT_NAMES",
+    "SourceState",
+    "SurfaceSample",
+    "collect_reference_dataset",
     "combine_replica_moments",
     "equal_area_hemisphere",
-    "make_response_dtype",
-    "resume_response_shard",
-    "sha256_file",
+    "equal_area_sphere",
+    "make_state_id",
+    "stratified_uv",
     "stratified_view_directions",
     "validate_reference_dataset",
-    "write_common_files",
-    "write_manifest_atomic",
-    "write_response_shard",
 ]

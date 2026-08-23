@@ -240,7 +240,7 @@ sampler head 可以预测 GGX、vMF、spherical Gaussian 等可解析混合分�
 - 确定 LayerStack 第一轮使用的材质状态、`wo/wi`、footprint 与监督覆盖；
 - 建立少量可部署 MLP 候选，而不是无边界搜索；
 - 明确每个候选的 latent bytes、网络结构、precision 和单次调用图；
-- 检查现有 direction tile 是否足以训练跨 `wo` 的 evaluator；空间 latent/LOD 实验需要新增位置与 footprint 数据时单独扩展数据合同。
+- 检查 HDF5 query groups 是否足以训练跨 `wo` 的 evaluator；空间 latent/LOD 使用合同中已有的 UV 与 footprint 查询，并在缺少尺度/旋转覆盖时重新采集。
 
 这一阶段的输出是可实现、可训练的候选模型定义，不产生 UE 性能结论。
 
@@ -252,7 +252,7 @@ sampler head 可以预测 GGX、vMF、spherical Gaussian 等可解析混合分�
 2. 共享 decoder 加材质专属 latent 能否覆盖一组材质，并在给定 latent/MLP 预算下保持质量；
 3. feed-forward compiler 能否为未见材质状态直接生成可用 latent，并保留参数编辑。
 
-这里先比较方向响应、能量诊断和受控光照积分，不把 UE、多灯和 PT 方差混入模型选择。旧的逐 `(material, wo)` tile 独立拟合只能测一张方向切片的容量；它可以保留为诊断，但不能单独证明 view-conditioned neural material program 可行。
+这里先比较方向响应、能量诊断和受控光照积分，不把 UE、多灯和 PT 方差混入模型选择。逐 `(material, wo)` query group 独立拟合只能测一张方向切片的容量；它可以保留为诊断，但不能单独证明 view-conditioned neural material program 可行。
 
 ### 阶段 C：形成 evaluator 的最小部署闭环
 

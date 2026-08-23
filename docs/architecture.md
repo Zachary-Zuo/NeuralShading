@@ -21,7 +21,7 @@
 
 - **源材质族**（source material family）：共享一种原生材质语义和求值规则的一组材质。它可以由公式、图、程序、纹理、测量表、微几何或其他资源定义。
 - **reference**：对某个源材质族具有权威语义的求值实现，用来生成监督和提供 viewer 的 GT 图像。随机游走、解析公式、原生材质图、纹理求值和测量数据查表都可以分别成为 reference；它们只统一查询与输出合同，不统一内部表示。新代码和文档不再使用 `teacher` 作为名称。
-- **直接拟合**（direct fit）：不经过通用 feed-forward compiler，直接优化候选表示的 latent 或参数，用于拆分表示容量与编译器泛化误差。拟合单位必须明确：单个方向 tile 只能测量方向切片；逐材质跨全部 `wo/wi` 的拟合才能测量 view-conditioned evaluator；共享 decoder + 多材质 latent 才能测量统一 neural representation。
+- **直接拟合**（direct fit）：不经过通用 feed-forward compiler，直接优化候选表示的 latent 或参数，用于拆分表示容量与编译器泛化误差。拟合单位必须明确：单个 query group 只能测量方向切片；逐材质跨全部 `wo/wi` 的拟合才能测量 view-conditioned evaluator；共享 decoder + 多材质 latent 才能测量统一 neural representation。
 - **神经材质后端**（neural material backend）：把编译结果变成可运行 neural material program 的实现，以小型 MLP 直接求值方向散射，可以包含解析 physical core、neural residual、matched sampler 和专用积分 head。
 - **解析基线**（analytic baseline）：用于质量、成本、能量和退化关系对照的 closure/固定基方法，也可以为神经后端提供 physical core 或 sampling proposal；它不定义目标表示的公共字段。
 - **材质程序**（`MaterialProgram`）：面向编辑、存储和交换的可扩展有类型材质图。

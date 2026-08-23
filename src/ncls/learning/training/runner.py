@@ -13,7 +13,7 @@ import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from ncls.learning.data import ReferenceTileStore
+from ncls.learning.data import LayerStackReferenceStore
 from ncls.learning.evaluation.evaluator import evaluate_model, tensor_batch
 from ncls.learning.evaluation.metrics import response_loss
 from ncls.learning.features import FEATURE_CONTRACT, FEATURE_CONTRACT_ID
@@ -50,7 +50,7 @@ def _checkpoint_payload(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     config: TrainingConfig,
-    store: ReferenceTileStore,
+    store: LayerStackReferenceStore,
     *,
     step: int,
     validation_metrics: dict[str, Any] | None,
@@ -76,7 +76,7 @@ def _checkpoint_payload(
 
 
 def train(
-    dataset_dir: Path | str,
+    dataset_path: Path | str,
     run_dir: Path | str,
     config: TrainingConfig,
 ) -> dict[str, Any]:
@@ -97,7 +97,7 @@ def train(
     if config.deterministic:
         torch.use_deterministic_algorithms(True)
     device = torch.device(config.device or ("cuda" if torch.cuda.is_available() else "cpu"))
-    store = ReferenceTileStore(dataset_dir)
+    store = LayerStackReferenceStore(dataset_path)
     if len(store.split_indices["train"]) == 0 or len(store.split_indices["validation"]) == 0:
         raise ValueError("training requires nonempty train and validation family splits")
     model = create_model(config.architecture_id, width=config.width).to(device)
@@ -165,7 +165,7 @@ def train(
                     store.split_indices["validation"],
                     device,
                     batch_size=config.batch_size,
-                    max_tiles=config.max_validation_tiles,
+                    max_query_groups=config.max_validation_query_groups,
                 )
                 record = {"step": step, **latest_validation}
                 validation_history.append(record)

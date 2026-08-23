@@ -7,7 +7,8 @@ from typing import Any
 import numpy as np
 import torch
 
-from ncls.learning.data import ReferenceTileStore, SPLIT_NAMES
+from ncls.data import SPLIT_NAMES
+from ncls.learning.data import LayerStackReferenceStore
 from ncls.learning.features import FEATURE_CONTRACT_ID
 from ncls.learning.models import create_model
 from ncls.learning.prediction import predict_legacy_ltc_k2_response
@@ -24,17 +25,17 @@ def tensor_batch(raw: dict[str, np.ndarray], device: torch.device) -> dict[str, 
 @torch.no_grad()
 def evaluate_model(
     model: torch.nn.Module,
-    store: ReferenceTileStore,
+    store: LayerStackReferenceStore,
     indices: np.ndarray,
     device: torch.device,
     *,
     batch_size: int,
-    max_tiles: int | None = None,
+    max_query_groups: int | None = None,
 ) -> dict[str, Any]:
     if len(indices) == 0:
         raise ValueError("cannot evaluate an empty split")
-    if max_tiles is not None and len(indices) > max_tiles:
-        selected = indices[np.linspace(0, len(indices) - 1, max_tiles, dtype=np.int64)]
+    if max_query_groups is not None and len(indices) > max_query_groups:
+        selected = indices[np.linspace(0, len(indices) - 1, max_query_groups, dtype=np.int64)]
     else:
         selected = indices
     lights = torch.as_tensor(store.lights, dtype=torch.float32, device=device)
@@ -57,7 +58,7 @@ def evaluate_model(
     relative = np.concatenate(relative_parts)
     replica_noise = np.concatenate(noise_parts)
     return {
-        "tile_count": int(len(selected)),
+        "query_group_count": int(len(selected)),
         "loss": float(np.mean(losses)),
         "relative_l1": summarize(relative),
         "replica_relative_l1": summarize(replica_noise),
@@ -65,20 +66,20 @@ def evaluate_model(
 
 
 def evaluate_checkpoint(
-    dataset_dir: Path | str,
+    dataset_path: Path | str,
     checkpoint_path: Path | str,
     *,
     split: str,
     output_path: Path | str | None = None,
     device_name: str | None = None,
-    max_tiles: int | None = None,
+    max_query_groups: int | None = None,
 ) -> dict[str, Any]:
     if split not in SPLIT_NAMES:
         raise ValueError(f"split must be one of {SPLIT_NAMES}")
     device = torch.device(device_name or ("cuda" if torch.cuda.is_available() else "cpu"))
     checkpoint = load_checkpoint(checkpoint_path, map_location=device)
     config = TrainingConfig.from_dict(checkpoint["training_config"])
-    store = ReferenceTileStore(dataset_dir)
+    store = LayerStackReferenceStore(dataset_path)
     if checkpoint["dataset_id"] != store.dataset.manifest.dataset_id:
         raise ValueError("checkpoint dataset_id does not match the requested dataset")
     if checkpoint["feature_contract_id"] != FEATURE_CONTRACT_ID:
@@ -91,7 +92,7 @@ def evaluate_checkpoint(
         store.split_indices[split],
         device,
         batch_size=config.batch_size,
-        max_tiles=max_tiles,
+        max_query_groups=max_query_groups,
     )
     result = {
         "dataset_id": store.dataset.manifest.dataset_id,

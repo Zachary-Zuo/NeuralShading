@@ -12,9 +12,9 @@ from ncls.core.material import (
     RoughDielectricInterface,
 )
 from ncls.data.reference import FalcorReferenceEvaluator, evaluate_reference_fixed
-from ncls.data import ReferenceDataset
+from ncls.data import CollectionConfig, ReferenceDataset, collect_reference_dataset
 from ncls.data.directions import equal_area_hemisphere
-from ncls.data.generator import ReferenceGenerationConfig, generate_reference_dataset
+from ncls.data.providers import LayerStackProvider, LayerStackProviderConfig
 
 
 pytest.importorskip("falcor")
@@ -28,12 +28,12 @@ def _direction(theta_degrees: float) -> np.ndarray:
 
 def _evaluate(stack: LayerStackIR, view_angle: float, light_angles: list[float], samples: int, seed: int = 1):
     lights = np.stack([_direction(angle) for angle in light_angles])
-    evaluator = FalcorReferenceEvaluator(lights, max_depth=64, max_tile_batch=1)
+    evaluator = FalcorReferenceEvaluator(lights, max_depth=64, max_query_group_batch=1)
     return evaluate_reference_fixed(
         evaluator,
         [stack],
         _direction(view_angle)[None, :],
-        tile_seeds=np.asarray([seed], dtype=np.uint32),
+        query_group_seeds=np.asarray([seed], dtype=np.uint32),
         samples_per_replica=samples,
     )
 
@@ -108,29 +108,31 @@ def test_unsupported_chromatic_extinction_with_scattering_is_rejected() -> None:
 
 
 def test_reference_generator_smoke(tmp_path: Path) -> None:
-    config = ReferenceGenerationConfig(
-        family_count=1,
-        local_state_count=1,
+    collection = CollectionConfig(
         view_count=1,
         light_count=4,
-        samples_per_replica=4,
-        tile_batch=1,
-        shard_tiles=1,
         seed=23,
+    )
+    config = LayerStackProviderConfig(
+        family_count=1,
+        local_state_count=1,
+        samples_per_replica=4,
+        query_group_batch=1,
         max_depth=8,
     )
     lights, _ = equal_area_hemisphere(4)
-    evaluator = FalcorReferenceEvaluator(lights, max_depth=8, max_tile_batch=1)
-    manifest = generate_reference_dataset(
-        tmp_path / "reference",
-        config,
-        evaluator=evaluator,
+    evaluator = FalcorReferenceEvaluator(lights, max_depth=8, max_query_group_batch=1)
+    provider = LayerStackProvider(collection, config, evaluator=evaluator)
+    manifest = collect_reference_dataset(
+        tmp_path / "reference.h5",
+        [provider],
+        collection,
         created_at="2026-08-23T00:00:00+00:00",
         generator_git_commit="test",
     )
-    dataset = ReferenceDataset.open(tmp_path / "reference")
-    statistics = dataset.statistics(0)
-    assert manifest.reference_implementation_id.startswith("random-walk-reference@1:")
-    assert np.all(np.isfinite(statistics.mean))
-    assert np.all(statistics.mean >= 0.0)
-    assert statistics.sample_count.tolist() == [8, 8, 8, 8]
+    with ReferenceDataset.open(tmp_path / "reference.h5") as dataset:
+        statistics = dataset.statistics(0)
+        assert manifest.provider_metadata[0]["reference_id"] == "ncls.layer-stack-random-walk@1"
+        assert np.all(np.isfinite(statistics.mean))
+        assert np.all(statistics.mean >= 0.0)
+        assert statistics.sample_count.tolist() == [8, 8, 8, 8]

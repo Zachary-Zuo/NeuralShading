@@ -122,7 +122,7 @@ class DirectFitClosureModule(nn.Module):
             raise ValueError("lobe_count must be positive")
         self.family = family
         self.lobe_count = lobe_count
-        tile_count = len(target)
+        query_group_count = len(target)
         generator = torch.Generator(device=target.device)
         generator.manual_seed(seed)
 
@@ -139,32 +139,32 @@ class DirectFitClosureModule(nn.Module):
         self.raw_amplitude = nn.Parameter(_inverse_softplus(initial_amplitude.clamp_min(1e-4)))
 
         if family in {"ggx", "sg"}:
-            raw_axis = torch.zeros((tile_count, lobe_count, 3), device=target.device, dtype=target.dtype)
+            raw_axis = torch.zeros((query_group_count, lobe_count, 3), device=target.device, dtype=target.dtype)
             if family == "sg":
                 specular = torch.stack((-views[:, 0], -views[:, 1], views[:, 2]), dim=-1)
                 raw_axis[:, 0, :2] = specular[:, :2]
                 raw_axis[:, 0, 2] = _inverse_softplus(specular[:, 2].clamp_min(1e-3))
                 if lobe_count > 1:
                     raw_axis[:, 1:, :2] = 0.7 * torch.randn(
-                        (tile_count, lobe_count - 1, 2), generator=generator, device=target.device
+                        (query_group_count, lobe_count - 1, 2), generator=generator, device=target.device
                     )
                     raw_axis[:, 1:, 2] = _inverse_softplus(
                         torch.rand(
-                            (tile_count, lobe_count - 1), generator=generator, device=target.device
+                            (query_group_count, lobe_count - 1), generator=generator, device=target.device
                         )
                         * 0.8
                         + 0.15
                     )
             else:
                 raw_axis[..., :2] = 0.08 * torch.randn(
-                    (tile_count, lobe_count, 2), generator=generator, device=target.device
+                    (query_group_count, lobe_count, 2), generator=generator, device=target.device
                 )
                 raw_axis[..., 2] = _inverse_softplus(torch.ones_like(raw_axis[..., 2]))
             self.raw_axis = nn.Parameter(raw_axis)
 
         if family == "ggx":
             alpha = torch.linspace(0.08, 0.8, lobe_count, device=target.device, dtype=target.dtype)
-            self.log_shape = nn.Parameter(torch.log(alpha)[None, :].repeat(tile_count, 1))
+            self.log_shape = nn.Parameter(torch.log(alpha)[None, :].repeat(query_group_count, 1))
         elif family == "sg":
             if lobe_count == 1:
                 sharpness = torch.full((1,), 32.0, device=target.device, dtype=target.dtype)
@@ -179,18 +179,18 @@ class DirectFitClosureModule(nn.Module):
                 closest = int(torch.argmin(torch.abs(sharpness - 32.0)))
                 sharpness[0], sharpness[closest] = sharpness[closest].clone(), sharpness[0].clone()
                 self.raw_amplitude.data[:, closest, :] = _inverse_softplus(mean)
-            self.log_shape = nn.Parameter(torch.log(sharpness)[None, :].repeat(tile_count, 1))
+            self.log_shape = nn.Parameter(torch.log(sharpness)[None, :].repeat(query_group_count, 1))
         else:
             self.log_scale = nn.Parameter(
                 0.03
-                * torch.randn((tile_count, lobe_count, 2), generator=generator, device=target.device)
+                * torch.randn((query_group_count, lobe_count, 2), generator=generator, device=target.device)
             )
             self.shear = nn.Parameter(
                 0.03
-                * torch.randn((tile_count, lobe_count, 3), generator=generator, device=target.device)
+                * torch.randn((query_group_count, lobe_count, 3), generator=generator, device=target.device)
             )
             initial_angles = torch.linspace(0.0, math.pi, lobe_count + 1, device=target.device)[:-1]
-            self.angle = nn.Parameter(initial_angles[None, :].repeat(tile_count, 1))
+            self.angle = nn.Parameter(initial_angles[None, :].repeat(query_group_count, 1))
 
     def forward(self, views: torch.Tensor, lights: torch.Tensor) -> torch.Tensor:
         if self.family == "ggx":

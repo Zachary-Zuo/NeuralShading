@@ -95,7 +95,7 @@ OpenPBR UI 编辑 resolved native parameter；来自 scene 命中点的 `geometr
 
 viewer 只列出通过 manifest、全文件 hash、平台、散射合同与 GPU parity 的实时 bundle。切换方法允许重建右侧 pipeline 和 backend-specific `ScatteringState`；不得把某个 backend 的 packet 布局提升为公共接口。
 
-逐 tile direct fit 只对离散 `(材质, 观察方向)` 有效，不属于自由相机 MethodBundle。
+逐 query group direct fit 只对离散 `(材质, 观察方向)` 有效，不属于自由相机 MethodBundle。
 
 目标 neural MethodBundle 在每个可见像素获取/过滤 latent，并由 `prepare` 形成 view-conditioned state；deferred lighting 对每个已知光照方向调用 evaluator MLP。viewer 需要分别计时 prepare 与 evaluate，不能把网络只放在 prepare 后输出固定 closure 的基线称为已经验证了 direct neural evaluator。
 

@@ -8,7 +8,7 @@
 conda run -n neural-shading python -m pytest tests\unit -q
 ```
 
-覆盖 `MaterialProgram`/`LayerStackIR`、旧数据一次性转换、散射合同、`legacy-ltc-k2` 私有状态、训练/评测/checkpoint/TensorBoard、MethodBundle 导出与内容哈希。
+覆盖 `MaterialProgram`/`LayerStackIR`、HDF5 固定合同与内容哈希、材质无关 reader、散射合同、`legacy-ltc-k2` 私有状态、训练/评测/checkpoint/TensorBoard、MethodBundle 导出与内容哈希。
 
 ## Slang/GPU 与随机游走参考
 
@@ -17,13 +17,13 @@ conda run -n neural-shading python -m pytest tests\unit -q
   tests\gpu tests\integration\reference -q
 ```
 
-覆盖 Python/Slang ABI、方向和余弦语义、`prepare/evaluate`、sampling-capable backend 的 `sample/pdf`、各向异性、P1 compiler 的 PyTorch/Slang parity、解析 diffuse、互易性、八层执行、统计量和数据生成 smoke。
+覆盖 Python/Slang ABI、方向和余弦语义、`prepare/evaluate`、sampling-capable backend 的 `sample/pdf`、各向异性、P1 compiler 的 PyTorch/Slang parity、解析 diffuse、互易性、八层执行、统计量，以及 LayerStack、MERL、OpenPBR、MaterialX 全部当前材质写入同一 HDF5 的真实导出。
 
 ## Neural material 方法的分阶段门槛
 
 目标 evaluator 尚在建模阶段，测试随能力形成而增加，不能预先把未实现的 sampler、环境积分或 UE 性能写成已存在门槛：
 
-1. 建模原型：完整 `wo × wi` 覆盖、方向/余弦测度、有限非负、动态范围和 reference 响应误差；
+1. 建模原型：完整 `wo × wi` 覆盖、方向/余弦测度、finite、符合 source/color-space 的数值范围、动态范围和 reference 响应误差；
 2. 共享 decoder/latent：latent identity、跨 view 共享、材质 split 与 optimized-latent 对照；
 3. compiler：未见材质状态、参数编辑和 compiler-vs-optimized-latent 差距；
 4. Slang 最小部署：Python/Slang parity、bundle hash、prepare/evaluate 分项成本；

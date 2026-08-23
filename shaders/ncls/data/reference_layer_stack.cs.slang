@@ -3,7 +3,7 @@
 StructuredBuffer<NclsLayerStackIR> gMaterialStates;
 StructuredBuffer<float4> gViewDirections;
 StructuredBuffer<float4> gLightDirections;
-StructuredBuffer<uint> gTileSeeds;
+StructuredBuffer<uint> gQueryGroupSeeds;
 RWStructuredBuffer<uint> gValidation;
 RWStructuredBuffer<float4> gMeanA;
 RWStructuredBuffer<float4> gMeanSquareA;
@@ -32,18 +32,18 @@ void validateReferenceMaterialLayout(uint3 dispatchThreadID : SV_DispatchThreadI
 }
 
 [numthreads(64, 1, 1)]
-void generateReferenceTileBatch(uint3 dispatchThreadID : SV_DispatchThreadID)
+void evaluateReferenceQueryGroups(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     const uint queryIndex = dispatchThreadID.x;
     if (queryIndex >= gQueryCount) return;
 
-    const uint tileIndex = queryIndex / gLightCount;
-    const uint lightBufferIndex = queryIndex - tileIndex * gLightCount;
+    const uint queryGroupIndex = queryIndex / gLightCount;
+    const uint lightBufferIndex = queryIndex - queryGroupIndex * gLightCount;
     const uint lightIndex = lightBufferIndex + gLightIndexOffset;
-    const NclsLayerStackIR material = gMaterialStates[tileIndex];
-    const float3 viewDirection = normalize(gViewDirections[tileIndex].xyz);
+    const NclsLayerStackIR material = gMaterialStates[queryGroupIndex];
+    const float3 viewDirection = normalize(gViewDirections[queryGroupIndex].xyz);
     const float3 lightDirection = normalize(gLightDirections[lightBufferIndex].xyz);
-    const uint tileSeed = gTileSeeds[tileIndex] ^ gSeed;
+    const uint queryGroupSeed = gQueryGroupSeeds[queryGroupIndex] ^ gSeed;
     float3 sumA = float3(0.0f);
     float3 sumSquareA = float3(0.0f);
     float3 sumB = float3(0.0f);
@@ -52,8 +52,8 @@ void generateReferenceTileBatch(uint3 dispatchThreadID : SV_DispatchThreadID)
     for (uint sampleIndex = 0u; sampleIndex < gSampleCountPerReplica; ++sampleIndex)
     {
         const uint globalSampleIndex = sampleIndex + gSampleOffset;
-        const uint2 keyA = uint2(lightIndex ^ tileSeed, globalSampleIndex + tileSeed * 1664525u);
-        const uint seedB = tileSeed ^ 0xa511e9b3u;
+        const uint2 keyA = uint2(lightIndex ^ queryGroupSeed, globalSampleIndex + queryGroupSeed * 1664525u);
+        const uint seedB = queryGroupSeed ^ 0xa511e9b3u;
         const uint2 keyB = uint2(lightIndex ^ seedB, globalSampleIndex + seedB * 22695477u);
         const float3 valueA = nclsEvalRandomWalkReference(
             material, viewDirection, lightDirection, keyA, gMaxDepth);

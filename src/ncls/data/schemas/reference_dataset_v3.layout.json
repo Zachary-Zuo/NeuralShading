@@ -1,0 +1,26 @@
+{
+  "format_name": "ncls.reference-dataset",
+  "format_version": 3,
+  "container": "HDF5",
+  "response_measure": "rgb-bsdf-times-absolute-shading-normal-light-cosine",
+  "required_groups": {
+    "states": [
+      "state_id", "family_id", "reference_id", "asset_id", "split_group_id",
+      "native_schema_id", "source_uri", "source_sha256", "parent_state_id", "split",
+      "payload_offsets", "payload_blob"
+    ],
+    "queries": [
+      "state_index", "position_kind", "position", "uv", "uv_dx", "uv_dy",
+      "geometric_normal", "geometric_tangent", "wo", "wi", "proposal_code",
+      "proposal_pdf", "solid_angle_weight", "rng_seed"
+    ],
+    "responses": [
+      "mean", "variance", "replica_mean_a", "replica_mean_b", "sample_count",
+      "valid", "event_flags", "reference_pdf"
+    ]
+  },
+  "logical_query_shape": "query_group_count x direction_count",
+  "native_state_payload": "UTF-8 or binary opaque bytes indexed by payload_offsets; interpretation is selected by native_schema_id",
+  "legacy_reader": false,
+  "regeneration_policy": "Earlier datasets are not accepted and must be regenerated."
+}

@@ -1,169 +1,157 @@
-# Reference 方向响应数据合同
+# ReferenceDataset HDF5 合同
 
-## 目的
+## 1. 定位
 
-参考数据只描述源材质在公共查询语义下的散射响应和统计不确定性，不包含 neural material backend 的状态、latent 或网络参数。evaluator、compiler 或 sampler 发生变化时，不应重新生成语义未变的 reference 监督。
+`ncls.reference-dataset@3` 是项目唯一的数据持久化合同。它保存某组源材质状态在一组明确查询上的 reference 响应，不规定源材质必须是层模型、OpenPBR、测量表或 MaterialX 图，也不包含 neural backend 的 latent、网络权重和私有 `ScatteringState`。
 
-## 查询语义
-
-一个方向响应样本由以下内容确定：
+公共数据流只有一条：
 
 ```text
-ReferenceQuery
-  material_program_id
-  canonical_material_ir_id
-  material_state_id
-  view_direction_local
-  light_directions_local[]
-  sample_policy
-  random_stream_id
-  max_path_depth
+family-specific source state
+        ↓ ReferenceProvider
+(state, surface/footprint, wo, wi, proposal)
+        ↓ family-specific Falcor reference
+response + uncertainty
+        ↓
+one fixed HDF5 layout
 ```
 
-持久化数据统一使用局部 shading frame。`wo` 是观察方向，`wi` 是入射光方向，两者指向远离表面。每个方向的监督量为：
+旧目录、NPY shard 和旧 schema 不再读取或转换。数据必须用当前 source package、reference 和采集配置重新生成。
+
+## 2. “HDF5 能恢复参数空间”的准确含义
+
+HDF5 对已采样监督域是自包含的：仅打开文件即可得到所有已采样 state identity、原生状态描述 payload、split、空间/footprint 查询、`wo/wi`、采样 PDF、积分权重、随机流、响应和统计量。response-only evaluator、target-visible compression、监督审计与固定 query 评测不需要识别具体材质族。
+
+它不能从有限样本恢复未采样的连续函数，也不重复嵌入数 GB 的 MERL 表或 4K MaterialX 纹理。`source_uri + source_sha256` 和原生 payload 共同锁定外部 source package；只有重新执行任意新 query、读取源纹理训练 source compiler，或构造新编辑状态时才需要这些锁定资源。
+
+因此项目区分两种恢复：
+
+- 恢复已采样监督参数空间：只需 HDF5；
+- 恢复源材质并求任意新点：需要 HDF5 中的 identity/hash 加 `data/source-materials/` 对应 package。
+
+## 3. Provider 接口
+
+每个已复现材质族实现同一个 `ReferenceProvider`：
 
 ```text
-response_cos = f(wo, wi) * max(dot(Ns, wi), 0)
+descriptor
+source_states()       枚举或采样原生状态
+surface_samples()     给出 constant、UV 或 surface-point 位置与 footprint
+query_plan()          给出 wo、wi、proposal PDF、立体角权重和 seed
+evaluate()            调用该材质族的权威 reference
+metadata()
+close()
 ```
 
-文件字段必须使用 `view_direction`、`light_direction` 和 `response_cos` 等角色明确的名称，不能直接用含义依赖调用方的 `wi/wo` 作为磁盘字段名。
+collector 不解析原生 payload，不认识材质参数，也没有按材质族分支。材质差异只存在于 provider 内。新增材质族时不得修改 HDF5 布局或公共 learning reader。
 
-`response_cos` 是监督与积分测度，不改变散射合同：运行时 `evaluate()` 仍返回不含余弦的 `f`。neural model 可以用 `response_cos` 构造 loss，但必须在 feature/output contract 中声明实际输出和 grazing-angle 处理，Falcor adapter 仍只能乘一次余弦。
+当前正式 provider：
 
-## 统计结果
+| provider | family | reference | 查询域 |
+|---|---|---|---|
+| `layer-stack` | `ncls.layer-stack@1` | 多层随机游走 | 常量表面、上半球、Monte Carlo moments |
+| `merl` | `merl.measured-brdf@1` | MERL 测量表 | 常量表面、上半球 |
+| `openpbr` | `openpbr.surface@1.1.1` | Adobe OpenPBR BSDF | 常量表面、完整入射球、含透射/PDF |
+| `materialx` | `materialx.textured-surface@1` | 原生纹理解析 + standard_surface | UV、footprint、normal map、上半球 |
 
-训练读取 API 必须返回：
+pbrt coated package用于独立验证 LayerStack reference，不是一个独立训练 source family，因此不作为 provider 重复导出。
+
+## 4. HDF5 固定布局
+
+文件根属性记录格式、生成时间、Git 提交、query profile、采集配置、provider metadata、proposal code 表、计数和语义内容哈希。实现对应的机器可读清单位于 `src/ncls/data/schemas/reference_dataset_v3.layout.json`。
 
 ```text
-ReferenceStatistics
-  mean
-  variance 或 standard_error
-  sample_count
-  replica_mean_a        可选
-  replica_mean_b        可选
+/
+  attrs
+    format_name = ncls.reference-dataset
+    format_version = 3
+    dataset_id = SHA-256(全部语义内容)
+    response_measure
+    color_model
+    query_profile_ids_json
+    generation_config_json
+    provider_metadata_json
+    proposal_ids_json
+    state_count / query_group_count / direction_count
+
+  /states
+    state_id, family_id, reference_id, asset_id
+    split_group_id, split
+    native_schema_id
+    source_uri, source_sha256, parent_state_id
+    payload_offsets, payload_blob
+
+  /queries
+    state_index, position_kind
+    position, uv, uv_dx, uv_dy
+    geometric_normal, geometric_tangent
+    wo
+    wi[direction_count]
+    proposal_code, proposal_pdf[direction_count]
+    solid_angle_weight[direction_count]
+    rng_seed[direction_count]
+
+  /responses
+    mean[direction_count, RGB]
+    variance[direction_count, RGB]
+    replica_mean_a / replica_mean_b
+    sample_count[direction_count]
+    valid, event_flags, reference_pdf
 ```
 
-训练代码不能从 `sample_count` 猜测方差。采集器内部使用 Welford 或等价的稳定累计方法。
+一个 query group 固定一个 `(state, surface sample, wo)`，并携带 `direction_count` 个 `wi`。不同 group 的方向值和 proposal 可以不同，但一个文件内的方向数量固定，以保证 HDF5 高效随机读取和 batch 化。
 
-- train 数据必须保存足以得到逐方向训练置信度的统计量；
-- representation-ceiling、验证和 reference 回归数据必须额外保存 A/B 独立随机流；
-- 磁盘可以使用 fp16 或压缩统计量，但 reader 必须输出 fp32 `mean` 和不确定性；
-- 量化误差上界写入 manifest，并由 round-trip 测试验证。
+## 5. 查询与响应语义
 
-v2 已确定采用 `mean/variance/replica_mean_a/replica_mean_b = float32`、`sample_count = uint32`，每个 RGB 方向 52 bytes。这里优先保证困难导体和深层栈长尾的二阶矩不因 fp16 溢出或下溢失真；后续若容量成为瓶颈，只能新增经过误差上界验证的磁盘 encoding，Python reader 的逻辑字段和物理语义不变。
+方向位于记录的局部几何 frame，均为指向远离表面的单位向量。`position_kind` 为：
 
-新采集数据的 `variance` 是两个独立随机流合并后的逐样本总体方差，`standard_error = sqrt(variance / sample_count)`。由 v0 转换的数据没有逐样本二阶矩，manifest 将 `uncertainty_kind` 明确写为 `replica-mean-variance`；此时 reader 返回的 `standard_error = sqrt(variance)`，禁止按逐样本方差再次除以样本数。
+- `constant`：材质无空间坐标；
+- `uv`：`uv + uv_dx/uv_dy` 定义纹理位置和 footprint；
+- `surface-point`：为以后需要真实表面点的 reference 保留。
 
-## 数据集目录
-
-目标逻辑布局：
+持久化响应统一为：
 
 ```text
-dataset/
-  manifest.json
-  material_programs.jsonl
-  canonical_material_ir.bin
-  material_states.npy
-  family_splits.npy
-  view_directions.npy
-  light_directions.npy
-  solid_angle_weights.npy
-  shards/
-    shard-00000.index.npy
-    shard-00000.response.npy
-    shard-00000.complete.json
+RGB f(wo, wi) × |dot(Ns, wi)|
 ```
 
-实际大数组继续允许内存映射和分片。manifest 是唯一入口，reader 不通过文件名猜测格式。
+其中 `Ns` 是 reference 实际使用的 shading normal；MaterialX 可由 normal map 和 footprint 得到它。OpenPBR 的透射方向因此同样使用绝对余弦。运行时公共 `evaluate()` 仍返回不含余弦的 `f`，模型输出参数化必须自行声明。
 
-## manifest 必需字段
+`proposal_pdf` 描述采集 `wi` 的分布，`solid_angle_weight` 描述当前离散积分权重，二者不能互相替代。固定 probe、均匀采样、microfacet/peak proposal 和自适应 query 都通过这两个字段保留真实语义。
+
+## 6. 状态、split 与原生语义
+
+`native_payload` 由 `payload_offsets/payload_blob` 保存，解释方式只由 `native_schema_id` 选择。公共 reader 将其视为 opaque bytes。LayerStack learning adapter 可以解码 `MaterialProgram`；其他 family 可以拥有各自 adapter，但 response-only reader 不加载任何 adapter。
+
+`split_group_id` 是不可跨 split 的最小语义单位：
+
+- LayerStack：同一结构 family 及其编辑状态；
+- MERL：同一物理样本；
+- OpenPBR：同一原生资产及其派生编辑；
+- MaterialX：同一图、纹理资产及其 crop/mip/query。
+
+状态表保存 split，所有引用该 state 的 query 自动继承。训练只能读取 train，checkpoint 选择只能读取 validation，held-out test 由独立评测命令读取。
+
+## 7. 统计与有效性
+
+所有 response 数组在磁盘上使用 float32，`sample_count` 使用 uint32。随机 reference 保存合并后的逐样本总体方差和两个独立 replica mean：
 
 ```text
-format_name
-format_version
-dataset_id
-created_at
-material_program_schema_version
-canonical_ir_abi_version
-scattering_contract_version
-reference_implementation_id
-reference_source_sha256
-generator_git_commit
-prior_id / prior_version
-resolved_config_sha256
-seed
-direction_parameterization
-response_measure
-color_model
-counts and shapes
-statistics_encoding
-quantization
-split_policy
-shards[]
-content_hashes
+standard_error = sqrt(max(variance, 0) / max(sample_count, 1))
 ```
 
-manifest 不保存开发机绝对路径。所有文件 URI 相对于数据集根目录。
+确定性 reference 使用零方差、`sample_count=1`，但仍写同一字段。`valid` 标明 query 是否有定义，`event_flags` 区分反射/透射等事件，`reference_pdf` 在 reference 暴露方向 PDF 时保存其值。
 
-## family、state 和 tile
+## 8. 完整性和写入规则
 
-- `family`：共享结构和主参数的材质族，是 train/validation/test 划分的最小单位；
-- `material_state`：同一 family 下的一组局部参数变化；
-- `tile`：一个 material state 与一个 view direction 的全部入射方向响应。
+- writer 只写 `<target>.tmp`，完成 shape/语义校验与内容哈希后原子替换目标 HDF5；
+- `dataset_id` 覆盖根语义属性和三个 group 的全部固定 dataset，包括字符串和 payload bytes；
+- reader 检查格式版本、必需字段、shape、索引范围、split、payload offsets 和全部方向归一化；
+- 不提供 resume、拼接旧 shard 或旧字段兜底。中断后删除临时文件并从锁定配置重跑；
+- 相同 query 配置不等于相同 Monte Carlo bit pattern；可复现身份还包括 reference implementation hash、source hash、seed 和 Falcor/Slang 版本。
 
-同一 family 的全部 state 和 view 必须位于同一 split。writer 可以任意分片，但逻辑 tile ID 和 split 不依赖物理 shard。
+## 9. Learning 边界
 
-neural evaluator 使用 v2 时，属于同一 `material_state` 的全部 view tile 必须共享同一个 material latent identity。逐 tile 独立优化只能标记为 `direction-slice` 诊断；它不能被报告为完整 `f(wo, wi)` neural representation 的 direct fit。
+`ReferenceQueryStore` 只提供公共 query/response，因此可用于任何 family 或混合 family 数据集。当前可部署 LayerStack baseline 使用显式的 `LayerStackReferenceStore` 解码原生 payload；这属于该模型的 source adapter，不属于数据合同。
 
-## 当前 v2 对空间变化材质的限制
-
-v2 的核心查询是常量局部材质状态与方向，不保存 surface position、UV、方向微分、texture footprint、mip/LOD 或 latent filtering 邻域。因此：
-
-- 它足以建立 LayerStack 等常量材质的 view-conditioned evaluator；
-- 它可以保存纹理材质在已解析局部状态上的方向监督，但不能单独训练或验证 random-access latent texture 的过滤行为；
-- 空间 neural material 阶段需要新增带版本的 spatial query/asset contract，记录 UV、footprint、原生资源 identity 和采样语义；不能在不提升合同的情况下复用无含义字段。
-
-这个限制属于监督域，不影响 v2 作为方向响应数据的权威性。
-
-## 方向集合和积分权重
-
-方向参数化不是隐含常数。manifest 必须记录算法、版本、方向数组哈希和权重测度。
-
-如果 tile 存储的已经是 `f*cos`，环境积分只能再乘光源辐亮度和立体角权重，不能重复乘余弦。reader 提供具有角色名称的字段，并在单元测试中用 Lambert 解析积分检查。
-
-## reference 身份
-
-`reference_implementation_id` 由以下内容共同确定：
-
-- 随机游走 shader 及其包含文件哈希；
-- MaterialProgram 节点语义版本；
-- canonical IR ABI；
-- max depth、RR、NEE、MIS 和介质采样策略；
-- Falcor/Slang 版本；
-- 已知适用范围和限制。
-
-只记录一个顶层源码哈希不足以证明数据可复现。
-
-## 生成要求
-
-- 分片写入采用临时文件加原子完成标记；
-- 支持按 shard 恢复，已完成 shard 必须验证哈希后复用；
-- 固定 seed 和 stream ID 能重现统计分布及确定性测试规模的精确结果；
-- 生成完成后执行有限值、非负、shape、hash、split、方向权重和噪声分布验证；
-- D3D12 与未来 Vulkan 后端差异通过统计容差验证，不要求逐 bit 相同。
-
-## v0 迁移
-
-当前 `ncls-direction-tiles@1` 数据保留为 legacy evidence。新核心不长期支持两套 reader；提供一次性转换或隔离的 `legacy_v0` adapter：
-
-- 原 A/B 均值转为 replica 字段；
-- 因 v0 没有二阶矩，方差只能标记为 `replica-estimate`，不能伪装成逐样本方差；
-- 保留原始 reference 哈希和格式限制；
-- 转换不改变响应数值或重新命名其物理含义。
-
-当前一次性转换入口为：
-
-```powershell
-conda run -n neural-shading python -m ncls.cli data convert-legacy-v0 <旧数据集> <新数据集>
-conda run -n neural-shading python -m ncls.cli data validate <新数据集>
-```
+任何新模型若只学习 `(state identity, query) → response`，都不应修改公共 reader。若 compiler 要读取原生图、参数或资源，则为对应 source family 注册 encoder/adapter，并继续以 HDF5 中的 state identity、payload 与 hash 作为训练样本身份。

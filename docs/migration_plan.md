@@ -13,15 +13,15 @@
 三个业务块只通过带版本的合同交换产物：
 
 ```text
-MaterialProgram → 数据采集 → ReferenceDataset
+MaterialProgram/原生 source state → ReferenceProvider → HDF5 ReferenceDataset
 ReferenceDataset → Python direct fit / train / evaluate → MethodBundle
 MaterialProgram + MethodBundle → Windows viewer
 ```
 
-- `MaterialProgram` 是公共作者格式，`LayerStackIR` 是当前规范化内部 IR。
+- `MaterialProgram` 是一种公共作者格式；不同 source family 可以使用自己的原生状态 schema，`LayerStackIR` 只属于 LayerStack reference/backend。
 - `prepare/evaluate` 是所有实时表面方法的基础散射合同。目标 neural backend 在 `prepare` 中获取/编码共享 state，在 `evaluate` 中运行主要 MLP；`sample/pdf` 与专用积分器按 capability 提供。
 - `CompiledMaterial` 和 `ScatteringState` 完全由 backend 私有。
-- 加入小型 neural evaluator、material/spatial latent、matched sampler 或 integration head，不改变 viewer 主可见性或顶层材质接口；若训练需要 UV/footprint/LOD，必须版本化扩展数据合同。
+- 加入小型 neural evaluator、material/spatial latent、matched sampler 或 integration head，不改变 viewer 主可见性或顶层材质接口；当前 HDF5 已保存 UV 与 footprint，新增公共查询语义时才提升合同版本。
 
 ## 迁移后的研究执行顺序
 
@@ -41,7 +41,7 @@ MaterialProgram + MethodBundle → Windows viewer
 
 | 迁移前 | 最终处理 |
 |---|---|
-| 固定 `schema/` | MaterialProgram schema、LayerStackIR ABI 和一次性 v0 reader 进入 `src/ncls/core/material/` |
+| 固定 `schema/` | MaterialProgram schema 与 LayerStackIR ABI 进入 `src/ncls/core/material/`；旧数据 reader 删除 |
 | 随机游走旧源码与采集脚本 | 进入 `shaders/ncls/reference/`、`shaders/ncls/data/` 和 `src/ncls/data/` |
 | 通用 legacy packet | 删除；具体布局进入对应 representation 与 shader backend |
 | 表示拟合脚本 | 可信部分进入 `learning/direct_fit/`，重复/过时实验入口删除 |
@@ -51,7 +51,7 @@ MaterialProgram + MethodBundle → Windows viewer
 | 根级旧测试 | 重组为 `tests/unit`、`tests/gpu`、`tests/integration/reference` |
 | 根级阶段计划和 v0 操作文档 | 删除；有效结论进入稳定文档，逐次运行指标只保存在被忽略的 `artifacts/` 中 |
 
-旧 `ncls-direction-tiles@1` 数据仍能通过 `ncls data convert-legacy-v0` 一次性转换，但项目不再保留第二套 writer 或旧包级 import shim。
+数据层只接受当前 HDF5 `ncls.reference-dataset@3`。迁移前数据不读取、不转换，必须从锁定 source package、reference 和采集配置重新生成。
 
 ## viewer 当前实现
 
