@@ -26,7 +26,7 @@ def main() -> None:
     root = Path(__file__).resolve().parents[2]
     reference = MaterialXReference(
         root / "external/MaterialX",
-        root / "data/source-materials/materialx-polyhaven/v1",
+        root / "assets/source-materials/materialx-polyhaven/v1",
         root / "references/materialx-polyhaven-v1/assets.json",
     )
     asset_ids = tuple(args.asset_ids) or reference.catalog.asset_ids

@@ -9,6 +9,7 @@ from ncls.references import (
     linear_hdr_image_metrics,
     load_reference_acceptance,
     load_reference_registry,
+    resolve_reference_path,
     validate_reference_tree,
 )
 
@@ -37,6 +38,23 @@ def test_registry_tracks_each_integration_capability_independently() -> None:
     assert entries["ncls.merl-brdf@1"].capabilities["viewer_integration"] == "ready"
     assert entries["ncls.materialx-polyhaven@1"].capabilities["numerical_parity"] == "not-applicable"
     assert entries["ncls.materialx-polyhaven@1"].capabilities["image_parity"] == "ready"
+
+
+def test_reference_manifest_roots_have_one_canonical_mapping() -> None:
+    assert resolve_reference_path(PROJECT_ROOT, "project", "src/ncls") == PROJECT_ROOT / "src" / "ncls"
+    assert resolve_reference_path(PROJECT_ROOT, "external", "MaterialX") == PROJECT_ROOT / "external" / "MaterialX"
+    assert resolve_reference_path(
+        PROJECT_ROOT, "source-materials", "materialx-polyhaven/v1"
+    ) == PROJECT_ROOT / "assets" / "source-materials" / "materialx-polyhaven" / "v1"
+
+
+def test_reference_manifest_paths_cannot_escape_their_root() -> None:
+    try:
+        resolve_reference_path(PROJECT_ROOT, "source-materials", "../viewer")
+    except ValueError as error:
+        assert "escapes" in str(error)
+    else:
+        raise AssertionError("escaping reference path was accepted")
 
 
 def test_deterministic_directional_acceptance_is_executable() -> None:

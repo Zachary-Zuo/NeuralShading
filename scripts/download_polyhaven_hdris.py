@@ -46,7 +46,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=PROJECT_ROOT / "data" / "hdris" / "polyhaven_1k",
+        default=PROJECT_ROOT / "assets" / "viewer" / "environments" / "polyhaven-1k",
     )
     args = parser.parse_args()
     download_manifest(args.manifest, args.output)

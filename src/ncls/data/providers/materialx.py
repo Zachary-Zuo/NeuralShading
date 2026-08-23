@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import gc
-import hashlib
-import json
 import math
 from pathlib import Path
 from typing import Sequence
@@ -16,6 +14,8 @@ import pyexr
 from ncls.data.collector import CollectionConfig
 from ncls.data.contract import EvaluatedBlock, PositionKind, QueryPlan, ReferenceDescriptor, SourceState, SurfaceSample, make_state_id
 from ncls.source_materials import MaterialXReference, MaterialXSourceMaterial
+from ncls.paths import SOURCE_MATERIAL_ROOT
+from ncls.source_materials.identity import materialx_asset_sha256
 
 from .base import BaseProvider, PROJECT_ROOT, assign_group_splits, implementation_hash
 from .falcor import direction_rows, import_falcor, output_buffer, structured_buffer
@@ -25,7 +25,7 @@ from .falcor import direction_rows, import_falcor, output_buffer, structured_buf
 class MaterialXProviderConfig:
     asset_ids: tuple[str, ...] = ()
     materialx_root: Path = PROJECT_ROOT / "external/MaterialX"
-    asset_root: Path = PROJECT_ROOT / "data/source-materials/materialx-polyhaven/v1"
+    asset_root: Path = SOURCE_MATERIAL_ROOT / "materialx-polyhaven/v1"
     asset_manifest: Path = PROJECT_ROOT / "references/materialx-polyhaven-v1/assets.json"
 
 
@@ -37,6 +37,7 @@ class _MaterialXRuntimeState:
     roughness: Path | None
     metalness: Path | None
     normal: Path | None
+    displacement: Path | None
 
 
 def _value3(text: str) -> tuple[float, float, float]:
@@ -48,6 +49,8 @@ def _value3(text: str) -> tuple[float, float, float]:
 
 def _parse_surface(document_path: Path, source: MaterialXSourceMaterial) -> _MaterialXRuntimeState:
     root = ET.parse(document_path).getroot()
+    if root.tag != "materialx" or root.get("version") != "1.38":
+        raise ValueError("MaterialX Falcor subset requires a 1.38 source document")
     material = next((node for node in root if node.tag == "surfacematerial"), None)
     if material is None:
         raise ValueError(f"MaterialX document has no surfacematerial: {document_path}")
@@ -95,6 +98,17 @@ def _parse_surface(document_path: Path, source: MaterialXSourceMaterial) -> _Mat
     values[16] = scalar("specular_rotation", 0.0)
     values[19] = scalar("emission", 0.0)
     values[20:23] = color("emission_color", (1.0, 1.0, 1.0))
+    opacity = inputs_by_name.get("opacity")
+    if opacity is not None:
+        if opacity.get("value") is None or opacity.get("nodegraph") or opacity.get("nodename"):
+            raise ValueError("MaterialX Falcor subset requires constant opacity")
+        if opacity.get("type") == "color3":
+            opacity_rgb = _value3(opacity.get("value", ""))
+            if max(opacity_rgb) - min(opacity_rgb) > 1e-8:
+                raise ValueError("MaterialX Falcor subset requires achromatic opacity")
+            values[23] = opacity_rgb[0]
+        else:
+            values[23] = float(opacity.get("value", ""))
     for name in (
         "transmission", "transmission_scatter_anisotropy", "transmission_dispersion",
         "transmission_extra_roughness", "subsurface", "subsurface_anisotropy", "sheen",
@@ -102,6 +116,9 @@ def _parse_surface(document_path: Path, source: MaterialXSourceMaterial) -> _Mat
     ):
         if abs(scalar(name, 0.0)) > 1e-8:
             raise ValueError(f"MaterialX Falcor surface-response subset does not support nonzero {name}")
+    thin_walled = inputs_by_name.get("thin_walled")
+    if thin_walled is not None and thin_walled.get("value", "false") != "false":
+        raise ValueError("MaterialX Falcor surface-response subset requires thin_walled=false")
 
     graphs = {node.get("name"): node for node in root if node.tag == "nodegraph"}
 
@@ -120,10 +137,24 @@ def _parse_surface(document_path: Path, source: MaterialXSourceMaterial) -> _Mat
             raise ValueError(f"MaterialX graph output does not resolve to {expected}")
         return result
 
-    def image_path(image: ET.Element) -> Path:
+    def image_path(
+        image: ET.Element,
+        expected_type: str,
+        expected_color_space: str | None = None,
+    ) -> Path:
+        if image.get("type") != expected_type:
+            raise ValueError(f"MaterialX image {image.get('name')} has the wrong type")
         file_node = next((node for node in image if node.tag == "input" and node.get("name") == "file"), None)
-        if file_node is None or not file_node.get("value"):
+        if file_node is None or file_node.get("type") != "filename" or not file_node.get("value"):
             raise ValueError("MaterialX image has no filename")
+        color_space = file_node.get("colorspace", "")
+        if expected_color_space is not None and color_space != expected_color_space:
+            raise ValueError(f"MaterialX image {image.get('name')} has the wrong colorspace")
+        if expected_color_space is None and color_space:
+            raise ValueError(f"MaterialX raw image {image.get('name')} has an unexpected colorspace")
+        texcoord = next((node for node in image if node.tag == "input" and node.get("name") == "texcoord"), None)
+        if texcoord is None or texcoord.get("type") != "vector2" or not texcoord.get("nodename"):
+            raise ValueError(f"MaterialX image {image.get('name')} must use an explicit texcoord node")
         path = (document_path.parent / file_node.get("value", "")).resolve()
         path.relative_to(document_path.parent.resolve())
         if not path.is_file():
@@ -142,7 +173,12 @@ def _parse_surface(document_path: Path, source: MaterialXSourceMaterial) -> _Mat
                 values[value_offset] = float(node.get("value", ""))
         else:
             key = "roughness" if name == "specular_roughness" else name
-            textures[key] = image_path(connected_node(node, "image"))
+            image = connected_node(node, "image")
+            textures[key] = image_path(
+                image,
+                "color3" if name == "base_color" else "float",
+                "srgb_texture" if name == "base_color" else None,
+            )
             values[flag_offset] = 1.0
     normal_input = inputs_by_name.get("normal")
     if normal_input is not None and normal_input.get("nodegraph"):
@@ -154,11 +190,40 @@ def _parse_surface(document_path: Path, source: MaterialXSourceMaterial) -> _Mat
         image = next((node for node in graph if node.tag == "image" and node.get("name") == normal_in.get("nodename")), None)
         if image is None:
             raise ValueError("MaterialX normalmap input does not resolve to image")
-        textures["normal"] = image_path(image)
+        textures["normal"] = image_path(image, "vector3")
         scale = next((node for node in normal_map if node.tag == "input" and node.get("name") == "scale"), None)
         values[17] = float(scale.get("value", "1")) if scale is not None else 1.0
         values[18] = 1.0
-    return _MaterialXRuntimeState(source, values, textures["base_color"], textures["roughness"], textures["metalness"], textures["normal"])
+    displacement_path = None
+    displacement_binding = next(
+        (node for node in material if node.tag == "input" and node.get("name") == "displacementshader"),
+        None,
+    )
+    if displacement_binding is not None and displacement_binding.get("nodename"):
+        displacement = next(
+            (node for node in root if node.tag == "displacement" and node.get("name") == displacement_binding.get("nodename")),
+            None,
+        )
+        if displacement is None:
+            raise ValueError("MaterialX displacement binding does not resolve to displacement")
+        displacement_input = next(
+            (node for node in displacement if node.tag == "input" and node.get("name") == "displacement"),
+            None,
+        )
+        if displacement_input is None:
+            raise ValueError("MaterialX displacement shader has no displacement input")
+        displacement_path = image_path(connected_node(displacement_input, "image"), "float")
+    if not float(values[14]) > 0.0 or not np.all(np.isfinite(values)):
+        raise ValueError("MaterialX source material has invalid standard_surface inputs")
+    return _MaterialXRuntimeState(
+        source,
+        values,
+        textures["base_color"],
+        textures["roughness"],
+        textures["metalness"],
+        textures["normal"],
+        displacement_path,
+    )
 
 
 def _downsample(values: np.ndarray) -> np.ndarray:
@@ -178,19 +243,11 @@ def _downsample(values: np.ndarray) -> np.ndarray:
     )
 
 
-def _linear_mips(values: np.ndarray) -> list[np.ndarray]:
+def _box_mips(values: np.ndarray) -> list[np.ndarray]:
     result = [np.asarray(values, dtype=np.float32)]
     while result[-1].shape[0] > 1 or result[-1].shape[1] > 1:
         result.append(_downsample(result[-1]))
     return result
-
-
-def _srgb_decode(values: np.ndarray) -> np.ndarray:
-    return np.where(values <= 0.04045, values / 12.92, np.power((values + 0.055) / 1.055, 2.4))
-
-
-def _srgb_encode(values: np.ndarray) -> np.ndarray:
-    return np.where(values <= 0.0031308, values * 12.92, 1.055 * np.power(values, 1.0 / 2.4) - 0.055)
 
 
 class MaterialXProvider(BaseProvider):
@@ -224,10 +281,10 @@ class MaterialXProvider(BaseProvider):
             loaded = reference.load(asset_id, verify_files=True)
             runtime = _parse_surface(loaded.document_path, loaded.material)
             payload = loaded.material.to_json().encode("utf-8")
-            records = reference.catalog.records(asset_id)
-            source_hash = hashlib.sha256(
-                json.dumps(records, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-            ).hexdigest()
+            source_hash = materialx_asset_sha256(
+                loaded.document_path,
+                (runtime.base_color, runtime.roughness, runtime.metalness, runtime.normal, runtime.displacement),
+            )
             states.append(SourceState(
                 make_state_id(self.descriptor.family_id, self.descriptor.native_schema_id, payload, source_hash),
                 self.descriptor.family_id,
@@ -267,21 +324,17 @@ class MaterialXProvider(BaseProvider):
                 encoded_mips = [np.asarray([[[255, 255, 255, 255]]], dtype=np.uint8)]
             else:
                 encoded = np.asarray(Image.open(path).convert("RGBA"), dtype=np.float32) / 255.0
-                linear = _srgb_decode(encoded[..., :3])
-                alpha = encoded[..., 3:4]
-                encoded_mips = []
-                for mip in _linear_mips(np.concatenate((linear, alpha), axis=2)):
-                    rgb = np.clip(_srgb_encode(np.clip(mip[..., :3], 0.0, 1.0)), 0.0, 1.0)
-                    encoded_mips.append(np.rint(np.concatenate((rgb, np.clip(mip[..., 3:4], 0.0, 1.0)), axis=2) * 255.0).astype(np.uint8))
-            texture_format = falcor.ResourceFormat.RGBA8UnormSrgb
+                encoded_mips = [np.rint(np.clip(mip, 0.0, 1.0) * 255.0).astype(np.uint8) for mip in _box_mips(encoded)]
+            # shared shader performs the single explicit sRGB decode; the resource must stay UNorm.
+            texture_format = falcor.ResourceFormat.RGBA8Unorm
             mips = encoded_mips
         elif semantic in {"roughness", "metalness"}:
             values = np.ones((1, 1, 1), dtype=np.float32) if path is None else pyexr.read(str(path)).astype(np.float32)[..., :1]
-            mips = _linear_mips(values)
+            mips = _box_mips(values)
             texture_format = falcor.ResourceFormat.R32Float
         elif semantic == "normal":
             values = np.asarray([[[0.5, 0.5, 1.0]]], dtype=np.float32) if path is None else pyexr.read(str(path)).astype(np.float32)[..., :3]
-            mips = [np.concatenate((mip, np.ones((*mip.shape[:2], 1), dtype=np.float32)), axis=2).astype(np.float16) for mip in _linear_mips(values)]
+            mips = [np.concatenate((mip, np.ones((*mip.shape[:2], 1), dtype=np.float32)), axis=2).astype(np.float16) for mip in _box_mips(values)]
             texture_format = falcor.ResourceFormat.RGBA16Float
         else:
             raise ValueError(semantic)

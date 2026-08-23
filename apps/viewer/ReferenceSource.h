@@ -39,7 +39,6 @@ struct ReferenceSource
     std::string displayName = "Default layered material";
     std::string sourceSha256;
 
-    bool supportsCurrentCompiler() const { return family == ReferenceFamily::LayerStack; }
     const char* familyId() const;
 };
 

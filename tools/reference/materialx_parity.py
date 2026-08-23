@@ -113,7 +113,8 @@ def _write_comparison_png(native: np.ndarray, falcor: np.ndarray, path: Path) ->
 def _replay(material: Path, sphere: Path, size: int) -> dict[str, object]:
     return {
         "format_name": "ncls.viewer-capture",
-        "format_version": 2,
+        "format_version": 3,
+        "reference_integrator": "ncls.scene-path-tracer@1",
         "method_id": "",
         "bundle_root": str(PROJECT_ROOT / "artifacts" / "exports"),
         "source_material": str(material),
@@ -121,10 +122,10 @@ def _replay(material: Path, sphere: Path, size: int) -> dict[str, object]:
         "reference_geometry_sha256": _sha256(sphere),
         "environment": "",
         "resolution": [size * 2, size],
-        "object_mode": 0,
         "reference_spp": 1,
         "reference_samples_per_frame": 1,
-        "reference_max_depth": 24,
+        "reference_scene_max_bounces": 0,
+        "reference_layer_walk_max_depth": 24,
         "camera": {
             "target": [0.0, 0.0, 0.0],
             "yaw": 0.0,
@@ -296,7 +297,7 @@ def main() -> int:
     parser.add_argument(
         "--manifest", type=Path, default=PROJECT_ROOT / "references/materialx-polyhaven-v1/assets.json")
     parser.add_argument(
-        "--asset-root", type=Path, default=PROJECT_ROOT / "data/source-materials/materialx-polyhaven/v1")
+        "--asset-root", type=Path, default=PROJECT_ROOT / "assets/source-materials/materialx-polyhaven/v1")
     parser.add_argument(
         "--materialx-root", type=Path, default=PROJECT_ROOT / "build/materialx-reference-install")
     parser.add_argument(

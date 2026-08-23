@@ -10,6 +10,7 @@
 #include <cctype>
 #include <fstream>
 #include <limits>
+#include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
@@ -213,6 +214,21 @@ ReferenceSource loadMaterialX(const std::filesystem::path& path)
     inputs[kMxEmission] = inputFloat(surface, "emission", 0.f);
     const auto emissionColor = inputFloat3(surface, "emission_color", {1.f, 1.f, 1.f});
     std::copy(emissionColor.begin(), emissionColor.end(), inputs.begin() + kMxEmissionColor);
+    const auto opacity = findInput(surface, "opacity");
+    if (opacity)
+    {
+        if (!opacity.attribute("value") || opacity.attribute("nodegraph") || opacity.attribute("nodename"))
+            throw std::runtime_error("MaterialX Falcor subset requires constant opacity");
+        if (std::string(opacity.attribute("type").value()) == "color3")
+        {
+            const auto value = parseFloat3(opacity.attribute("value").value(), "opacity");
+            if (std::max(value[0], std::max(value[1], value[2]))
+                - std::min(value[0], std::min(value[1], value[2])) > 1e-8f)
+                throw std::runtime_error("MaterialX Falcor subset requires achromatic opacity");
+            inputs[kMxOpacity] = value[0];
+        }
+        else inputs[kMxOpacity] = parseFloat(opacity.attribute("value").value(), "opacity");
+    }
 
     const auto baseColorInput = findInput(surface, "base_color");
     if (!baseColorInput) throw std::runtime_error("MaterialX standard_surface has no base_color input");
@@ -568,9 +584,20 @@ ReferenceSource loadOpenPbr(const std::filesystem::path& path, const json& docum
     if (colorSpace == "acescg") source.openPbrColorSpace = 1;
     else if (colorSpace == "linear-srgb" || colorSpace == "lin_rec709") source.openPbrColorSpace = 0;
     else throw std::runtime_error("Falcor OpenPBR runtime requires acescg or linear-srgb: " + colorSpace);
-    source.sourcePath = std::filesystem::absolute(path);
+    const std::string sourceUri = document.at("source_document").get<std::string>();
+    if (sourceUri.empty()) throw std::runtime_error("OpenPBR adapter has no native source_document");
+    const std::filesystem::path authoredSource(sourceUri);
+    const auto nativeSource = std::filesystem::absolute(
+        authoredSource.is_absolute() ? authoredSource : path.parent_path() / authoredSource).lexically_normal();
+    if (!std::filesystem::is_regular_file(nativeSource))
+        throw std::runtime_error("OpenPBR native source document is missing: " + nativeSource.string());
+    const std::string declaredHash = document.at("metadata").at("source_sha256").get<std::string>();
+    const std::string actualHash = sha256FileHex(nativeSource);
+    if (actualHash != declaredHash)
+        throw std::runtime_error("OpenPBR native source asset SHA-256 mismatch: " + nativeSource.string());
+    source.sourcePath = nativeSource;
     source.displayName = document.value("material_id", path.stem().string());
-    source.sourceSha256 = sha256FileHex(path);
+    source.sourceSha256 = actualHash;
     return source;
 }
 
@@ -699,6 +726,13 @@ std::filesystem::path resolveSourceUri(
         path.is_absolute() ? path : manifestDirectory / path).lexically_normal();
 }
 
+void requireSha256(const std::string& value, const char* label)
+{
+    static const std::regex pattern("^[0-9a-f]{64}$");
+    if (!std::regex_match(value, pattern))
+        throw std::runtime_error(std::string(label) + " must be a lowercase SHA-256 digest");
+}
+
 json referenceSourceStatePayload(const ReferenceSource& source)
 {
     json payload = {{"family_id", source.familyId()}};
@@ -748,7 +782,10 @@ ReferenceSource deserializeReferenceSourceState(
     if (!document.is_object()) throw std::runtime_error("viewer scene source binding must be an object");
     const std::string familyId = document.at("family_id").get<std::string>();
     const auto sourcePath = resolveSourceUri(document.value("source_uri", std::string()), manifestDirectory);
-    const std::string expectedSourceHash = document.value("source_asset_sha256", std::string());
+    const std::string expectedSourceHash = document.at("source_asset_sha256").get<std::string>();
+    const std::string expectedStateHash = document.at("state_sha256").get<std::string>();
+    requireSha256(expectedSourceHash, "source_asset_sha256");
+    requireSha256(expectedStateHash, "state_sha256");
     ReferenceSource source;
     if (familyId == "ncls.layer-stack@1")
     {
@@ -757,23 +794,18 @@ ReferenceSource deserializeReferenceSourceState(
             document.at("material_program"), &source.displayName, "Embedded LayerStack material");
         source.sourcePath.clear();
         source.sourceSha256 = layerStackHash(source.layerStack);
+        if (source.sourceSha256 != expectedSourceHash)
+            throw std::runtime_error("viewer scene LayerStack source asset SHA-256 mismatch");
     }
     else if (familyId == "openpbr.surface@1.1.1")
     {
-        if (!sourcePath.empty() && std::filesystem::is_regular_file(sourcePath))
-        {
-            source = loadReferenceSource(sourcePath);
-            if (source.family != ReferenceFamily::OpenPbr)
-                throw std::runtime_error("viewer scene OpenPBR source URI resolved to another family");
-            if (!expectedSourceHash.empty() && source.sourceSha256 != expectedSourceHash)
-                throw std::runtime_error("viewer scene OpenPBR source asset SHA-256 mismatch: " + sourcePath.string());
-        }
-        else
-        {
-            source = makeDefaultReferenceSource(ReferenceFamily::OpenPbr);
-            source.sourcePath = sourcePath;
-            source.sourceSha256 = expectedSourceHash;
-        }
+        if (sourcePath.empty() || !std::filesystem::is_regular_file(sourcePath))
+            throw std::runtime_error("viewer scene OpenPBR native source is missing: " + sourcePath.string());
+        if (sha256FileHex(sourcePath) != expectedSourceHash)
+            throw std::runtime_error("viewer scene OpenPBR source asset SHA-256 mismatch: " + sourcePath.string());
+        source = makeDefaultReferenceSource(ReferenceFamily::OpenPbr);
+        source.sourcePath = sourcePath;
+        source.sourceSha256 = expectedSourceHash;
         const std::string colorSpace = document.at("color_space").get<std::string>();
         if (colorSpace == "linear-srgb") source.openPbrColorSpace = 0u;
         else if (colorSpace == "acescg") source.openPbrColorSpace = 1u;
@@ -789,7 +821,7 @@ ReferenceSource deserializeReferenceSourceState(
             ? ReferenceFamily::MaterialX : ReferenceFamily::Merl;
         if (source.family != expectedFamily)
             throw std::runtime_error("viewer scene source URI resolved to another family: " + sourcePath.string());
-        if (!expectedSourceHash.empty() && source.sourceSha256 != expectedSourceHash)
+        if (source.sourceSha256 != expectedSourceHash)
             throw std::runtime_error("viewer scene source asset SHA-256 mismatch: " + sourcePath.string());
         if (source.family == ReferenceFamily::MaterialX)
             applyMaterialXParameterValues(source, document.at("parameters"));
@@ -797,8 +829,7 @@ ReferenceSource deserializeReferenceSourceState(
     else throw std::runtime_error("viewer scene contains unsupported source family: " + familyId);
 
     source.displayName = document.value("display_name", source.displayName);
-    const std::string expectedStateHash = document.value("state_sha256", std::string());
-    if (!expectedStateHash.empty() && referenceSourceStateHash(source) != expectedStateHash)
+    if (referenceSourceStateHash(source) != expectedStateHash)
         throw std::runtime_error("viewer scene source-material state SHA-256 mismatch: " + familyId);
     return source;
 }
@@ -820,9 +851,10 @@ void saveOpenPbrReferenceSource(const std::filesystem::path& path, const Referen
         {"schema_version", 1},
         {"material_id", source.displayName},
         {"color_space", source.openPbrColorSpace == 0u ? "linear-srgb" : "acescg"},
-        {"source_document", source.sourcePath.string()},
+        {"source_document", portableSourceUri(source.sourcePath, path.parent_path())},
         {"authored_parameters", authored},
         {"parameters", bindings},
+        {"metadata", {{"source_sha256", source.sourceSha256}}},
     };
     if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path());
     const auto temporary = path.string() + ".tmp";

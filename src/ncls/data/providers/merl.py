@@ -10,6 +10,7 @@ import numpy as np
 from ncls.data.collector import CollectionConfig
 from ncls.data.contract import EvaluatedBlock, PositionKind, QueryPlan, ReferenceDescriptor, SourceState, SurfaceSample, make_state_id
 from ncls.source_materials import MerlBrdfReference, MerlMaterial
+from ncls.paths import SOURCE_MATERIAL_ROOT
 
 from .base import BaseProvider, PROJECT_ROOT, assign_group_splits, implementation_hash
 from .falcor import execute_direction_kernel, import_falcor, structured_buffer
@@ -18,7 +19,7 @@ from .falcor import execute_direction_kernel, import_falcor, structured_buffer
 @dataclass(frozen=True)
 class MerlProviderConfig:
     material_ids: tuple[str, ...] = ()
-    asset_root: Path = PROJECT_ROOT / "data/source-materials/merl-brdf/v1"
+    asset_root: Path = SOURCE_MATERIAL_ROOT / "merl-brdf/v1"
     material_index: Path = PROJECT_ROOT / "references/merl-brdf-v1/materials.json"
 
 

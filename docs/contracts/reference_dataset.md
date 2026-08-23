@@ -24,10 +24,12 @@ HDF5 对已采样监督域是自包含的：仅打开文件即可得到所有已
 
 它不能从有限样本恢复未采样的连续函数，也不重复嵌入数 GB 的 MERL 表或 4K MaterialX 纹理。`source_uri + source_sha256` 和原生 payload 共同锁定外部 source package；只有重新执行任意新 query、读取源纹理训练 source compiler，或构造新编辑状态时才需要这些锁定资源。
 
+`source_sha256` 始终标识原始 source asset，不标识临时 adapter：MERL/OpenPBR 使用原始测量表或 `.mtlx` 的文件 SHA-256；MaterialX 使用文档及其已连接 base color、roughness、metalness、normal、displacement 纹理的确定性组合 SHA-256；LayerStack 使用规范化原生状态 identity。viewer scene 与 HDF5 使用同一规则。
+
 因此项目区分两种恢复：
 
 - 恢复已采样监督参数空间：只需 HDF5；
-- 恢复源材质并求任意新点：需要 HDF5 中的 identity/hash 加 `data/source-materials/` 对应 package。
+- 恢复源材质并求任意新点：需要 HDF5 中的 identity/hash 加 `assets/source-materials/` 对应 package。
 
 ## 3. Provider 接口
 
@@ -118,6 +120,8 @@ RGB f(wo, wi) × |dot(Ns, wi)|
 其中 `Ns` 是 reference 实际使用的 shading normal；MaterialX 可由 normal map 和 footprint 得到它。OpenPBR 的透射方向因此同样使用绝对余弦。运行时公共 `evaluate()` 仍返回不含余弦的 `f`，模型输出参数化必须自行声明。
 
 `proposal_pdf` 描述采集 `wi` 的分布，`solid_angle_weight` 描述当前离散积分权重，二者不能互相替代。固定 probe、均匀采样、microfacet/peak proposal 和自适应 query 都通过这两个字段保留真实语义。
+
+`rng_seed` 由 provider 返回，必须是 reference 实际执行该 query 使用的随机流 seed，writer 不得根据 query 行号再合成。确定性 reference 写 0；LayerStack 当前按 `(state, wo)` 使用一个 query-group seed，再在 shader 内结合 `wi` 索引派生随机流，因此同组各方向记录相同的 seed。
 
 ## 6. 状态、split 与原生语义
 

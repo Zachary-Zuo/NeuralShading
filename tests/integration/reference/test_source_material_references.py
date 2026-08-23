@@ -20,7 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_downloaded_merl_table_opens() -> None:
-    asset_root = PROJECT_ROOT / "data" / "source-materials" / "merl-brdf" / "v1"
+    asset_root = PROJECT_ROOT / "assets" / "source-materials" / "merl-brdf" / "v1"
     if not (asset_root / "complete.json").is_file():
         pytest.skip("MERL source material asset is not downloaded")
     marker = json.loads((asset_root / "complete.json").read_text(encoding="utf-8"))
@@ -54,7 +54,7 @@ def test_openpbr_reference_evaluates_and_samples_official_material() -> None:
 
 
 def test_downloaded_materialx_assets_validate_and_generate_glsl(tmp_path: Path) -> None:
-    asset_root = PROJECT_ROOT / "data" / "source-materials" / "materialx-polyhaven" / "v1"
+    asset_root = PROJECT_ROOT / "assets" / "source-materials" / "materialx-polyhaven" / "v1"
     if not (asset_root / "complete.json").is_file():
         pytest.skip("Poly Haven MaterialX source assets are not downloaded")
     marker = json.loads((asset_root / "complete.json").read_text(encoding="utf-8"))

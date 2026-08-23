@@ -12,7 +12,6 @@
   "environment_source_manifest": "docs/manifests/polyhaven_hdri_v0.json",
   "environment_license": "CC0",
   "source_material": "viewer-studio-material-v1.json",
-  "object_mode": 0,
   "reference_samples_per_frame": 4,
   "reference_scene_max_bounces": 4,
   "reference_layer_walk_max_depth": 24,

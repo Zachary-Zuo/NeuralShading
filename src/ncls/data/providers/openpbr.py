@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 from typing import Sequence
@@ -57,6 +57,7 @@ class OpenPBRProvider(BaseProvider):
             if not path.is_file() or path.stat().st_size != int(record["size"]):
                 raise FileNotFoundError(f"OpenPBR source document is missing or truncated: {path}")
             material = OpenPBRMaterial.from_materialx(path)
+            material = replace(material, source_document=str(record["document"]).replace("\\", "/"))
             payload = material.to_json().encode("utf-8")
             source_hash = str(record["sha256"])
             states.append(SourceState(

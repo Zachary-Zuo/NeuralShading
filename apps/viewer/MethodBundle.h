@@ -28,6 +28,7 @@ struct ViewerMethod
     std::string backendId;
     uint32_t backendVersion = 0;
     std::string architectureId;
+    std::vector<std::string> supportedIrIds;
     uint32_t width = 0;
     uint32_t parameterCount = 0;
     uint32_t stateBytesPerPixel = 0;

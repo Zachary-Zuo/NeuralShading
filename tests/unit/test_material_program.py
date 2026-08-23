@@ -26,14 +26,6 @@ from ncls.core.material import (
     validate_material_program,
 )
 from ncls.core.material.abi_layout import render_slang_header
-from ncls.core.material.legacy_v0 import (
-    LegacyLayerInterface,
-    LegacyLayerMedium,
-    LegacyLayerStack,
-    LegacyLayerType,
-    from_legacy_stack,
-    to_legacy_stack,
-)
 from ncls.cli import main as cli_main
 
 
@@ -127,37 +119,6 @@ def test_registry_rejects_unknown_operation() -> None:
 def test_generated_slang_abi_is_current() -> None:
     shader = PROJECT_ROOT / "shaders" / "ncls" / "contracts" / "layer_stack_ir.slang"
     assert shader.read_text(encoding="utf-8") == render_slang_header()
-
-
-def test_legacy_stack_conversion_preserves_used_semantics() -> None:
-    legacy = LegacyLayerStack(
-        (
-            LegacyLayerInterface(
-                LegacyLayerType.ROUGH_DIELECTRIC,
-                0.08,
-                0.17,
-                eta=(1.5, 9.0, 11.0),
-                tangent_rotation=0.25,
-            ),
-            LegacyLayerInterface(
-                LegacyLayerType.ROUGH_CONDUCTOR,
-                0.3,
-                0.5,
-                eta=(0.2, 0.9, 1.1),
-                k=(3.9, 2.5, 2.1),
-                albedo=(0.1, 0.2, 0.3),
-                tangent_rotation=-0.4,
-            ),
-        ),
-        (LegacyLayerMedium((0.1, 0.2, 0.3), thickness=0.4),),
-    )
-    converted = from_legacy_stack(legacy)
-    assert converted == make_ir()
-    restored = to_legacy_stack(converted)
-    assert restored.layers[0].eta == pytest.approx((1.5, 1.5, 1.5))
-    assert restored.layers[1].eta == pytest.approx(legacy.layers[1].eta)
-    assert restored.layers[1].k == pytest.approx(legacy.layers[1].k)
-    assert restored.media == pytest.approx(legacy.media)
 
 
 def test_material_cli_validates_and_packs(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

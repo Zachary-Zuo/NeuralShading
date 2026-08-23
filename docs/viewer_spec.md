@@ -18,7 +18,7 @@
 - 相机、环境、曝光、每帧 spp、场景反弹上限和层内随机游走上限；
 - 上游 commit、许可证和资源 manifest。
 
-版本化源资产位于被 Git 忽略但职责固定的 `data/source-materials/viewer-scenes/studio-v1/` 与 `data/hdris/polyhaven_1k/`。获取/验证由 `scripts/fetch_viewer_assets.ps1` 完成；runtime 副本位于 Falcor bin 目录的 `data/ncls-viewer/`。无 replay、无显式场景参数时只能从这个 runtime preset 启动，缺失或哈希不匹配必须报错，不能静默退回解析球。
+版本化源资产位于被 Git 忽略但职责固定的 `assets/viewer/scenes/studio-v1/` 与 `assets/viewer/environments/polyhaven-1k/`。获取/验证由 `scripts/fetch_viewer_assets.ps1` 完成；runtime 副本位于 Falcor bin 目录的 `data/ncls-viewer/`。无 replay、无显式场景参数时只能从这个 runtime preset 启动，缺失或哈希不匹配必须报错。viewer 只保留统一的 Falcor scene reference path，不再提供无场景解析预览。
 
 用户仍可用 CLI 或文件对话框加载其他 Falcor Scene、HDRI 和源材质，以验证未见 mesh/材质；这属于显式覆盖，不改变默认验收场景。
 

@@ -76,9 +76,9 @@ ViewerMethod loadBundle(
 
     const auto& descriptor = manifest.at("backend_descriptor");
     require(descriptor.value("bounded_execution", false), "realtime backend must have bounded execution");
-    constexpr uint32_t kRequiredCapabilities = 31u;
+    constexpr uint32_t kRequiredCapabilities = 1u | 2u | 16u;
     require((descriptor.value("capabilities", 0u) & kRequiredCapabilities) == kRequiredCapabilities,
-        "backend is missing prepare/evaluate/sample/pdf/anisotropic-frame capabilities");
+        "backend is missing prepare/evaluate/anisotropic-frame capabilities required by the viewer");
     require(descriptor.at("shader_entry_points").value("prepare", "") == "LegacyLtcK2P1Backend.prepare",
         "bundle prepare entry does not match the compiled P1 runtime");
     const auto& compiler = manifest.at("compiler");
@@ -165,6 +165,8 @@ ViewerMethod loadBundle(
     method.backendId = manifest.at("backend_id").get<std::string>();
     method.backendVersion = manifest.at("backend_version").get<uint32_t>();
     method.architectureId = compiler.at("architecture_id").get<std::string>();
+    for (const auto& value : manifest.at("supported_ir_ids"))
+        method.supportedIrIds.push_back(value.get<std::string>());
     method.width = width;
     method.parameterCount = parameterCount;
     method.stateBytesPerPixel = descriptor.at("state_stride").get<uint32_t>();

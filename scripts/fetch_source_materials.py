@@ -14,7 +14,7 @@ import zipfile
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SOURCE_MATERIAL_ROOT = PROJECT_ROOT / "data" / "source-materials"
+SOURCE_MATERIAL_ROOT = PROJECT_ROOT / "assets" / "source-materials"
 USER_AGENT = "NeuralShading source-material importer/1.0"
 
 

@@ -166,6 +166,7 @@ class LayerStackProvider(BaseProvider):
             np.ones(shape, dtype=np.uint8),
             np.ones(shape, dtype=np.uint32),
             np.zeros(shape, dtype=np.float32),
+            np.broadcast_to(seeds[None, :, None], shape).copy().astype(np.uint64),
         )
 
     def metadata(self):

@@ -40,17 +40,17 @@ def main() -> None:
     parser.add_argument(
         "--hdris",
         type=Path,
-        default=PROJECT_ROOT / "data" / "hdris" / "polyhaven_1k",
+        default=PROJECT_ROOT / "assets" / "viewer" / "environments" / "polyhaven-1k",
     )
     parser.add_argument(
         "--directions",
         type=Path,
-        default=PROJECT_ROOT / "data" / "v0_oracle_512" / "light_directions.npy",
+        default=PROJECT_ROOT / "artifacts" / "legacy-data" / "v0_oracle_512" / "light_directions.npy",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=PROJECT_ROOT / "data" / "hdris" / "polyhaven_probes_v0.npz",
+        default=PROJECT_ROOT / "artifacts" / "caches" / "polyhaven_probes_v0.npz",
     )
     args = parser.parse_args()
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))

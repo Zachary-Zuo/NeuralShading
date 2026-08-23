@@ -79,7 +79,10 @@ class _FakeProvider:
     def evaluate(self, state, surfaces, plan):
         shape = (len(surfaces), len(plan.view_directions), len(plan.light_directions), 3)
         value = np.full(shape, state.runtime_state, dtype=np.float32)
-        return EvaluatedBlock.deterministic(value)
+        return EvaluatedBlock.deterministic(
+            value,
+            rng_seed=np.full(shape[:-1], 100 + state.runtime_state, dtype=np.uint64),
+        )
 
     def metadata(self):
         return {"family_id": self.descriptor.family_id, "reference_id": self.descriptor.reference_id}
@@ -138,6 +141,7 @@ def test_hdf5_contract_preserves_native_state_queries_and_responses(tmp_path: Pa
         assert batch["mean"].shape == (3, 4, 3)
         np.testing.assert_allclose(batch["standard_error"], 0.0)
         np.testing.assert_allclose(batch["mean"][:, 0, 0], [1.0, 2.0, 3.0])
+        np.testing.assert_array_equal(batch["rng_seed"][:, 0], [101, 102, 103])
 
 
 def test_dataset_cli_and_semantic_hash_validation(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

@@ -121,6 +121,7 @@ private:
     bool pickSceneObject(const Falcor::float2& screenPosition);
     void updateMaterialBuffer();
     void updateReferenceSourceBuffer();
+    SourceGpuResources createFallbackSourceGpuResources();
     SourceGpuResources createSourceGpuResources(const ncls::ReferenceSource& source);
     void activateSceneMaterial(uint32_t materialId);
     const MaterialSlotBinding* inactiveSceneMaterial(uint32_t materialId) const;
@@ -150,7 +151,7 @@ private:
     void renderMaterialUi(Falcor::Gui::Widgets& widgets);
     void renderOpenPbrUi(Falcor::Gui::Widgets& widgets);
     void renderMaterialXUi(Falcor::Gui::Widgets& widgets);
-    bool allMaterialsSupportCurrentCompiler() const;
+    bool allMaterialsSupportedBy(const ncls::ViewerMethod& method) const;
     bool hasActiveMethod() const;
 
     ViewerOptions mOptions;
@@ -159,6 +160,7 @@ private:
     ncls::ReferenceSource mReferenceSource = ncls::makeDefaultReferenceSource();
     ncls::LayerStackIR& mMaterial = mReferenceSource.layerStack;
     SourceGpuResources mSourceGpu;
+    SourceGpuResources mFallbackSourceGpu;
     std::unordered_map<uint32_t, MaterialSlotBinding> mInactiveSceneMaterials;
     uint32_t mActiveSceneMaterial = std::numeric_limits<uint32_t>::max();
     std::filesystem::path mMaterialPath;
@@ -179,10 +181,9 @@ private:
     Falcor::ref<Falcor::Buffer> mpEnvironmentMarginalCdf;
     Falcor::ref<Falcor::Buffer> mpEnvironmentConditionalCdf;
 
-    Falcor::ref<Falcor::ComputePass> mpVisibilityPass;
+    Falcor::ref<Falcor::ComputePass> mpVisibilityClearPass;
     Falcor::ref<Falcor::Scene> mpScene;
     Falcor::ref<Falcor::RasterPass> mpSceneVisibilityPass;
-    Falcor::ref<Falcor::ComputePass> mpReferencePass;
     Falcor::ref<Falcor::ComputePass> mpReferencePathPass;
     Falcor::ref<Falcor::ComputePass> mpDenoisePass;
     Falcor::ref<Falcor::ComputePass> mpPreparePass;
@@ -231,7 +232,6 @@ private:
     uint32_t mSamplesPerFrame = 1;
     uint32_t mMaxSceneBounces = 4;
     uint32_t mMaxLayerWalkDepth = 24;
-    uint32_t mObjectMode = 0;
     uint32_t mSelectedInterface = 0;
     uint32_t mComparisonMode = 0;
     float mSplit = 0.5f;

@@ -8,9 +8,9 @@
 
 ## 为什么需要
 
-只保存 Falcor scene 无法恢复 viewer 中的源材质绑定；只保存一个 `--material` 路径也无法表达多 slot。原 capture v3 虽记录了每个 slot 的来源摘要，但没有保存 UI 修改后的参数，因此多 slot capture 不能完整 replay。
+只保存 Falcor scene 无法恢复 viewer 中的源材质绑定；只保存一个 `--material` 路径也无法表达多 slot。capture 因此必须同时写出 viewer scene sidecar，保存逐 slot 的原生来源与 UI 修改后的完整状态，不能只依赖 capture 中面向报告的来源摘要。
 
-viewer scene 把“场景引用”和“族专属材质状态”分开：大资源仍位于 `data/` 或外部资产目录，JSON 保存可移植 URI、内容 identity 和必要的内嵌参数。加载时逐项验证 URI、identity 与参数，再创建相应的族专属 GPU 资源。
+viewer scene 把“场景引用”和“族专属材质状态”分开：原始大资源位于 `assets/` 或锁定的 `external/`，JSON 保存可移植 URI、内容 identity 和必要的内嵌参数。加载时逐项验证 URI、identity 与参数，再创建相应的族专属 GPU 资源。
 
 ## 顶层字段
 
@@ -33,7 +33,7 @@ viewer scene 把“场景引用”和“族专属材质状态”分开：大资�
 
 `family_id = "openpbr.surface@1.1.1"`。`color_space` 与 `parameters` 保存当前 resolved native inputs，参数使用 OpenPBR 名称而不是 77-float runtime offset。`geometry_normal/tangent` 的 geometry binding 在命中点由局部 shading frame 提供；scene 中保存的 basis 值用于精确恢复当前 resolved state。
 
-`source_uri` 与 `source_asset_sha256` 保留原始 OpenPBR source asset provenance。即使原文件暂时不可用，完整具名参数仍足以恢复当前 constant/resolved viewer subset；存在原文件时必须先验证它的 hash。
+`source_uri` 直接指向原始 OpenPBR `.mtlx`，`source_asset_sha256` 是该原始文档的 SHA-256；派生 resolved JSON adapter 不参与 source identity。加载 scene 时原文件必须存在并通过 hash，具名参数只负责恢复当前编辑状态，不作为缺失源资产的兜底。
 
 ### MERL
 
@@ -56,5 +56,7 @@ MaterialX 文档、图结构和纹理始终是 GT 的一部分，加载时必须
 3. MERL/MaterialX 原生资源存在并通过 hash；
 4. 各族参数有限、维度合法，纹理连接不被非法 override；
 5. 重建后的 `state_sha256` 与文件记录一致。
+
+所有 binding 都必须显式提供合法的小写 `source_asset_sha256` 与 `state_sha256`；加载器不接受缺字段、空字符串或“自动采用当前文件”的兼容行为。
 
 capture v3 的 `viewer_scene` 字段引用同目录下的 `*-scene.json`。`--replay capture.json` 优先加载该 sidecar，再应用 capture 的 method/comparison 显示状态；也可以用 `--viewer-scene FILE` 直接打开 authoring state。

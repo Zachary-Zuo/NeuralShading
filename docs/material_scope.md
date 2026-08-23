@@ -60,7 +60,7 @@ reference adapter 只负责把共同查询所需的几何、方向、光谱/颜�
 2. **reference 响应数据**：reference 对查询采样后产生的方向响应、方差、图像或其他监督；
 3. **方法产物**：direct-fit latent/evaluator、共享 decoder、compiler checkpoint、matched sampler、`MethodBundle` 和评测结果；解析 closure 产物属于对照或可选 physical core。
 
-`ncls.reference-dataset@2` 只属于第二类。它不是源材质库，也不规定第一类必须如何表达。
+`ncls.reference-dataset@3` 只属于第二类。它不是源材质库，也不规定第一类必须如何表达。
 
 ## 候选源材质族
 
@@ -121,9 +121,9 @@ coated conductor 验证已经完成；“通用 pbrt N 层 probe”仍不进入�
 |---|---|---|---|
 | ASWF OpenPBR | 原生规范、83 个 MaterialX 示例 | tag `v1.1.1`，commit `f8d6d947dfae4c9b599965a86c22826ea7a8dbfb` | 已固定到 `external/OpenPBR` |
 | Adobe `openpbr-bsdf` | 可移植 C++/GLSL/CUDA/MSL/Slang reference | commit `9edf806740d2140846d9bef76e4342fc458e2ef5` | 已固定到 `external/openpbr-bsdf` |
-| MERL BRDF Database | 100 个测量 BRDF 的原始查表 GT | ZIP 1,253,117,184 bytes，解压约 3.25 GB，Zenodo record `8101681` | 已下载到 `data/source-materials/merl-brdf/v1` 并校验 MD5/SHA256 |
+| MERL BRDF Database | 100 个测量 BRDF 的原始查表 GT | ZIP 1,253,117,184 bytes，解压约 3.25 GB，Zenodo record `8101681` | 已下载到 `assets/source-materials/merl-brdf/v1` 并校验 MD5/SHA256 |
 | MaterialX | 原生图、shader definition、GLSL generation、float renderer 和官方 viewer | tag `v1.39.4`，commit `270b5cf2ae2be24a3b6ef4b0569f1c93038dda1d` | 已固定到 `external/MaterialX`，并完成独立 renderer 与 Falcor 图像验收 |
-| Poly Haven MaterialX 材质 | 高分辨率真实纹理源材质 | 8 个 CC0 4K 材质，manifest 总计 578,787,891 bytes | 已下载到 `data/source-materials/materialx-polyhaven/v1` 并逐文件校验 MD5 |
+| Poly Haven MaterialX 材质 | 高分辨率真实纹理源材质 | 8 个 CC0 4K 材质，manifest 总计 578,787,891 bytes | 已下载到 `assets/source-materials/materialx-polyhaven/v1` 并逐文件校验 MD5 |
 | MatSynth | 大规模 PBR/SVBRDF 语料 | 当前完整仓库约 433 GB | 不全量下载；需要扩大语料时只取 manifest 固定的子集 |
 | refractiveindex.info database | 光谱 IOR/消光参数 | CC0；在 thin-film/真实导体阶段锁定提交 | 暂不下载 |
 | pbrt-v4-scenes | 完整场景与材质示例 | 场景级验证资源 | 当前不需要下载 |

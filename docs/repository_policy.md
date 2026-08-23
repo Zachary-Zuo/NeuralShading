@@ -16,12 +16,32 @@
 
 ## 根仓库不保存什么
 
+被 Git 忽略的大文件目录只有以下职责，不能交叉使用：
+
+```text
+assets/
+  source-materials/
+    merl-brdf/v1/                 原始测量表与发布归档
+    materialx-polyhaven/v1/       原生 .mtlx、纹理和导入记录
+  viewer/
+    scenes/studio-v1/             viewer 固定几何
+    environments/polyhaven-1k/    viewer/HDRI 原始输入
+data/
+  reference-responses/            只允许 .h5/.hdf5 ReferenceDataset
+artifacts/
+  legacy-data/                    迁移前数组与旧实验输出，仅供追溯
+  caches/                         可再生成 cache
+  ...                             capture、报告、模型和 MethodBundle
+external/                         固定提交的第三方源码
+```
+
 | 路径或类型 | 原因 |
 |---|---|
 | `external/` | Falcor、pbrt-v4、OpenPBR、openpbr-bsdf、GLM 和 MaterialX 是固定提交的独立上游克隆 |
-| `data/source-materials/` | 原始纹理、测量表、场景和其他源材质大资源；由 `references/` 中的 manifest 锁定 |
+| `assets/source-materials/` | 原始材质定义、纹理和测量表；由 `references/` 中的 manifest 锁定 |
+| `assets/viewer/` | viewer 固定场景和环境图等运行输入；由版本化 preset/manifest 锁定 |
 | `data/reference-responses/` | reference 查询后生成的响应数据，可由源材质、reference 和采集配置复现 |
-| `data/` 其他内容 | 迁移前参考数据、HDRI 和缓存体积大，不进入根 Git |
+| `data/` 其他内容 | 不允许；非 HDF5 派生数据进入 `artifacts/`，原始输入进入 `assets/` |
 | `build/` | CMake、viewer 和 pbrt probe 构建产物 |
 | `artifacts/` | training run、checkpoint、MethodBundle、capture、benchmark、验证报告和临时实验输出 |
 | `reports/` | 正确性验证结果、运行摘要和实验报告均可由代码、配置与锁定输入再生，不在根仓库持久化 |

@@ -21,7 +21,7 @@ viewer 不是当前 neural 模型结构的搜索工具。先在完整 `wo × wi`
 - 默认材质：`configs/viewer-studio-material-v1.json` 中的各向异性粗糙导体；
 - 相机、曝光、环境旋转、积分深度和所有资产 SHA-256 均由 preset 固定。
 
-`scripts/fetch_viewer_assets.ps1` 把 shaderball 放到 `data/source-materials/viewer-scenes/studio-v1/`，并验证 `data/hdris/polyhaven_1k/` 中的 HDRI；构建再把固定资源复制到 viewer runtime 的 `data/ncls-viewer/`。因此默认启动、无窗口捕获和 benchmark 看到的是同一个标准场景，而不是依赖当前工作目录的临时资产。
+`scripts/fetch_viewer_assets.ps1` 把 shaderball 放到 `assets/viewer/scenes/studio-v1/`，并验证 `assets/viewer/environments/polyhaven-1k/` 中的 HDRI；构建再把固定资源复制到 viewer runtime 的 `data/ncls-viewer/`。因此默认启动、无窗口捕获和 benchmark 看到的是同一个标准场景，而不是依赖当前工作目录的临时资产。
 
 ## 构建与运行
 
@@ -32,16 +32,16 @@ viewer 不是当前 neural 模型结构的搜索工具。先在完整 `wo × wi`
 .\scripts\build_viewer.ps1 -Configuration Release -Run --bundle-root artifacts\exports
 
 .\scripts\build_viewer.ps1 -Configuration Release -Run `
-  --reference-geometry data\source-materials\scenes\example.glb `
-  --material data\source-materials\example.mtlx `
-  --environment data\hdris\example.exr
+  --reference-geometry assets\viewer\scenes\example.glb `
+  --material assets\source-materials\example.mtlx `
+  --environment assets\viewer\environments\example.exr
 ```
 
 常用交互：单击选择物体/material slot；左键拖动 orbit；中键或右键拖动 pan；滚轮 dolly；拖动分割线；`Space` 暂停/继续 raw reference 累积；`R` 重置相机。UI 中可切换 raw/denoised preview，但该开关不重置或修改 raw 累积。
 
 UI 按职责分为 `Scene and camera`、`Material`、`Lighting`、`Reference and display`、`Realtime method`、`Capture` 与 `Performance and status`。`Lighting` 内再按环境光、方向光、点光和矩形光分组；未启用的灯只显示禁用说明，不再暴露看似可改但不会参与图像的颜色和强度。颜色控件编辑线性 RGB。材质或光照参数一旦变化，viewer 会自动解除 `Freeze reference`、清空旧累积并立即用新状态出图。
 
-`Source material family` 可以在当前 slot 上明确切换 LayerStack、MERL、OpenPBR 与 MaterialX。LayerStack/OpenPBR 可直接建立默认实例；MERL 必须选择 `.binary` 测量表，MaterialX 必须选择 `.mtlx` 及其原生纹理资源。OpenPBR 可另存 resolved native parameter JSON；MaterialX 的图/纹理和 MERL 测量表不由 viewer 改写，编辑后的 override 随 viewer scene 保存。
+`Source material family` 可以在当前 slot 上明确切换 LayerStack、MERL、OpenPBR 与 MaterialX。LayerStack 可直接建立规范化默认实例；MERL 必须选择 `.binary` 测量表，OpenPBR 必须选择记录原始 `.mtlx` provenance 的 resolved adapter，MaterialX 必须选择 `.mtlx` 及其原生纹理资源。OpenPBR 可另存 resolved native parameter JSON；MaterialX 的图/纹理和 MERL 测量表不由 viewer 改写，编辑后的 override 随 viewer scene 保存。
 
 `Save viewer scene` 写出 `ncls.viewer-scene@1` sidecar。它逐 material slot 保存 family 与状态：LayerStack 内嵌 `MaterialProgram`，OpenPBR 保存具名参数，MERL 保存测量表 URI/hash，MaterialX 保存文档/纹理 identity 与可编辑 constant override；同时保存几何、HDRI、相机、物理光照和 reference 上限。`Load viewer scene` 会按 URI、hash 和 slot 覆盖关系验证并重建 GPU 资源。详细合同见 [viewer scene 合同](../../docs/contracts/viewer_scene.md)。
 

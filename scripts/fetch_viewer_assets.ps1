@@ -19,14 +19,14 @@ function Assert-Sha256([string]$Path, [string]$Expected, [string]$Label) {
 }
 
 $sceneSource = Join-Path $projectRoot ($preset.reference_geometry_source -replace '/', '\')
-$sceneTargetDirectory = Join-Path $projectRoot "data\source-materials\viewer-scenes\studio-v1"
+$sceneTargetDirectory = Join-Path $projectRoot "assets\viewer\scenes\studio-v1"
 $sceneTarget = Join-Path $sceneTargetDirectory $preset.reference_geometry
 Assert-Sha256 $sceneSource $preset.reference_geometry_sha256 "Pinned MaterialX shaderball"
 New-Item -ItemType Directory -Force -Path $sceneTargetDirectory | Out-Null
 Copy-Item -LiteralPath $sceneSource -Destination $sceneTarget -Force
 Assert-Sha256 $sceneTarget $preset.reference_geometry_sha256 "Provisioned viewer shaderball"
 
-$environmentTarget = Join-Path $projectRoot "data\hdris\polyhaven_1k\$($preset.environment)"
+$environmentTarget = Join-Path $projectRoot "assets\viewer\environments\polyhaven-1k\$($preset.environment)"
 $environmentValid = Test-Path -LiteralPath $environmentTarget -PathType Leaf
 if ($environmentValid) {
     $environmentValid = (Get-FileHash -Algorithm SHA256 -LiteralPath $environmentTarget).Hash.ToLowerInvariant() `

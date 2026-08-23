@@ -27,7 +27,6 @@ namespace
 {
 constexpr uint32_t kLegacyStateBytes = 176;
 constexpr uint32_t kMaximumSceneMaterials = 64;
-const Gui::DropdownList kObjectModes = {{0, "Sphere"}, {1, "Shader ball"}, {2, "Detail hero"}};
 const Gui::DropdownList kComparisonModes = {
     {0, "Reference / method split"},
     {1, "Linear absolute error"},
@@ -46,6 +45,13 @@ float3 normalizedOr(float3 value, float3 fallback)
 {
     const float lengthSquared = dot(value, value);
     return lengthSquared > 1e-12f ? value / std::sqrt(lengthSquared) : fallback;
+}
+
+bool isSha256(const std::string& value)
+{
+    return value.size() == 64u && std::all_of(value.begin(), value.end(), [](unsigned char character) {
+        return (character >= '0' && character <= '9') || (character >= 'a' && character <= 'f');
+    });
 }
 
 std::string shortId(const std::string& value)
@@ -142,12 +148,10 @@ ViewerOptions parseOptions(int argc, char** argv)
         std::ifstream stream(options.replayPath);
         if (!stream) throw std::runtime_error("cannot open replay manifest: " + options.replayPath.string());
         const nlohmann::json replay = nlohmann::json::parse(stream);
-        const uint32_t replayVersion = replay.value("format_version", 0u);
         if (replay.value("format_name", "") != "ncls.viewer-capture"
-            || (replayVersion != 1u && replayVersion != 2u && replayVersion != 3u))
+            || replay.value("format_version", 0u) != 3u)
             throw std::runtime_error("unsupported replay manifest");
-        if (replayVersion == 3u
-            && replay.value("reference_integrator", "") != "ncls.scene-path-tracer@1")
+        if (replay.value("reference_integrator", "") != "ncls.scene-path-tracer@1")
             throw std::runtime_error("capture v3 requires reference_integrator ncls.scene-path-tracer@1");
         const auto base = std::filesystem::absolute(options.replayPath).parent_path();
         const auto resolve = [&](const std::string& value) {
@@ -156,8 +160,7 @@ ViewerOptions parseOptions(int argc, char** argv)
             return path.is_absolute() ? path : base / path;
         };
         options.bundleRoot = resolve(replay.value("bundle_root", std::string()));
-        options.materialPath = resolve(replay.value(
-            "source_material", replay.value("material_program", std::string())));
+        options.materialPath = resolve(replay.value("source_material", std::string()));
         options.environmentPath = resolve(replay.value("environment", std::string()));
         options.environmentSha256 = replay.value("environment_sha256", std::string());
         options.referenceGeometryPath = resolve(replay.value("reference_geometry", std::string()));
@@ -226,6 +229,7 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
         .setAddressingMode(TextureAddressingMode::Wrap, TextureAddressingMode::Wrap, TextureAddressingMode::Wrap);
     mpMaterialXSampler = getDevice()->createSampler(materialSamplerDesc);
     createDefaultEnvironment();
+    mFallbackSourceGpu = createFallbackSourceGpuResources();
     mSourceGpu = createSourceGpuResources(mReferenceSource);
     mOpenPbrLuts = ncls::OpenPbrLuts::create(getDevice());
     const float zero = 0.f;
@@ -280,6 +284,8 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
         if (!mOptions.environmentPath.empty())
             loadEnvironment(mOptions.environmentPath, mOptions.environmentSha256);
     }
+    if (!mpScene || !mpReferencePathPass)
+        throw std::runtime_error("the viewer requires a loaded scene and the unified scene reference path");
     resizeResources(getTargetFbo()->getWidth(), getTargetFbo()->getHeight());
     scanBundles();
     if (!mOptions.requestedMethodId.empty())
@@ -299,8 +305,7 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
 
 void NclsViewer::createPasses()
 {
-    mpVisibilityPass = ComputePass::create(getDevice(), "NclsViewer/shaders/Visibility.cs.slang");
-    mpReferencePass = ComputePass::create(getDevice(), "NclsViewer/shaders/Reference.cs.slang");
+    mpVisibilityClearPass = ComputePass::create(getDevice(), "NclsViewer/shaders/ClearVisibility.cs.slang");
     mpDenoisePass = ComputePass::create(getDevice(), "NclsViewer/shaders/Denoise.cs.slang");
     mpPreparePass = ComputePass::create(getDevice(), "NclsViewer/shaders/Prepare.cs.slang");
     mpApproximationPass = ComputePass::create(getDevice(), "NclsViewer/shaders/Approximation.cs.slang");
@@ -395,52 +400,84 @@ void NclsViewer::rebuildEnvironmentSampling(
     mEnvironmentSamplingDimensions = uint2(width, height);
 }
 
-NclsViewer::SourceGpuResources NclsViewer::createSourceGpuResources(const ncls::ReferenceSource& source)
+NclsViewer::SourceGpuResources NclsViewer::createFallbackSourceGpuResources()
 {
     const auto shaderResource = ResourceBindFlags::ShaderResource;
     SourceGpuResources resources;
+    const auto layerStack = ncls::makeDefaultMaterial();
     resources.pMaterial = getDevice()->createStructuredBuffer(
-        sizeof(ncls::LayerStackIR), 1, shaderResource, MemoryType::DeviceLocal, &source.layerStack);
-
+        sizeof(ncls::LayerStackIR), 1, shaderResource, MemoryType::DeviceLocal, &layerStack);
     const float3 zeroMerl(0.f);
-    resources.pMerlBrdf = source.merlBrdf.empty()
-        ? getDevice()->createStructuredBuffer(sizeof(float3), 1, shaderResource, MemoryType::DeviceLocal, &zeroMerl)
-        : getDevice()->createStructuredBuffer(
+    resources.pMerlBrdf = getDevice()->createStructuredBuffer(
+        sizeof(float3), 1, shaderResource, MemoryType::DeviceLocal, &zeroMerl);
+    const std::array<float, 77> zeroOpenPbr{};
+    resources.pOpenPbrInputs = getDevice()->createStructuredBuffer(
+        sizeof(float), static_cast<uint32_t>(zeroOpenPbr.size()),
+        shaderResource, MemoryType::DeviceLocal, zeroOpenPbr.data());
+    const std::array<float, 24> zeroMaterialX{};
+    resources.pMaterialXInputs = getDevice()->createStructuredBuffer(
+        sizeof(float), static_cast<uint32_t>(zeroMaterialX.size()),
+        shaderResource, MemoryType::DeviceLocal, zeroMaterialX.data());
+    const float4 baseColor(.8f, .8f, .8f, 1.f);
+    const float4 roughness(.2f, .2f, .2f, 1.f);
+    const float4 metalness(0.f, 0.f, 0.f, 1.f);
+    const float4 normal(.5f, .5f, 1.f, 1.f);
+    resources.pMaterialXBaseColor = getDevice()->createTexture2D(
+        1, 1, ResourceFormat::RGBA32Float, 1, 1, &baseColor, shaderResource);
+    resources.pMaterialXRoughness = getDevice()->createTexture2D(
+        1, 1, ResourceFormat::RGBA32Float, 1, 1, &roughness, shaderResource);
+    resources.pMaterialXMetalness = getDevice()->createTexture2D(
+        1, 1, ResourceFormat::RGBA32Float, 1, 1, &metalness, shaderResource);
+    resources.pMaterialXNormalMap = getDevice()->createTexture2D(
+        1, 1, ResourceFormat::RGBA32Float, 1, 1, &normal, shaderResource);
+    return resources;
+}
+
+NclsViewer::SourceGpuResources NclsViewer::createSourceGpuResources(const ncls::ReferenceSource& source)
+{
+    const auto shaderResource = ResourceBindFlags::ShaderResource;
+    SourceGpuResources resources = mFallbackSourceGpu;
+    if (source.family == ncls::ReferenceFamily::LayerStack)
+        resources.pMaterial = getDevice()->createStructuredBuffer(
+            sizeof(ncls::LayerStackIR), 1, shaderResource, MemoryType::DeviceLocal, &source.layerStack);
+    else if (source.family == ncls::ReferenceFamily::Merl)
+        resources.pMerlBrdf = getDevice()->createStructuredBuffer(
             sizeof(std::array<float, 3>), static_cast<uint32_t>(source.merlBrdf.size()),
             shaderResource, MemoryType::DeviceLocal, source.merlBrdf.data());
-    resources.pOpenPbrInputs = getDevice()->createStructuredBuffer(
-        sizeof(float), static_cast<uint32_t>(source.openPbrInputs.size()),
-        shaderResource, MemoryType::DeviceLocal, source.openPbrInputs.data());
+    else if (source.family == ncls::ReferenceFamily::OpenPbr)
+        resources.pOpenPbrInputs = getDevice()->createStructuredBuffer(
+            sizeof(float), static_cast<uint32_t>(source.openPbrInputs.size()),
+            shaderResource, MemoryType::DeviceLocal, source.openPbrInputs.data());
+    else if (source.family != ncls::ReferenceFamily::MaterialX)
+        throw std::runtime_error("unsupported reference source family");
+
+    if (source.family != ncls::ReferenceFamily::MaterialX) return resources;
     resources.pMaterialXInputs = getDevice()->createStructuredBuffer(
         sizeof(float), static_cast<uint32_t>(source.materialXInputs.size()),
         shaderResource, MemoryType::DeviceLocal, source.materialXInputs.data());
 
     auto loadTexture = [&](const std::filesystem::path& texturePath, bool srgb, bool generateMips,
-                           bool convertToFloat16, const float4& fallback) {
-        if (!texturePath.empty())
-        {
-            logInfo("Loading MaterialX texture '{}' (sRGB={})", texturePath, srgb);
-            auto texture = convertToFloat16
-                ? loadHalfRgbaExr(getDevice(), texturePath, generateMips)
-                : Texture::createFromFile(getDevice(), texturePath, generateMips, srgb);
-            if (!texture) throw std::runtime_error("Falcor failed to load MaterialX texture: " + texturePath.string());
-            logInfo("Loaded MaterialX texture '{}' as {}x{} with {} mip(s)",
-                texturePath.filename(), texture->getWidth(), texture->getHeight(), texture->getMipCount());
-            return texture;
-        }
-        return getDevice()->createTexture2D(
-            1, 1, ResourceFormat::RGBA32Float, 1, 1, &fallback, shaderResource);
+                           bool convertToFloat16, const ref<Texture>& fallback) {
+        if (texturePath.empty()) return fallback;
+        logInfo("Loading MaterialX texture '{}' (sRGB={})", texturePath, srgb);
+        auto texture = convertToFloat16
+            ? loadHalfRgbaExr(getDevice(), texturePath, generateMips)
+            : Texture::createFromFile(getDevice(), texturePath, generateMips, srgb);
+        if (!texture) throw std::runtime_error("Falcor failed to load MaterialX texture: " + texturePath.string());
+        logInfo("Loaded MaterialX texture '{}' as {}x{} with {} mip(s)",
+            texturePath.filename(), texture->getWidth(), texture->getHeight(), texture->getMipCount());
+        return texture;
     };
     // MaterialX samples srgb_texture in the encoded domain and applies the
     // explicit srgb_texture_to_lin_rec709 transform in the reference shader.
     resources.pMaterialXBaseColor = loadTexture(
-        source.materialXBaseColorTexture, false, true, false, float4(.8f, .8f, .8f, 1.f));
+        source.materialXBaseColorTexture, false, true, false, mFallbackSourceGpu.pMaterialXBaseColor);
     resources.pMaterialXRoughness = loadTexture(
-        source.materialXRoughnessTexture, false, true, true, float4(.2f, .2f, .2f, 1.f));
+        source.materialXRoughnessTexture, false, true, true, mFallbackSourceGpu.pMaterialXRoughness);
     resources.pMaterialXMetalness = loadTexture(
-        source.materialXMetalnessTexture, false, true, true, float4(0.f, 0.f, 0.f, 1.f));
+        source.materialXMetalnessTexture, false, true, true, mFallbackSourceGpu.pMaterialXMetalness);
     resources.pMaterialXNormalMap = loadTexture(
-        source.materialXNormalTexture, false, true, true, float4(.5f, .5f, 1.f, 1.f));
+        source.materialXNormalTexture, false, true, true, mFallbackSourceGpu.pMaterialXNormalMap);
     return resources;
 }
 
@@ -662,7 +699,7 @@ void NclsViewer::activateSceneMaterial(uint32_t materialId)
     mSelectedInterface = 0u;
     resetReference(false, true);
 
-    if (!allMaterialsSupportCurrentCompiler()) selectMethod(-1);
+    if (mSelectedMethod >= 0 && !allMaterialsSupportedBy(mMethods[mSelectedMethod])) selectMethod(-1);
 }
 
 void NclsViewer::updateMaterialBuffer()
@@ -696,19 +733,24 @@ void NclsViewer::updateReferenceSourceBuffer()
     resetReference(false, false);
 }
 
-bool NclsViewer::allMaterialsSupportCurrentCompiler() const
+bool NclsViewer::allMaterialsSupportedBy(const ncls::ViewerMethod& method) const
 {
-    if (!mReferenceSource.supportsCurrentCompiler()) return false;
+    const auto supports = [&](const ncls::ReferenceSource& source) {
+        if (source.family != ncls::ReferenceFamily::LayerStack) return false;
+        return std::find(method.supportedIrIds.begin(), method.supportedIrIds.end(), "ncls.layer-stack-ir@1")
+            != method.supportedIrIds.end();
+    };
+    if (!supports(mReferenceSource)) return false;
     for (const auto& [materialId, binding] : mInactiveSceneMaterials)
-        if (!binding.source.supportsCurrentCompiler()) return false;
+        if (!supports(binding.source)) return false;
     return true;
 }
 
 bool NclsViewer::hasActiveMethod() const
 {
-    return allMaterialsSupportCurrentCompiler()
-        && mSelectedMethod >= 0
-        && mSelectedMethod < static_cast<int32_t>(mMethods.size());
+    return mSelectedMethod >= 0
+        && mSelectedMethod < static_cast<int32_t>(mMethods.size())
+        && allMaterialsSupportedBy(mMethods[mSelectedMethod]);
 }
 
 void NclsViewer::resetReference(bool visibilityChanged, bool prepareChanged)
@@ -775,7 +817,7 @@ void NclsViewer::scanBundles()
     if (!previousId.empty())
         for (uint32_t index = 0; index < mMethods.size(); ++index)
             if (mMethods[index].methodId == previousId) selection = static_cast<int32_t>(index);
-    selectMethod(allMaterialsSupportCurrentCompiler() ? selection : -1);
+    selectMethod(selection >= 0 && allMaterialsSupportedBy(mMethods[selection]) ? selection : -1);
 }
 
 bool NclsViewer::runParityProbe(const ncls::ViewerMethod& method, std::string& error)
@@ -835,6 +877,7 @@ void NclsViewer::selectMethod(int32_t methodIndex)
 {
     const bool previouslyActive = hasActiveMethod();
     mSelectedMethod = methodIndex >= 0 && methodIndex < static_cast<int32_t>(mMethods.size()) ? methodIndex : -1;
+    if (mSelectedMethod >= 0 && !allMaterialsSupportedBy(mMethods[mSelectedMethod])) mSelectedMethod = -1;
     mMethodUiValue = mSelectedMethod >= 0 ? static_cast<uint32_t>(mSelectedMethod + 1) : 0u;
     if (mSelectedMethod >= 0)
     {
@@ -895,8 +938,9 @@ void NclsViewer::endTiming(PassTiming& timing)
 
 void NclsViewer::renderVisibility(RenderContext* pRenderContext)
 {
-    const bool useScene = mpSceneFbo && mpScene && mpSceneVisibilityPass;
-    auto root = mpVisibilityPass->getRootVar();
+    if (!mpSceneFbo || !mpScene || !mpSceneVisibilityPass)
+        throw std::runtime_error("scene visibility resources are unavailable");
+    auto root = mpVisibilityClearPass->getRootVar();
     root["gPositionDepth"] = mpPositionDepth;
     root["gNormal"] = mpNormal;
     root["gTangent"] = mpTangent;
@@ -905,28 +949,20 @@ void NclsViewer::renderVisibility(RenderContext* pRenderContext)
     root["gMaterialXTexCoordGrad"] = mpMaterialXTexCoordGrad;
     root["gInstanceId"] = mpInstanceId;
     root["gMaterialId"] = mpSceneMaterialId;
-    auto constants = root["VisibilityCB"];
+    auto constants = root["ClearVisibilityCB"];
     constants["gFrameDim"] = uint2(mViewWidth, mOutputHeight);
-    constants["gObjectMode"] = mObjectMode;
-    constants["gClearOnly"] = uint32_t(useScene);
-    constants["gVerticalFovRadians"] = mCamera.verticalFovDegrees * (3.14159265358979323846f / 180.f);
-    constants["gCameraPosition"] = cameraPosition();
-    constants["gCameraTarget"] = mCamera.target;
     beginTiming(mVisibilityTiming);
-    mpVisibilityPass->execute(pRenderContext, mViewWidth, mOutputHeight);
-    if (useScene)
-    {
-        syncSceneCamera();
-        mpScene->update(pRenderContext, getGlobalClock().getTime());
-        pRenderContext->clearDsv(mpSceneFbo->getDepthStencilView().get(), 1.f, 0u, true, false);
-        std::string extension = mReferenceGeometryPath.extension().string();
-        std::transform(extension.begin(), extension.end(), extension.begin(),
-            [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-        mpSceneVisibilityPass->getRootVar()["SceneVisibilityCB"]["gFlipTexCoordV"] = uint32_t(extension == ".obj");
-        mpScene->rasterize(
-            pRenderContext, mpSceneVisibilityPass->getState().get(), mpSceneVisibilityPass->getVars().get(),
-            RasterizerState::CullMode::None);
-    }
+    mpVisibilityClearPass->execute(pRenderContext, mViewWidth, mOutputHeight);
+    syncSceneCamera();
+    mpScene->update(pRenderContext, getGlobalClock().getTime());
+    pRenderContext->clearDsv(mpSceneFbo->getDepthStencilView().get(), 1.f, 0u, true, false);
+    std::string extension = mReferenceGeometryPath.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+        [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+    mpSceneVisibilityPass->getRootVar()["SceneVisibilityCB"]["gFlipTexCoordV"] = uint32_t(extension == ".obj");
+    mpScene->rasterize(
+        pRenderContext, mpSceneVisibilityPass->getState().get(), mpSceneVisibilityPass->getVars().get(),
+        RasterizerState::CullMode::None);
     endTiming(mVisibilityTiming);
     mVisibilityDirty = false;
 }
@@ -936,7 +972,6 @@ void NclsViewer::renderReference(RenderContext* pRenderContext)
     const uint32_t next = 1u - mReferencePing;
     const bool accumulate = !mCameraDragging && !mPanDragging;
     beginTiming(mReferenceTiming);
-    if (mpScene && mpReferencePathPass)
     {
         auto root = mpReferencePathPass->getRootVar();
         mpScene->bindShaderDataForRaytracing(pRenderContext, root["gScene"]);
@@ -987,48 +1022,8 @@ void NclsViewer::renderReference(RenderContext* pRenderContext)
         pRenderContext->clearUAV(mpReferenceNoiseStats->getUAV().get(), uint4(0u));
         mpReferencePathPass->execute(pRenderContext, mViewWidth, mOutputHeight);
     }
-    else
-    {
-        auto root = mpReferencePass->getRootVar();
-        root["gMaterialXSampler"] = mpMaterialXSampler;
-        mOpenPbrLuts.bind(root);
-        root["gPositionDepth"] = mpPositionDepth;
-        root["gNormal"] = mpNormal;
-        root["gTangent"] = mpTangent;
-        root["gViewDirection"] = mpViewDirection;
-        root["gMaterialXTexCoord"] = mpMaterialXTexCoord;
-        root["gMaterialXTexCoordGrad"] = mpMaterialXTexCoordGrad;
-        root["gMaterialId"] = mpSceneMaterialId;
-        root["gPreviousReference"] = mpReference[mReferencePing];
-        root["gNextReference"] = mpReference[next];
-        root["gEnvironment"] = mpEnvironment;
-        root["gLinearSampler"] = mpLinearSampler;
-        auto constants = root["ReferenceCB"];
-        constants["gFrameDim"] = uint2(mViewWidth, mOutputHeight);
-        constants["gFrameIndex"] = mFrameIndex;
-        constants["gUseRasterGeometry"] = 0u;
-        constants["gReferenceSpp"] = mReferenceSpp;
-        constants["gSamplesThisFrame"] = mSamplesPerFrame;
-        constants["gMaxDepth"] = mMaxLayerWalkDepth;
-        constants["gResetAccumulation"] = uint32_t(mResetAccumulation);
-        constants["gAccumulate"] = uint32_t(accumulate);
-        bindLighting(root, "ReferenceCB");
-        root["gMaterials"] = mSourceGpu.pMaterial;
-        root["gMerlBrdf"] = mSourceGpu.pMerlBrdf;
-        root["gOpenPbrInputs"] = mSourceGpu.pOpenPbrInputs;
-        root["gMaterialXInputs"] = mSourceGpu.pMaterialXInputs;
-        root["gMaterialXBaseColor"] = mSourceGpu.pMaterialXBaseColor;
-        root["gMaterialXRoughness"] = mSourceGpu.pMaterialXRoughness;
-        root["gMaterialXMetalness"] = mSourceGpu.pMaterialXMetalness;
-        root["gMaterialXNormalMap"] = mSourceGpu.pMaterialXNormalMap;
-        constants["gReferenceFamily"] = static_cast<uint32_t>(mReferenceSource.family);
-        constants["gOpenPbrColorSpace"] = mReferenceSource.openPbrColorSpace;
-        constants["gTargetMaterialId"] = 0u;
-        constants["gInitializeOutput"] = 1u;
-        mpReferencePass->execute(pRenderContext, mViewWidth, mOutputHeight);
-    }
     endTiming(mReferenceTiming);
-    if (mpScene && (mFrameIndex % 8u == 0u || mResetAccumulation))
+    if (mFrameIndex % 8u == 0u || mResetAccumulation)
     {
         const auto stats = pRenderContext->readBuffer<uint32_t>(mpReferenceNoiseStats.get(), 0u, 2u);
         if (stats.size() == 2u && stats[1] > 0u)
@@ -1347,9 +1342,8 @@ void NclsViewer::renderMaterialUi(Gui::Widgets& widgets)
         if (mReferenceSource.family == ncls::ReferenceFamily::MaterialX)
         {
             widgets.text("Falcor query: MaterialX 1.39.4 standard_surface + source textures");
-            widgets.text(mReferenceGeometryPath.empty()
-                ? "Geometry contract: no scene specified; using the analytic-sphere fallback"
-                : "Geometry contract: reference path traces the Falcor scene; SHA-256 " + shortId(mReferenceGeometrySha256));
+            widgets.text("Geometry contract: reference path traces the Falcor scene; SHA-256 "
+                + shortId(mReferenceGeometrySha256));
             widgets.text("The displacement graph remains in the source document and is outside this surface-response query");
         }
         if (mReferenceSource.family == ncls::ReferenceFamily::OpenPbr) renderOpenPbrUi(widgets);
@@ -1491,14 +1485,6 @@ void NclsViewer::onGuiRender(Gui* pGui)
         if (group)
         {
             bool physicalChanged = false;
-            if (mReferenceSource.family == ncls::ReferenceFamily::MaterialX)
-            {
-                if (mObjectMode != 0u) { mObjectMode = 0u; physicalChanged = true; }
-                group.text(mReferenceGeometryPath.empty()
-                    ? "Preview: analytic sphere (parity requires an explicit scene)"
-                    : "Scene: " + mReferenceGeometryPath.filename().string());
-            }
-            else if (!mpScene) physicalChanged |= group.dropdown("Preview object", kObjectModes, mObjectMode);
             if (mpScene)
             {
                 group.text("Scene: " + mReferenceGeometryPath.filename().string());
@@ -1551,15 +1537,13 @@ void NclsViewer::onGuiRender(Gui* pGui)
         Gui::Group group = window.group("Material", true);
         if (group)
         {
-            group.text(mpScene
-                ? "Editing material slot #" + std::to_string(mActiveSceneMaterial)
-                : "Editing the analytic preview material");
+            group.text("Editing material slot #" + std::to_string(mActiveSceneMaterial));
             uint32_t requestedFamily = static_cast<uint32_t>(mReferenceSource.family);
             if (group.dropdown("Source material family", kReferenceFamilies, requestedFamily)
                 && requestedFamily != static_cast<uint32_t>(mReferenceSource.family))
             {
                 const auto family = static_cast<ncls::ReferenceFamily>(requestedFamily);
-                if (family == ncls::ReferenceFamily::LayerStack || family == ncls::ReferenceFamily::OpenPbr)
+                if (family == ncls::ReferenceFamily::LayerStack)
                 {
                     try
                     {
@@ -1574,9 +1558,11 @@ void NclsViewer::onGuiRender(Gui* pGui)
                     std::filesystem::path path;
                     const FileDialogFilterVec filters = family == ncls::ReferenceFamily::Merl
                         ? FileDialogFilterVec{{"binary", "MERL BRDF table"}}
-                        : FileDialogFilterVec{{"mtlx", "MaterialX document"}};
+                        : family == ncls::ReferenceFamily::OpenPbr
+                            ? FileDialogFilterVec{{"json", "OpenPBR resolved adapter"}}
+                            : FileDialogFilterVec{{"mtlx", "MaterialX document"}};
                     if (openFileDialog(filters, path)) loadMaterial(path);
-                    else mStatus = "Family switch cancelled; MERL and MaterialX require their native source asset.";
+                    else mStatus = "Family switch cancelled; resource-backed families require a native source asset.";
                 }
             }
             renderMaterialUi(group);
@@ -1719,12 +1705,8 @@ void NclsViewer::onGuiRender(Gui* pGui)
             if (mComparisonMode == 3u) group.var("Error amplification", mDifferenceScale, 1.f, 100.f, 0.5f);
             group.text("spp: " + std::to_string(mReferenceSpp)
                 + ", elapsed: " + fmt::format("{:.2f}s", mAccumulationSeconds));
-            if (mpScene)
-                group.text("Estimated mean relative standard error: "
-                    + fmt::format("{:.2f}%", 100.f * mEstimatedRelativeStandardError));
-            else
-                group.text("Analytic fallback noise proxy: "
-                    + fmt::format("{:.4f}", 1.f / std::sqrt(float(std::max(mReferenceSpp, 1u)))));
+            group.text("Estimated mean relative standard error: "
+                + fmt::format("{:.2f}%", 100.f * mEstimatedRelativeStandardError));
         }
     }
 
@@ -1732,17 +1714,20 @@ void NclsViewer::onGuiRender(Gui* pGui)
         Gui::Group group = window.group("Realtime method", false);
         if (group)
         {
-            if (allMaterialsSupportCurrentCompiler())
+            Gui::DropdownList methodList = {{0, "None (reference only)"}};
+            for (uint32_t index = 0; index < mMethods.size(); ++index)
             {
-                Gui::DropdownList methodList = {{0, "None (reference only)"}};
-                for (uint32_t index = 0; index < mMethods.size(); ++index)
+                if (allMaterialsSupportedBy(mMethods[index]))
                     methodList.push_back({index + 1, mMethods[index].displayName
                         + " [" + shortId(mMethods[index].methodId) + "]"});
+            }
+            if (methodList.size() > 1)
+            {
                 if (group.dropdown("Right-side method", methodList, mMethodUiValue))
                     selectMethod(int32_t(mMethodUiValue) - 1);
-                if (group.button("Rescan MethodBundles")) scanBundles();
             }
             else group.text("One or more material slots have no compatible compiler; showing reference only.");
+            if (group.button("Rescan MethodBundles")) scanBundles();
             if (mSelectedMethod >= 0)
             {
                 const auto& method = mMethods[mSelectedMethod];
@@ -1801,8 +1786,7 @@ void NclsViewer::loadMaterial(const std::filesystem::path& path)
             mStatus = "Loaded OpenPBR 1.1.1 resolved-input material into the Falcor reference pass: " + path.string();
         else if (mReferenceSource.family == ncls::ReferenceFamily::MaterialX)
         {
-            mStatus = "Loaded MaterialX standard_surface and connected source textures into the Falcor reference pass; "
-                + (mReferenceGeometryPath.empty() ? std::string("currently using the analytic-sphere fallback: ") : std::string("currently path tracing the Falcor scene: "))
+            mStatus = "Loaded MaterialX standard_surface and connected source textures into the scene reference path: "
                 + path.string();
         }
     }
@@ -1821,7 +1805,6 @@ void NclsViewer::installReferenceSource(ncls::ReferenceSource source, const std:
     mSourceGpu = std::move(gpu);
     mMaterialDisplayName = mReferenceSource.displayName;
     mMaterialPath = path.empty() ? mReferenceSource.sourcePath : path;
-    if (mReferenceSource.family == ncls::ReferenceFamily::MaterialX) mObjectMode = 0u;
     if (mpScene)
     {
         rebuildReferenceMaterialMetadata();
@@ -1829,7 +1812,7 @@ void NclsViewer::installReferenceSource(ncls::ReferenceSource source, const std:
     }
     if (mReferenceSource.family == ncls::ReferenceFamily::LayerStack) updateMaterialBuffer();
     else resetReference(mReferenceSource.family == ncls::ReferenceFamily::MaterialX, true);
-    if (!allMaterialsSupportCurrentCompiler()) selectMethod(-1);
+    if (mSelectedMethod >= 0 && !allMaterialsSupportedBy(mMethods[mSelectedMethod])) selectMethod(-1);
     if (viewWasSplit != hasActiveMethod() && mOutputWidth > 0u && mOutputHeight > 0u)
         resizeResources(mOutputWidth, mOutputHeight);
 }
@@ -1981,12 +1964,26 @@ void NclsViewer::loadViewerScene(const std::filesystem::path& requestedPath)
         throw std::runtime_error("viewer scene requires reference_integrator ncls.scene-path-tracer@1");
     const fs::path base = path.parent_path();
     const auto& geometry = document.at("geometry");
-    loadScene(resolveUri(geometry.at("uri").get<std::string>(), base), geometry.at("sha256").get<std::string>());
+    const std::string geometryUri = geometry.at("uri").get<std::string>();
+    const std::string geometryHash = geometry.at("sha256").get<std::string>();
+    if (geometryUri.empty() || !isSha256(geometryHash))
+        throw std::runtime_error("viewer scene geometry requires a URI and lowercase SHA-256");
+    loadScene(resolveUri(geometryUri, base), geometryHash);
 
     const auto& environment = document.at("environment");
     const auto environmentPath = resolveUri(environment.value("uri", std::string()), base);
-    if (environmentPath.empty()) createDefaultEnvironment();
-    else loadEnvironment(environmentPath, environment.value("sha256", std::string()));
+    const std::string environmentHash = environment.value("sha256", std::string());
+    if (environmentPath.empty())
+    {
+        if (!environmentHash.empty()) throw std::runtime_error("viewer scene default environment must not declare a file hash");
+        createDefaultEnvironment();
+    }
+    else
+    {
+        if (!isSha256(environmentHash))
+            throw std::runtime_error("viewer scene environment requires a lowercase SHA-256");
+        loadEnvironment(environmentPath, environmentHash);
+    }
 
     const auto vector3 = [](const nlohmann::json& value) {
         if (!value.is_array() || value.size() != 3u)
@@ -2084,11 +2081,9 @@ void NclsViewer::applyReplaySettings(const std::filesystem::path& path)
         if (!value.is_array() || value.size() != 3) throw std::runtime_error("replay vector must contain three values");
         return float3(value[0].get<float>(), value[1].get<float>(), value[2].get<float>());
     };
-    mObjectMode = replay.value("object_mode", 0u);
     mSamplesPerFrame = std::clamp(replay.value("reference_samples_per_frame", 1u), 1u, 16u);
     mMaxSceneBounces = std::clamp(replay.value("reference_scene_max_bounces", 4u), 0u, 16u);
-    mMaxLayerWalkDepth = std::clamp(replay.value(
-        "reference_layer_walk_max_depth", replay.value("reference_max_depth", 24u)), 4u, 128u);
+    mMaxLayerWalkDepth = std::clamp(replay.value("reference_layer_walk_max_depth", 24u), 4u, 128u);
     const auto& camera = replay.at("camera");
     mCamera.target = vector3(camera.at("target"));
     mCamera.yaw = camera.at("yaw").get<float>();
@@ -2235,7 +2230,6 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         {"scene_material_bindings_replayable", sceneMaterialBindingsReplayable},
         {"resolution", {mOutputWidth, mOutputHeight}},
         {"view_resolution", {mViewWidth, mOutputHeight}},
-        {"object_mode", mObjectMode},
         {"reference_spp", mReferenceSpp},
         {"reference_samples_per_frame", mSamplesPerFrame},
         {"reference_scene_max_bounces", mMaxSceneBounces},

@@ -31,7 +31,7 @@
 ## 根 Git 仓库边界
 
 - 根仓库包含项目自有源码、测试、环境声明、中文稳定文档、版本化验收门槛、资产清单，以及 `references/` 中的 reference registry/package 说明。
-- 根仓库不包含 `external/`、`data/`、`build/`、`artifacts/`、`reports/` 和缓存。单次正确性验证、实验报告与运行摘要统一进入 `artifacts/`；第三方 reference 源码固定在 `external/`；原始源材质大资源固定在 `data/source-materials/`；派生响应固定在 `data/reference-responses/`；它们都由 `references/` 中的 package/manifest 追溯。
+- 根仓库不包含 `external/`、`assets/`、`data/`、`build/`、`artifacts/`、`reports/` 和缓存。单次正确性验证、实验报告与运行摘要统一进入 `artifacts/`；第三方 reference 源码固定在 `external/`；原始源材质、纹理、测量表和 viewer 运行资产固定在 `assets/`；`data/` 只保存 `data/reference-responses/` 下由 reference 导出的 HDF5；它们都由 `references/` 中的 package/manifest 追溯。
 - 完整规则见 `docs/repository_policy.md`。
 - `external/Falcor`、`external/pbrt-v4`、`external/OpenPBR`、`external/openpbr-bsdf`、`external/glm` 和 `external/MaterialX` 是固定提交的独立克隆。当前均为干净工作树，本项目没有修改上游源码。MaterialX viewer 所需的 NanoGUI 及其依赖使用上游 gitlink 固定提交，由获取脚本初始化。
 - 若以后确实需要修改上游，先把改动保存为根仓库中的显式补丁和应用脚本，并更新本文件；不得把未说明的修改留在 `external/`。

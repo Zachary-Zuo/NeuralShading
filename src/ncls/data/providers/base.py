@@ -10,17 +10,9 @@ import numpy as np
 from ncls.data.collector import CollectionConfig
 from ncls.data.contract import PositionKind, QueryPlan, ReferenceDescriptor, SourceState, SurfaceSample
 from ncls.data.directions import equal_area_hemisphere, equal_area_sphere, stratified_uv, stratified_view_directions
+from ncls.paths import PROJECT_ROOT
+from ncls.source_materials.identity import sha256_file
 
-
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
-
-
-def sha256_file(path: Path, *, chunk_size: int = 8 * 1024 * 1024) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        while chunk := stream.read(chunk_size):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def implementation_hash(paths: Sequence[Path]) -> str:

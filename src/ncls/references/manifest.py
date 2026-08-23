@@ -24,6 +24,34 @@ CAPABILITY_NAMES = {
 CAPABILITY_STATES = {"ready", "pending", "not-applicable"}
 
 
+def resolve_reference_path(
+    project_root: str | Path,
+    path_root: str,
+    relative_path: str | Path,
+) -> Path:
+    """把 reference manifest 的逻辑根解析到唯一的项目目录。"""
+
+    root = Path(project_root).resolve()
+    bases = {
+        "project": root,
+        "external": root / "external",
+        "source-materials": root / "assets" / "source-materials",
+    }
+    try:
+        base = bases[path_root].resolve()
+    except KeyError as error:
+        raise ValueError(f"unsupported reference path_root {path_root!r}") from error
+    relative = Path(relative_path)
+    if relative.is_absolute():
+        raise ValueError("reference manifest path must be relative")
+    resolved = (base / relative).resolve()
+    try:
+        resolved.relative_to(base)
+    except ValueError as error:
+        raise ValueError("reference manifest path escapes its path_root") from error
+    return resolved
+
+
 def _nonempty(name: str, value: Any) -> str:
     result = str(value)
     if not result:

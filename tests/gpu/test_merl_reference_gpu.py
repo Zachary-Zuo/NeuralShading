@@ -25,7 +25,7 @@ def _hemisphere_directions(generator: np.random.Generator, count: int) -> np.nda
 
 @pytest.mark.falcor
 def test_merl_falcor_runtime_matches_native_table_reference() -> None:
-    asset_root = PROJECT_ROOT / "data" / "source-materials" / "merl-brdf" / "v1"
+    asset_root = PROJECT_ROOT / "assets" / "source-materials" / "merl-brdf" / "v1"
     if not (asset_root / "complete.json").is_file():
         pytest.skip("MERL source material asset is not downloaded")
     marker = json.loads((asset_root / "complete.json").read_text(encoding="utf-8"))

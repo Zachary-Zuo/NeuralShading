@@ -71,6 +71,11 @@ def _generate_dataset(args: argparse.Namespace) -> int:
     from .data import CollectionConfig
     from .data.generator import generate_reference_dataset
     from .data.providers import LayerStackProviderConfig
+    from .paths import DATA_ROOT, REFERENCE_RESPONSE_ROOT
+
+    output = args.output.resolve()
+    if DATA_ROOT.resolve() in output.parents and REFERENCE_RESPONSE_ROOT.resolve() not in output.parents:
+        raise ValueError("data/ only accepts ReferenceDataset HDF5 under data/reference-responses/")
 
     collection = CollectionConfig(
         view_count=args.views,
@@ -92,13 +97,13 @@ def _generate_dataset(args: argparse.Namespace) -> int:
         relative_standard_error=args.relative_standard_error,
     )
     manifest = generate_reference_dataset(
-        args.output,
+        output,
         args.provider,
         collection,
         material_ids=args.material_id,
         layer_stack=layer_stack,
     )
-    print(f"Wrote ReferenceDataset {manifest.dataset_id} to {args.output}")
+    print(f"Wrote ReferenceDataset {manifest.dataset_id} to {output}")
     return 0
 
 

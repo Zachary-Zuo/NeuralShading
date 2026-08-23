@@ -165,6 +165,7 @@ class EvaluatedBlock:
     valid: np.ndarray
     event_flags: np.ndarray
     reference_pdf: np.ndarray
+    rng_seed: np.ndarray
 
     def __post_init__(self) -> None:
         mean = np.asarray(self.mean, dtype=np.float32)
@@ -181,10 +182,12 @@ class EvaluatedBlock:
         valid = np.asarray(self.valid, dtype=np.uint8)
         event_flags = np.asarray(self.event_flags, dtype=np.uint32)
         reference_pdf = np.asarray(self.reference_pdf, dtype=np.float32)
+        rng_seed = np.asarray(self.rng_seed, dtype=np.uint64)
         scalar_shape = mean.shape[:-1]
         for name, value in (
             ("sample_count", sample_count), ("valid", valid),
             ("event_flags", event_flags), ("reference_pdf", reference_pdf),
+            ("rng_seed", rng_seed),
         ):
             if value.shape != scalar_shape:
                 raise ValueError(f"{name} must have shape {scalar_shape}")
@@ -201,6 +204,7 @@ class EvaluatedBlock:
         object.__setattr__(self, "valid", np.ascontiguousarray(valid))
         object.__setattr__(self, "event_flags", np.ascontiguousarray(event_flags))
         object.__setattr__(self, "reference_pdf", np.ascontiguousarray(reference_pdf))
+        object.__setattr__(self, "rng_seed", np.ascontiguousarray(rng_seed))
 
     @classmethod
     def deterministic(
@@ -210,6 +214,7 @@ class EvaluatedBlock:
         valid: np.ndarray | None = None,
         event_flags: np.ndarray | None = None,
         reference_pdf: np.ndarray | None = None,
+        rng_seed: np.ndarray | None = None,
     ) -> "EvaluatedBlock":
         value = np.asarray(mean, dtype=np.float32)
         scalar_shape = value.shape[:-1]
@@ -222,6 +227,7 @@ class EvaluatedBlock:
             np.ones(scalar_shape, dtype=np.uint8) if valid is None else valid,
             np.ones(scalar_shape, dtype=np.uint32) if event_flags is None else event_flags,
             np.zeros(scalar_shape, dtype=np.float32) if reference_pdf is None else reference_pdf,
+            np.zeros(scalar_shape, dtype=np.uint64) if rng_seed is None else rng_seed,
         )
 
 

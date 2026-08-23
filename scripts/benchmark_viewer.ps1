@@ -103,7 +103,6 @@ foreach ($camera in $presetDocument.camera_path) {
         reference_geometry = $referenceGeometryPath
         reference_geometry_sha256 = $referenceGeometrySha256
         resolution = @([uint32]$presetDocument.resolution[0], [uint32]$presetDocument.resolution[1])
-        object_mode = [uint32]$presetDocument.object_mode
         reference_spp = $totalFrames * [uint32]$presetDocument.reference_samples_per_frame
         reference_samples_per_frame = [uint32]$presetDocument.reference_samples_per_frame
         reference_integrator = "ncls.scene-path-tracer@1"

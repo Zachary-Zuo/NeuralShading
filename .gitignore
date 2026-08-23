@@ -8,6 +8,7 @@ __pycache__/
 
 # 本项目的本地构建和运行数据。
 /build/
+/assets/
 /data/
 /external/
 /artifacts/

@@ -4,6 +4,7 @@ from .manifest import (
     ReferenceRegistryEntry,
     load_reference_package,
     load_reference_registry,
+    resolve_reference_path,
     validate_reference_tree,
 )
 from .acceptance import (
@@ -24,6 +25,7 @@ __all__ = [
     "ReferenceRegistryEntry",
     "load_reference_package",
     "load_reference_registry",
+    "resolve_reference_path",
     "validate_reference_tree",
     "DeterministicDirectionalGate",
     "DeterministicDirectionalMetrics",

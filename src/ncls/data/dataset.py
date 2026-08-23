@@ -244,11 +244,7 @@ class ReferenceDatasetWriter:
             "proposal_pdf": np.broadcast_to(plan.proposal_pdf, (group_count, self.direction_count)),
             "solid_angle_weight": np.broadcast_to(plan.solid_angle_weights, (group_count, self.direction_count)),
         }
-        group_ids = np.arange(start, end, dtype=np.uint64)[:, None]
-        light_ids = np.arange(self.direction_count, dtype=np.uint64)[None, :]
-        query_values["rng_seed"] = (
-            np.uint64(plan.seed) + group_ids * np.uint64(0x9E3779B185EBCA87) + light_ids * np.uint64(0xC2B2AE3D27D4EB4F)
-        )
+        query_values["rng_seed"] = evaluated.rng_seed.reshape(group_count, self.direction_count)
         for name, values in query_values.items():
             dataset = self._query_group[name]
             dataset.resize(end, axis=0)
