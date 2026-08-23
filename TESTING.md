@@ -1,62 +1,72 @@
 # 测试说明
 
-所有 Python 命令使用 Conda 环境 `neural-shading`。
+所有 Python 命令使用唯一 Conda 环境 `neural-shading`。需要导入 Falcor Python 模块的测试只能通过 `scripts/run_falcor_python.ps1` 启动。
 
-## Python 与层栈数据布局
-
-```powershell
-conda run -n neural-shading python -m pytest
-```
-
-期望：`tests/test_stack_schema.py` 全部通过。
-
-## 自包含界面与两层随机游走参考（GPU）
+## CPU 单元测试
 
 ```powershell
-./scripts/run_falcor_python.ps1 -m pytest -m falcor -q
+conda run -n neural-shading python -m pytest tests\unit -q
 ```
 
-覆盖粗糙介电界面的双向透射、强制透射/内反射期望、Lambert 白炉、采样与概率密度一致性、确定性、互易性，以及关闭俄罗斯轮盘赌（RR）时与 Falcor 参考实现的一致性。
+覆盖 `MaterialProgram`/`LayerStackIR`、旧数据一次性转换、散射合同、`legacy-ltc-k2` 私有状态、训练/评测/checkpoint/TensorBoard、MethodBundle 导出与内容哈希。
 
-## pbrt-v4 两层 CPU 探针
-
-首次配置与构建：
+## Slang/GPU 与随机游走参考
 
 ```powershell
-cmake -S teacher/xval/pbrt_probe -B build/pbrt-probe -G "Visual Studio 17 2022" -A x64
-cmake --build build/pbrt-probe --config Release --target ncls_pbrt_probe --parallel 12
+.\scripts\run_falcor_python.ps1 -m pytest `
+  tests\gpu tests\integration\reference -q
 ```
 
-运行灰色“粗糙涂层 + 漫反射基底”方向切片：
+覆盖 Python/Slang ABI、方向和余弦语义、`evaluate/sample/pdf`、各向异性、P1 compiler 的 PyTorch/Slang parity、解析 diffuse、互易性、八层执行、统计量和数据生成 smoke。
+
+## pbrt-v4 外部交叉验证
+
+首次配置和构建 probe：
 
 ```powershell
-./build/pbrt-probe/Release/ncls_pbrt_probe.exe 262144 20 32
-./scripts/run_falcor_python.ps1 ./teacher/xval/falcor_two_layer.py --samples 262144 --max-depth 4
+cmake -S tools\reference\pbrt_probe -B build\pbrt-probe `
+  -G "Visual Studio 17 2022" -A x64
+cmake --build build\pbrt-probe --config Release `
+  --target ncls_pbrt_probe --parallel 12
 ```
 
-其中 pbrt 探针参数依次为 `nSamples viewAngle maxDepth opticalThickness seed mediumAlbedo g`。三方/介质对比可运行：
+比较锁定 pbrt-v4 与 Falcor 随机游走参考解：
 
 ```powershell
-./scripts/run_falcor_python.ps1 ./teacher/xval/pbrt_compare.py --pbrt-exe ./build/pbrt-probe/Release/ncls_pbrt_probe.exe --samples 65536 --batches 8 --optical-thickness 0.4
-./scripts/run_falcor_python.ps1 ./teacher/xval/pbrt_compare.py --pbrt-exe ./build/pbrt-probe/Release/ncls_pbrt_probe.exe --samples 65536 --batches 8 --optical-thickness 0.4 --medium-albedo 0.5 --g 0.3
+.\scripts\run_falcor_python.ps1 tools\reference\pbrt_compare.py `
+  --pbrt-exe build\pbrt-probe\Release\ncls_pbrt_probe.exe `
+  --samples 65536 --batches 8 --optical-thickness 0.4 `
+  --medium-albedo 0.5 --g 0.3
 ```
 
-## Falcor 8.0 Release 构建
+## Windows viewer
 
 ```powershell
-Set-Location external/Falcor
-./setup_vs2022.bat
-./tools/.packman/cmake/bin/cmake.exe --build build/windows-vs2022 --config Release --target FalcorPython -- /m
+.\scripts\build_viewer.ps1 -Configuration Release
+
+external\Falcor\build\windows-vs2022\bin\Release\NclsViewer.exe `
+  --bundle-root artifacts\exports --headless --frames 32 `
+  --width 320 --height 240 --capture artifacts\captures\smoke
 ```
 
-## CPU/GPU 层栈布局
+固定相机路径 benchmark：
 
 ```powershell
-./scripts/run_falcor_python.ps1 ./datagen/validate_layout.py
+.\scripts\benchmark_viewer.ps1 `
+  -BundleRoot artifacts\exports `
+  -Preset configs\viewer-benchmark-v1.json `
+  -OutputDirectory artifacts\benchmarks\viewer
 ```
 
-期望输出：
+验收时还应将 capture manifest 传回 `--replay`，确认左右 EXR、显示 PNG、difference 和材质快照逐字节一致；篡改任一 bundle 内容哈希后，锁定方法 ID 的 headless replay 必须以非零状态失败。
 
-```text
-LayerStack CPU/GPU layout OK: 752 bytes
+## 仓库边界与静态检查
+
+```powershell
+conda run -n neural-shading python -m compileall -q src tests tools
+git diff --check
+git -C external\Falcor status --short
+git -C external\pbrt-v4 status --short
 ```
+
+两个上游工作树必须为空。`build/`、`data/`、`artifacts/`、`external/` 和缓存不得进入根仓库。

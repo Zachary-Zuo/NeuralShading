@@ -37,7 +37,7 @@ def download_manifest(manifest_path: Path, output_dir: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Download the frozen Poly Haven HDRI oracle manifest.")
+    parser = argparse.ArgumentParser(description="Download the frozen Poly Haven HDRI probe manifest.")
     parser.add_argument(
         "--manifest",
         type=Path,

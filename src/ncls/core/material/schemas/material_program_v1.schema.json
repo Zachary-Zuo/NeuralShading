@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neural-shading.local/schemas/material_program_v1.schema.json",
+  "title": "NeuralShading MaterialProgram v1",
+  "type": "object",
+  "required": [
+    "schema_name",
+    "schema_version",
+    "program_id",
+    "color_model",
+    "nodes",
+    "resources",
+    "outputs",
+    "metadata"
+  ],
+  "properties": {
+    "schema_name": {"const": "ncls.material-program"},
+    "schema_version": {"const": 1},
+    "program_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "color_model": {"const": "linear-srgb"},
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/node"}
+    },
+    "resources": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/resource"}
+    },
+    "outputs": {
+      "type": "object",
+      "required": [
+        "surface",
+        "interior_medium",
+        "exterior_medium",
+        "emission",
+        "opacity",
+        "displacement"
+      ],
+      "properties": {
+        "surface": {"$ref": "#/$defs/connection"},
+        "interior_medium": {"oneOf": [{"$ref": "#/$defs/connection"}, {"type": "null"}]},
+        "exterior_medium": {"oneOf": [{"$ref": "#/$defs/connection"}, {"type": "null"}]},
+        "emission": {"oneOf": [{"$ref": "#/$defs/connection"}, {"type": "null"}]},
+        "opacity": {"oneOf": [{"$ref": "#/$defs/connection"}, {"type": "null"}]},
+        "displacement": {"oneOf": [{"$ref": "#/$defs/connection"}, {"type": "null"}]}
+      },
+      "additionalProperties": false
+    },
+    "metadata": {"type": "object"}
+  },
+  "$defs": {
+    "connection": {
+      "type": "object",
+      "required": ["node", "port"],
+      "properties": {
+        "node": {"type": "string", "minLength": 1},
+        "port": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "operation": {
+      "type": "object",
+      "required": ["namespace", "name", "version"],
+      "properties": {
+        "namespace": {"type": "string", "minLength": 1},
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "parameter_source": {
+      "type": "object",
+      "required": ["source", "type"],
+      "properties": {
+        "source": {"enum": ["constant", "texture", "vertex_attribute", "procedural"]},
+        "type": {
+          "enum": [
+            "Float",
+            "Float2",
+            "Float3",
+            "Color3",
+            "Normal3",
+            "Spectrum",
+            "Interface",
+            "Medium",
+            "Surface",
+            "Emission",
+            "Opacity",
+            "Displacement"
+          ]
+        },
+        "value": {},
+        "resource": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "node": {
+      "type": "object",
+      "required": ["id", "operation", "inputs", "parameters"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "operation": {"$ref": "#/$defs/operation"},
+        "inputs": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              {"$ref": "#/$defs/connection"},
+              {"type": "array", "items": {"$ref": "#/$defs/connection"}}
+            ]
+          }
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/parameter_source"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "resource": {
+      "type": "object",
+      "required": ["id", "uri", "semantic"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "uri": {"type": "string", "minLength": 1},
+        "semantic": {"type": "string", "minLength": 1},
+        "color_space": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

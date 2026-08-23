@@ -1,0 +1,18 @@
+{
+  "architecture_id": "legacy-ltc-k2-p1@2",
+  "representation_id": "legacy-ltc-k2@1",
+  "width": 64,
+  "steps": 10000,
+  "batch_size": 256,
+  "learning_rate": 0.0003,
+  "weight_decay": 0.00001,
+  "gradient_clip": 5.0,
+  "validation_interval": 250,
+  "checkpoint_interval": 250,
+  "max_validation_tiles": 4096,
+  "seed": 20260822,
+  "device": "cuda",
+  "deterministic": true,
+  "schema_name": "ncls.training-config",
+  "schema_version": 1
+}

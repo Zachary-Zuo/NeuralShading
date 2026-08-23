@@ -1,0 +1,32 @@
+{
+  "contract_name": "ncls.scattering",
+  "contract_version": 1,
+  "transport_mode": {
+    "Radiance": 0,
+    "Importance": 1
+  },
+  "event_flags": {
+    "Reflection": 1,
+    "Transmission": 2,
+    "Diffuse": 4,
+    "Glossy": 8,
+    "Delta": 16,
+    "FrontSide": 32,
+    "BackSide": 64,
+    "VolumeBoundary": 128
+  },
+  "capabilities": {
+    "Prepare": 1,
+    "Evaluate": 2,
+    "Sample": 4,
+    "Pdf": 8,
+    "AnisotropicFrame": 16,
+    "ReversePdf": 32,
+    "AnalyticPolygonIntegration": 64,
+    "PrefilteredEnvironmentIntegration": 128,
+    "NeuralEnvironmentIntegration": 256,
+    "DeltaEvents": 512,
+    "Transmission": 1024,
+    "HomogeneousVolume": 2048
+  }
+}

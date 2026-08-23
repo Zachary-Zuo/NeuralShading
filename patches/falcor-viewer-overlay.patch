@@ -1,0 +1,9 @@
+diff --git a/Source/Samples/CMakeLists.txt b/Source/Samples/CMakeLists.txt
+index b07da17..dfc1001 100644
+--- a/Source/Samples/CMakeLists.txt
++++ b/Source/Samples/CMakeLists.txt
+@@ -4,3 +4,4 @@ add_subdirectory(MultiSampling)
+ add_subdirectory(SampleAppTemplate)
+ add_subdirectory(ShaderToy)
+ add_subdirectory(Visualization2D)
++add_subdirectory("${CMAKE_SOURCE_DIR}/../../apps/viewer" "${CMAKE_BINARY_DIR}/Source/Samples/NclsViewer")

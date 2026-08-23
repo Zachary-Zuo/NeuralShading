@@ -4,6 +4,7 @@ param(
 )
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
+$projectSrc = Join-Path $projectRoot "src"
 $falcorBin = Join-Path $projectRoot "external\Falcor\build\windows-vs2022\bin\Release"
 $falcorModule = Join-Path $falcorBin "python"
 
@@ -12,7 +13,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $falcorModule "falcor\falcor_ext.cp3
 }
 
 $env:PATH = $falcorBin + ";" + $env:PATH
-$env:PYTHONPATH = $projectRoot + ";" + $falcorModule
+$env:PYTHONPATH = $projectSrc + ";" + $falcorModule
 
 & conda run -n neural-shading python @PythonArgs
 exit $LASTEXITCODE

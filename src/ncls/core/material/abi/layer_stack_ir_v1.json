@@ -1,0 +1,50 @@
+{
+  "abi_name": "ncls.layer-stack-ir",
+  "abi_version": 1,
+  "magic": 1380535374,
+  "magic_ascii": "NLIR",
+  "max_interfaces": 8,
+  "max_media": 7,
+  "header": {
+    "struct_format": "<4I",
+    "size": 16,
+    "fields": ["magic", "abi_version", "interface_count", "medium_count"]
+  },
+  "interface": {
+    "struct_format": "<2I14f",
+    "size": 64,
+    "fields": [
+      "kind",
+      "flags",
+      "alpha_x",
+      "alpha_y",
+      "relative_ior",
+      "eta_r",
+      "eta_g",
+      "eta_b",
+      "k_r",
+      "k_g",
+      "k_b",
+      "color_r",
+      "color_g",
+      "color_b",
+      "tangent_rotation",
+      "reserved"
+    ]
+  },
+  "medium": {
+    "struct_format": "<8f",
+    "size": 32,
+    "fields": [
+      "sigma_a_r",
+      "sigma_a_g",
+      "sigma_a_b",
+      "sigma_s_r",
+      "sigma_s_g",
+      "sigma_s_b",
+      "g",
+      "thickness"
+    ]
+  },
+  "binary_size": 752
+}

@@ -1,0 +1,136 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from ncls.core.material import (
+    DiffuseInterface,
+    HomogeneousMedium,
+    LayerStackIR,
+    RoughDielectricInterface,
+)
+from ncls.data.reference import FalcorReferenceEvaluator, evaluate_reference_fixed
+from ncls.data import ReferenceDataset
+from ncls.data.directions import equal_area_hemisphere
+from ncls.data.generator import ReferenceGenerationConfig, generate_reference_dataset
+
+
+pytest.importorskip("falcor")
+pytestmark = pytest.mark.falcor
+
+
+def _direction(theta_degrees: float) -> np.ndarray:
+    theta = np.deg2rad(theta_degrees)
+    return np.asarray([np.sin(theta), 0.0, np.cos(theta), 0.0], dtype=np.float32)
+
+
+def _evaluate(stack: LayerStackIR, view_angle: float, light_angles: list[float], samples: int, seed: int = 1):
+    lights = np.stack([_direction(angle) for angle in light_angles])
+    evaluator = FalcorReferenceEvaluator(lights, max_depth=64, max_tile_batch=1)
+    return evaluate_reference_fixed(
+        evaluator,
+        [stack],
+        _direction(view_angle)[None, :],
+        tile_seeds=np.asarray([seed], dtype=np.uint32),
+        samples_per_replica=samples,
+    )
+
+
+def test_single_interface_diffuse_matches_analytic_response_cos() -> None:
+    color = np.asarray([0.6, 0.3, 0.1], dtype=np.float32)
+    stack = LayerStackIR((DiffuseInterface(tuple(color)),), ())
+    angles = [-50.0, 0.0, 55.0]
+    result = _evaluate(stack, 25.0, angles, 4)
+    expected = color[None, :] * np.cos(np.deg2rad(angles))[:, None] / np.pi
+    np.testing.assert_allclose(result.mean[0], expected, rtol=1e-6, atol=1e-7)
+    np.testing.assert_allclose(result.variance[0], 0.0, atol=1e-8)
+
+
+def _three_interface_stack() -> LayerStackIR:
+    return LayerStackIR(
+        (
+            RoughDielectricInterface(0.12, 0.08, 1.4, 0.1),
+            RoughDielectricInterface(0.24, 0.16, 1.15, -0.35),
+            DiffuseInterface((0.5, 0.25, 0.1)),
+        ),
+        (
+            HomogeneousMedium((0.1, 0.05, 0.02), thickness=0.25),
+            HomogeneousMedium(thickness=0.35),
+        ),
+    )
+
+
+def test_three_interface_reference_is_reciprocal_within_monte_carlo_error() -> None:
+    stack = _three_interface_stack()
+    samples = 32768
+    view_angle = 20.0
+    light_angle = 50.0
+    forward = _evaluate(stack, view_angle, [light_angle], samples, seed=191)
+    reverse = _evaluate(stack, light_angle, [view_angle], samples, seed=211)
+    total_samples = 2 * samples
+    forward_cosine = np.cos(np.deg2rad(light_angle))
+    reverse_cosine = np.cos(np.deg2rad(view_angle))
+    forward_f = forward.mean[0, 0] / forward_cosine
+    reverse_f = reverse.mean[0, 0] / reverse_cosine
+    standard_error = np.sqrt(
+        forward.variance[0, 0] / (total_samples * forward_cosine**2)
+        + reverse.variance[0, 0] / (total_samples * reverse_cosine**2)
+    )
+    assert np.all(np.abs(forward_f - reverse_f) <= 6.0 * standard_error + 3e-3)
+
+
+def test_eight_interface_reference_executes_with_anisotropic_frames() -> None:
+    interfaces = tuple(
+        RoughDielectricInterface(
+            0.08 + 0.02 * index,
+            0.1 + 0.015 * index,
+            1.5 if index == 0 else 1.0,
+            0.1 * index,
+        )
+        for index in range(7)
+    ) + (DiffuseInterface((0.4, 0.2, 0.1)),)
+    stack = LayerStackIR(interfaces, tuple(HomogeneousMedium(thickness=0.1) for _ in range(7)))
+    result = _evaluate(stack, 20.0, [-30.0, 0.0, 40.0], 64)
+    assert np.all(np.isfinite(result.mean))
+    assert np.all(result.mean >= 0.0)
+    assert np.max(result.mean) > 0.0
+
+
+def test_unsupported_chromatic_extinction_with_scattering_is_rejected() -> None:
+    stack = LayerStackIR(
+        (RoughDielectricInterface(0.1, 0.2, 1.5), DiffuseInterface((0.5, 0.5, 0.5))),
+        (HomogeneousMedium((0.1, 0.2, 0.3), (0.2, 0.2, 0.2), 0.0, 0.2),),
+    )
+    with pytest.raises(RuntimeError, match="unsupported material state"):
+        _evaluate(stack, 20.0, [0.0], 4)
+
+
+def test_reference_generator_smoke(tmp_path: Path) -> None:
+    config = ReferenceGenerationConfig(
+        family_count=1,
+        local_state_count=1,
+        view_count=1,
+        light_count=4,
+        samples_per_replica=4,
+        tile_batch=1,
+        shard_tiles=1,
+        seed=23,
+        max_depth=8,
+    )
+    lights, _ = equal_area_hemisphere(4)
+    evaluator = FalcorReferenceEvaluator(lights, max_depth=8, max_tile_batch=1)
+    manifest = generate_reference_dataset(
+        tmp_path / "reference",
+        config,
+        evaluator=evaluator,
+        created_at="2026-08-23T00:00:00+00:00",
+        generator_git_commit="test",
+    )
+    dataset = ReferenceDataset.open(tmp_path / "reference")
+    statistics = dataset.statistics(0)
+    assert manifest.reference_implementation_id.startswith("random-walk-reference@1:")
+    assert np.all(np.isfinite(statistics.mean))
+    assert np.all(statistics.mean >= 0.0)
+    assert statistics.sample_count.tolist() == [8, 8, 8, 8]

@@ -1,8 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neural-shading"
+version = "0.1.0"
+description = "可编辑多层材质到固定成本散射实现的研究系统"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy",
+]
+
+[project.scripts]
+ncls = "ncls.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"ncls.core.material" = ["abi/*.json", "schemas/*.json"]
+"ncls.core.scattering" = ["abi/*.json"]
+"ncls.data" = ["schemas/*.json"]
+"ncls.bundle" = ["schemas/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = ["src"]
 addopts = "-ra"
 markers = [
   "falcor: requires the built Falcor Python module and a D3D12 GPU",
 ]
-
