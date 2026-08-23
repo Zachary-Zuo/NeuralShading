@@ -1,5 +1,6 @@
 from .base import LearningPipeline, LearningPipelineDescriptor
 from .dense_evaluator import (
+    ANALYTIC_RESIDUAL_ENERGY_SHAPE_PIPELINE_ID,
     ANALYTIC_RESIDUAL_PIPELINE_ID,
     ENERGY_SHAPE_PIPELINE_ID,
     LINEAR_PIPELINE_ID,
@@ -14,6 +15,7 @@ __all__ = [
     "LearningPipelineDescriptor",
     "PIPELINE_ID",
     "LINEAR_PIPELINE_ID",
+    "ANALYTIC_RESIDUAL_ENERGY_SHAPE_PIPELINE_ID",
     "ANALYTIC_RESIDUAL_PIPELINE_ID",
     "ENERGY_SHAPE_PIPELINE_ID",
     "LOG1P_PIPELINE_ID",

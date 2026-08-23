@@ -26,6 +26,7 @@ LINEAR_PIPELINE_ID = "dense-latent-small-mlp-linear-e1@1"
 LOG1P_PIPELINE_ID = "dense-latent-small-mlp-log1p-e1@1"
 STANDARDIZED_LOG1P_PIPELINE_ID = "dense-latent-small-mlp-standardized-log1p-e1@1"
 ANALYTIC_RESIDUAL_PIPELINE_ID = "analytic-core-neural-residual-standardized-e1@1"
+ANALYTIC_RESIDUAL_ENERGY_SHAPE_PIPELINE_ID = "analytic-core-neural-residual-energy-shape-e1@1"
 ENERGY_SHAPE_PIPELINE_ID = "dense-latent-small-mlp-energy-shape-e1@1"
 _FAMILIES = (
     "ncls.layer-stack@1",
@@ -718,6 +719,65 @@ class AnalyticResidualE1Pipeline(DenseStandardizedLog1pE1Pipeline):
         }
 
 
+def _energy_shape_terms(
+    prediction: torch.Tensor,
+    batch: Mapping[str, torch.Tensor],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    target = torch.clamp(batch["mean"].float(), min=0.0)
+    weights = batch["solid_angle_weight"].float()[..., None]
+    predicted_contribution = torch.clamp(prediction, min=0.0) * weights
+    target_contribution = target * weights
+    predicted_energy = torch.sum(predicted_contribution, dim=1)
+    target_energy = torch.sum(target_contribution, dim=1)
+    energy_floor = 1e-5 * torch.amax(target_energy, dim=1, keepdim=True) + 1e-8
+    energy_loss = torch.mean(torch.square(
+        torch.log(predicted_energy + energy_floor)
+        - torch.log(target_energy + energy_floor)
+    ))
+    predicted_distribution = predicted_contribution / torch.clamp(
+        predicted_energy[:, None, :], min=1e-12
+    )
+    target_distribution = target_contribution / torch.clamp(
+        target_energy[:, None, :], min=1e-12
+    )
+    shape_loss = torch.mean(torch.sum(torch.square(
+        torch.sqrt(predicted_distribution + 1e-12)
+        - torch.sqrt(target_distribution + 1e-12)
+    ), dim=1))
+    return energy_loss, shape_loss
+
+
+class AnalyticResidualEnergyShapeE1Pipeline(AnalyticResidualE1Pipeline):
+    descriptor = LearningPipelineDescriptor(
+        pipeline_id=ANALYTIC_RESIDUAL_ENERGY_SHAPE_PIPELINE_ID,
+        candidate_id="ncls.analytic-core-neural-residual@1",
+        research_role="e1-single-material-capacity",
+        response_reader_id="ncls.reference-query-store@1",
+        partition_policy_id="ncls.query-role-within-state@1",
+        source_adapter_id="ncls.layer-stack-direct-top-adapter@1",
+        feature_transform_id="ncls.local-frame-wo-wi@1",
+        target_transform_id=AnalyticResidualE1Pipeline.target_transform_id,
+        representation_id="ncls.analytic-direct-top-plus-neural-residual@1",
+        architecture_id=ARCHITECTURE_ID,
+        latent_inference_id="ncls.optimized-dense-material-latent@1",
+        compiler_id="ncls.none-capacity-study@1",
+        loss_id="ncls.standardized-asinh-residual-energy-shape-reciprocity@1",
+        metric_suite_id="ncls.evaluator-quality-suite-with-core-ablation@1",
+        exporter_id="ncls.neural-evaluator-method-bundle-planned@1",
+        supported_family_ids=("ncls.layer-stack@1",),
+        scope="single-material-complete-directional-evaluator",
+    )
+
+    def training_loss(
+        self,
+        prediction: torch.Tensor,
+        batch: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor:
+        base_loss = super().training_loss(prediction, batch)
+        energy_loss, shape_loss = _energy_shape_terms(prediction, batch)
+        return 0.25 * base_loss + 0.5 * energy_loss + 2.0 * shape_loss
+
+
 class DenseEnergyShapeE1Pipeline(DenseStandardizedLog1pE1Pipeline):
     descriptor = LearningPipelineDescriptor(
         pipeline_id=ENERGY_SHAPE_PIPELINE_ID,
@@ -745,25 +805,5 @@ class DenseEnergyShapeE1Pipeline(DenseStandardizedLog1pE1Pipeline):
         batch: Mapping[str, torch.Tensor],
     ) -> torch.Tensor:
         base_loss = super().training_loss(prediction, batch)
-        target = torch.clamp(batch["mean"].float(), min=0.0)
-        weights = batch["solid_angle_weight"].float()[..., None]
-        predicted_contribution = torch.clamp(prediction, min=0.0) * weights
-        target_contribution = target * weights
-        predicted_energy = torch.sum(predicted_contribution, dim=1)
-        target_energy = torch.sum(target_contribution, dim=1)
-        energy_floor = 1e-5 * torch.amax(target_energy, dim=1, keepdim=True) + 1e-8
-        energy_loss = torch.mean(torch.square(
-            torch.log(predicted_energy + energy_floor)
-            - torch.log(target_energy + energy_floor)
-        ))
-        predicted_distribution = predicted_contribution / torch.clamp(
-            predicted_energy[:, None, :], min=1e-12
-        )
-        target_distribution = target_contribution / torch.clamp(
-            target_energy[:, None, :], min=1e-12
-        )
-        shape_loss = torch.mean(torch.sum(torch.square(
-            torch.sqrt(predicted_distribution + 1e-12)
-            - torch.sqrt(target_distribution + 1e-12)
-        ), dim=1))
+        energy_loss, shape_loss = _energy_shape_terms(prediction, batch)
         return 0.25 * base_loss + 0.5 * energy_loss + 2.0 * shape_loss
