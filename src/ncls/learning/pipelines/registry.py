@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 from .base import LearningPipeline, LearningPipelineDescriptor
 from .dense_evaluator import (
+    AnalyticResidualE1Pipeline,
     DenseLinearE1Pipeline,
     DenseLog1pE1Pipeline,
     DenseStandardizedLog1pE1Pipeline,
@@ -37,3 +38,4 @@ register_pipeline(LegacyLtcK2Pipeline)
 register_pipeline(DenseLinearE1Pipeline)
 register_pipeline(DenseLog1pE1Pipeline)
 register_pipeline(DenseStandardizedLog1pE1Pipeline)
+register_pipeline(AnalyticResidualE1Pipeline)

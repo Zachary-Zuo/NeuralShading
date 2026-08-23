@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import torch
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
 from ncls.bundle import MethodBundle, export_legacy_ltc_k2_checkpoint
@@ -321,6 +322,39 @@ def test_standardized_log1p_state_matches_train_only_response_statistics(tmp_pat
             np.maximum(np.std(transformed, axis=0), 1e-6),
         )
         pipeline.load_training_state(state)
+
+
+def test_analytic_residual_pipeline_uses_layer_stack_core_and_signed_train_state(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "analytic-residual-dataset.h5"
+    _e1_dataset(dataset_path)
+    pipeline = create_pipeline("analytic-core-neural-residual-standardized-e1@1")
+    with pipeline.open_store(str(dataset_path)) as store:
+        state_id = str(store.dataset.state_strings("state_id")[0])
+        indices = store.select_indices(
+            pipeline.lifecycle_indices(store, "train"), {"state_ids": [state_id]}
+        )
+        state = pipeline.fit_training_state(store, indices)
+        assert state["target_transform_id"] == "ncls.train-only-standardized-asinh-analytic-residual@1"
+        pipeline.load_training_state(state)
+        model = pipeline.create_model({
+            "latent_dimension": 4,
+            "width": 8,
+            "prepare_layer_count": 1,
+            "evaluate_layer_count": 1,
+            "direction_encoding_id": "ncls.half-difference-directions@1",
+            "fourier_band_count": 1,
+            "output_bias": 0.0,
+        })
+        batch = {
+            name: torch.as_tensor(value)
+            for name, value in store.batch(indices[:1]).items()
+        }
+        prediction = pipeline.predict(model, batch, store, torch.device("cpu"))
+        loss = pipeline.training_loss(prediction, batch)
+        assert prediction.shape == batch["mean"].shape
+        assert torch.all(torch.isfinite(prediction))
+        assert torch.isfinite(loss)
+        loss.backward()
 
 
 def test_direct_fit_is_a_separate_representation_ceiling_run(tmp_path: Path) -> None:

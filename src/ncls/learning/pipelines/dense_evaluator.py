@@ -6,7 +6,11 @@ import numpy as np
 import torch
 from torch import nn
 
-from ncls.learning.data import ReferenceQueryStore
+from ncls.core.representations.legacy_ltc_k2.torch_eval import (
+    LegacyLtcK2Tensors,
+    eval_direct_top,
+)
+from ncls.learning.data import LayerStackReferenceStore, ReferenceQueryStore
 from ncls.learning.evaluation.metrics import evaluator_metric_distributions, response_loss
 from ncls.learning.models.neural_evaluator import (
     ARCHITECTURE_ID,
@@ -21,6 +25,7 @@ from .base import LearningPipeline, LearningPipelineDescriptor
 LINEAR_PIPELINE_ID = "dense-latent-small-mlp-linear-e1@1"
 LOG1P_PIPELINE_ID = "dense-latent-small-mlp-log1p-e1@1"
 STANDARDIZED_LOG1P_PIPELINE_ID = "dense-latent-small-mlp-standardized-log1p-e1@1"
+ANALYTIC_RESIDUAL_PIPELINE_ID = "analytic-core-neural-residual-standardized-e1@1"
 _FAMILIES = (
     "ncls.layer-stack@1",
     "merl.measured-brdf@1",
@@ -477,3 +482,236 @@ class DenseStandardizedLog1pE1Pipeline(_DenseE1Pipeline):
             + 0.02 * response_loss(prediction, target, standard_error)
             + 0.02 * reciprocity_loss
         )
+
+
+class AnalyticResidualE1Pipeline(DenseStandardizedLog1pE1Pipeline):
+    target_transform_id = "ncls.train-only-standardized-asinh-analytic-residual@1"
+    descriptor = LearningPipelineDescriptor(
+        pipeline_id=ANALYTIC_RESIDUAL_PIPELINE_ID,
+        candidate_id="ncls.analytic-core-neural-residual@1",
+        research_role="e1-single-material-capacity",
+        response_reader_id="ncls.reference-query-store@1",
+        partition_policy_id="ncls.query-role-within-state@1",
+        source_adapter_id="ncls.layer-stack-direct-top-adapter@1",
+        feature_transform_id="ncls.local-frame-wo-wi@1",
+        target_transform_id=target_transform_id,
+        representation_id="ncls.analytic-direct-top-plus-neural-residual@1",
+        architecture_id=ARCHITECTURE_ID,
+        latent_inference_id="ncls.optimized-dense-material-latent@1",
+        compiler_id="ncls.none-capacity-study@1",
+        loss_id="ncls.standardized-asinh-residual-response-reciprocity@1",
+        metric_suite_id="ncls.evaluator-quality-suite-with-core-ablation@1",
+        exporter_id="ncls.neural-evaluator-method-bundle-planned@1",
+        supported_family_ids=("ncls.layer-stack@1",),
+        scope="single-material-complete-directional-evaluator",
+    )
+
+    def open_store(self, dataset_path: str) -> ReferenceQueryStore:
+        return LayerStackReferenceStore(dataset_path)
+
+    @staticmethod
+    def _state_tensors(
+        batch: Mapping[str, torch.Tensor],
+        *,
+        repeat_count: int = 1,
+    ) -> LegacyLtcK2Tensors:
+        def values(name: str) -> torch.Tensor:
+            tensor = batch[name]
+            return tensor if repeat_count == 1 else tensor.repeat_interleave(repeat_count, dim=0)
+
+        count = len(batch["top_kind"]) * repeat_count
+        device = batch["top_alpha"].device
+        return LegacyLtcK2Tensors(
+            interface_kind=values("top_kind").long(),
+            alpha=values("top_alpha").float(),
+            relative_ior=values("top_relative_ior").float(),
+            eta=values("top_eta").float(),
+            k=values("top_k").float(),
+            color=values("top_color").float(),
+            tangent_rotation=values("top_rotation").float(),
+            amplitude=torch.zeros((count, 2, 3), dtype=torch.float32, device=device),
+            inverse_scale=torch.ones((count, 2, 2), dtype=torch.float32, device=device),
+            shear=torch.zeros((count, 2, 3), dtype=torch.float32, device=device),
+            angle=torch.zeros((count, 2), dtype=torch.float32, device=device),
+        )
+
+    def _core(
+        self,
+        batch: Mapping[str, torch.Tensor],
+        view: torch.Tensor,
+        lights: torch.Tensor,
+        *,
+        repeat_count: int = 1,
+    ) -> torch.Tensor:
+        return eval_direct_top(
+            self._state_tensors(batch, repeat_count=repeat_count), view, lights
+        )
+
+    def fit_training_state(
+        self,
+        store: ReferenceQueryStore,
+        train_indices: np.ndarray,
+    ) -> Mapping[str, Any]:
+        if not isinstance(store, LayerStackReferenceStore):
+            raise TypeError("analytic residual E1 pipeline requires LayerStackReferenceStore")
+        base = dict(_DenseE1Pipeline.fit_training_state(self, store, train_indices))
+        residual_parts = []
+        for start in range(0, len(train_indices), 256):
+            raw = store.batch(train_indices[start : start + 256])
+            tensor = {
+                name: torch.as_tensor(value)
+                for name, value in raw.items()
+            }
+            core = self._core(tensor, tensor["view"].float(), tensor["lights"].float())
+            residual_parts.append(
+                raw["mean"].astype(np.float64) - core.detach().cpu().numpy().astype(np.float64)
+            )
+        residual = np.concatenate(residual_parts, axis=0).reshape(-1, 3)
+        scale = np.empty(3, dtype=np.float64)
+        for channel in range(3):
+            absolute_nonzero = np.abs(residual[:, channel])
+            absolute_nonzero = absolute_nonzero[absolute_nonzero > 0.0]
+            scale[channel] = (
+                max(float(np.quantile(absolute_nonzero, 0.5)), 1e-8)
+                if len(absolute_nonzero)
+                else 1e-8
+            )
+        transformed = np.arcsinh(residual / scale)
+        standard_deviation = np.maximum(np.std(transformed, axis=0), 1e-6)
+        return {
+            **base,
+            "format_version": 2,
+            "target_channel_scale": [float(value) for value in scale],
+            "target_channel_mean": [float(value) for value in np.mean(transformed, axis=0)],
+            "target_channel_standard_deviation": [
+                float(value) for value in standard_deviation
+            ],
+        }
+
+    def _decode(self, raw: torch.Tensor) -> torch.Tensor:
+        scale, mean, standard_deviation = self._transform_tensors(raw)
+        transformed = torch.clamp(raw * standard_deviation + mean, min=-15.0, max=15.0)
+        return scale * torch.sinh(transformed)
+
+    @staticmethod
+    def _reciprocity_values(
+        forward: torch.Tensor,
+        reverse: torch.Tensor,
+        wo: torch.Tensor,
+        wi: torch.Tensor,
+    ) -> torch.Tensor:
+        wi_cosine = torch.abs(wi[..., 2:3])
+        wo_cosine = torch.abs(wo[:, None, 2:3])
+        valid = (wi_cosine > 0.05) & (wo_cosine > 0.05)
+        forward_bsdf = forward / torch.clamp(wi_cosine, min=0.05)
+        reverse_bsdf = reverse / torch.clamp(wo_cosine, min=0.05)
+        delta = torch.where(
+            valid, torch.abs(forward_bsdf - reverse_bsdf), torch.zeros_like(forward)
+        )
+        magnitude = torch.where(valid, torch.abs(forward_bsdf), torch.zeros_like(forward))
+        return torch.sum(delta, dim=(1, 2)) / torch.clamp(
+            torch.sum(magnitude, dim=(1, 2)), min=1e-8
+        )
+
+    def _reverse_prediction(
+        self,
+        model: SingleMaterialNeuralEvaluator,
+        batch: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor:
+        wo = batch["view"].float()
+        wi = batch["lights"].float()
+        group_count, direction_count, _ = wi.shape
+        reverse_view = wi.reshape(group_count * direction_count, 3)
+        reverse_light = wo[:, None, :].expand(-1, direction_count, -1).reshape(
+            group_count * direction_count, 1, 3
+        )
+        reverse_core = self._core(
+            batch,
+            reverse_view,
+            reverse_light,
+            repeat_count=direction_count,
+        )
+        reverse_residual = self._decode(model(reverse_view, reverse_light))
+        return torch.clamp(reverse_core + reverse_residual, min=0.0).reshape(
+            group_count, direction_count, 3
+        )
+
+    def predict(
+        self,
+        model: nn.Module,
+        batch: Mapping[str, torch.Tensor],
+        store: ReferenceQueryStore,
+        device: torch.device,
+    ) -> torch.Tensor:
+        del device
+        self._require_batch_state(batch, store)
+        if not isinstance(model, SingleMaterialNeuralEvaluator):
+            raise TypeError("analytic residual pipeline requires SingleMaterialNeuralEvaluator")
+        core = self._core(batch, batch["view"].float(), batch["lights"].float())
+        residual = self._decode(model(batch["view"].float(), batch["lights"].float()))
+        prediction = torch.clamp(core + residual, min=0.0)
+        if isinstance(batch, dict):
+            batch["_analytic_core"] = core
+            batch["_predicted_residual"] = residual
+            if model.training:
+                reverse = self._reverse_prediction(model, batch)
+                reciprocity = self._reciprocity_values(
+                    prediction, reverse, batch["view"].float(), batch["lights"].float()
+                )
+                batch["_reciprocity_penalty"] = torch.mean(torch.log1p(reciprocity))
+        return prediction
+
+    def training_loss(
+        self,
+        prediction: torch.Tensor,
+        batch: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor:
+        core = batch.get("_analytic_core")
+        predicted_residual = batch.get("_predicted_residual")
+        if not isinstance(core, torch.Tensor) or not isinstance(predicted_residual, torch.Tensor):
+            raise RuntimeError("analytic residual loss requires pipeline prediction state")
+        target = batch["mean"].float()
+        target_residual = target - core
+        scale, mean, standard_deviation = self._transform_tensors(prediction)
+        transformed_prediction = (
+            torch.asinh(predicted_residual / scale) - mean
+        ) / standard_deviation
+        transformed_target = (torch.asinh(target_residual / scale) - mean) / standard_deviation
+        transform_loss = torch.mean(torch.square(transformed_prediction - transformed_target))
+        reciprocity = batch.get("_reciprocity_penalty")
+        reciprocity_loss = (
+            reciprocity if isinstance(reciprocity, torch.Tensor) else prediction.new_zeros(())
+        )
+        return (
+            transform_loss
+            + 0.02 * response_loss(prediction, target, batch["standard_error"].float())
+            + 0.02 * reciprocity_loss
+        )
+
+    def additional_metric_distributions(
+        self,
+        model: nn.Module,
+        batch: Mapping[str, torch.Tensor],
+        store: ReferenceQueryStore,
+        device: torch.device,
+    ) -> Mapping[str, np.ndarray]:
+        del device
+        self._require_batch_state(batch, store)
+        if not isinstance(model, SingleMaterialNeuralEvaluator):
+            raise TypeError("analytic residual pipeline requires SingleMaterialNeuralEvaluator")
+        core = self._core(batch, batch["view"].float(), batch["lights"].float())
+        residual = self._decode(model(batch["view"].float(), batch["lights"].float()))
+        forward = torch.clamp(core + residual, min=0.0)
+        reverse = self._reverse_prediction(model, batch)
+        reciprocity = self._reciprocity_values(
+            forward, reverse, batch["view"].float(), batch["lights"].float()
+        )
+        weights = batch["solid_angle_weight"].float()[..., None]
+        target = batch["mean"].float()
+        core_error = torch.sum(torch.abs(core - target) * weights, dim=(1, 2)) / torch.clamp(
+            torch.sum(torch.abs(target) * weights, dim=(1, 2)), min=1e-8
+        )
+        return {
+            "reciprocity_relative_l1": reciprocity.detach().cpu().numpy(),
+            "analytic_core_solid_angle_normalized_l1": core_error.detach().cpu().numpy(),
+        }
