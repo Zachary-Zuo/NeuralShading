@@ -10,7 +10,14 @@ import numpy as np
 from ncls.core.material import material_program_from_layer_stack
 from ncls.data.collector import CollectionConfig
 from ncls.data.contract import EvaluatedBlock, PositionKind, QueryPlan, ReferenceDescriptor, SourceState, SurfaceSample, make_state_id
-from ncls.data.priors import sample_stack_families
+from ncls.data.priors import (
+    E0_LAYER_STACK_BOUNDARY_CASE_IDS,
+    E0_LAYER_STACK_BOUNDARY_PROFILE_ID,
+    LAYER_STACK_RESEARCH_PRIOR_ID,
+    LAYER_STACK_STATE_PROFILE_IDS,
+    e0_layer_stack_boundary_cases,
+    sample_stack_families,
+)
 from ncls.data.reference import FalcorReferenceEvaluator, evaluate_reference_adaptive, evaluate_reference_fixed
 
 from .base import BaseProvider, PROJECT_ROOT, assign_group_splits, implementation_hash
@@ -28,6 +35,7 @@ class LayerStackProviderConfig:
     min_samples: int = 512
     max_samples: int = 16384
     relative_standard_error: float = 0.03
+    state_profile_id: str = LAYER_STACK_RESEARCH_PRIOR_ID
 
     def __post_init__(self) -> None:
         values = (
@@ -40,6 +48,16 @@ class LayerStackProviderConfig:
             raise ValueError("adaptive sample limits must be multiples of batch_samples")
         if not 0.0 < self.relative_standard_error < 1.0:
             raise ValueError("relative_standard_error must lie in (0, 1)")
+        if self.state_profile_id not in LAYER_STACK_STATE_PROFILE_IDS:
+            raise ValueError(f"unknown LayerStack state profile {self.state_profile_id!r}")
+        if self.state_profile_id == E0_LAYER_STACK_BOUNDARY_PROFILE_ID:
+            if self.family_count != len(E0_LAYER_STACK_BOUNDARY_CASE_IDS):
+                raise ValueError(
+                    f"{E0_LAYER_STACK_BOUNDARY_PROFILE_ID} requires "
+                    f"family_count={len(E0_LAYER_STACK_BOUNDARY_CASE_IDS)}"
+                )
+            if self.local_state_count != 1:
+                raise ValueError(f"{E0_LAYER_STACK_BOUNDARY_PROFILE_ID} requires local_state_count=1")
 
 
 class LayerStackProvider(BaseProvider):
@@ -71,8 +89,15 @@ class LayerStackProvider(BaseProvider):
             capabilities=("evaluate", "monte-carlo-moments"),
             implementation_sha256=implementation_hash(source_paths),
         )
-        families = sample_stack_families(config.family_count, config.local_state_count, collection.seed)
-        group_ids = [f"layer-stack-family-{index:06d}" for index in range(config.family_count)]
+        if config.state_profile_id == E0_LAYER_STACK_BOUNDARY_PROFILE_ID:
+            cases = e0_layer_stack_boundary_cases()
+            case_ids = [case_id for case_id, _ in cases]
+            families = [[stack] for _, stack in cases]
+            group_ids = [f"layer-stack-boundary-{case_id}" for case_id in case_ids]
+        else:
+            families = sample_stack_families(config.family_count, config.local_state_count, collection.seed)
+            case_ids = [f"sampled-family-{index:06d}" for index in range(config.family_count)]
+            group_ids = [f"layer-stack-family-{index:06d}" for index in range(config.family_count)]
         splits = assign_group_splits(group_ids, collection.seed)
         states = []
         for family_index, family in enumerate(families):
@@ -80,7 +105,12 @@ class LayerStackProvider(BaseProvider):
             for local_index, stack in enumerate(family):
                 program = material_program_from_layer_stack(
                     stack,
-                    metadata={"family_index": family_index, "local_state_index": local_index},
+                    metadata={
+                        "family_index": family_index,
+                        "local_state_index": local_index,
+                        "state_profile_id": config.state_profile_id,
+                        "state_profile_case_id": case_ids[family_index],
+                    },
                 )
                 payload = program.to_json().encode("utf-8")
                 source_hash = hashlib.sha256(payload).hexdigest()

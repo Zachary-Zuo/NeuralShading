@@ -64,6 +64,21 @@ E0 的定向覆盖诊断使用版本化的 `ncls.e0-peak-grazing-mixture@1`。�
   --output data\reference-responses\layer-stack-smoke.h5
 ```
 
+LayerStack 的默认 `ncls.layer-stack-research-prior@1` 仍用于随机结构/局部状态采样。E0 另提供固定的 `ncls.e0-layer-stack-boundary@1`，它不是训练 prior，而是六个可追溯 coverage probe：极窄 dielectric 高光、极窄各向异性 conductor、旋转各向异性 dielectric、色吸收 slab、满足当前 v0 同消光约束的色散射 slab，以及多界面移动峰。该 profile 的案例集合和数量都属于版本化语义，因此必须显式使用 6 个 family、每个 1 个状态：
+
+```powershell
+.\scripts\run_falcor_python.ps1 -m ncls.cli data collect-reference `
+  --provider layer-stack `
+  --layer-stack-state-profile ncls.e0-layer-stack-boundary@1 `
+  --families 6 --local-states 1 `
+  --query-profile ncls.e0-peak-grazing-mixture@1 `
+  --views 2 --validation-views 1 --test-views 1 --adversarial-views 2 `
+  --lights 128 --samples-per-replica 4096 `
+  --output artifacts\research\learning-goal\e0\probes\layer-stack-boundary-v4.h5
+```
+
+案例 ID、profile ID 和采样配置同时进入原生 `MaterialProgram` metadata、provider metadata 与 HDF5 generation config。修改固定案例必须发布新 profile ID，不能在原 ID 下静默换状态。先用低预算 H5 按 state/query role 定位 reference noise，再只给最坏状态增加自适应预算；不得把百万样本上界无差别用于所有状态。
+
 ## 验证与读取
 
 ```powershell

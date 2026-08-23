@@ -12,8 +12,20 @@ from ncls.core.material import (
 )
 
 
-PRIOR_ID = "layer-stack-research-prior"
-PRIOR_VERSION = "v1.0"
+LAYER_STACK_RESEARCH_PRIOR_ID = "ncls.layer-stack-research-prior@1"
+E0_LAYER_STACK_BOUNDARY_PROFILE_ID = "ncls.e0-layer-stack-boundary@1"
+LAYER_STACK_STATE_PROFILE_IDS = (
+    LAYER_STACK_RESEARCH_PRIOR_ID,
+    E0_LAYER_STACK_BOUNDARY_PROFILE_ID,
+)
+E0_LAYER_STACK_BOUNDARY_CASE_IDS = (
+    "narrow-dielectric-over-diffuse",
+    "narrow-anisotropic-conductor",
+    "rotated-anisotropic-dielectric",
+    "chromatic-absorption-slab",
+    "chromatic-scattering-slab",
+    "multi-interface-moving-peaks",
+)
 
 
 def assign_family_splits(family_count: int, seed: int) -> np.ndarray:
@@ -180,3 +192,92 @@ def sample_stack_families(family_count: int, local_state_count: int, seed: int) 
             ]
         )
     return families
+
+
+def e0_layer_stack_boundary_cases() -> tuple[tuple[str, LayerStackIR], ...]:
+    """返回 E0 固定边界案例；它是 coverage probe，不是训练 prior。"""
+
+    return (
+        (
+            "narrow-dielectric-over-diffuse",
+            LayerStackIR(
+                (
+                    RoughDielectricInterface(0.002, 0.002, 1.5),
+                    DiffuseInterface((0.42, 0.19, 0.06)),
+                ),
+                (HomogeneousMedium(thickness=0.08),),
+            ),
+        ),
+        (
+            "narrow-anisotropic-conductor",
+            LayerStackIR(
+                (
+                    RoughConductorInterface(
+                        0.002,
+                        0.08,
+                        (0.17, 0.35, 1.5),
+                        (3.1, 2.7, 1.9),
+                        0.61,
+                    ),
+                ),
+                (),
+            ),
+        ),
+        (
+            "rotated-anisotropic-dielectric",
+            LayerStackIR(
+                (
+                    RoughDielectricInterface(0.004, 0.12, 1.62, -0.73),
+                    DiffuseInterface((0.12, 0.48, 0.2)),
+                ),
+                (HomogeneousMedium(thickness=0.18),),
+            ),
+        ),
+        (
+            "chromatic-absorption-slab",
+            LayerStackIR(
+                (
+                    RoughDielectricInterface(0.018, 0.055, 1.45, 0.37),
+                    DiffuseInterface((0.72, 0.58, 0.34)),
+                ),
+                (HomogeneousMedium((0.25, 1.2, 3.0), thickness=0.6),),
+            ),
+        ),
+        (
+            "chromatic-scattering-slab",
+            LayerStackIR(
+                (
+                    RoughDielectricInterface(0.05, 0.05, 1.3),
+                    DiffuseInterface((0.55, 0.45, 0.35)),
+                ),
+                (
+                    HomogeneousMedium(
+                        (0.8, 0.5, 0.2),
+                        (0.2, 0.5, 0.8),
+                        0.7,
+                        0.75,
+                    ),
+                ),
+            ),
+        ),
+        (
+            "multi-interface-moving-peaks",
+            LayerStackIR(
+                (
+                    RoughDielectricInterface(0.012, 0.05, 1.48, 0.1),
+                    RoughDielectricInterface(0.045, 0.01, 0.82, 1.03),
+                    RoughConductorInterface(
+                        0.07,
+                        0.025,
+                        (0.22, 0.9, 1.4),
+                        (3.8, 2.6, 1.7),
+                        -0.42,
+                    ),
+                ),
+                (
+                    HomogeneousMedium((0.03, 0.08, 0.16), thickness=0.12),
+                    HomogeneousMedium(thickness=0.22),
+                ),
+            ),
+        ),
+    )

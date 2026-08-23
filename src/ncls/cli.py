@@ -99,6 +99,7 @@ def _generate_dataset(args: argparse.Namespace) -> int:
         min_samples=args.min_samples,
         max_samples=args.max_samples,
         relative_standard_error=args.relative_standard_error,
+        state_profile_id=args.layer_stack_state_profile,
     )
     manifest = generate_reference_dataset(
         output,
@@ -265,6 +266,12 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--material-id", action="append", default=[], help="单 provider 下只导出指定资产；可重复")
     generate.add_argument("--families", type=int, default=8)
     generate.add_argument("--local-states", type=int, default=4)
+    generate.add_argument(
+        "--layer-stack-state-profile",
+        choices=("ncls.layer-stack-research-prior@1", "ncls.e0-layer-stack-boundary@1"),
+        default="ncls.layer-stack-research-prior@1",
+        help="LayerStack provider-local 的版本化状态分布",
+    )
     generate.add_argument("--views", type=int, default=4)
     generate.add_argument("--validation-views", type=int, default=0)
     generate.add_argument("--test-views", type=int, default=0)

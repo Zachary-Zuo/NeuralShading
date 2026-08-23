@@ -14,6 +14,7 @@ from ncls.core.material import (
 from ncls.data.reference import FalcorReferenceEvaluator, evaluate_reference_fixed
 from ncls.data import CollectionConfig, ReferenceDataset, collect_reference_dataset
 from ncls.data.directions import equal_area_hemisphere
+from ncls.data.priors import E0_LAYER_STACK_BOUNDARY_CASE_IDS, E0_LAYER_STACK_BOUNDARY_PROFILE_ID
 from ncls.data.providers import LayerStackProvider, LayerStackProviderConfig
 
 
@@ -174,3 +175,30 @@ def test_reference_generator_supports_per_view_peak_grazing_queries(tmp_path: Pa
             rtol=1e-6,
             atol=1e-7,
         )
+
+
+def test_e0_boundary_state_profile_executes_all_cases(tmp_path: Path) -> None:
+    collection = CollectionConfig(view_count=1, light_count=16, seed=20260824)
+    config = LayerStackProviderConfig(
+        family_count=len(E0_LAYER_STACK_BOUNDARY_CASE_IDS),
+        local_state_count=1,
+        samples_per_replica=4,
+        query_group_batch=1,
+        max_depth=32,
+        state_profile_id=E0_LAYER_STACK_BOUNDARY_PROFILE_ID,
+    )
+    provider = LayerStackProvider(collection, config)
+    collect_reference_dataset(
+        tmp_path / "boundary-reference.h5",
+        [provider],
+        collection,
+        created_at="2026-08-24T00:00:00+00:00",
+        generator_git_commit="test",
+    )
+    with ReferenceDataset.open(tmp_path / "boundary-reference.h5") as dataset:
+        assert dataset.manifest.counts["state_count"] == len(E0_LAYER_STACK_BOUNDARY_CASE_IDS)
+        assert {int(value) for value in dataset.state_splits} == {0, 1, 2}
+        assert dataset.manifest.provider_metadata[0]["provider_config"]["state_profile_id"] == E0_LAYER_STACK_BOUNDARY_PROFILE_ID
+        mean = dataset.group_batch(range(dataset.query_group_count))["mean"]
+        assert np.all(np.isfinite(mean))
+        assert np.all(mean >= 0.0)

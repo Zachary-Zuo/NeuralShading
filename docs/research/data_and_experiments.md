@@ -150,6 +150,10 @@ target transform 的统计量只能由 source train × query train 生成并带 
 
 真实 targeted probe 给出了两项稳定结果。MERL `black-obsidian` 使用 8 个 `wo`、每个 512 个 mixture query 后，peak 最近邻角 p95 从 pilot 的约 `8.73°` 降至 `1.15°`；OpenPBR `open_pbr_glass` 从约 `12.25°` 降至 `0.52°`，并实际包含约 `47.1%` 透射侧 query 与 `11.4%` 的五度内掠射 query。两个单资产 probe 的 proposal/profile 检查通过，gate 只因它们故意没有 validation/test state 而失败，不能把该预期失败解释为 proposal 失败。
 
+随后三资产 OpenPBR v4 smoke 把 `open_pbr_glass`、`open_pbr_soapbubble` 与 `open_pbr_aluminum_brushed` 放入独立 source/query partition。合同和内容哈希通过，全部方向 overlap 为 0；adversarial peak spacing p95 为 `1.410°`、掠射比例为 `0.115`、透射比例为 `0.475`，通过 `ncls.e0-supervision-entry@3`。这只确认 E0 查询覆盖，不代表 transmission evaluator 已通过容量或视觉 gate。
+
+LayerStack 不再等待随机 prior 偶然采到边界状态。provider-local 的 `ncls.e0-layer-stack-boundary@1` 固定六个 coverage case：极窄 dielectric、极窄各向异性 conductor、旋转各向异性 dielectric、色吸收 slab、符合当前 v0 同消光实现约束的色散射 slab，以及多界面移动峰。它要求 6 个 family、每个 1 个状态，并把 profile/case ID 写进原生 payload 与 provider metadata。该集合是 E0 probe，不替代后续连续研究 prior；改动案例必须升级 profile ID。
+
 三组 LayerStack 的相同 state/query 在四档自适应预算下测得以下 noise 曲线；`sample_count` 是合并两个 replica 后的总样本数上限：
 
 | 最大总样本数 | relative SE p95 | replica normalized L1 p95 | gate |
