@@ -134,7 +134,10 @@ class LayerStackProvider(BaseProvider):
         evaluator = self._active_evaluator(plan)
         materials = [state.runtime_state] * len(plan.view_directions)
         seeds = np.asarray(
-            [self.config.seed ^ int(state.state_id[:8], 16) ^ (index * 0x9E3779B1) for index in range(len(materials))],
+            [
+                (self.config.seed ^ int(state.state_id[:8], 16) ^ (index * 0x9E3779B1)) & 0xFFFFFFFF
+                for index in range(len(materials))
+            ],
             dtype=np.uint32,
         )
         if self.provider_config.adaptive:

@@ -26,6 +26,7 @@ from ncls.data import (
     make_state_id,
     stratified_view_directions,
 )
+from ncls.data.providers import LayerStackProvider, LayerStackProviderConfig
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -91,6 +92,29 @@ class _FakeProvider:
         pass
 
 
+class _SeedRecordingEvaluator:
+    def __init__(self, light_count: int) -> None:
+        self.light_count = light_count
+        self.query_group_seeds = np.empty(0, dtype=np.uint32)
+
+    def evaluate_query_groups(
+        self,
+        materials,
+        view_directions,
+        *,
+        sample_count_per_replica: int,
+        query_group_seeds: np.ndarray,
+        sample_offset: int = 0,
+    ):
+        self.query_group_seeds = np.asarray(query_group_seeds, dtype=np.uint32).copy()
+        shape = (len(materials), self.light_count, 3)
+        mean_a = np.full(shape, 0.2, dtype=np.float32)
+        mean_b = np.full(shape, 0.22, dtype=np.float32)
+        second_a = mean_a * mean_a
+        second_b = mean_b * mean_b
+        return mean_a, second_a, mean_b, second_b
+
+
 def _collect(path: Path):
     return collect_reference_dataset(
         path,
@@ -118,6 +142,34 @@ def test_equal_area_directions_integrate_lambert_response() -> None:
     response_cos = albedo[None, :] * directions[:, 2:3] / np.pi
     integrated = np.sum(response_cos * weights[:, None], axis=0)
     assert integrated == pytest.approx(albedo, rel=1e-6, abs=1e-6)
+
+
+def test_layer_stack_provider_wraps_per_view_seeds_to_uint32() -> None:
+    collection = CollectionConfig(view_count=8, light_count=4, seed=20260824)
+    evaluator = _SeedRecordingEvaluator(collection.light_count)
+    provider = LayerStackProvider(
+        collection,
+        LayerStackProviderConfig(
+            family_count=1,
+            local_state_count=1,
+            samples_per_replica=4,
+            query_group_batch=8,
+            max_depth=4,
+        ),
+        evaluator=evaluator,
+    )
+    state = provider.source_states()[0]
+    plan = provider.query_plan(state)
+    provider.evaluate(state, provider.surface_samples(state), plan)
+
+    expected = np.asarray(
+        [
+            (collection.seed ^ int(state.state_id[:8], 16) ^ (index * 0x9E3779B1)) & 0xFFFFFFFF
+            for index in range(collection.view_count)
+        ],
+        dtype=np.uint32,
+    )
+    np.testing.assert_array_equal(evaluator.query_group_seeds, expected)
 
 
 def test_hdf5_contract_preserves_native_state_queries_and_responses(tmp_path: Path) -> None:
