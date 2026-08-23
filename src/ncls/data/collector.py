@@ -105,7 +105,7 @@ def collect_reference_dataset(
             surfaces = tuple(provider.surface_samples(state))
             if not surfaces or any(surface.position_kind != provider.descriptor.position_kind for surface in surfaces):
                 raise ValueError("provider surface samples disagree with its declared position kind")
-            plan = provider.query_plan(state)
+            plan = provider.query_plan(state, surfaces)
             if np.any(plan.view_directions[:, 2] <= 0.0):
                 raise ValueError("surface reference view directions must lie above the local surface")
             if provider.descriptor.incident_domain == "upper-hemisphere" and np.any(plan.light_directions[..., 2] <= 0.0):

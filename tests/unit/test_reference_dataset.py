@@ -72,7 +72,7 @@ class _FakeProvider:
     def surface_samples(self, state):
         return (SurfaceSample(),)
 
-    def query_plan(self, state):
+    def query_plan(self, state, surfaces=()):
         lights, weights = equal_area_hemisphere(4)
         per_view_lights = np.stack((lights, np.roll(lights, 1, axis=0)))
         return QueryPlan(
@@ -181,6 +181,40 @@ def test_peak_grazing_mixture_is_per_view_and_has_normalized_pdf() -> None:
     center /= np.linalg.norm(center)
     folded_integral = np.sum(_folded_vmf_pdf(quadrature, center, 8.0, 1.0) * solid_angle)
     assert folded_integral == pytest.approx(1.0, rel=2e-3, abs=2e-3)
+
+
+def test_peak_mixture_accepts_explicit_surface_conditioned_reflection_centers() -> None:
+    views = stratified_view_directions(2)
+    centers = np.asarray(((0.3, -0.2, 0.9327379), (-0.25, 0.35, 0.9027735)), dtype=np.float64)
+    centers /= np.linalg.norm(centers, axis=1, keepdims=True)
+    directions, weights, pdf = peak_grazing_mixture_query(
+        views,
+        1024,
+        full_sphere=False,
+        seed=73,
+        reflection_centers=centers,
+    )
+    nearest = np.degrees(np.arccos(np.clip(np.max(np.sum(directions * centers[:, None], axis=-1), axis=1), -1.0, 1.0)))
+    assert np.all(nearest < 0.5)
+    np.testing.assert_allclose(weights * pdf, 1.0 / 1024.0, rtol=1e-6, atol=1e-7)
+
+
+def test_query_plan_accepts_surface_dependent_direction_tables() -> None:
+    views = stratified_view_directions(2)
+    lights, weights = equal_area_hemisphere(4)
+    per_view = np.stack((lights, np.roll(lights, 1, axis=0)))
+    per_surface = np.stack((per_view, np.roll(per_view, 1, axis=2)))
+    plan = QueryPlan(
+        views,
+        per_surface,
+        np.broadcast_to(weights, (2, 2, 4)),
+        np.full((2, 2, 4), 1.0 / (2.0 * np.pi), dtype=np.float32),
+        ("first@1", "second@1"),
+        79,
+    )
+    assert plan.light_directions.shape == (2, 2, 4, 3)
+    assert plan.solid_angle_weights.shape == (2, 2, 4)
+    assert plan.direction_count == 4
 
 
 def test_full_sphere_mixture_includes_reflection_transmission_and_grazing() -> None:

@@ -68,7 +68,11 @@ class BaseProvider:
     def __init__(self, config: CollectionConfig) -> None:
         self.config = config
 
-    def query_plan(self, state: SourceState) -> QueryPlan:
+    def query_plan(
+        self,
+        state: SourceState,
+        surfaces: Sequence[SurfaceSample] = (),
+    ) -> QueryPlan:
         full_sphere = self.descriptor.incident_domain == "full-sphere"
         domain = "full-sphere" if full_sphere else "upper-hemisphere"
         query_seed = self.config.seed ^ int(state.state_id[:16], 16)

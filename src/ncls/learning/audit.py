@@ -14,12 +14,13 @@ from ncls.learning.gates import evaluate_supervision_gate, load_supervision_gate
 
 
 AUDIT_FORMAT = "ncls.supervision-audit"
-AUDIT_VERSION = 5
+AUDIT_VERSION = 6
 TRANSFORM_STATISTICS_FORMAT = "ncls.target-transform-statistics"
 TRANSFORM_STATISTICS_VERSION = 2
 _SPLIT_CODES = {name: index for index, name in enumerate(SPLIT_NAMES)}
 _QUERY_ROLE_CODES = {name: index for index, name in enumerate(QUERY_ROLE_NAMES)}
 _LUMINANCE = np.asarray((0.2126, 0.7152, 0.0722), dtype=np.float64)
+_PEAK_RELEVANT_TOP_1_PERCENT_ENERGY_FRACTION = 0.1
 
 
 def _json_bytes(value: Any) -> bytes:
@@ -90,6 +91,19 @@ def _distribution(values: np.ndarray) -> dict[str, Any]:
         denominator = max(float(np.quantile(nonzero, 0.01)), np.finfo(np.float64).tiny)
         result["dynamic_range_max_over_nonzero_p1"] = float(np.max(nonzero) / denominator)
     return result
+
+
+def _peak_relevant_summary(top1: np.ndarray, spacing: np.ndarray) -> dict[str, Any]:
+    concentration = np.asarray(top1, dtype=np.float64)
+    angles = np.asarray(spacing, dtype=np.float64)
+    selected = concentration >= _PEAK_RELEVANT_TOP_1_PERCENT_ENERGY_FRACTION
+    return {
+        "top_1_percent_energy_fraction_minimum": _PEAK_RELEVANT_TOP_1_PERCENT_ENERGY_FRACTION,
+        "query_group_count": int(np.sum(selected)),
+        "peak_nearest_neighbor_angle_degrees": _percentiles(
+            angles[selected], (0.05, 0.5, 0.9, 0.95)
+        ),
+    }
 
 
 def _split_leaks(keys: np.ndarray, splits: np.ndarray) -> dict[str, Any]:
@@ -317,6 +331,7 @@ def audit_supervision(
         group_top1 = np.empty(len(selected), dtype=np.float64)
         group_top5 = np.empty(len(selected), dtype=np.float64)
         group_peak_spacing = np.empty(len(selected), dtype=np.float64)
+        group_peak_to_median = np.empty(len(selected), dtype=np.float64)
         worst_groups: list[dict[str, Any]] = []
         for family_id in sorted(set(map(str, selected_families.tolist()))):
             family_mask = selected_families == family_id
@@ -343,6 +358,11 @@ def audit_supervision(
 
             response_magnitude = np.sum(np.abs(response), axis=-1) * valid
             peak_indices = np.argmax(response_magnitude, axis=1)
+            median_magnitude = np.asarray([
+                float(np.median(row[row > 0.0])) if np.any(row > 0.0) else 0.0
+                for row in response_magnitude
+            ])
+            peak_to_median = np.max(response_magnitude, axis=1) / np.maximum(median_magnitude, 1e-20)
             spacing = np.empty(len(peak_indices), dtype=np.float64)
             for local_index, peak_index in enumerate(peak_indices.tolist()):
                 dots = np.clip(wi[local_index] @ wi[local_index, peak_index], -1.0, 1.0)
@@ -356,11 +376,14 @@ def audit_supervision(
                 "top_1_percent_energy_fraction": _percentiles(top1, (0.5, 0.9, 0.95)),
                 "top_5_percent_energy_fraction": _percentiles(top5, (0.5, 0.9, 0.95)),
                 "peak_nearest_neighbor_angle_degrees": _percentiles(spacing, (0.05, 0.5, 0.9, 0.95)),
+                "peak_to_median_response_ratio": _percentiles(peak_to_median, (0.5, 0.9, 0.95, 0.99)),
+                "peak_relevant": _peak_relevant_summary(top1, spacing),
             }
             global_family_indices = np.flatnonzero(family_mask)
             group_top1[global_family_indices] = top1
             group_top5[global_family_indices] = top5
             group_peak_spacing[global_family_indices] = spacing
+            group_peak_to_median[global_family_indices] = peak_to_median
             for local_index in np.argsort(top1)[-4:][::-1]:
                 selected_position = int(global_family_indices[local_index])
                 group_index = int(selected[selected_position])
@@ -479,6 +502,12 @@ def audit_supervision(
                 ),
                 "peak_nearest_neighbor_angle_degrees": _percentiles(
                     group_peak_spacing[selected_roles == code], (0.05, 0.5, 0.9, 0.95)
+                ),
+                "peak_to_median_response_ratio": _percentiles(
+                    group_peak_to_median[selected_roles == code], (0.5, 0.9, 0.95, 0.99)
+                ),
+                "peak_relevant": _peak_relevant_summary(
+                    group_top1[selected_roles == code], group_peak_spacing[selected_roles == code]
                 ),
             }
             for name, code in _QUERY_ROLE_CODES.items()

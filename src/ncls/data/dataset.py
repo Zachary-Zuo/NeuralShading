@@ -233,6 +233,16 @@ class ReferenceDatasetWriter:
         ], dtype=np.uint16)
         surface_rows = [surface for surface in surfaces for _ in plan.view_directions]
         views = np.tile(plan.view_directions, (len(surfaces), 1))
+        if plan.light_directions.ndim == 3:
+            light_directions = np.tile(plan.light_directions, (len(surfaces), 1, 1))
+            proposal_pdf = np.tile(plan.proposal_pdf, (len(surfaces), 1))
+            solid_angle_weight = np.tile(plan.solid_angle_weights, (len(surfaces), 1))
+        else:
+            if plan.light_directions.shape[0] != len(surfaces):
+                raise ValueError("surface-dependent QueryPlan must match the appended surface count")
+            light_directions = plan.light_directions.reshape(group_count, self.direction_count, 3)
+            proposal_pdf = plan.proposal_pdf.reshape(group_count, self.direction_count)
+            solid_angle_weight = plan.solid_angle_weights.reshape(group_count, self.direction_count)
         query_values: dict[str, np.ndarray] = {
             "state_index": np.full(group_count, state_index, dtype=np.uint32),
             "query_role": np.tile(plan.query_roles, len(surfaces)),
@@ -244,9 +254,9 @@ class ReferenceDatasetWriter:
             "geometric_normal": np.asarray([surface.geometric_normal for surface in surface_rows], dtype=np.float32),
             "geometric_tangent": np.asarray([surface.geometric_tangent for surface in surface_rows], dtype=np.float32),
             "wo": views,
-            "wi": np.tile(plan.light_directions, (len(surfaces), 1, 1)),
-            "proposal_pdf": np.tile(plan.proposal_pdf, (len(surfaces), 1)),
-            "solid_angle_weight": np.tile(plan.solid_angle_weights, (len(surfaces), 1)),
+            "wi": light_directions,
+            "proposal_pdf": proposal_pdf,
+            "solid_angle_weight": solid_angle_weight,
         }
         query_values["rng_seed"] = evaluated.rng_seed.reshape(group_count, self.direction_count)
         for name, values in query_values.items():

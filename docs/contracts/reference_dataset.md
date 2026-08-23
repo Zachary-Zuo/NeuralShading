@@ -39,7 +39,7 @@ HDF5 对已采样监督域是自包含的：仅打开文件即可得到所有已
 descriptor
 source_states()       枚举或采样原生状态
 surface_samples()     给出 constant、UV 或 surface-point 位置与 footprint
-query_plan()          给出 wo、wi、proposal PDF、立体角权重和 seed
+query_plan(state, surfaces)  给出 wo、wi、proposal PDF、立体角权重和 seed
 evaluate()            调用该材质族的权威 reference
 metadata()
 close()
@@ -103,7 +103,7 @@ pbrt coated package用于独立验证 LayerStack reference，不是一个独立�
     valid, event_flags, reference_pdf
 ```
 
-一个 query group 固定一个 `(state, surface sample, wo)`，并携带 `direction_count` 个 `wi`。不同 group 的方向值和 proposal 可以不同，但一个文件内的方向数量固定，以保证 HDF5 高效随机读取和 batch 化。
+一个 query group 固定一个 `(state, surface sample, wo)`，并携带 `direction_count` 个 `wi`。provider 可以共享方向表，也可以按 `wo`，或进一步按 `(surface sample, wo)` 生成不同方向；writer 统一展平成同一种 query-group 表。不同 group 的方向值和 proposal 可以不同，但一个文件内的方向数量固定，以保证 HDF5 高效随机读取和 batch 化。surface-dependent proposal 的 PDF 与积分权重必须与各自方向同时落盘，不能把第一处 UV 的 proposal 复制给其他 surface。
 
 ## 5. 查询与响应语义
 
@@ -126,6 +126,8 @@ RGB f(wo, wi) × |dot(Ns, wi)|
 `proposal_pdf` 描述采集 `wi` 的分布，`solid_angle_weight` 描述当前离散积分权重，二者不能互相替代。固定 probe、均匀采样、microfacet/peak proposal 和自适应 query 都通过这两个字段保留真实语义。
 
 版本化 E0 mixture `ncls.e0-peak-grazing-mixture@2` 是按 `wo` 构造的 uniform + 多尺度球面 vMF 反射 peak + grazing 混合分布；完整球面时另含透射 peak。vMF peak 以真实镜面方向为球面中心，并把完整球分布折叠到目标半球，PDF 等于原方向与镜像方向的 PDF 之和。它使用可计算的归一化 PDF 和 `1/(N p)` 权重，目标是诊断 peak、掠射与透射覆盖，不预先宣告为最终训练分布。train/adversarial 使用 mixture，validation/test 使用独立 uniform probe；文件仍须由 supervision audit 检查实际 query role 与方向哈希，不能只相信 profile 名称。旧 `@1` 在近法线与旋转各向异性窄峰上方差过高，历史文件只能由其锁定生成提交复现。
+
+对带 normal map 的 MaterialX，几何镜面中心不足以覆盖局部移动峰。`ncls.materialx-local-normal-peak@1` 先按每个真实 UV/footprint 用 reference 相同的 filtering 求出 shading normal，再把 `@2` 的反射 peak 中心替换为该法线对应的镜面方向；uniform、grazing、解析 PDF 和 validation/test 独立 uniform 语义保持不变。这是 MaterialX provider 的 proposal adapter，不改变 GT，也不把 normal map 烘成公共材质参数。
 
 `rng_seed` 由 provider 返回，必须是 reference 实际执行该 query 使用的随机流 seed，writer 不得根据 query 行号再合成。确定性 reference 写 0；LayerStack 当前按 `(state, wo)` 使用一个 query-group seed，再在 shader 内结合 `wi` 索引派生随机流，因此同组各方向记录相同的 seed。
 

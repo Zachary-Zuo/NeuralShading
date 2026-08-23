@@ -155,19 +155,31 @@ class QueryPlan:
             lights = _unit_vectors("light_directions", raw_lights, ndim=3)
             if lights.shape[0] != len(views):
                 raise ValueError("per-view light directions must match view_directions")
+        elif raw_lights.ndim == 4:
+            lights = _unit_vectors("light_directions", raw_lights, ndim=4)
+            if lights.shape[1] != len(views):
+                raise ValueError("per-surface light directions must match view_directions")
         else:
-            raise ValueError("light_directions must have shape [light, 3] or [view, light, 3]")
-        if len(views) < 1 or lights.shape[1] < 1:
+            raise ValueError(
+                "light_directions must have shape [light, 3], [view, light, 3], "
+                "or [surface, view, light, 3]"
+            )
+        if len(views) < 1 or lights.shape[-2] < 1:
             raise ValueError("QueryPlan requires at least one view and light direction")
         weights = np.asarray(self.solid_angle_weights, dtype=np.float32)
         pdf = np.asarray(self.proposal_pdf, dtype=np.float32)
-        expected = (len(views), lights.shape[1])
-        if weights.ndim == 1 and weights.shape == (lights.shape[1],):
-            weights = np.broadcast_to(weights[None, :], expected).copy()
-        if pdf.ndim == 1 and pdf.shape == (lights.shape[1],):
-            pdf = np.broadcast_to(pdf[None, :], expected).copy()
+        expected = lights.shape[:-1]
+        direction_count = lights.shape[-2]
+        if weights.ndim == 1 and weights.shape == (direction_count,):
+            weights = np.broadcast_to(weights, expected).copy()
+        elif lights.ndim == 4 and weights.ndim == 2 and weights.shape == expected[1:]:
+            weights = np.broadcast_to(weights[None, ...], expected).copy()
+        if pdf.ndim == 1 and pdf.shape == (direction_count,):
+            pdf = np.broadcast_to(pdf, expected).copy()
+        elif lights.ndim == 4 and pdf.ndim == 2 and pdf.shape == expected[1:]:
+            pdf = np.broadcast_to(pdf[None, ...], expected).copy()
         if weights.shape != expected or pdf.shape != expected:
-            raise ValueError("direction weights and proposal PDF must match [view, light]")
+            raise ValueError("direction weights and proposal PDF must match the light-direction leading axes")
         if np.any(weights <= 0.0) or np.any(pdf <= 0.0) or not np.all(np.isfinite(weights)) or not np.all(np.isfinite(pdf)):
             raise ValueError("direction weights and proposal PDF must be positive and finite")
         if isinstance(self.proposal_id, str):
@@ -192,7 +204,7 @@ class QueryPlan:
 
     @property
     def direction_count(self) -> int:
-        return int(self.light_directions.shape[1])
+        return int(self.light_directions.shape[-2])
 
 
 @dataclass(frozen=True)
@@ -278,7 +290,11 @@ class ReferenceProvider(Protocol):
 
     def surface_samples(self, state: SourceState) -> Sequence[SurfaceSample]: ...
 
-    def query_plan(self, state: SourceState) -> QueryPlan: ...
+    def query_plan(
+        self,
+        state: SourceState,
+        surfaces: Sequence[SurfaceSample] = (),
+    ) -> QueryPlan: ...
 
     def evaluate(
         self,

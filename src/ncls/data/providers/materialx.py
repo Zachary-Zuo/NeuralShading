@@ -12,7 +12,8 @@ from PIL import Image
 import pyexr
 
 from ncls.data.collector import CollectionConfig
-from ncls.data.contract import EvaluatedBlock, PositionKind, QueryPlan, ReferenceDescriptor, SourceState, SurfaceSample, make_state_id
+from ncls.data.contract import EvaluatedBlock, PositionKind, QueryPlan, QueryRole, ReferenceDescriptor, SourceState, SurfaceSample, make_state_id
+from ncls.data.directions import MIXTURE_QUERY_PROFILE_ID, peak_grazing_mixture_query
 from ncls.source_materials import MaterialXReference, MaterialXSourceMaterial
 from ncls.paths import SOURCE_MATERIAL_ROOT
 from ncls.source_materials.identity import materialx_asset_sha256
@@ -259,6 +260,7 @@ class MaterialXProvider(BaseProvider):
             "materialx.textured-surface@1",
             "ncls.materialx-polyhaven@1",
             "ncls.materialx-source-material@1",
+            query_profile_id="ncls.materialx-local-normal-peak@1",
             incident_domain="upper-hemisphere",
             position_kind=PositionKind.UV,
             deterministic=True,
@@ -302,6 +304,7 @@ class MaterialXProvider(BaseProvider):
         self._falcor = None
         self._device = None
         self._compute = None
+        self._normal_compute = None
 
     def source_states(self) -> Sequence[SourceState]:
         return self._states
@@ -315,7 +318,96 @@ class MaterialXProvider(BaseProvider):
                 file=PROJECT_ROOT / "shaders/ncls/data/reference_materialx.cs.slang",
                 cs_entry="evaluateReference",
             )
+            self._normal_compute = self._falcor.ComputePass(
+                self._device,
+                file=PROJECT_ROOT / "shaders/ncls/data/reference_materialx.cs.slang",
+                cs_entry="resolveReferenceNormal",
+            )
         return self._falcor, self._device, self._compute
+
+    def _resolved_shading_normals(
+        self,
+        state: SourceState,
+        surfaces: Sequence[SurfaceSample],
+    ) -> np.ndarray:
+        falcor, device, _ = self._runtime()
+        runtime: _MaterialXRuntimeState = state.runtime_state
+        normal_texture = self._texture(runtime.normal, "normal")
+        compute = self._normal_compute
+        if compute is None:
+            raise RuntimeError("MaterialX normal resolver was not initialized")
+        uv = np.asarray([surface.uv for surface in surfaces], dtype=np.float32)
+        gradients = np.asarray(
+            [(*surface.uv_dx, *surface.uv_dy) for surface in surfaces], dtype=np.float32
+        )
+        compute.globals.gInputs = structured_buffer(device, falcor, runtime.inputs, 4)
+        compute.globals.gNormalMap = normal_texture
+        compute.globals.gMaterialSampler = device.create_sampler(max_anisotropy=16)
+        compute.globals.gUv = structured_buffer(device, falcor, np.pad(uv, ((0, 0), (0, 2))), 16)
+        compute.globals.gUvGrad = structured_buffer(device, falcor, gradients, 16)
+        output = output_buffer(device, falcor, len(surfaces))
+        compute.globals.gOutput = output
+        compute.globals.gQueryCount = len(surfaces)
+        compute.execute(threads_x=len(surfaces))
+        normals = output.to_numpy().view(np.float32).reshape(len(surfaces), 4)[:, :3].copy()
+        del normal_texture
+        gc.collect()
+        lengths = np.linalg.norm(normals, axis=1, keepdims=True)
+        if not np.all(np.isfinite(normals)) or np.any(lengths <= 0.0):
+            raise RuntimeError("MaterialX normal resolver produced an invalid direction")
+        return normals / lengths
+
+    def query_plan(
+        self,
+        state: SourceState,
+        surfaces: Sequence[SurfaceSample] = (),
+    ) -> QueryPlan:
+        base = super().query_plan(state, surfaces)
+        if self.config.query_profile_id != MIXTURE_QUERY_PROFILE_ID or not surfaces:
+            return base
+        normals = self._resolved_shading_normals(state, surfaces)
+        surface_count = len(surfaces)
+        lights = np.broadcast_to(base.light_directions[None, ...], (surface_count, *base.light_directions.shape)).copy()
+        weights = np.broadcast_to(base.solid_angle_weights[None, ...], (surface_count, *base.solid_angle_weights.shape)).copy()
+        pdf = np.broadcast_to(base.proposal_pdf[None, ...], (surface_count, *base.proposal_pdf.shape)).copy()
+        mixture_roles = np.isin(
+            base.query_roles,
+            (int(QueryRole.TRAIN), int(QueryRole.ADVERSARIAL_PROBE)),
+        )
+        mixture_views = base.view_directions[mixture_roles]
+        for surface_index, normal in enumerate(normals):
+            oriented_normals = np.broadcast_to(normal, mixture_views.shape).copy()
+            facing = np.sum(oriented_normals * mixture_views, axis=1) < 0.0
+            oriented_normals[facing] *= -1.0
+            centers = (
+                2.0 * np.sum(mixture_views * oriented_normals, axis=1, keepdims=True) * oriented_normals
+                - mixture_views
+            )
+            centers /= np.linalg.norm(centers, axis=1, keepdims=True)
+            surface_lights, surface_weights, surface_pdf = peak_grazing_mixture_query(
+                mixture_views,
+                base.direction_count,
+                full_sphere=False,
+                seed=base.seed ^ ((surface_index + 1) * 0x85EBCA77),
+                reflection_centers=centers,
+            )
+            lights[surface_index, mixture_roles] = surface_lights
+            weights[surface_index, mixture_roles] = surface_weights
+            pdf[surface_index, mixture_roles] = surface_pdf
+        proposal_ids = tuple(
+            value.replace("-peak-grazing-", "-local-normal-peak-grazing-").replace("@2", "@1")
+            if mixture_roles[index] else value
+            for index, value in enumerate(base.proposal_id)
+        )
+        return QueryPlan(
+            base.view_directions,
+            lights,
+            weights,
+            pdf,
+            proposal_ids,
+            base.seed,
+            base.query_roles,
+        )
 
     def _texture(self, path: Path | None, semantic: str):
         falcor, device, _ = self._runtime()
@@ -387,10 +479,12 @@ class MaterialXProvider(BaseProvider):
             "asset_manifest": self.provider_config.asset_manifest.relative_to(PROJECT_ROOT).as_posix(),
             "material_count": len(self._states),
             "texture_filter": "native-resolution mip pyramid, trilinear, 16x anisotropic, repeat",
+            "proposal_peak_center": "exact filtered MaterialX shading normal, forward-facing per wo",
         }
 
     def close(self) -> None:
         self._compute = None
+        self._normal_compute = None
         self._device = None
         self._falcor = None
         gc.collect()

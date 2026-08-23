@@ -20,11 +20,18 @@ def direction_rows(views: np.ndarray, lights: np.ndarray, surface_count: int) ->
     light_values = np.asarray(lights, dtype=np.float32)
     if light_values.ndim == 2:
         light_values = np.broadcast_to(light_values[None, ...], (len(view_values), *light_values.shape))
-    if light_values.ndim != 3 or light_values.shape[0] != len(view_values):
-        raise ValueError("lights must have shape [light, 3] or [view, light, 3]")
-    direction_count = light_values.shape[1]
+    if light_values.ndim == 3:
+        if light_values.shape[0] != len(view_values):
+            raise ValueError("per-view lights must match views")
+        light_values = np.broadcast_to(light_values[None, ...], (surface_count, *light_values.shape))
+    elif light_values.ndim == 4:
+        if light_values.shape[:2] != (surface_count, len(view_values)):
+            raise ValueError("per-surface lights must match surfaces and views")
+    else:
+        raise ValueError("lights must have shape [light, 3], [view, light, 3], or [surface, view, light, 3]")
+    direction_count = light_values.shape[-2]
     view_rows = np.tile(np.repeat(view_values, direction_count, axis=0), (surface_count, 1))
-    light_rows = np.tile(light_values.reshape(-1, 3), (surface_count, 1))
+    light_rows = light_values.reshape(-1, 3)
     return np.ascontiguousarray(np.pad(view_rows, ((0, 0), (0, 1)))), np.ascontiguousarray(
         np.pad(light_rows, ((0, 0), (0, 1)))
     )

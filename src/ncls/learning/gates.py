@@ -81,15 +81,45 @@ def evaluate_supervision_gate(audit: Mapping[str, Any], gate: Mapping[str, Any])
         actual = bool(adversarial[profile])
         check(f"coverage.adversarial.{profile}", actual, True, actual)
     adversarial_response = audit["response"]["by_query_role"]["adversarial_probe"]
-    peak_spacing_value = adversarial_response["peak_nearest_neighbor_angle_degrees"].get("p95")
-    peak_spacing_p95 = float(peak_spacing_value) if peak_spacing_value is not None else None
-    maximum_peak_spacing = float(base["maximum_adversarial_peak_spacing_p95_degrees"])
-    check(
-        "coverage.adversarial.peak_spacing_p95_degrees",
-        peak_spacing_p95,
-        {"maximum": maximum_peak_spacing},
-        peak_spacing_p95 is not None and peak_spacing_p95 <= maximum_peak_spacing,
-    )
+    maximum_peak_spacing_value = base.get("maximum_adversarial_peak_spacing_p95_degrees")
+    if maximum_peak_spacing_value is not None:
+        peak_spacing_value = adversarial_response["peak_nearest_neighbor_angle_degrees"].get("p95")
+        peak_spacing_p95 = float(peak_spacing_value) if peak_spacing_value is not None else None
+        maximum_peak_spacing = float(maximum_peak_spacing_value)
+        check(
+            "coverage.adversarial.peak_spacing_p95_degrees",
+            peak_spacing_p95,
+            {"maximum": maximum_peak_spacing},
+            peak_spacing_p95 is not None and peak_spacing_p95 <= maximum_peak_spacing,
+        )
+    peak_relevant_threshold = base.get("peak_relevant_top_1_percent_energy_fraction_minimum")
+    if peak_relevant_threshold is not None:
+        peak_relevant = adversarial_response["peak_relevant"]
+        actual_threshold = float(peak_relevant["top_1_percent_energy_fraction_minimum"])
+        expected_threshold = float(peak_relevant_threshold)
+        check(
+            "coverage.adversarial.peak_relevant_threshold",
+            actual_threshold,
+            expected_threshold,
+            actual_threshold == expected_threshold,
+        )
+        actual_count = int(peak_relevant["query_group_count"])
+        minimum_count = int(base["minimum_adversarial_peak_relevant_query_group_count"])
+        check(
+            "coverage.adversarial.peak_relevant_group_count",
+            actual_count,
+            {"minimum": minimum_count},
+            actual_count >= minimum_count,
+        )
+        spacing_value = peak_relevant["peak_nearest_neighbor_angle_degrees"].get("p95")
+        actual_spacing = float(spacing_value) if spacing_value is not None else None
+        maximum_spacing = float(base["maximum_adversarial_peak_relevant_spacing_p95_degrees"])
+        check(
+            "coverage.adversarial.peak_relevant_spacing_p95_degrees",
+            actual_spacing,
+            {"maximum": maximum_spacing},
+            actual_spacing is not None and actual_spacing <= maximum_spacing,
+        )
     adversarial_coverage = audit["coverage"]["by_query_role"]["adversarial_probe"]
     grazing_fraction = float(adversarial_coverage["wi_grazing_fraction_abs_cos_below_sin_5deg"])
     minimum_grazing = float(base["minimum_adversarial_wi_grazing_fraction"])
@@ -177,6 +207,15 @@ def evaluate_supervision_gate(audit: Mapping[str, Any], gate: Mapping[str, Any])
                 str(required_surface_profile),
                 actual == str(required_surface_profile),
             )
+        required_family_query_profile = requirements.get("required_query_profile_id")
+        if required_family_query_profile is not None:
+            actual = list(map(str, audit["dataset"].get("query_profile_ids", [])))
+            check(
+                f"family.{family_id}.query_profile_id",
+                actual,
+                {"contains": str(required_family_query_profile)},
+                str(required_family_query_profile) in actual,
+            )
         minimum_source_states = requirements.get("minimum_source_state_count")
         if minimum_source_states is not None:
             actual = int(sum(audit["state_distribution"][family_id].values()))
@@ -189,6 +228,14 @@ def evaluate_supervision_gate(audit: Mapping[str, Any], gate: Mapping[str, Any])
         for profile in requirements.get("required_adversarial_profiles", []):
             actual = bool(adversarial[profile])
             check(f"family.{family_id}.adversarial.{profile}", actual, True, actual)
+        for keyword in requirements.get("required_proposal_keywords", []):
+            present = any(str(keyword).lower() in proposal_id for proposal_id in proposal_ids)
+            check(
+                f"family.{family_id}.proposal.{keyword}",
+                proposal_ids,
+                {"contains": keyword},
+                present,
+            )
         minimum_scales = requirements.get("minimum_unique_footprint_scales")
         if minimum_scales is not None:
             actual = int(audit["coverage"]["unique_footprint_scale_count"])

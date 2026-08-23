@@ -69,7 +69,7 @@ def test_supervision_audit_is_family_neutral_and_transform_stats_are_train_only(
     result = audit_supervision(dataset_path, output, max_distribution_query_groups=4)
 
     assert result["format_name"] == "ncls.supervision-audit"
-    assert result["format_version"] == 5
+    assert result["format_version"] == 6
     assert result["dataset"]["content_hash_verified"] is True
     assert result["split_audit"]["split_group_id"]["leak_count"] == 0
     assert result["split_audit"]["source_sha256"]["leak_count"] == 0
@@ -90,6 +90,8 @@ def test_supervision_audit_is_family_neutral_and_transform_stats_are_train_only(
     assert result["reference_uncertainty"]["worst_query_group"]["relative_standard_error_p95"] >= result["reference_uncertainty"]["relative_standard_error"]["p95"]
     assert result["dataset"]["provider_metadata"][0]["provider_config"]["state_profile_id"]
     assert result["response"]["by_query_role"]["adversarial_probe"]["query_group_count"] >= 1
+    assert result["response"]["by_query_role"]["adversarial_probe"]["peak_relevant"]["query_group_count"] >= 1
+    assert result["response"]["by_query_role"]["adversarial_probe"]["peak_to_median_response_ratio"]["p95"] >= 1.0
     assert result["coverage"]["by_query_role"]["adversarial_probe"]["query_group_count"] >= 1
 
     statistics = json.loads((output / "target_transform_statistics.json").read_text(encoding="utf-8"))
@@ -106,13 +108,14 @@ def test_frozen_supervision_gate_reports_all_failures_without_mutating_audit(tmp
     output = tmp_path / "audit"
     _dataset(dataset_path)
     result = audit_supervision(dataset_path, output)
-    gate = load_supervision_gate(Path("configs/research/e0-supervision-gates-v5.json"))
+    gate = load_supervision_gate(Path("configs/research/e0-supervision-gates-v6.json"))
 
     gate_result = evaluate_supervision_gate(result, gate)
 
     assert gate_result["passed"] is False
     failures = {item["name"] for item in gate_result["checks"] if not item["passed"]}
     assert "dataset.query_profile_id" in failures
+    assert "coverage.adversarial.peak_relevant_spacing_p95_degrees" in failures
     assert "coverage.proposal.peak" in failures
     check_names = {item["name"] for item in gate_result["checks"]}
     assert "noise.worst_query_group_relative_standard_error_p95" in check_names

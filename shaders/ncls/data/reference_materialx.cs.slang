@@ -20,6 +20,19 @@ float3 toShadingFrame(float3 value, float3 normal, float3 tangent)
 }
 
 [numthreads(64, 1, 1)]
+void resolveReferenceNormal(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    const uint index = dispatchThreadID.x;
+    if (index >= gQueryCount) return;
+    const float2 uv = gUv[index].xy;
+    const float4 gradients = gUvGrad[index];
+    const float3 normal = nclsMaterialXShadingNormal(
+        gInputs, gNormalMap, gMaterialSampler, uv, gradients.xy, gradients.zw,
+        float3(0.0f, 0.0f, 1.0f), float3(1.0f, 0.0f, 0.0f));
+    gOutput[index] = float4(normal, 1.0f);
+}
+
+[numthreads(64, 1, 1)]
 void evaluateReference(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     const uint index = dispatchThreadID.x;

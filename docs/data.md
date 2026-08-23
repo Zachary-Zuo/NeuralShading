@@ -113,7 +113,7 @@ response-only learning 使用 `ReferenceQueryStore`。当前 LayerStack baseline
 
 当前公共默认是确定性 stratified `wo` 与均匀立体角 `wi`：反射 family 使用上半球，含透射的 OpenPBR 使用完整球面。各 source split 与 query role 的方位角确定性扰动，不再复用完全相同的方向表。这是可复现基线，不足以自动覆盖极窄高光。
 
-`QueryPlan` 允许共享的 `[light, 3]` 方向表，也允许按 `wo` 提供 `[view, light, 3]`，内部统一为后者。因此 peak 能随 `wo` 移动，而不需要在公共 collector 中加入材质族或网络分支。v4 还为每个 `wo` 保存 query role；`--views` 是 train query 数，其他三类由 `--validation-views`、`--test-views`、`--adversarial-views` 明确给出。计数为零只适用于快速 provider/legacy smoke，不能通过正式 E0 gate。
+`QueryPlan` 允许共享的 `[light, 3]` 方向表、按 `wo` 的 `[view, light, 3]`，以及按 surface/footprint 与 `wo` 的 `[surface, view, light, 3]`。因此 peak 可以随 `wo` 和局部过滤后的 shading normal 移动，而不需要在公共 collector 中加入材质族分支。MaterialX provider 先用与 reference 相同的 normal texture、`SampleGrad`、trilinear 和 16× anisotropic sampler 求出每个 UV/footprint 的 shading normal，再围绕它的真实反射中心生成 `ncls.materialx-local-normal-peak@1` proposal；实际方向、PDF 与积分权重仍逐 query 落盘。v4 还为每个 `wo` 保存 query role；`--views` 是 train query 数，其他三类由 `--validation-views`、`--test-views`、`--adversarial-views` 明确给出。计数为零只适用于快速 provider/legacy smoke，不能通过正式 E0 gate。
 
 选择 `ncls.e0-peak-grazing-mixture@2` 时，train 与 adversarial role 使用 mixture；validation/test 使用不同方位与种子的固定 uniform probe。这样模型不会在与训练完全相同的离散方向表上被选择或宣称 held-out。source state split 与 query role 仍是两个独立轴，公共 reader 可按任一轴或交集随机访问。`@1` 的分离 `z/方位角` peak 在极窄、旋转各向异性材质上出现高方差，已停止作为当前入口；历史 H5 自带其方向/PDF，并由对应生成提交复现，不能用 `@2` 冒充重生。
 

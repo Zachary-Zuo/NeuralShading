@@ -111,8 +111,13 @@ def _folded_vmf_pdf(
     return np.where(values[..., 2] * sign > 0.0, result, 0.0)
 
 
-def _peak_component_pdf(directions: np.ndarray, view: np.ndarray, sign: float) -> np.ndarray:
-    center = _peak_center(view, sign)
+def _peak_component_pdf(
+    directions: np.ndarray,
+    view: np.ndarray,
+    sign: float,
+    center: np.ndarray | None = None,
+) -> np.ndarray:
+    center = _peak_center(view, sign) if center is None else np.asarray(center, dtype=np.float64)
     result = np.zeros(np.asarray(directions).shape[:-1], dtype=np.float64)
     for sigma in _PEAK_ANGULAR_SCALES:
         result += _folded_vmf_pdf(directions, center, 1.0 / (sigma * sigma), sign)
@@ -153,10 +158,11 @@ def _sample_peak_component(
     count: int,
     sign: float,
     rng: np.random.Generator,
+    center: np.ndarray | None = None,
 ) -> np.ndarray:
     if count < 1:
         return np.empty((0, 3), dtype=np.float64)
-    center = _peak_center(view, sign)
+    center = _peak_center(view, sign) if center is None else np.asarray(center, dtype=np.float64)
     scale_indices = np.arange(count) % len(_PEAK_ANGULAR_SCALES)
     rng.shuffle(scale_indices)
     result = np.empty((count, 3), dtype=np.float64)
@@ -199,6 +205,7 @@ def peak_grazing_mixture_pdf(
     *,
     full_sphere: bool,
     component_weights: tuple[float, ...] | None = None,
+    reflection_center: np.ndarray | None = None,
 ) -> np.ndarray:
     values = np.asarray(directions, dtype=np.float64)
     exponent = 7.0
@@ -208,14 +215,18 @@ def peak_grazing_mixture_pdf(
         grazing = (exponent + 1.0) * np.power(1.0 - np.abs(values[..., 2]), exponent) / (4.0 * math.pi)
         return (
             weights[0] * uniform
-            + weights[1] * _peak_component_pdf(values, view, 1.0)
+            + weights[1] * _peak_component_pdf(values, view, 1.0, reflection_center)
             + weights[2] * _peak_component_pdf(values, view, -1.0)
             + weights[3] * grazing
         )
     weights = component_weights or (0.5, 0.35, 0.15)
     uniform = np.full(values.shape[:-1], 1.0 / (2.0 * math.pi))
     grazing = (exponent + 1.0) * np.power(1.0 - values[..., 2], exponent) / (2.0 * math.pi)
-    return weights[0] * uniform + weights[1] * _peak_component_pdf(values, view, 1.0) + weights[2] * grazing
+    return (
+        weights[0] * uniform
+        + weights[1] * _peak_component_pdf(values, view, 1.0, reflection_center)
+        + weights[2] * grazing
+    )
 
 
 def peak_grazing_mixture_query(
@@ -224,12 +235,22 @@ def peak_grazing_mixture_query(
     *,
     full_sphere: bool,
     seed: int,
+    reflection_centers: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """生成按 wo 对齐、PDF 可计算的 uniform + peak + grazing 固定 query mixture。"""
 
     view_values = np.asarray(views, dtype=np.float64)
     if direction_count < 16 or seed < 0:
         raise ValueError("mixture query requires at least 16 directions and a nonnegative seed")
+    if reflection_centers is None:
+        center_values: np.ndarray | None = None
+    else:
+        center_values = np.asarray(reflection_centers, dtype=np.float64)
+        if center_values.shape != view_values.shape or not np.all(np.isfinite(center_values)):
+            raise ValueError("reflection_centers must match views and contain finite values")
+        lengths = np.linalg.norm(center_values, axis=1)
+        if np.any(np.abs(lengths - 1.0) > 2e-4):
+            raise ValueError("reflection_centers must be normalized")
     base_weights = (0.4, 0.25, 0.2, 0.15) if full_sphere else (0.5, 0.35, 0.15)
     counts = [max(1, int(round(direction_count * weight))) for weight in base_weights]
     counts[-1] += direction_count - sum(counts)
@@ -243,17 +264,18 @@ def peak_grazing_mixture_query(
     all_weights = np.empty((len(view_values), direction_count), dtype=np.float32)
     for view_index, view in enumerate(view_values):
         rng = np.random.default_rng(seed ^ ((view_index + 1) * 0x9E3779B1))
+        reflection_center = None if center_values is None else center_values[view_index]
         if full_sphere:
             parts = (
                 _sample_uniform(counts[0], True, rng),
-                _sample_peak_component(view, counts[1], 1.0, rng),
+                _sample_peak_component(view, counts[1], 1.0, rng, reflection_center),
                 _sample_peak_component(view, counts[2], -1.0, rng),
                 _sample_grazing(counts[3], True, rng),
             )
         else:
             parts = (
                 _sample_uniform(counts[0], False, rng),
-                _sample_peak_component(view, counts[1], 1.0, rng),
+                _sample_peak_component(view, counts[1], 1.0, rng, reflection_center),
                 _sample_grazing(counts[2], False, rng),
             )
         directions = np.concatenate(parts)
@@ -264,6 +286,7 @@ def peak_grazing_mixture_query(
             view,
             full_sphere=full_sphere,
             component_weights=actual_weights,
+            reflection_center=reflection_center,
         )
         if not np.all(np.isfinite(pdf)) or np.any(pdf <= 0.0):
             raise RuntimeError("mixture query produced an invalid PDF")

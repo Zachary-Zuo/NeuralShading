@@ -126,19 +126,27 @@ def test_materialx_e0_surface_profile_persists_scale_rotation_and_seam_queries(t
         assert len(rotations) >= 4
         assert np.any(uv[:, 0] <= 0.01) and np.any(uv[:, 0] >= 0.99)
         assert np.any(uv[:, 1] <= 0.01) and np.any(uv[:, 1] >= 0.99)
+        wi = np.asarray(dataset.stream["queries/wi"], dtype=np.float32)
+        assert not np.array_equal(wi[0], wi[4])
 
     audit = audit_supervision(path, tmp_path / "audit")
     assert audit["coverage"]["adversarial_profile_presence"]["spatial_footprint_rotation"]
     assert audit["coverage"]["unique_footprint_scale_count"] >= 4
     assert audit["coverage"]["unique_footprint_rotation_count"] >= 4
     assert audit["coverage"]["uv_seam"]["opposite_edge_pair_axis_count"] == 2
-    gate = load_supervision_gate(PROJECT_ROOT / "configs/research/e0-supervision-gates-v5.json")
+    assert any(
+        "local-normal-peak" in item["proposal_id"]
+        for item in audit["coverage"]["proposals"]
+    )
+    gate = load_supervision_gate(PROJECT_ROOT / "configs/research/e0-supervision-gates-v6.json")
     checks = {
         item["name"]: item["passed"]
         for item in evaluate_supervision_gate(audit, gate)["checks"]
     }
     assert checks["dataset.query_profile_id"]
     assert checks["family.materialx.textured-surface@1.surface_profile_id"]
+    assert checks["family.materialx.textured-surface@1.query_profile_id"]
+    assert checks["family.materialx.textured-surface@1.proposal.local-normal-peak"]
     assert checks["family.materialx.textured-surface@1.footprint_scales"]
     assert checks["family.materialx.textured-surface@1.footprint_rotations"]
     assert checks["family.materialx.textured-surface@1.uv_seam_opposite_edge_pair_axes"]
