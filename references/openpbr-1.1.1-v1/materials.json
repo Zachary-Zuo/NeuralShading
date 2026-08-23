@@ -1,0 +1,1299 @@
+{
+  "schema_name": "ncls.openpbr-material-index",
+  "schema_version": 1,
+  "upstream": "aswf.openpbr@1.1.1",
+  "revision": "f8d6d947dfae4c9b599965a86c22826ea7a8dbfb",
+  "native_representation": "official MaterialX open_pbr_surface examples",
+  "materials": [
+    {
+      "material_id": "open_pbr_aluminum_brushed",
+      "display_name": "Aluminum_Brushed",
+      "document": "examples/open_pbr_aluminum_brushed.mtlx",
+      "size": 716,
+      "sha256": "02400da3191a646a6b247bee47cb885f16e481309b13d56d4dc8f45e24e6cc55",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness",
+        "specular_roughness_anisotropy"
+      ],
+      "coverage_role": "anisotropic-metal"
+    },
+    {
+      "material_id": "open_pbr_beryllium",
+      "display_name": "Beryllium",
+      "document": "examples/open_pbr_beryllium.mtlx",
+      "size": 634,
+      "sha256": "6d6fd37a4a00bae73d23eafbd104771aee7eeaaab0763852796fa35e1a188467",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_blackboard",
+      "display_name": "Blackboard",
+      "document": "examples/open_pbr_blackboard.mtlx",
+      "size": 564,
+      "sha256": "6d324c17bdcf371c5da7b48f8aed54edec22b8493b7a4cef035a4c11e0af1be8",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_diffuse_roughness",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_blood",
+      "display_name": "Blood",
+      "document": "examples/open_pbr_blood.mtlx",
+      "size": 847,
+      "sha256": "ae40d0eb3e14534d71f6a620c7b962052da7f55a51789834e3402d72e7f6ba27",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "transmission_weight",
+        "transmission_color",
+        "transmission_depth",
+        "transmission_dispersion_scale",
+        "transmission_dispersion_abbe_number"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_brass",
+      "display_name": "Brass",
+      "document": "examples/open_pbr_brass.mtlx",
+      "size": 630,
+      "sha256": "632064a64f2872031cc1b62e09890804bbc0712bbab7077646dd0edfecc9975e",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": "metal"
+    },
+    {
+      "material_id": "open_pbr_brick",
+      "display_name": "Brick",
+      "document": "examples/open_pbr_brick.mtlx",
+      "size": 559,
+      "sha256": "ef57f068acb57527d5d3227015d2dc1db7633e95fcd5db85aface892155610bc",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_diffuse_roughness",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_carpaint",
+      "display_name": "Car_Paint",
+      "document": "examples/open_pbr_carpaint.mtlx",
+      "size": 720,
+      "sha256": "a8e1fd94c883130fcfff979bcbc591d28570ebd42bcb2531f315fff7ed658c24",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "specular_ior",
+        "specular_roughness",
+        "coat_weight",
+        "coat_roughness",
+        "coat_ior"
+      ],
+      "coverage_role": "coat"
+    },
+    {
+      "material_id": "open_pbr_cesium",
+      "display_name": "Cesium",
+      "document": "examples/open_pbr_cesium.mtlx",
+      "size": 631,
+      "sha256": "a1e664891b2ec2cc800c5cdcb491597355adbb16d46fc2574cc742c02d5fb6ba",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_charcoal",
+      "display_name": "Charcoal",
+      "document": "examples/open_pbr_charcoal.mtlx",
+      "size": 562,
+      "sha256": "f6672e8be38a87ec2c9745e35541c8434b8d63388dda3b4759e2601f95df3366",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_diffuse_roughness",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_chocolate",
+      "display_name": "Chocolate",
+      "document": "examples/open_pbr_chocolate.mtlx",
+      "size": 648,
+      "sha256": "bee93de7a307bce99e9465249ff7ebc1e90bb8b99e0e4efcc0fa78dc35059f21",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "subsurface_weight",
+        "subsurface_color",
+        "subsurface_radius_scale"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_chromium",
+      "display_name": "Chromium",
+      "document": "examples/open_pbr_chromium.mtlx",
+      "size": 633,
+      "sha256": "b8c4ed5de920770a2781818ddf4dae419af2b97cc4828684690a810f7a00df72",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_cobalt",
+      "display_name": "Cobalt",
+      "document": "examples/open_pbr_cobalt.mtlx",
+      "size": 631,
+      "sha256": "573f615a309fdcc501d0ea5ca0b41bfe2e0ccef2f2bb37ff0b813b92a138d44e",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_coffee",
+      "display_name": "Coffee",
+      "document": "examples/open_pbr_coffee.mtlx",
+      "size": 850,
+      "sha256": "497f8a5f356737011cf4e1cac347992ff9743d3feefc9bd82c79b9dffee0d041",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "transmission_weight",
+        "transmission_color",
+        "transmission_depth",
+        "transmission_dispersion_scale",
+        "transmission_dispersion_abbe_number"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_concrete",
+      "display_name": "Concrete",
+      "document": "examples/open_pbr_concrete.mtlx",
+      "size": 493,
+      "sha256": "1445505281f36d398062516995a35eaf61e1578faa3e51c679a15a4fc4538c91",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_cooking_oil",
+      "display_name": "Cooking_Oil",
+      "document": "examples/open_pbr_cooking_oil.mtlx",
+      "size": 630,
+      "sha256": "d0bc3ddcbcd22dba5dca798cd45bd443b5e6520e1ae9dc8bcc27d69f5f799bbc",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "transmission_weight",
+        "transmission_color"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_copper",
+      "display_name": "Copper",
+      "document": "examples/open_pbr_copper.mtlx",
+      "size": 631,
+      "sha256": "91391fd02291645d44578678ff971e523bbb0c244b8af4c19d23172f23f53e66",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_default",
+      "display_name": "Default",
+      "document": "examples/open_pbr_default.mtlx",
+      "size": 2881,
+      "sha256": "7cbd66415ef5cce2e9ce9d904761df6e8a235570bed96c33661bd4a6240add66",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_weight",
+        "base_color",
+        "base_diffuse_roughness",
+        "base_metalness",
+        "specular_weight",
+        "specular_color",
+        "specular_roughness",
+        "specular_ior",
+        "specular_roughness_anisotropy",
+        "transmission_weight",
+        "transmission_color",
+        "transmission_depth",
+        "transmission_scatter",
+        "transmission_scatter_anisotropy",
+        "transmission_dispersion_scale",
+        "transmission_dispersion_abbe_number",
+        "subsurface_weight",
+        "subsurface_color",
+        "subsurface_radius",
+        "subsurface_radius_scale",
+        "subsurface_scatter_anisotropy",
+        "fuzz_weight",
+        "fuzz_color",
+        "fuzz_roughness",
+        "coat_weight",
+        "coat_color",
+        "coat_roughness",
+        "coat_roughness_anisotropy",
+        "coat_ior",
+        "coat_darkening",
+        "thin_film_weight",
+        "thin_film_thickness",
+        "thin_film_ior",
+        "emission_luminance",
+        "emission_color",
+        "geometry_opacity",
+        "geometry_thin_walled"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_diamond",
+      "display_name": "Diamond",
+      "document": "examples/open_pbr_diamond.mtlx",
+      "size": 703,
+      "sha256": "2aa8f155ed4e25b2b759d099d15b80682efcf05f8548478a9a58588c90c1d9d0",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "transmission_weight",
+        "transmission_dispersion_scale",
+        "transmission_dispersion_abbe_number"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_egg_shell",
+      "display_name": "Egg_Shell",
+      "document": "examples/open_pbr_egg_shell.mtlx",
+      "size": 494,
+      "sha256": "628dc86ed7073bf59f69cc64993528d890701c74ba1216c35471a08eeeff4920",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_eye_cornea",
+      "display_name": "Eye_cornea",
+      "document": "examples/open_pbr_eye_cornea.mtlx",
+      "size": 547,
+      "sha256": "0e9818b8cce21c362f172a022aa13afa8559809c1ba39abfe50b0c758a19215f",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "transmission_weight"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_eye_lens",
+      "display_name": "Eye_lens",
+      "document": "examples/open_pbr_eye_lens.mtlx",
+      "size": 545,
+      "sha256": "673cbabc056c4850c960e6de50924b339c6a08abd2f238ed22130decdf3232ff",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "transmission_weight"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_eye_sclera",
+      "display_name": "Eye_sclera",
+      "document": "examples/open_pbr_eye_sclera.mtlx",
+      "size": 712,
+      "sha256": "283b1e1461fa6604fd2823925e1fbccf7a75de7d770f6bd7e5d658a5b9f8c68f",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "subsurface_weight",
+        "subsurface_color",
+        "subsurface_radius_scale"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_gasoline",
+      "display_name": "Gasoline",
+      "document": "examples/open_pbr_gasoline.mtlx",
+      "size": 627,
+      "sha256": "31dc2333117581d700119560015976678a78e1f4133a4229ac03781e58148521",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "transmission_weight",
+        "transmission_color"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_germanium",
+      "display_name": "Germanium",
+      "document": "examples/open_pbr_germanium.mtlx",
+      "size": 634,
+      "sha256": "2324e8c7a8f0f67cb1329738601430e7f81b21b50e29adfd657d8b950555ee85",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_glass",
+      "display_name": "Glass",
+      "document": "examples/open_pbr_glass.mtlx",
+      "size": 699,
+      "sha256": "5eb792195739aedd02e93b09b9c642ee26bcfee735cbdba0cbb51e551ca91c94",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "transmission_weight",
+        "transmission_dispersion_scale",
+        "transmission_dispersion_abbe_number"
+      ],
+      "coverage_role": "transmission-volume"
+    },
+    {
+      "material_id": "open_pbr_gold",
+      "display_name": "Gold",
+      "document": "examples/open_pbr_gold.mtlx",
+      "size": 629,
+      "sha256": "bdd4d09185b87653bcff201d0bb403203d9a600550fa3e6dfa286b2c00258687",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_gray_card",
+      "display_name": "Gray_Card",
+      "document": "examples/open_pbr_gray_card.mtlx",
+      "size": 494,
+      "sha256": "effe49180320b03b99239cf0ce2696d80518455da8320c4f8c2a499f0b87bd33",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_honey_crystallized",
+      "display_name": "Honey_crystallized",
+      "document": "examples/open_pbr_honey_crystallized.mtlx",
+      "size": 714,
+      "sha256": "6aed5b314fc2f1edeaf9dc5f64e4207cda4877f403419f1c30a871fa0bd7e260",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "subsurface_weight",
+        "subsurface_color",
+        "subsurface_radius_scale"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_honey_liquid",
+      "display_name": "Honey_liquid",
+      "document": "examples/open_pbr_honey_liquid.mtlx",
+      "size": 631,
+      "sha256": "b867671c1ac1033d5e169f2ce1718cb668b9951dc4d7bf3f929fe8bb918f2a27",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "transmission_weight",
+        "transmission_color"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_ice",
+      "display_name": "Ice",
+      "document": "examples/open_pbr_ice.mtlx",
+      "size": 700,
+      "sha256": "4c976a791946b197b6354368fbea4b9d7bbc777afae590053773932fd214a978",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "transmission_weight",
+        "transmission_dispersion_scale",
+        "transmission_dispersion_abbe_number"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_iridium",
+      "display_name": "Iridium",
+      "document": "examples/open_pbr_iridium.mtlx",
+      "size": 632,
+      "sha256": "643fcf19142a71250ded386a0d0a32154cceff2d67b5f47ecfcf3763d708b901",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_iron",
+      "display_name": "Iron",
+      "document": "examples/open_pbr_iron.mtlx",
+      "size": 629,
+      "sha256": "09f4125421a620f36f7f6ce7d2230aa4d74c90d2967beb7e89bc4e7c0212e4b3",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_ketchup",
+      "display_name": "Ketchup",
+      "document": "examples/open_pbr_ketchup.mtlx",
+      "size": 709,
+      "sha256": "c4cc367e0dd4c3746a59c9840695ca37cf72031003a05ffd73ae3745fa94e98c",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "subsurface_weight",
+        "subsurface_color",
+        "subsurface_radius_scale"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_lcd_display_6500k",
+      "display_name": "LCD_Display_6500_K",
+      "document": "examples/open_pbr_lcd_display_6500k.mtlx",
+      "size": 516,
+      "sha256": "4c5928f95e0c90379f44269cc815bfdcc8bd49ec2c90b5b8b5f2270cad62db59",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "emission_color",
+        "emission_luminance"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_lead",
+      "display_name": "Lead",
+      "document": "examples/open_pbr_lead.mtlx",
+      "size": 629,
+      "sha256": "9b128a1be6d9de775c7af6bfd073060c08078f958897ec8203f6b97ba76801a5",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_light_bulb_2700k",
+      "display_name": "Light_Bulb_2700_K",
+      "document": "examples/open_pbr_light_bulb_2700k.mtlx",
+      "size": 517,
+      "sha256": "afbd505f99a6eef062b3fee4010d3b98e7ecf80acdf89501751ed0f7d323ef02",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "emission_color",
+        "emission_luminance"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_light_bulb_5000k",
+      "display_name": "Light_Bulb_5000_K",
+      "document": "examples/open_pbr_light_bulb_5000k.mtlx",
+      "size": 517,
+      "sha256": "e8f084a07c501ac9ed244d3c9a00db7d6fe236708cc6fa3bc7b049fe79ca5b5c",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "emission_color",
+        "emission_luminance"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_lithium",
+      "display_name": "Lithium",
+      "document": "examples/open_pbr_lithium.mtlx",
+      "size": 632,
+      "sha256": "47a055c78b9958ca04ed8d91001a024bc6e6db6864241066932fd5099f1df979",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_magnesium",
+      "display_name": "Magnesium",
+      "document": "examples/open_pbr_magnesium.mtlx",
+      "size": 634,
+      "sha256": "fde453e5f18c4e21ff69510473c32898b052695a271eb8a749048273c0245068",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_manganese",
+      "display_name": "Manganese",
+      "document": "examples/open_pbr_manganese.mtlx",
+      "size": 634,
+      "sha256": "6fb91b6e5c57673304a29805c5b8e00a33cbea507f73e09fa8a74dedbe5eb1ff",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_marble",
+      "display_name": "Marble",
+      "document": "examples/open_pbr_marble.mtlx",
+      "size": 648,
+      "sha256": "476ee9e827f8ecc922d3d41e52a41afb3f2d696113bf76960679d045643f474d",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "subsurface_weight",
+        "subsurface_color",
+        "subsurface_radius_scale"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_mercury",
+      "display_name": "Mercury",
+      "document": "examples/open_pbr_mercury.mtlx",
+      "size": 632,
+      "sha256": "beb64c692f0a4498cd7819d99c936d3a40d647da00959a3c20f9aee19307198f",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_milk",
+      "display_name": "Milk",
+      "document": "examples/open_pbr_milk.mtlx",
+      "size": 705,
+      "sha256": "a7bf435b2b2be461444b3e600e2dd7297ebef9ebf924c6a99d4b25bc7cb53265",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "subsurface_weight",
+        "subsurface_color",
+        "subsurface_radius_scale"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_molybdenum",
+      "display_name": "Molybdenum",
+      "document": "examples/open_pbr_molybdenum.mtlx",
+      "size": 635,
+      "sha256": "47c09d24198328e69bc87b83dd2afad1eec79e16819dd744f492eef309032f46",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_nickel",
+      "display_name": "Nickel",
+      "document": "examples/open_pbr_nickel.mtlx",
+      "size": 631,
+      "sha256": "1e829f494d18e476dcbe1d8100ab7cea68fb07df19ed0336aa7575d8828b1b02",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_office_paper",
+      "display_name": "Office_Paper",
+      "document": "examples/open_pbr_office_paper.mtlx",
+      "size": 497,
+      "sha256": "a56edb7eff598a8df060848e17ba5a0057121f1a0ceba157a5ea4213691e64de",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_palladium",
+      "display_name": "Palladium",
+      "document": "examples/open_pbr_palladium.mtlx",
+      "size": 634,
+      "sha256": "e37a7fea65bbb22b3c1ca18c3d803146a742c8faeaa3e228cd23143ebab1612d",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_pearl",
+      "display_name": "Pearl",
+      "document": "examples/open_pbr_pearl.mtlx",
+      "size": 1064,
+      "sha256": "42a0ee772f9aa351a088325008859dd58be924366a73458126663deb8bb48cbc",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "subsurface_weight",
+        "subsurface_color",
+        "subsurface_radius_scale",
+        "coat_weight",
+        "coat_roughness",
+        "coat_ior",
+        "thin_film_weight",
+        "thin_film_thickness",
+        "thin_film_ior"
+      ],
+      "coverage_role": "coat-thin-film-subsurface"
+    },
+    {
+      "material_id": "open_pbr_petroleum",
+      "display_name": "Petroleum",
+      "document": "examples/open_pbr_petroleum.mtlx",
+      "size": 642,
+      "sha256": "7787a609d77ee3acc9465f5eaaa31b971bf02a531eaa30389e706da6017bba95",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "subsurface_weight",
+        "subsurface_color",
+        "subsurface_radius_scale"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_plastic_acrylic",
+      "display_name": "Plastic_Acrylic",
+      "document": "examples/open_pbr_plastic_acrylic.mtlx",
+      "size": 712,
+      "sha256": "072c1ad9122390eaad3f32d1750429f83f460b1e16a1f7e6a27f627b1cb37e8c",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "transmission_weight",
+        "transmission_dispersion_scale",
+        "transmission_dispersion_abbe_number"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_plastic_pc",
+      "display_name": "Plastic_PC",
+      "document": "examples/open_pbr_plastic_pc.mtlx",
+      "size": 707,
+      "sha256": "ca5040c24e00ea0ff2fc1a5cb6d1f036e0befdb8213c00c2185c6ea118ea625a",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "transmission_weight",
+        "transmission_dispersion_scale",
+        "transmission_dispersion_abbe_number"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_plastic_pet",
+      "display_name": "Plastic_PET",
+      "document": "examples/open_pbr_plastic_pet.mtlx",
+      "size": 548,
+      "sha256": "1aa7151aac6491ebde054d449ea558df17356d1f6ed4ed8640f45ed75fcb4c64",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "transmission_weight"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_plastic_polyurethane",
+      "display_name": "Polyurethane",
+      "document": "examples/open_pbr_plastic_polyurethane.mtlx",
+      "size": 549,
+      "sha256": "825b3da1dd2dddc07977bc779cf8f2fd45324547e337afcab641f3ef2aa44d2c",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "transmission_weight"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_plastic_pp",
+      "display_name": "Plastic_PP",
+      "document": "examples/open_pbr_plastic_pp.mtlx",
+      "size": 547,
+      "sha256": "1e83ea3e33373239da8f9e6620568df7db8e4f7c73d270ba1fcc23514b0e151b",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "transmission_weight"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_plastic_pvc",
+      "display_name": "Plastic_PVC",
+      "document": "examples/open_pbr_plastic_pvc.mtlx",
+      "size": 548,
+      "sha256": "0db03b61d1769c8617b31ce0bcf06b067877a5bb8b269a9a8045c7cda9bac853",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "transmission_weight"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_platinum",
+      "display_name": "Platinum",
+      "document": "examples/open_pbr_platinum.mtlx",
+      "size": 633,
+      "sha256": "8c048713f5e668556a33cac94f29eb1b32ef5a5029e53f781c69840f42c521dc",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_potassium",
+      "display_name": "Potassium",
+      "document": "examples/open_pbr_potassium.mtlx",
+      "size": 634,
+      "sha256": "62b16b6b647722ade380c873498cccd950395cb7fde01e167609a2d0040600b9",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_quartz",
+      "display_name": "Quartz",
+      "document": "examples/open_pbr_quartz.mtlx",
+      "size": 703,
+      "sha256": "436e88fcbb36450ae27df87cf821825ba57dd948bf6a5a11bc63e217b22fd03f",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "transmission_weight",
+        "transmission_dispersion_scale",
+        "transmission_dispersion_abbe_number"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_rubidium",
+      "display_name": "Rubidium",
+      "document": "examples/open_pbr_rubidium.mtlx",
+      "size": 633,
+      "sha256": "07a9a0320724f69849cb0c51a18beda46bc409bd1d2406f7b76da52bb198aae7",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_salt",
+      "display_name": "Salt",
+      "document": "examples/open_pbr_salt.mtlx",
+      "size": 701,
+      "sha256": "680444591ddcdda9263edda01a3c35aa5e15d4d2d851487fa5d1ffbc9f7367f5",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "transmission_weight",
+        "transmission_dispersion_scale",
+        "transmission_dispersion_abbe_number"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_sand",
+      "display_name": "Sand",
+      "document": "examples/open_pbr_sand.mtlx",
+      "size": 558,
+      "sha256": "1bc1be86523b22a091cae0dee490731d1d526b206a841d4a1b0800e0090baae9",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_diffuse_roughness",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_sapphire",
+      "display_name": "Sapphire",
+      "document": "examples/open_pbr_sapphire.mtlx",
+      "size": 786,
+      "sha256": "57c2bd5c183d3877827f0517eb0fee879667237f10f40e131323964c74474544",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "transmission_weight",
+        "transmission_color",
+        "transmission_dispersion_scale",
+        "transmission_dispersion_abbe_number"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_silicon",
+      "display_name": "Silicon",
+      "document": "examples/open_pbr_silicon.mtlx",
+      "size": 632,
+      "sha256": "307db104dc6bee88eb8345f8f337fa5d6631acf54b63b249ff464dc7926fefc2",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_silver",
+      "display_name": "Silver",
+      "document": "examples/open_pbr_silver.mtlx",
+      "size": 631,
+      "sha256": "386dcc4af6ed33f1d17de4f4b81e60d944369de436854de233a8197271c06ea6",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_skin_i",
+      "display_name": "Skin_I",
+      "document": "examples/open_pbr_skin_i.mtlx",
+      "size": 708,
+      "sha256": "6453af23dd7e8bfc2e2adeb9e0c9d8879a791f8e166c7c9c5a982e1d026361ff",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "subsurface_weight",
+        "subsurface_color",
+        "subsurface_radius_scale"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_skin_ii",
+      "display_name": "Skin_II",
+      "document": "examples/open_pbr_skin_ii.mtlx",
+      "size": 709,
+      "sha256": "322e136d62903b356f9fffeaf8f692793e363c26058f3415eb31d1f9bc4e5f8b",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "subsurface_weight",
+        "subsurface_color",
+        "subsurface_radius_scale"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_skin_iii",
+      "display_name": "Skin_III",
+      "document": "examples/open_pbr_skin_iii.mtlx",
+      "size": 710,
+      "sha256": "1e0cbb1171363da56aec0936f69068d241facc522377b0fd8e7f69069cfc267a",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "subsurface_weight",
+        "subsurface_color",
+        "subsurface_radius_scale"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_skin_iv",
+      "display_name": "Skin_IV",
+      "document": "examples/open_pbr_skin_iv.mtlx",
+      "size": 709,
+      "sha256": "d82f722f46232796ae75047c0f9bde7e62e8a54189c476e485d7eaa310756cfc",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "subsurface_weight",
+        "subsurface_color",
+        "subsurface_radius_scale"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_skin_v",
+      "display_name": "Skin_V",
+      "document": "examples/open_pbr_skin_v.mtlx",
+      "size": 708,
+      "sha256": "1f70f0ab4c96c0f41dc6c6b51e9a5d18c9ce56bf12b65e5d65abcd4099ab58ee",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "subsurface_weight",
+        "subsurface_color",
+        "subsurface_radius_scale"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_skin_vi",
+      "display_name": "Skin_VI",
+      "document": "examples/open_pbr_skin_vi.mtlx",
+      "size": 709,
+      "sha256": "ce55ec19d1054e9e0a41d9ead9cee3f148c06110aecebb174b2277a4f1f2c247",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "subsurface_weight",
+        "subsurface_color",
+        "subsurface_radius_scale"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_snow",
+      "display_name": "Snow",
+      "document": "examples/open_pbr_snow.mtlx",
+      "size": 698,
+      "sha256": "c1c9fa6398dc646934858017af144b5ae5c0fdf65ca8ccde62234303a9f4ed87",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "subsurface_weight",
+        "subsurface_color",
+        "subsurface_radius_scale"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_soapbubble",
+      "display_name": "Soap_Bubble",
+      "document": "examples/open_pbr_soapbubble.mtlx",
+      "size": 808,
+      "sha256": "be07f419df42072e1c95bd469dd182535c876a9af8d9b78e001d253020481c4d",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "transmission_weight",
+        "thin_film_weight",
+        "thin_film_thickness",
+        "thin_film_ior",
+        "geometry_thin_walled"
+      ],
+      "coverage_role": "thin-film-delta-transmission"
+    },
+    {
+      "material_id": "open_pbr_sodium",
+      "display_name": "Sodium",
+      "document": "examples/open_pbr_sodium.mtlx",
+      "size": 631,
+      "sha256": "db5ff363a433aad78d77eff1d2060c288781d19e8d5182b2534083fb853067b3",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_stainless_steel",
+      "display_name": "Stainless_Steel",
+      "document": "examples/open_pbr_stainless_steel.mtlx",
+      "size": 640,
+      "sha256": "139d1bdad075cc753ff899d146519f60ec4f82347fa222506fbd91c45f9f0ff8",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_tire",
+      "display_name": "Tire",
+      "document": "examples/open_pbr_tire.mtlx",
+      "size": 489,
+      "sha256": "e0f071e689a8c7a1fc74b66d1efbf7a1fe1325bf8aa48187e3c9e678ae25f150",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_titanium",
+      "display_name": "Titanium",
+      "document": "examples/open_pbr_titanium.mtlx",
+      "size": 633,
+      "sha256": "d9df84e8b7a643fae97b14e426aca20d9998ce3234a30f694f35cdba55669ca5",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_toner_black",
+      "display_name": "Toner_black",
+      "document": "examples/open_pbr_toner_black.mtlx",
+      "size": 496,
+      "sha256": "34bb3ef4f608d7c9247ac4d229566bb5afe2936fe57d4f56bd1b6b213c2116bd",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_tungsten",
+      "display_name": "Tungsten",
+      "document": "examples/open_pbr_tungsten.mtlx",
+      "size": 633,
+      "sha256": "74dcd2a5b24ffa81ea0fb21d775cf0f70eca8b15a83f5384422ff5f5df3923be",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_vanadium",
+      "display_name": "Vanadium",
+      "document": "examples/open_pbr_vanadium.mtlx",
+      "size": 633,
+      "sha256": "41cad4c9f9a4b6a8c7e40eeb083c4a6b80f9ac03bf82e11550ef145880c00e5e",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_velvet",
+      "display_name": "Velvet",
+      "document": "examples/open_pbr_velvet.mtlx",
+      "size": 767,
+      "sha256": "6af22cf41be2cb3176d9f179aa1077b322535e76ec38ab045da689d93e0af7a7",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_diffuse_roughness",
+        "specular_roughness",
+        "fuzz_weight",
+        "fuzz_color",
+        "fuzz_roughness"
+      ],
+      "coverage_role": "fuzz"
+    },
+    {
+      "material_id": "open_pbr_water",
+      "display_name": "Water",
+      "document": "examples/open_pbr_water.mtlx",
+      "size": 702,
+      "sha256": "d38aaec8f004e49474321527e87a4fc7734dfa5fa23c5d2e6f7cf6509effaae1",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "specular_roughness",
+        "specular_ior",
+        "transmission_weight",
+        "transmission_dispersion_scale",
+        "transmission_dispersion_abbe_number"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_whiteboard",
+      "display_name": "Whiteboard",
+      "document": "examples/open_pbr_whiteboard.mtlx",
+      "size": 495,
+      "sha256": "050495726768e63e235082a1715b75cd1d647f80605d7817cfbd53837bd370ee",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    },
+    {
+      "material_id": "open_pbr_zinc",
+      "display_name": "Zinc",
+      "document": "examples/open_pbr_zinc.mtlx",
+      "size": 629,
+      "sha256": "f4e05554ed6051212395843328ae3acfac9fc362836199e036049e40321ac52b",
+      "color_space": "acescg",
+      "authored_parameters": [
+        "base_color",
+        "base_metalness",
+        "specular_color",
+        "specular_roughness"
+      ],
+      "coverage_role": null
+    }
+  ]
+}

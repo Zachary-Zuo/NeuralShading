@@ -4,7 +4,7 @@
 
 `apps/viewer/` 已实现本规格的第一版闭环，并在锁定 Falcor 8.0/D3D12 上用真实 P1 realtime `MethodBundle` 验证：bundle 全文件哈希、平台/合同检查、GPU parity、左右像素对齐捕获、逐字节 replay 和三段固定相机 benchmark 均已通过。构建、运行与捕获命令见 `apps/viewer/README.md`。
 
-当前 reference 计算的是共享主可见性表面上的局部多层材质直接光照响应，不包含物体间投影、全场景间接光或穿物体传输；这与第一阶段“先不做投射物体”的范围一致，不应把它描述成完整场景 path tracer。
+当前已经接入 viewer 的 reference 是 `LayerStackIR` 材质族的随机游走实现。它计算共享主可见性表面上的局部多层材质直接光照响应，不包含物体间投影、全场景间接光或穿物体传输；这与该材质族第一阶段“先不做投射物体”的范围一致，不应把它描述成完整场景 path tracer。后续源材质族可以提供不同的 reference pipeline，viewer 统一它们的场景输入、输出图像和比较语义，不统一内部材质表示。
 
 ## 定位
 
@@ -14,7 +14,7 @@ viewer 是仅支持 Windows/D3D12 的原生交互应用，用来观察材质在�
 
 ## 画面合同
 
-- 左侧：随机游走参考解驱动的累积 path tracing；
+- 左侧：当前源材质族的权威 reference 输出；现阶段 `LayerStackIR` 使用随机游走累积；
 - 右侧：当前选中 MethodBundle 的 deferred/实时结果；
 - 两侧使用同一场景、相机、材质程序、几何法线/切线、灯光、环境旋转、曝光和 tone mapping；
 - 两个 renderer 生成像素对齐的线性 HDR 图像，再由 composite pass 按垂直分割线选取，最后统一 tone map；
@@ -80,7 +80,7 @@ viewer 扫描用户指定的 bundle 目录。只有通过 manifest、hash、平�
 
 ## MaterialProgram 编辑
 
-第一版 UI 支持：
+第一版 `LayerStackIR` UI 支持：
 
 - 打开和保存 MaterialProgram JSON；
 - 增加、删除、重排 LayerStack 内的界面和介质；
@@ -100,7 +100,7 @@ viewer 编辑的是 MaterialProgram，不直接编辑某个 backend 的 packet�
 - 点光；
 - 矩形面光。
 
-右侧优先使用 backend 声明的专用积分能力；没有专用能力时使用标准 `evaluate/sample/pdf` 路径并明确显示 fallback。参考侧始终使用无偏路径采样。
+右侧优先使用 backend 声明的专用积分能力；没有专用能力时使用标准 `evaluate/sample/pdf` 路径并明确显示 fallback。reference 侧直接使用该源材质族的权威求值和积分路径；当前随机游走 reference 使用无偏路径采样，解析或测量材质 reference 不需要伪装成随机游走。
 
 ## UI 信息
 

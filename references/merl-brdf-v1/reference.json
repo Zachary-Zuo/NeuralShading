@@ -1,0 +1,44 @@
+{
+  "schema_name": "ncls.reference-package",
+  "schema_version": 1,
+  "reference_id": "ncls.merl-brdf@1",
+  "source_material_family_id": "merl.measured-brdf@1",
+  "role": "ground-truth",
+  "native_representation": "merl-dense-isotropic-brdf-table",
+  "query_contract": {
+    "domain": "local-surface-reflection",
+    "measure": "linear-rgb-brdf-times-positive-light-cosine",
+    "directions": "right-handed-tangent-frame-positive-z-hemisphere",
+    "interpolation": "official-nearest-index-parameterization"
+  },
+  "implementations": [
+    {
+      "implementation_id": "merl.readbrdf@2023",
+      "kind": "upstream-parameterization-sample-code",
+      "path_root": "source-materials",
+      "path": "merl-brdf/v1/expanded/BRDFDatabase/code",
+      "upstream_url": "https://zenodo.org/records/8101681",
+      "revision": "record-8101681",
+      "license": "MERL-educational-research-nonprofit-notice"
+    },
+    {
+      "implementation_id": "ncls.merl-adapter@1",
+      "kind": "project-python-adapter",
+      "path_root": "project",
+      "path": "src/ncls/source_materials/merl.py",
+      "license": "project"
+    }
+  ],
+  "source_assets": [
+    {
+      "asset_set_id": "merl.brdf-database@8101681",
+      "path_root": "source-materials",
+      "path": "merl-brdf/v1",
+      "download_url": "https://zenodo.org/records/8101681/files/BRDFDatabase.zip?download=1",
+      "archive_file": "BRDFDatabase.zip",
+      "size": 1253117184,
+      "md5": "7141af4c12b4c4feed299769260b3604",
+      "license": "CC-BY-SA-4.0"
+    }
+  ]
+}

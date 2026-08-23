@@ -1,0 +1,72 @@
+{
+  "schema_name": "ncls.reference-package",
+  "schema_version": 1,
+  "reference_id": "ncls.materialx-polyhaven@1",
+  "source_material_family_id": "materialx.textured-surface@1",
+  "role": "ground-truth",
+  "native_representation": "materialx-document-with-native-textures",
+  "query_contract": {
+    "domain": "spatially-varying-local-surface",
+    "measure": "materialx-generated-surface-response",
+    "directions": "materialx-tangent-frame",
+    "coordinates": "native-materialx-texcoord-and-unit-metadata"
+  },
+  "implementations": [
+    {
+      "implementation_id": "aswf.materialx@1.39.4",
+      "kind": "upstream-graph-and-shader-reference",
+      "path_root": "external",
+      "path": "MaterialX",
+      "upstream_url": "git@github.com:AcademySoftwareFoundation/MaterialX.git",
+      "revision": "270b5cf2ae2be24a3b6ef4b0569f1c93038dda1d",
+      "license": "Apache-2.0"
+    },
+    {
+      "implementation_id": "ncls.materialx-adapter@1",
+      "kind": "project-python-adapter",
+      "path_root": "project",
+      "path": "src/ncls/source_materials/materialx.py",
+      "license": "project"
+    },
+    {
+      "implementation_id": "ncls.falcor-materialx-standard-surface@1",
+      "kind": "project-falcor-runtime",
+      "path_root": "project",
+      "path": "shaders/ncls/reference/materialx_standard_surface_reference.slang",
+      "license": "project"
+    },
+    {
+      "implementation_id": "ncls.materialx-native-probe@1",
+      "kind": "project-validation-harness-over-upstream-runtime",
+      "path_root": "project",
+      "path": "tools/reference/materialx_probe",
+      "license": "project"
+    }
+  ],
+  "dependencies": [
+    {
+      "dependency_id": "nanogui@6452dd69",
+      "path_root": "external",
+      "path": "MaterialX/source/MaterialXView/NanoGUI",
+      "revision": "6452dd6944d2ba5c0c9bc0042a1894f703ce1ace",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "dependency_id": "openimageio@3.1.15",
+      "path_root": "project",
+      "path": "environment.yml",
+      "revision": "3.1.15",
+      "license": "BSD-3-Clause"
+    }
+  ],
+  "source_assets": [
+    {
+      "asset_set_id": "polyhaven.materialx-curated@1",
+      "path_root": "source-materials",
+      "path": "materialx-polyhaven/v1",
+      "manifest": "references/materialx-polyhaven-v1/assets.json",
+      "license": "CC0-1.0",
+      "credit": "Powered by Poly Haven"
+    }
+  ]
+}

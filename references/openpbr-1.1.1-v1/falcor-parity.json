@@ -1,0 +1,77 @@
+{
+  "schema_name": "ncls.reference-validation-evidence",
+  "schema_version": 1,
+  "reference_id": "ncls.openpbr@1.1.1",
+  "validation": "deterministic-directional-native-vs-falcor",
+  "acceptance_profile": "references/acceptance.json#deterministic_directional",
+  "date": "2026-08-23",
+  "native_implementation": "Adobe OpenPBR 1.1.1 C++ probe",
+  "falcor_implementation": "Adobe OpenPBR 1.1.1 headers compiled by pinned Slang 2024.1.34 with texture LUTs",
+  "device": "NVIDIA GeForce RTX 4090 / D3D12 / SM 6.7",
+  "query_count_per_material": 2048,
+  "seed": 20260823,
+  "materials": {
+    "open_pbr_aluminum_brushed": {
+      "median_relative_l1": 0.0,
+      "p99_relative_l1": 0.00365070417,
+      "max_relative_l1": 0.00415784211,
+      "max_absolute_error": 3.05175781e-05,
+      "max_scaled_absolute_error": 2.00867653e-05
+    },
+    "open_pbr_brass": {
+      "median_relative_l1": 0.0,
+      "p99_relative_l1": 2.34952798e-07,
+      "max_relative_l1": 6.82121026e-07,
+      "max_absolute_error": 5.58793545e-09,
+      "max_scaled_absolute_error": 5.58793545e-09
+    },
+    "open_pbr_carpaint": {
+      "median_relative_l1": 0.0,
+      "p99_relative_l1": 0.000299597198,
+      "max_relative_l1": 0.000586730601,
+      "max_absolute_error": 4.01735306e-05,
+      "max_scaled_absolute_error": 4.01735306e-05
+    },
+    "open_pbr_glass": {
+      "median_relative_l1": 6.77626358e-16,
+      "p99_relative_l1": 9.49703279e-12,
+      "max_relative_l1": 1.53950926e-09,
+      "max_absolute_error": 1.77635684e-14,
+      "max_scaled_absolute_error": 1.77635684e-14
+    },
+    "open_pbr_pearl": {
+      "median_relative_l1": 0.000150531446,
+      "p99_relative_l1": 0.000944330579,
+      "max_relative_l1": 0.00245396196,
+      "max_absolute_error": 0.000263214111,
+      "max_scaled_absolute_error": 0.000108363546
+    },
+    "open_pbr_soapbubble": {
+      "median_relative_l1": 0.0,
+      "p99_relative_l1": 1.11022302e-11,
+      "max_relative_l1": 5.68434189e-09,
+      "max_absolute_error": 5.68434189e-14,
+      "max_scaled_absolute_error": 5.68434189e-14
+    },
+    "open_pbr_velvet": {
+      "median_relative_l1": 0.0,
+      "p99_relative_l1": 0.000154301012,
+      "max_relative_l1": 0.000322799161,
+      "max_absolute_error": 1.43460929e-05,
+      "max_scaled_absolute_error": 1.43460929e-05
+    }
+  },
+  "passed": true,
+  "viewer_smoke": {
+    "source": "external/OpenPBR/examples/open_pbr_carpaint.mtlx",
+    "command": "NclsViewer --material carpaint.openpbr.json --headless --frames 16 --width 320 --height 240",
+    "capture": "artifacts/validation/openpbr-viewer/capture.json",
+    "capture_format_version": 2,
+    "source_material_sha256": "42c498c5018a38445de3f3a1cb4cd8e51ddf1611f598f04186438e1c7d3c280e",
+    "passed": true
+  },
+  "limitations": [
+    "当前 Falcor resolved-input v1 接受 OpenPBR 常量输入和几何 frame；texture/graph binding 会显式拒绝，不能被静默烘焙成常量。",
+    "该证据验证完整 Adobe OpenPBR 方向查询和 Falcor viewer 执行路径；尚未与独立 native renderer 做线性 HDR 图像 parity。"
+  ]
+}

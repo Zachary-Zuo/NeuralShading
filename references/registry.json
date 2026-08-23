@@ -1,0 +1,81 @@
+{
+  "schema_name": "ncls.reference-registry",
+  "schema_version": 2,
+  "references": [
+    {
+      "reference_id": "ncls.layer-stack-random-walk@1",
+      "package": "layer-stack-random-walk-v1",
+      "role": "ground-truth",
+      "source_material_family_id": "ncls.layer-stack@1",
+      "status": "active",
+      "capabilities": {
+        "source_adapter": "ready",
+        "native_reference": "ready",
+        "falcor_runtime": "ready",
+        "viewer_integration": "ready",
+        "numerical_parity": "pending",
+        "image_parity": "pending"
+      }
+    },
+    {
+      "reference_id": "ncls.pbrt-coated-crosscheck@1",
+      "package": "pbrt-coated-crosscheck-v1",
+      "role": "independent-validation",
+      "source_material_family_id": "ncls.layer-stack@1",
+      "status": "active",
+      "capabilities": {
+        "source_adapter": "ready",
+        "native_reference": "ready",
+        "falcor_runtime": "not-applicable",
+        "viewer_integration": "not-applicable",
+        "numerical_parity": "pending",
+        "image_parity": "not-applicable"
+      }
+    },
+    {
+      "reference_id": "ncls.openpbr@1.1.1",
+      "package": "openpbr-1.1.1-v1",
+      "role": "ground-truth",
+      "source_material_family_id": "openpbr.surface@1.1.1",
+      "status": "active",
+      "capabilities": {
+        "source_adapter": "ready",
+        "native_reference": "ready",
+        "falcor_runtime": "ready",
+        "viewer_integration": "ready",
+        "numerical_parity": "ready",
+        "image_parity": "pending"
+      }
+    },
+    {
+      "reference_id": "ncls.merl-brdf@1",
+      "package": "merl-brdf-v1",
+      "role": "ground-truth",
+      "source_material_family_id": "merl.measured-brdf@1",
+      "status": "active",
+      "capabilities": {
+        "source_adapter": "ready",
+        "native_reference": "ready",
+        "falcor_runtime": "ready",
+        "viewer_integration": "ready",
+        "numerical_parity": "ready",
+        "image_parity": "pending"
+      }
+    },
+    {
+      "reference_id": "ncls.materialx-polyhaven@1",
+      "package": "materialx-polyhaven-v1",
+      "role": "ground-truth",
+      "source_material_family_id": "materialx.textured-surface@1",
+      "status": "active",
+      "capabilities": {
+        "source_adapter": "ready",
+        "native_reference": "ready",
+        "falcor_runtime": "ready",
+        "viewer_integration": "ready",
+        "numerical_parity": "not-applicable",
+        "image_parity": "ready"
+      }
+    }
+  ]
+}

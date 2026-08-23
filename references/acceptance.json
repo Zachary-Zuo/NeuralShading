@@ -1,0 +1,35 @@
+{
+  "schema_name": "ncls.reference-acceptance",
+  "schema_version": 1,
+  "profiles": {
+    "deterministic_directional": {
+      "metric": "per-query symmetric relative RGB L1 before tone mapping",
+      "absolute_floor": 0.00003,
+      "median_relative_l1_max": 0.001,
+      "p99_relative_l1_max": 0.01,
+      "max_relative_l1_max": 0.03,
+      "max_scaled_absolute_error": 0.0002
+    },
+    "monte_carlo": {
+      "metric": "per-channel difference covered by combined uncertainty or relative allowance",
+      "sigma_multiplier": 3.0,
+      "relative_allowance": 0.02,
+      "absolute_floor": 0.0001,
+      "minimum_coverage": 0.99
+    },
+    "linear_hdr_image": {
+      "metric": "common-camera linear HDR before exposure and tone mapping",
+      "luminance_floor": 0.0001,
+      "p95_relative_l1_max": 0.02,
+      "linear_psnr_min_db": 40.0,
+      "max_absolute_mae": 0.0001
+    },
+    "linear_hdr_textured_image": {
+      "metric": "common-camera linear HDR before exposure; source UV and backend-native mip and anisotropic texture footprints retained",
+      "luminance_floor": 0.0001,
+      "p95_relative_l1_max": 0.1,
+      "linear_psnr_min_db": 50.0,
+      "max_absolute_mae": 0.002
+    }
+  }
+}

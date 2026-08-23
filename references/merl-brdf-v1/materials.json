@@ -1,0 +1,614 @@
+{
+  "schema_name": "ncls.merl-material-index",
+  "schema_version": 1,
+  "source_record": "zenodo:8101681",
+  "license": "CC-BY-SA-4.0",
+  "parameterization": "rusinkiewicz-half-difference-official-nearest-index",
+  "channel_scale": [
+    0.0006666666666666666,
+    0.0007666666666666666,
+    0.0011066666666666666
+  ],
+  "materials": [
+    {
+      "material_id": "alum-bronze",
+      "table_uri": "expanded/BRDFDatabase/brdfs/alum-bronze.binary",
+      "size": 34992012,
+      "sha256": "d6506c69e44430bfe8ea676f3950599ca3a6bfb1f46b9906da336d13991bd37d"
+    },
+    {
+      "material_id": "alumina-oxide",
+      "table_uri": "expanded/BRDFDatabase/brdfs/alumina-oxide.binary",
+      "size": 34992012,
+      "sha256": "c3e49d638d96245845b5361ccec502af69923bbedd09b74a0a058e3f6e9e90fc"
+    },
+    {
+      "material_id": "aluminium",
+      "table_uri": "expanded/BRDFDatabase/brdfs/aluminium.binary",
+      "size": 34992012,
+      "sha256": "ca43554a1b0afd9bcb437113bd431742a9918f744e14675af917f89e0eba74c8"
+    },
+    {
+      "material_id": "aventurnine",
+      "table_uri": "expanded/BRDFDatabase/brdfs/aventurnine.binary",
+      "size": 34992012,
+      "sha256": "4d31a9f44db931ceb24bf5d58f1cb0356fdbb3ec7e2050f14b54682466af027d"
+    },
+    {
+      "material_id": "beige-fabric",
+      "table_uri": "expanded/BRDFDatabase/brdfs/beige-fabric.binary",
+      "size": 34992012,
+      "sha256": "c6562ae99d66c10c9e4f9cf56df9df2e07701ff4cf680732d118e518066fd7ed"
+    },
+    {
+      "material_id": "black-fabric",
+      "table_uri": "expanded/BRDFDatabase/brdfs/black-fabric.binary",
+      "size": 34992012,
+      "sha256": "fc8da452ce368e9327faa064dedd03edd8ad905940eb9114e9e9d980a8b9ccf7"
+    },
+    {
+      "material_id": "black-obsidian",
+      "table_uri": "expanded/BRDFDatabase/brdfs/black-obsidian.binary",
+      "size": 34992012,
+      "sha256": "80fac7777bf9bad943ee088cebbb8fa135d92c28a62b5c6bcd9b65539f469c5a"
+    },
+    {
+      "material_id": "black-oxidized-steel",
+      "table_uri": "expanded/BRDFDatabase/brdfs/black-oxidized-steel.binary",
+      "size": 34992012,
+      "sha256": "1437d5d250b2b53a71a2263891095dbfd4593dc2973ce23ab17a52302952c661"
+    },
+    {
+      "material_id": "black-phenolic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/black-phenolic.binary",
+      "size": 34992012,
+      "sha256": "86389660b984e9ff1d31ecb1afb3d63e3fa71e7e90149d56b56d5dd6e707b6b2"
+    },
+    {
+      "material_id": "black-soft-plastic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/black-soft-plastic.binary",
+      "size": 34992012,
+      "sha256": "482be11e7110b993532cfe95651bffda643033cd4e765b8e5184023e2f4ac440"
+    },
+    {
+      "material_id": "blue-acrylic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/blue-acrylic.binary",
+      "size": 34992012,
+      "sha256": "36a65d59a4e0b5ad4ac777285124c435ed4da776d7c28ba01c1330be9a38a340"
+    },
+    {
+      "material_id": "blue-fabric",
+      "table_uri": "expanded/BRDFDatabase/brdfs/blue-fabric.binary",
+      "size": 34992012,
+      "sha256": "e3dee274e8a8a74ab371cf02c9f912fa87defe5eea302202b80ea31107b1504d"
+    },
+    {
+      "material_id": "blue-metallic-paint",
+      "table_uri": "expanded/BRDFDatabase/brdfs/blue-metallic-paint.binary",
+      "size": 34992012,
+      "sha256": "e6a87a32c16f314b5e56f79ccb122002e8f82501ae741b84f306328b24785c20"
+    },
+    {
+      "material_id": "blue-metallic-paint2",
+      "table_uri": "expanded/BRDFDatabase/brdfs/blue-metallic-paint2.binary",
+      "size": 34992012,
+      "sha256": "7f4db72b17deee9e9f27cd72caddd3ff4cb9a91e049577a29ec450c6cb9a6190"
+    },
+    {
+      "material_id": "blue-rubber",
+      "table_uri": "expanded/BRDFDatabase/brdfs/blue-rubber.binary",
+      "size": 34992012,
+      "sha256": "1d0fa4e0a4926a905db7fa1f0ab7602751f707062ad7d6d148ce1fe1d00f808a"
+    },
+    {
+      "material_id": "brass",
+      "table_uri": "expanded/BRDFDatabase/brdfs/brass.binary",
+      "size": 34992012,
+      "sha256": "4a18a679425b394e8d4df6318c97946456793ee6e6299eb9c86a6b1967087043"
+    },
+    {
+      "material_id": "cherry-235",
+      "table_uri": "expanded/BRDFDatabase/brdfs/cherry-235.binary",
+      "size": 34992012,
+      "sha256": "84fee448e2fdf3f5bec5554412c44839f9e422d1283ac54bb0f28e822b25e9ac"
+    },
+    {
+      "material_id": "chrome-steel",
+      "table_uri": "expanded/BRDFDatabase/brdfs/chrome-steel.binary",
+      "size": 34992012,
+      "sha256": "768d4f17fea81f1b281ec1c77e2d1c7b4a0f3bcc2975849e00c3330ea47af3c9"
+    },
+    {
+      "material_id": "chrome",
+      "table_uri": "expanded/BRDFDatabase/brdfs/chrome.binary",
+      "size": 34992012,
+      "sha256": "8ca888458aff42b6ebc95329ef1552782e7cb4c2ddc6df060a5afe5ffa58ba8d"
+    },
+    {
+      "material_id": "colonial-maple-223",
+      "table_uri": "expanded/BRDFDatabase/brdfs/colonial-maple-223.binary",
+      "size": 34992012,
+      "sha256": "4e8ebe0edeee7f1296acaf6b368196534389d56ab1605eaed4f30d98070947f2"
+    },
+    {
+      "material_id": "color-changing-paint1",
+      "table_uri": "expanded/BRDFDatabase/brdfs/color-changing-paint1.binary",
+      "size": 34992012,
+      "sha256": "77956cd5d05f8c8f524ef811a51f8be0c19cec8fb19e3e8d4b3383f057014deb"
+    },
+    {
+      "material_id": "color-changing-paint2",
+      "table_uri": "expanded/BRDFDatabase/brdfs/color-changing-paint2.binary",
+      "size": 34992012,
+      "sha256": "76e0e091072437d7dc478b3fc6f3952c5fc60c5c9705f5c175a7ab9a4525f3e7"
+    },
+    {
+      "material_id": "color-changing-paint3",
+      "table_uri": "expanded/BRDFDatabase/brdfs/color-changing-paint3.binary",
+      "size": 34992012,
+      "sha256": "863ef6f6909d60286dfa8dc6487add1975796fc996872b85aa879e5d6a3e1b2c"
+    },
+    {
+      "material_id": "dark-blue-paint",
+      "table_uri": "expanded/BRDFDatabase/brdfs/dark-blue-paint.binary",
+      "size": 34992012,
+      "sha256": "96f1a800f8885c2896d415cfc71aeb1f5508c6db9ed200648644987c950167d2"
+    },
+    {
+      "material_id": "dark-red-paint",
+      "table_uri": "expanded/BRDFDatabase/brdfs/dark-red-paint.binary",
+      "size": 34992012,
+      "sha256": "bcd236e94bc0214ec5551a99403db5167c3182b4a204afa56d30fadc4c52736a"
+    },
+    {
+      "material_id": "dark-specular-fabric",
+      "table_uri": "expanded/BRDFDatabase/brdfs/dark-specular-fabric.binary",
+      "size": 34992012,
+      "sha256": "220be5b0516d8945b4cd7888912d85832df5d2a2b389e34254a3b6510e0d89fd"
+    },
+    {
+      "material_id": "delrin",
+      "table_uri": "expanded/BRDFDatabase/brdfs/delrin.binary",
+      "size": 34992012,
+      "sha256": "5e16ced69616cf4ee0b4962cf2d4d6a0295ed1ae246dffdabc549255da712619"
+    },
+    {
+      "material_id": "fruitwood-241",
+      "table_uri": "expanded/BRDFDatabase/brdfs/fruitwood-241.binary",
+      "size": 34992012,
+      "sha256": "c72ccdc487a6c2cf4e0a0adf1a7d7f235db048d934e4e850b61024b50b4b3ee8"
+    },
+    {
+      "material_id": "gold-metallic-paint",
+      "table_uri": "expanded/BRDFDatabase/brdfs/gold-metallic-paint.binary",
+      "size": 34992012,
+      "sha256": "69c493d7f36fa5267d15948a616056f9bc84e352ec6db49b64afe6ff232e27d6"
+    },
+    {
+      "material_id": "gold-metallic-paint2",
+      "table_uri": "expanded/BRDFDatabase/brdfs/gold-metallic-paint2.binary",
+      "size": 34992012,
+      "sha256": "a670c1e46a9b2b9077a49cfc6c90543d3bd04950f4d2cde632c402b694aed085"
+    },
+    {
+      "material_id": "gold-metallic-paint3",
+      "table_uri": "expanded/BRDFDatabase/brdfs/gold-metallic-paint3.binary",
+      "size": 34992012,
+      "sha256": "7c09a391afb189e80df062dcffa6c30d68bbc00b1b5bf0717e8c9e9578ba894c"
+    },
+    {
+      "material_id": "gold-paint",
+      "table_uri": "expanded/BRDFDatabase/brdfs/gold-paint.binary",
+      "size": 34992012,
+      "sha256": "6fa71285a697acc96d869a4d6d8c903f7c5cd2eafeff8f191ff730c90e1e5f68"
+    },
+    {
+      "material_id": "gray-plastic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/gray-plastic.binary",
+      "size": 34992012,
+      "sha256": "67778f2d7c361838bf64bcd5cf6497ec917452dd1318601bf110b83f3a1b18e0"
+    },
+    {
+      "material_id": "grease-covered-steel",
+      "table_uri": "expanded/BRDFDatabase/brdfs/grease-covered-steel.binary",
+      "size": 34992012,
+      "sha256": "15684f9854ada6947ba3a7790b00e47e638edf611b1b0b00b8354cb5ca25fe61"
+    },
+    {
+      "material_id": "green-acrylic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/green-acrylic.binary",
+      "size": 34992012,
+      "sha256": "156c0c45d7719ebd41ddf46c4d4018f161a205fbbc7cfba15b2c9268f832afa7"
+    },
+    {
+      "material_id": "green-fabric",
+      "table_uri": "expanded/BRDFDatabase/brdfs/green-fabric.binary",
+      "size": 34992012,
+      "sha256": "a3ea39612719e4638e883c5ed42b2ca47dcdd6bab846546c6deec1031a1f1a6e"
+    },
+    {
+      "material_id": "green-latex",
+      "table_uri": "expanded/BRDFDatabase/brdfs/green-latex.binary",
+      "size": 34992012,
+      "sha256": "77f633a4bd13b38815cab2d3e26ed159b7d7c7b926a9842c696db22c61e03d09"
+    },
+    {
+      "material_id": "green-metallic-paint",
+      "table_uri": "expanded/BRDFDatabase/brdfs/green-metallic-paint.binary",
+      "size": 34992012,
+      "sha256": "90d2ee46c0d0f224a87849796241c946ab8cf33c17f07177339d037f6fa945b7"
+    },
+    {
+      "material_id": "green-metallic-paint2",
+      "table_uri": "expanded/BRDFDatabase/brdfs/green-metallic-paint2.binary",
+      "size": 34992012,
+      "sha256": "2f5af652e6f1de7281e59995f3d0921f7a773455d380938ff4984e239ed19ab3"
+    },
+    {
+      "material_id": "green-plastic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/green-plastic.binary",
+      "size": 34992012,
+      "sha256": "a1bd0374278810558de904056a73e08fdabeffd4260d816541e47467d4a4e962"
+    },
+    {
+      "material_id": "hematite",
+      "table_uri": "expanded/BRDFDatabase/brdfs/hematite.binary",
+      "size": 34992012,
+      "sha256": "c27c844294514eb5f69d3c820484b9c97834394ba58e20acb993630685cc3a45"
+    },
+    {
+      "material_id": "ipswich-pine-221",
+      "table_uri": "expanded/BRDFDatabase/brdfs/ipswich-pine-221.binary",
+      "size": 34992012,
+      "sha256": "81eeb276660a56b8f70eb0dd4d4c07d6b6cd2d9074f3d9a15e86b041895ad978"
+    },
+    {
+      "material_id": "light-brown-fabric",
+      "table_uri": "expanded/BRDFDatabase/brdfs/light-brown-fabric.binary",
+      "size": 34992012,
+      "sha256": "9375f68d1acf69e6c26cf814375e63302250667a78d19165814ea832a67e5e70"
+    },
+    {
+      "material_id": "light-red-paint",
+      "table_uri": "expanded/BRDFDatabase/brdfs/light-red-paint.binary",
+      "size": 34992012,
+      "sha256": "cf75a504f0583fdc41802dfa658aae94738760ee02d6e8118b32486ced764884"
+    },
+    {
+      "material_id": "maroon-plastic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/maroon-plastic.binary",
+      "size": 34992012,
+      "sha256": "c09de644e09bbaccd74a2d92b4c49599866609522e826196b9c62eb7233e6a39"
+    },
+    {
+      "material_id": "natural-209",
+      "table_uri": "expanded/BRDFDatabase/brdfs/natural-209.binary",
+      "size": 34992012,
+      "sha256": "1d73d733e42b3b5547c5875c55f74855d4c4a9a7ef2531601121c892416905f5"
+    },
+    {
+      "material_id": "neoprene-rubber",
+      "table_uri": "expanded/BRDFDatabase/brdfs/neoprene-rubber.binary",
+      "size": 34992012,
+      "sha256": "98975c6416bb806cf348c04a40b28a0c903aaa64fd353c2d7ae96f892b618c2f"
+    },
+    {
+      "material_id": "nickel",
+      "table_uri": "expanded/BRDFDatabase/brdfs/nickel.binary",
+      "size": 34992012,
+      "sha256": "5b74c001f2235255e2db1a03a8cf3627ecd47c4ce8a8ea5d7da5dc16c0ece3b7"
+    },
+    {
+      "material_id": "nylon",
+      "table_uri": "expanded/BRDFDatabase/brdfs/nylon.binary",
+      "size": 34992012,
+      "sha256": "303bebb8c1704527d075023eeccb441f744dcc450bf20ed359910aaab206baad"
+    },
+    {
+      "material_id": "orange-paint",
+      "table_uri": "expanded/BRDFDatabase/brdfs/orange-paint.binary",
+      "size": 34992012,
+      "sha256": "0205cb97485a79a6c3bc358c63d9a84dd62e275a498a7384cdf763312bf8f2ab"
+    },
+    {
+      "material_id": "pearl-paint",
+      "table_uri": "expanded/BRDFDatabase/brdfs/pearl-paint.binary",
+      "size": 34992012,
+      "sha256": "50ed2d6430f3a019b0f3c59c796c6879d6d6fe7d2107c0ee26115792085ad9d2"
+    },
+    {
+      "material_id": "pickled-oak-260",
+      "table_uri": "expanded/BRDFDatabase/brdfs/pickled-oak-260.binary",
+      "size": 34992012,
+      "sha256": "c3aadbfd93757e1b1b5459588d36939d1144b4e182947546f380729f1bc9a6a7"
+    },
+    {
+      "material_id": "pink-fabric",
+      "table_uri": "expanded/BRDFDatabase/brdfs/pink-fabric.binary",
+      "size": 34992012,
+      "sha256": "657deb3dc9479ca07c710659c5964cc0dc14576b36ac1b4e4549639758e21ae0"
+    },
+    {
+      "material_id": "pink-fabric2",
+      "table_uri": "expanded/BRDFDatabase/brdfs/pink-fabric2.binary",
+      "size": 34992012,
+      "sha256": "6f540356571a29616c2ad9e123e8b2530f41aec13ce1cd330958cf552ca592c6"
+    },
+    {
+      "material_id": "pink-felt",
+      "table_uri": "expanded/BRDFDatabase/brdfs/pink-felt.binary",
+      "size": 34992012,
+      "sha256": "424c1ac827b32898feb85b634ad02812d232d872c2c2f4e7db5d283ef34757eb"
+    },
+    {
+      "material_id": "pink-jasper",
+      "table_uri": "expanded/BRDFDatabase/brdfs/pink-jasper.binary",
+      "size": 34992012,
+      "sha256": "764f5fa1998ef9fd7fa505ac7892ceb539bdf2c484bd5db02bd110e3500f3b08"
+    },
+    {
+      "material_id": "pink-plastic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/pink-plastic.binary",
+      "size": 34992012,
+      "sha256": "d4d0d80832d69c21cf850a85f29ff4884da59f9aa922d8a7d62b4f377a9f08cc"
+    },
+    {
+      "material_id": "polyethylene",
+      "table_uri": "expanded/BRDFDatabase/brdfs/polyethylene.binary",
+      "size": 34992012,
+      "sha256": "5f65b9ba56889b2480d874b8f5cc195064d35c5af0d42b0d4bca72b7f9c2fbf4"
+    },
+    {
+      "material_id": "polyurethane-foam",
+      "table_uri": "expanded/BRDFDatabase/brdfs/polyurethane-foam.binary",
+      "size": 34992012,
+      "sha256": "0a6deb221291901b945240cf7462e44d2c376ae8e9588a50eb340178d1d5df26"
+    },
+    {
+      "material_id": "pure-rubber",
+      "table_uri": "expanded/BRDFDatabase/brdfs/pure-rubber.binary",
+      "size": 34992012,
+      "sha256": "43810d5889387166c57812ce572d14aa335c7317f0fdbc3d7cb99a1c02e74d28"
+    },
+    {
+      "material_id": "purple-paint",
+      "table_uri": "expanded/BRDFDatabase/brdfs/purple-paint.binary",
+      "size": 34992012,
+      "sha256": "92107197f14e185fe578f7886472c05eaa4b00b64649c685e8e40c121b9e1634"
+    },
+    {
+      "material_id": "pvc",
+      "table_uri": "expanded/BRDFDatabase/brdfs/pvc.binary",
+      "size": 34992012,
+      "sha256": "4ac85beedf563dbbb6ff3d47faef97f2fa2efa6450458ca912726306ccbe7947"
+    },
+    {
+      "material_id": "red-fabric",
+      "table_uri": "expanded/BRDFDatabase/brdfs/red-fabric.binary",
+      "size": 34992012,
+      "sha256": "9661f2187918d3db5cef4c2628483ce287bf04fa19252e871747002b9de962e2"
+    },
+    {
+      "material_id": "red-fabric2",
+      "table_uri": "expanded/BRDFDatabase/brdfs/red-fabric2.binary",
+      "size": 34992012,
+      "sha256": "4cbf3dc33fc4376cab25e83183393de2d4f4576f220a19eb7be51cdd0734b8fc"
+    },
+    {
+      "material_id": "red-metallic-paint",
+      "table_uri": "expanded/BRDFDatabase/brdfs/red-metallic-paint.binary",
+      "size": 34992012,
+      "sha256": "b2e71a67418915cd985bf02cef1b9a5b29a8ca3173919335ec0f39c98426cf7e"
+    },
+    {
+      "material_id": "red-phenolic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/red-phenolic.binary",
+      "size": 34992012,
+      "sha256": "c1daab4ee99c386cb6dcd31ca2d30734504b47456b0d7dc38f1737596e373ba1"
+    },
+    {
+      "material_id": "red-plastic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/red-plastic.binary",
+      "size": 34992012,
+      "sha256": "d6407989bc5e8a0c12aa7a2096ac212e707f3e89b8361bda08226edb37eb3eb4"
+    },
+    {
+      "material_id": "red-specular-plastic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/red-specular-plastic.binary",
+      "size": 34992012,
+      "sha256": "2e6988e9ae6796d19d93fb3967c1964f0ef2c43fd75e86556ecfba273500acbb"
+    },
+    {
+      "material_id": "silicon-nitrade",
+      "table_uri": "expanded/BRDFDatabase/brdfs/silicon-nitrade.binary",
+      "size": 34992012,
+      "sha256": "485520b38ef70cba382d6fdb20a28eb794a7fc8ffc4bfe3e1eb0936e026073ef"
+    },
+    {
+      "material_id": "silver-metallic-paint",
+      "table_uri": "expanded/BRDFDatabase/brdfs/silver-metallic-paint.binary",
+      "size": 34992012,
+      "sha256": "1f363c976b2017077a9df4941fe50281e6b0f0f90addcb2d46841cc5a767b35b"
+    },
+    {
+      "material_id": "silver-metallic-paint2",
+      "table_uri": "expanded/BRDFDatabase/brdfs/silver-metallic-paint2.binary",
+      "size": 34992012,
+      "sha256": "82d2cdafe51665062245f1881bc320cdfce1cbcde156b9f604641128e40ab9c3"
+    },
+    {
+      "material_id": "silver-paint",
+      "table_uri": "expanded/BRDFDatabase/brdfs/silver-paint.binary",
+      "size": 34992012,
+      "sha256": "9c6975e11860b80ba739236e5c092041e917209bb229e95afb8bbf6356a12f7d"
+    },
+    {
+      "material_id": "special-walnut-224",
+      "table_uri": "expanded/BRDFDatabase/brdfs/special-walnut-224.binary",
+      "size": 34992012,
+      "sha256": "24988c19ab79c2849a7028fdd87b0db680e4b5b76f92eda761cfd63712bb062e"
+    },
+    {
+      "material_id": "specular-black-phenolic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/specular-black-phenolic.binary",
+      "size": 34992012,
+      "sha256": "65ea5c3b6a7e48a1be05b83237f55eb81e8134f6f96aa28aed1dd48645d69396"
+    },
+    {
+      "material_id": "specular-blue-phenolic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/specular-blue-phenolic.binary",
+      "size": 34992012,
+      "sha256": "8df9d49f4f5e2e0b52583d46b3b5ab9641a028efa3c9049bc13c01a2783911ae"
+    },
+    {
+      "material_id": "specular-green-phenolic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/specular-green-phenolic.binary",
+      "size": 34992012,
+      "sha256": "05b389a759d555b6f7a45ae33763d555b93d373b4d6db2fe0c52ca461321a7b0"
+    },
+    {
+      "material_id": "specular-maroon-phenolic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/specular-maroon-phenolic.binary",
+      "size": 34992012,
+      "sha256": "3c0fd0d9a9932a772854eca3bae8b6506659cab63c2820ee918304265709713b"
+    },
+    {
+      "material_id": "specular-orange-phenolic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/specular-orange-phenolic.binary",
+      "size": 34992012,
+      "sha256": "61e3ee38c2b541abe755dc0f1541c9cf572306409b9eccec849fa85b9811f3b0"
+    },
+    {
+      "material_id": "specular-red-phenolic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/specular-red-phenolic.binary",
+      "size": 34992012,
+      "sha256": "e4821c9618b0eb931c536548af6b58bae86f2752200e3a24b4e44800b87516b5"
+    },
+    {
+      "material_id": "specular-violet-phenolic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/specular-violet-phenolic.binary",
+      "size": 34992012,
+      "sha256": "09acfbb1d8e7eb63872c25edffe6ab65e1f643d2e9522612cc80a7ec8eb60a08"
+    },
+    {
+      "material_id": "specular-white-phenolic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/specular-white-phenolic.binary",
+      "size": 34992012,
+      "sha256": "dab007a599a34eedbc3a1afe6757b24ac5943798e1d45713d3d1c7f51f0b996a"
+    },
+    {
+      "material_id": "specular-yellow-phenolic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/specular-yellow-phenolic.binary",
+      "size": 34992012,
+      "sha256": "745b9868b6c28b1d7e4132879a046e066f5d4c45516e940de0dc0811bdacf1ea"
+    },
+    {
+      "material_id": "ss440",
+      "table_uri": "expanded/BRDFDatabase/brdfs/ss440.binary",
+      "size": 34992012,
+      "sha256": "ddf0c7b5369a86023470dd55d3c28cd48a8fe41944885dd6e6dc3f93c8d5b832"
+    },
+    {
+      "material_id": "steel",
+      "table_uri": "expanded/BRDFDatabase/brdfs/steel.binary",
+      "size": 34992012,
+      "sha256": "75f2555e75d2a58864f223ad6269b84279bc2793d32a6f987e1768a94c065808"
+    },
+    {
+      "material_id": "teflon",
+      "table_uri": "expanded/BRDFDatabase/brdfs/teflon.binary",
+      "size": 34992012,
+      "sha256": "84519c4158b66a6abfa0f7e3ab83143983d4a2a638d8c254e0b16dd3950575df"
+    },
+    {
+      "material_id": "tungsten-carbide",
+      "table_uri": "expanded/BRDFDatabase/brdfs/tungsten-carbide.binary",
+      "size": 34992012,
+      "sha256": "e1c9bc7b2404f14a7afbef842c03125fee439cc2287f31331b908846476876ad"
+    },
+    {
+      "material_id": "two-layer-gold",
+      "table_uri": "expanded/BRDFDatabase/brdfs/two-layer-gold.binary",
+      "size": 34992012,
+      "sha256": "d1c8fc446d24fee00cfb8ab5278f96c3b43f8d8e7197f5d8260d7c0eac12d374"
+    },
+    {
+      "material_id": "two-layer-silver",
+      "table_uri": "expanded/BRDFDatabase/brdfs/two-layer-silver.binary",
+      "size": 34992012,
+      "sha256": "a8810e925efc22fd633f9653393dca855d94867f0d0a0f84c6b746e42a1b266b"
+    },
+    {
+      "material_id": "violet-acrylic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/violet-acrylic.binary",
+      "size": 34992012,
+      "sha256": "8084adfb95c5cd9ff4943da0826d46f42bcd9afab667b6fdf6fc543bff0cbca6"
+    },
+    {
+      "material_id": "violet-rubber",
+      "table_uri": "expanded/BRDFDatabase/brdfs/violet-rubber.binary",
+      "size": 34992012,
+      "sha256": "f13ee6d8a646855da406e59900d2c0c9bdc5f322610031b27e0d97d9ed1b6100"
+    },
+    {
+      "material_id": "white-acrylic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/white-acrylic.binary",
+      "size": 34992012,
+      "sha256": "c89c13bec30668da0f16b9d5f9be9d4fb37578c5640c0a0cc5e9a9ba502e4c1a"
+    },
+    {
+      "material_id": "white-diffuse-bball",
+      "table_uri": "expanded/BRDFDatabase/brdfs/white-diffuse-bball.binary",
+      "size": 34992012,
+      "sha256": "660ea616a505c0b6ac248c8b5f432f1e780f6f4b2226fe1249c37a1fbd83fdcb"
+    },
+    {
+      "material_id": "white-fabric",
+      "table_uri": "expanded/BRDFDatabase/brdfs/white-fabric.binary",
+      "size": 34992012,
+      "sha256": "8493ab45577ac0c421149e52cac60225ef265dd06c74459c34f44f43acaf1da8"
+    },
+    {
+      "material_id": "white-fabric2",
+      "table_uri": "expanded/BRDFDatabase/brdfs/white-fabric2.binary",
+      "size": 34992012,
+      "sha256": "674a7c9ff1f4a0d830652eca06199dc24056eb3e6f91b11e47553aa2079630a1"
+    },
+    {
+      "material_id": "white-marble",
+      "table_uri": "expanded/BRDFDatabase/brdfs/white-marble.binary",
+      "size": 34992012,
+      "sha256": "8460a7d6e99aa143ba7cbd1801079ef95a4eb1f1ed93585b60ebb00fccb3c41c"
+    },
+    {
+      "material_id": "white-paint",
+      "table_uri": "expanded/BRDFDatabase/brdfs/white-paint.binary",
+      "size": 34992012,
+      "sha256": "6fc96fa98570616c643e4b8125bfc59e00b186da63028e75b0ceb1ecd8eca543"
+    },
+    {
+      "material_id": "yellow-matte-plastic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/yellow-matte-plastic.binary",
+      "size": 34992012,
+      "sha256": "f776212f60943d45bdaff0215e34c6af287a6d0d180fc4d39387d2ec6b9d0995"
+    },
+    {
+      "material_id": "yellow-paint",
+      "table_uri": "expanded/BRDFDatabase/brdfs/yellow-paint.binary",
+      "size": 34992012,
+      "sha256": "6c66ca184949c6b023fb2b13427e863f79d901b51aecb8af740230a3a1c6f519"
+    },
+    {
+      "material_id": "yellow-phenolic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/yellow-phenolic.binary",
+      "size": 34992012,
+      "sha256": "cd8957418c49a898c0d044428c055e6e27abd917d232a67a5999a29ab7998435"
+    },
+    {
+      "material_id": "yellow-plastic",
+      "table_uri": "expanded/BRDFDatabase/brdfs/yellow-plastic.binary",
+      "size": 34992012,
+      "sha256": "cc036db74087f380747a0746d39dd1e4be359c409fa729214a894bd883a4757e"
+    }
+  ]
+}

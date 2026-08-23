@@ -6,6 +6,8 @@
 
 迁移前的固定数组式 `LayerStack` 已被内部 `LayerStackIR` 取代。它仍是第一阶段研究范围的中心，但不承担顶层材质文件格式。
 
+`MaterialProgram` 的职责是忠实保存源材质原生存在的可编辑参数、图结构和资源。除非源材质本身就是层模型，否则合同不要求它提供层数或层参数，也不允许为了适配当前 backend 而把反演出的层分解冒充成 GT。不同源材质族可以规范化为不同的内部 IR，并由不同 reference 求值；详细边界见 `docs/material_scope.md`。
+
 ## 顶层结构
 
 逻辑结构如下；具体 JSON Schema 位于 `src/ncls/core/material/schemas/material_program_v1.schema.json`，并由合同测试锁定。
@@ -134,7 +136,7 @@ media: Medium[]
 - 层间介质采用当前局部、无横向位移的 slab 假设；
 - 有体散射时 RGB 总消光相同是 `homogeneous@1` 的范围限制，不是通用介质定律。
 
-通过验证的子图规范化为 `LayerStackIR`。该 IR 可以使用固定 GPU 布局，但其 ABI 版本与 `MaterialProgram` 版本独立。
+通过验证的这个子图规范化为 `LayerStackIR`。该 IR 可以使用固定 GPU 布局，但其 ABI 版本与 `MaterialProgram` 版本独立。其他源材质族不需要经过 `LayerStackIR`，可以定义自己的规范化 IR 和 reference capability。
 
 ## 表面坐标和各向异性
 
@@ -161,8 +163,8 @@ family split 和数据去重都使用规范化后的物理语义哈希，不能�
 
 - 节点注册信息和中文语义说明；
 - 规范化规则；
-- reference 支持或明确的 reference capability；
-- 至少一个 backend 支持，或清晰的 unsupported error；
+- 一个直接保持源材质原生语义的 reference，或明确的 reference capability；
+- approximation backend 可以暂时不支持，但必须返回清晰的 capability error，不能因此拒绝源材质及其 reference 作为 GT 接入；
 - schema、round-trip 和 shader ABI 测试。
 
 非局部 BSSRDF、完整 volume、displacement 等使用预留输出连接独立 renderer 阶段，不伪装成局部 `Surface` 节点。

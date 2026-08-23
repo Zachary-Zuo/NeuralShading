@@ -4,11 +4,14 @@ RWTexture2D<float4> gPositionDepth;
 RWTexture2D<float4> gNormal;
 RWTexture2D<float4> gTangent;
 RWTexture2D<float4> gViewDirection;
+RWTexture2D<float4> gMaterialXTexCoord;
+RWTexture2D<float4> gMaterialXTexCoordGrad;
 
 cbuffer VisibilityCB
 {
     uint2 gFrameDim;
     uint gObjectMode;
+    uint gClearOnly;
     float gVerticalFovRadians;
     float3 gCameraPosition;
     float _padding0;
@@ -30,6 +33,16 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     const float aspect = float(gFrameDim.x) / float(gFrameDim.y);
     const float3 rayDirection = normalize(
         forward + screen.x * aspect * tangentFov * right + screen.y * tangentFov * up);
+    if (gClearOnly != 0u)
+    {
+        gPositionDepth[pixel] = float4(0.0f, 0.0f, 0.0f, -1.0f);
+        gNormal[pixel] = float4(0.0f, 1.0f, 0.0f, 0.0f);
+        gTangent[pixel] = float4(1.0f, 0.0f, 0.0f, 0.0f);
+        gViewDirection[pixel] = float4(-rayDirection, 0.0f);
+        gMaterialXTexCoord[pixel] = float4(0.0f);
+        gMaterialXTexCoordGrad[pixel] = float4(0.0f);
+        return;
+    }
     float distance;
     if (!nclsViewerTrace(gCameraPosition, rayDirection, gObjectMode, distance))
     {
@@ -37,6 +50,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         gNormal[pixel] = float4(0.0f, 1.0f, 0.0f, 0.0f);
         gTangent[pixel] = float4(1.0f, 0.0f, 0.0f, 0.0f);
         gViewDirection[pixel] = float4(-rayDirection, 0.0f);
+        gMaterialXTexCoord[pixel] = float4(0.0f);
+        gMaterialXTexCoordGrad[pixel] = float4(0.0f);
         return;
     }
     const float3 position = gCameraPosition + distance * rayDirection;
@@ -46,4 +61,6 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     gNormal[pixel] = float4(normal, 0.0f);
     gTangent[pixel] = float4(tangent, 0.0f);
     gViewDirection[pixel] = float4(-rayDirection, 0.0f);
+    gMaterialXTexCoord[pixel] = float4(0.0f);
+    gMaterialXTexCoordGrad[pixel] = float4(0.0f);
 }

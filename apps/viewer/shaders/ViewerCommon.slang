@@ -112,6 +112,14 @@ float3 nclsViewerUniformHemisphere(float2 u)
     return float3(radius * cos(phi), radius * sin(phi), z);
 }
 
+float3 nclsViewerUniformSphere(float2 u)
+{
+    const float z = 2.0f * u.x - 1.0f;
+    const float radius = sqrt(max(0.0f, 1.0f - z * z));
+    const float phi = 2.0f * NCLS_VIEWER_PI * u.y;
+    return float3(radius * cos(phi), radius * sin(phi), z);
+}
+
 float2 nclsViewerLatLongUv(float3 direction, float rotation)
 {
     const float longitude = atan2(direction.z, direction.x) + rotation;

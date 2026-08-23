@@ -1,12 +1,16 @@
-# 随机游走参考数据
+# Reference 响应数据
 
 ## 它是什么
 
-`ncls.reference-dataset@2` 是训练、逐样本直接拟合和回归测试共用的唯一方向响应数据合同。每个 tile 对应一个 `MaterialProgram` 局部状态与一个观察方向，保存全部入射光方向上的 `response_cos = f(wo, wi) * max(dot(Ns, wi), 0)`、统计方差、总样本数和两个独立随机流的均值。
+`ncls.reference-dataset@2` 是训练、逐样本直接拟合和回归测试共用的方向响应数据合同。每个 tile 对应一个源材质状态与一个观察方向，保存全部入射光方向上的 `response_cos = f(wo, wi) * max(dot(Ns, wi), 0)`、统计方差、总样本数和可选的独立随机流均值。
 
-它不包含 K2、LTC、latent 或网络参数。拟合表示发生变化时，只要参考算法和材质语义没有变化，就不需要重新采集。
+它不包含 K2、LTC、latent 或网络参数。拟合表示发生变化时，只要 reference 和源材质语义没有变化，就不需要重新采集。
+
+它也不是源材质资产合同。源材质的原生参数、图、程序、纹理、测量表和其他资源必须独立保存并可追溯；本数据集只记录 reference 对这些源材质状态执行查询后得到的监督。完整边界见 `docs/material_scope.md`。
 
 ## 生成
+
+下面的命令只生成当前 `LayerStackIR` 材质族的随机游走 reference 数据，不是所有源材质族必须共用的生成器：
 
 Falcor Python 只能通过锁定环境启动：
 
@@ -67,6 +71,6 @@ conda run -n neural-shading python -m ncls.cli data convert-legacy-v0 `
 
 转换后的 `mean` 是原 A/B 均值的平均，replica 字段逐值保留。由于旧格式没有二阶矩，`variance = 0.5 * (mean_a - mean_b)^2` 只表示两个 replica 均值之间的不确定性估计；这个限制同时写入 manifest。
 
-## 当前适用范围
+## 当前随机游走 reference 的适用范围
 
 v1 随机游走参考解处理局部反射、至多八个界面、各向异性粗糙度、各层切线旋转、均匀吸收/散射介质和不透明基底。为了让 RGB 共用一次自由飞行采样，有体散射时仍要求三个通道的总消光系数相同；各通道散射反照率可以不同。这只是当前实现约束，不是一般介质的物理性质。

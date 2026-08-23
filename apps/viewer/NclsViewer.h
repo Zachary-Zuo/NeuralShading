@@ -3,9 +3,12 @@
 #include "Falcor.h"
 #include "Core/SampleApp.h"
 #include "Core/API/GpuTimer.h"
+#include "Core/Pass/RasterPass.h"
 
 #include "MaterialProgram.h"
 #include "MethodBundle.h"
+#include "OpenPbrLuts.h"
+#include "ReferenceSource.h"
 
 #include <array>
 #include <filesystem>
@@ -17,6 +20,8 @@ struct ViewerOptions
     std::filesystem::path bundleRoot = "artifacts/exports";
     std::filesystem::path materialPath;
     std::filesystem::path environmentPath;
+    std::filesystem::path referenceGeometryPath;
+    std::string referenceGeometrySha256;
     std::filesystem::path replayPath;
     std::filesystem::path captureManifest = "artifacts/captures/headless.json";
     std::string requestedMethodId;
@@ -81,6 +86,8 @@ private:
     void createPasses();
     void createDefaultEnvironment();
     void resizeResources(uint32_t width, uint32_t height);
+    void loadReferenceGeometry(const std::filesystem::path& path);
+    void rebuildReferenceGeometryFbo();
     void updateMaterialBuffer();
     void resetReference(bool visibilityChanged, bool prepareChanged = true);
     void resetCamera();
@@ -106,9 +113,12 @@ private:
     ViewerOptions mOptions;
     CameraState mCamera;
     LightingState mLighting;
-    ncls::LayerStackIR mMaterial = ncls::makeDefaultMaterial();
+    ncls::ReferenceSource mReferenceSource = ncls::makeDefaultReferenceSource();
+    ncls::LayerStackIR& mMaterial = mReferenceSource.layerStack;
     std::filesystem::path mMaterialPath;
     std::filesystem::path mEnvironmentPath;
+    std::filesystem::path mReferenceGeometryPath;
+    std::string mReferenceGeometrySha256;
     std::string mMaterialDisplayName = "默认多层材质";
     std::string mStatus;
 
@@ -119,6 +129,7 @@ private:
     Falcor::ref<Falcor::Buffer> mpWeights;
 
     Falcor::ref<Falcor::ComputePass> mpVisibilityPass;
+    Falcor::ref<Falcor::RasterPass> mpMeshVisibilityPass;
     Falcor::ref<Falcor::ComputePass> mpReferencePass;
     Falcor::ref<Falcor::ComputePass> mpPreparePass;
     Falcor::ref<Falcor::ComputePass> mpApproximationPass;
@@ -126,17 +137,31 @@ private:
     Falcor::ref<Falcor::ComputePass> mpParityPass;
 
     Falcor::ref<Falcor::Buffer> mpMaterial;
+    Falcor::ref<Falcor::Buffer> mpMerlBrdf;
+    Falcor::ref<Falcor::Buffer> mpOpenPbrInputs;
+    Falcor::ref<Falcor::Buffer> mpMaterialXInputs;
+    ncls::OpenPbrLuts mOpenPbrLuts;
     Falcor::ref<Falcor::Buffer> mpStates;
     Falcor::ref<Falcor::Texture> mpPositionDepth;
     Falcor::ref<Falcor::Texture> mpNormal;
     Falcor::ref<Falcor::Texture> mpTangent;
     Falcor::ref<Falcor::Texture> mpViewDirection;
+    Falcor::ref<Falcor::Texture> mpMaterialXTexCoord;
+    Falcor::ref<Falcor::Texture> mpMaterialXTexCoordGrad;
+    Falcor::ref<Falcor::Texture> mpReferenceGeometryDepth;
+    Falcor::ref<Falcor::Fbo> mpReferenceGeometryFbo;
+    Falcor::ref<Falcor::Vao> mpReferenceGeometryVao;
     std::array<Falcor::ref<Falcor::Texture>, 2> mpReference;
     Falcor::ref<Falcor::Texture> mpApproximation;
     Falcor::ref<Falcor::Texture> mpComparisonLinear;
     Falcor::ref<Falcor::Texture> mpDisplay;
     Falcor::ref<Falcor::Texture> mpEnvironment;
     Falcor::ref<Falcor::Sampler> mpLinearSampler;
+    Falcor::ref<Falcor::Sampler> mpMaterialXSampler;
+    Falcor::ref<Falcor::Texture> mpMaterialXBaseColor;
+    Falcor::ref<Falcor::Texture> mpMaterialXRoughness;
+    Falcor::ref<Falcor::Texture> mpMaterialXMetalness;
+    Falcor::ref<Falcor::Texture> mpMaterialXNormalMap;
 
     PassTiming mVisibilityTiming;
     PassTiming mReferenceTiming;
@@ -150,6 +175,7 @@ private:
     uint32_t mFrameIndex = 0;
     uint32_t mReferenceSpp = 0;
     uint32_t mReferencePing = 0;
+    uint32_t mReferenceGeometryIndexCount = 0;
     uint32_t mSamplesPerFrame = 1;
     uint32_t mMaxReferenceDepth = 24;
     uint32_t mObjectMode = 0;

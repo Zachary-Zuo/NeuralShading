@@ -1,20 +1,36 @@
 #include "ViewerCommon.slang"
 #include "../../../shaders/ncls/reference/random_walk_reference.slang"
+#include "../../../shaders/ncls/reference/merl_reference.slang"
+#include "../../../shaders/ncls/reference/openpbr_reference.slang"
+#include "../../../shaders/ncls/reference/materialx_standard_surface_reference.slang"
 
 StructuredBuffer<NclsLayerStackIR> gMaterials;
+StructuredBuffer<float3> gMerlBrdf;
+StructuredBuffer<float> gOpenPbrInputs;
+StructuredBuffer<float> gMaterialXInputs;
+Texture2D<float4> gMaterialXBaseColor;
+Texture2D<float4> gMaterialXRoughness;
+Texture2D<float4> gMaterialXMetalness;
+Texture2D<float4> gMaterialXNormalMap;
 Texture2D<float4> gPositionDepth;
 Texture2D<float4> gNormal;
 Texture2D<float4> gTangent;
 Texture2D<float4> gViewDirection;
+Texture2D<float4> gMaterialXTexCoord;
+Texture2D<float4> gMaterialXTexCoordGrad;
 Texture2D<float4> gPreviousReference;
 Texture2D<float4> gEnvironment;
 SamplerState gLinearSampler;
+SamplerState gMaterialXSampler;
 RWTexture2D<float4> gNextReference;
 
 cbuffer ReferenceCB
 {
     uint2 gFrameDim;
     uint gFrameIndex;
+    uint gReferenceFamily;
+    uint gUseRasterGeometry;
+    uint gOpenPbrColorSpace;
     uint gReferenceSpp;
     uint gSamplesThisFrame;
     uint gMaxDepth;
@@ -42,8 +58,46 @@ cbuffer ReferenceCB
     float _padding2;
 };
 
+float3 nclsReferenceLocal(
+    NclsLayerStackIR material,
+    NclsMaterialXResolvedSurface materialXSurface,
+    float3 woLocal,
+    float3 wiLocal,
+    uint2 key)
+{
+    if (gReferenceFamily == 1u) return nclsEvalMerlReference(gMerlBrdf, woLocal, wiLocal);
+    if (gReferenceFamily == 2u) return nclsEvalOpenPbrReference(gOpenPbrInputs, woLocal, wiLocal);
+    if (gReferenceFamily == 3u)
+        return nclsEvalMaterialXStandardSurface(gMaterialXInputs, materialXSurface, woLocal, wiLocal);
+    return max(nclsEvalRandomWalkReference(material, woLocal, wiLocal, key, gMaxDepth), 0.0f);
+}
+
+float3 nclsOpenPbrAcesCgToLinearSrgb(float3 value)
+{
+    return float3(
+        1.70505099f * value.x - 0.62179212f * value.y - 0.08325887f * value.z,
+        -0.13025642f * value.x + 1.14080474f * value.y - 0.01054832f * value.z,
+        -0.02400336f * value.x - 0.12896898f * value.y + 1.15297233f * value.z);
+}
+
+float3 nclsOpenPbrLinearSrgbToAcesCg(float3 value)
+{
+    return float3(
+        0.61309740f * value.x + 0.33952315f * value.y + 0.04737945f * value.z,
+        0.07019372f * value.x + 0.91635388f * value.y + 0.01345240f * value.z,
+        0.02061560f * value.x + 0.10956978f * value.y + 0.86981464f * value.z);
+}
+
+float3 nclsReferenceIlluminate(float3 response, float3 linearSrgbRadiance)
+{
+    if (gReferenceFamily != 2u) return response * linearSrgbRadiance;
+    if (gOpenPbrColorSpace == 0u) return response * linearSrgbRadiance;
+    return nclsOpenPbrAcesCgToLinearSrgb(response * nclsOpenPbrLinearSrgbToAcesCg(linearSrgbRadiance));
+}
+
 float3 nclsReferenceDirection(
     NclsLayerStackIR material,
+    NclsMaterialXResolvedSurface materialXSurface,
     float3 woLocal,
     float3 wiWorld,
     float3 normal,
@@ -51,8 +105,8 @@ float3 nclsReferenceDirection(
     uint2 key)
 {
     const float3 wiLocal = nclsViewerToLocal(normalize(wiWorld), normal, tangent);
-    if (wiLocal.z <= 0.0f) return float3(0.0f);
-    return max(nclsEvalRandomWalkReference(material, woLocal, wiLocal, key, gMaxDepth), 0.0f);
+    if (wiLocal.z <= 0.0f && gReferenceFamily != 2u) return float3(0.0f);
+    return nclsReferenceLocal(material, materialXSurface, woLocal, wiLocal, key);
 }
 
 float3 nclsEnvironment(float3 direction)
@@ -77,8 +131,64 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     const NclsLayerStackIR material = gMaterials[0];
     const float3 position = positionDepth.xyz;
-    const float3 normal = normalize(gNormal[pixel].xyz);
-    const float3 tangent = normalize(gTangent[pixel].xyz);
+    const float3 geometricNormal = normalize(gNormal[pixel].xyz);
+    const float3 geometricTangent = normalize(gTangent[pixel].xyz);
+    NclsMaterialXResolvedSurface materialXSurface;
+    materialXSurface.baseColor = float3(0.0f);
+    materialXSurface.metalness = 0.0f;
+    materialXSurface.specularRoughness = 0.0f;
+    float3 normal = geometricNormal;
+    float3 tangent = geometricTangent;
+    if (gReferenceFamily == 3u)
+    {
+        float2 materialUv;
+        float2 uvDx;
+        float2 uvDy;
+        if (gUseRasterGeometry != 0u)
+        {
+            materialUv = gMaterialXTexCoord[pixel].xy;
+            const float4 gradients = gMaterialXTexCoordGrad[pixel];
+            uvDx = gradients.xy;
+            uvDy = gradients.zw;
+        }
+        else
+        {
+            materialUv = nclsMaterialXSphereUv(position);
+            const uint2 maximumPixel = gFrameDim - 1u;
+            // Analytic-SDF fallback for interactive use without an explicit mesh.
+            const uint2 pixelX = uint2(min(pixel.x ^ 1u, maximumPixel.x), pixel.y);
+            const uint2 pixelY = uint2(pixel.x, min(pixel.y ^ 1u, maximumPixel.y));
+            const float4 positionX = gPositionDepth[pixelX];
+            const float4 positionY = gPositionDepth[pixelY];
+            const float2 uvX = positionX.w >= 0.0f ? nclsMaterialXSphereUv(positionX.xyz) : materialUv;
+            const float2 uvY = positionY.w >= 0.0f ? nclsMaterialXSphereUv(positionY.xyz) : materialUv;
+            uvDx = (pixel.x & 1u) == 0u ? uvX - materialUv : materialUv - uvX;
+            uvDy = (pixel.y & 1u) == 0u ? uvY - materialUv : materialUv - uvY;
+            uvDx.x -= round(uvDx.x);
+            uvDy.x -= round(uvDy.x);
+        }
+        materialXSurface = nclsResolveMaterialXSurface(
+            gMaterialXInputs,
+            gMaterialXBaseColor,
+            gMaterialXRoughness,
+            gMaterialXMetalness,
+            gMaterialXSampler,
+            materialUv,
+            uvDx,
+            uvDy);
+        normal = nclsMaterialXShadingNormal(
+            gMaterialXInputs,
+            gMaterialXNormalMap,
+            gMaterialXSampler,
+            materialUv,
+            uvDx,
+            uvDy,
+            geometricNormal,
+            geometricTangent);
+        normal = nclsMxForwardFacingNormal(normal, viewWorld);
+        tangent = geometricTangent - dot(geometricTangent, normal) * normal;
+        tangent = dot(tangent, tangent) > 1e-10f ? normalize(tangent) : nclsViewerTangent(normal);
+    }
     const float3 woLocal = nclsViewerToLocal(viewWorld, normal, tangent);
     float3 batchSum = float3(0.0f);
     float batchLuminanceSquare = 0.0f;
@@ -94,18 +204,18 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         if (gUseSun != 0u)
         {
             const float3 response = nclsReferenceDirection(
-                material, woLocal, normalize(gSunDirection), normal, tangent,
+                material, materialXSurface, woLocal, normalize(gSunDirection), normal, tangent,
                 uint2(seed ^ query++, globalSample));
-            radiance += response * gSunColor * gSunIntensity;
+            radiance += nclsReferenceIlluminate(response, gSunColor * gSunIntensity);
         }
         if (gUsePoint != 0u)
         {
             const float3 toLight = gPointPosition - position;
             const float distanceSquared = max(dot(toLight, toLight), 1e-4f);
             const float3 response = nclsReferenceDirection(
-                material, woLocal, toLight, normal, tangent,
+                material, materialXSurface, woLocal, toLight, normal, tangent,
                 uint2(seed ^ query++, globalSample));
-            radiance += response * gPointColor * (gPointIntensity / distanceSquared);
+            radiance += nclsReferenceIlluminate(response, gPointColor * (gPointIntensity / distanceSquared));
         }
         if (gUseRectangle != 0u)
         {
@@ -120,19 +230,29 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
             const float lightCosine = max(dot(lightNormal, -wiWorld), 0.0f);
             const float area = 4.0f * length(cross(gRectangleAxisU, gRectangleAxisV));
             const float3 response = nclsReferenceDirection(
-                material, woLocal, wiWorld, normal, tangent,
+                material, materialXSurface, woLocal, wiWorld, normal, tangent,
                 uint2(seed ^ query++, globalSample));
-            radiance += response * gRectangleColor * gRectangleIntensity
-                * (area * lightCosine / distanceSquared);
+            radiance += nclsReferenceIlluminate(
+                response,
+                gRectangleColor * gRectangleIntensity * (area * lightCosine / distanceSquared));
         }
         if (gUseEnvironment != 0u)
         {
-            const float3 wiLocal = nclsViewerUniformHemisphere(lightRng.nextFloat2());
+            const float3 wiLocal = gReferenceFamily == 2u
+                ? nclsViewerUniformSphere(lightRng.nextFloat2())
+                : nclsViewerUniformHemisphere(lightRng.nextFloat2());
             const float3 wiWorld = nclsViewerToWorld(wiLocal, normal, tangent);
-            const float3 response = max(nclsEvalRandomWalkReference(
-                material, woLocal, wiLocal, uint2(seed ^ query++, globalSample), gMaxDepth), 0.0f);
-            radiance += response * nclsEnvironment(wiWorld) * (2.0f * NCLS_VIEWER_PI);
+            const float3 response = nclsReferenceLocal(
+                material, materialXSurface, woLocal, wiLocal, uint2(seed ^ query++, globalSample));
+            radiance += nclsReferenceIlluminate(response, nclsEnvironment(wiWorld))
+                * (gReferenceFamily == 2u ? 4.0f : 2.0f) * NCLS_VIEWER_PI;
         }
+        if (gReferenceFamily == 2u)
+        {
+            const float3 emission = nclsOpenPbrEmission(gOpenPbrInputs, woLocal);
+            radiance += gOpenPbrColorSpace == 0u ? emission : nclsOpenPbrAcesCgToLinearSrgb(emission);
+        }
+        if (gReferenceFamily == 3u) radiance += nclsMaterialXEmission(gMaterialXInputs);
         batchSum += radiance;
         const float luminance = nclsViewerLuminance(radiance);
         batchLuminanceSquare += luminance * luminance;

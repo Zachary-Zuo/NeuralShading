@@ -1,0 +1,32 @@
+{
+  "schema_name": "ncls.reference-package",
+  "schema_version": 1,
+  "reference_id": "ncls.pbrt-coated-crosscheck@1",
+  "source_material_family_id": "ncls.layer-stack@1",
+  "role": "independent-validation",
+  "native_representation": "pbrt-v4-coated-bxdf",
+  "query_contract": {
+    "domain": "local-surface-reflection",
+    "measure": "sampled-spectrum-bsdf-times-absolute-light-cosine",
+    "directions": "pbrt-local-frame-positive-z-hemisphere"
+  },
+  "implementations": [
+    {
+      "implementation_id": "pbrt-v4@5f7a6068",
+      "kind": "upstream-cpp",
+      "path_root": "external",
+      "path": "pbrt-v4",
+      "upstream_url": "git@github.com:mmp/pbrt-v4.git",
+      "revision": "5f7a606806a4ac7b939131ded9d7a30ebd02416e",
+      "license": "BSD-2-Clause"
+    },
+    {
+      "implementation_id": "ncls.pbrt-coated-probe@1",
+      "kind": "project-cpp-adapter",
+      "path_root": "project",
+      "path": "tools/reference/pbrt_probe",
+      "license": "project"
+    }
+  ],
+  "source_assets": []
+}

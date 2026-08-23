@@ -232,14 +232,16 @@ MethodBundle 决定使用哪种 shader 和权重。renderer 只看到 descriptor
 
 ## reference adapter
 
-随机游走参考解实现同样的方向和事件语义，但允许：
+每个源材质族的 reference adapter 实现同样的方向、事件和输出测度语义，但保留该源材质的原生参数、资源和求值算法。reference 可以是确定性的解析/查表实现，也可以像当前随机游走实现一样在 `evaluate()` 内部使用随机样本。
+
+随机 reference 允许：
 
 - `evaluate()` 内部使用随机样本；
 - 每像素随时间累积；
 - sample count 和方差由 reference 调用方记录；
 - 运行成本不满足实时 backend 的固定预算。
 
-reference 不生成通用 packet，也不参与 MethodBundle 的部署成本比较。
+reference 直接求值源材质 GT，不经过统一 approximation backend。它不生成通用 packet，也不参与 MethodBundle 的部署成本比较。不同材质族的 reference 不要求共享内部 IR、shader 或资源布局。
 
 ## 一致性测试
 

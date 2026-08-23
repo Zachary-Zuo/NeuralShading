@@ -24,9 +24,9 @@ conda run -n neural-shading python -m pytest tests\unit -q
 首次配置和构建 probe：
 
 ```powershell
-cmake -S tools\reference\pbrt_probe -B build\pbrt-probe `
+cmake -S tools\reference\pbrt_probe -B build\pbrt-probe-current `
   -G "Visual Studio 17 2022" -A x64
-cmake --build build\pbrt-probe --config Release `
+cmake --build build\pbrt-probe-current --config Release `
   --target ncls_pbrt_probe --parallel 12
 ```
 
@@ -34,10 +34,55 @@ cmake --build build\pbrt-probe --config Release `
 
 ```powershell
 .\scripts\run_falcor_python.ps1 tools\reference\pbrt_compare.py `
-  --pbrt-exe build\pbrt-probe\Release\ncls_pbrt_probe.exe `
-  --samples 65536 --batches 8 --optical-thickness 0.4 `
-  --medium-albedo 0.5 --g 0.3
+  --pbrt-exe build\pbrt-probe-current\Release\ncls_pbrt_probe.exe `
+  --samples 65536 --batches 8 --max-depth 32
 ```
+
+默认 suite 同时覆盖 diffuse-clear、conductor-clear、conductor-absorbing 和 conductor-scattering，并包含不同方位的各向异性 conductor 切片。
+
+## OpenPBR、MERL 与 MaterialX 源材质
+
+获取固定上游和原始资产：
+
+```powershell
+.\scripts\fetch_reference_sources.ps1 -All
+conda run -n neural-shading python scripts\fetch_source_materials.py merl
+conda run -n neural-shading python scripts\fetch_source_materials.py polyhaven
+```
+
+构建 OpenPBR CPU probe，以及 MaterialX 官方 viewer、上游 runtime 和独立 float parity probe：
+
+```powershell
+cmake -S tools\reference\openpbr_probe -B build\openpbr-probe `
+  -G "Visual Studio 17 2022" -A x64
+cmake --build build\openpbr-probe --config Release `
+  --target ncls_openpbr_probe --parallel 12
+.\scripts\build_materialx_reference.ps1 -Configuration Release
+```
+
+运行原生身份、参数编辑、实表查表、图依赖和 shader generation 回归，以及三个材质族的离线呈现：
+
+```powershell
+conda run -n neural-shading python -m pytest `
+  tests\unit\test_reference_registry.py `
+  tests\unit\test_openpbr_material.py `
+  tests\unit\test_merl_material.py `
+  tests\unit\test_materialx_catalog.py `
+  tests\integration\reference\test_source_material_references.py -q
+
+conda run -n neural-shading python tools\reference\analytic_material_preview.py openpbr
+conda run -n neural-shading python tools\reference\analytic_material_preview.py merl
+conda run -n neural-shading python tools\reference\materialx_preview.py
+```
+
+三个新增源材质族都由 Falcor viewer 直接呈现，而不是只停留在 Python adapter。MERL 与 OpenPBR 做逐方向数值 parity；MaterialX 的空间纹理契约使用共同相机线性 HDR 图像 parity：
+
+```powershell
+.\scripts\build_viewer.ps1 -Configuration Release
+conda run -n neural-shading python tools\reference\materialx_parity.py --suite
+```
+
+MaterialX suite 先生成一次 `common-sphere.obj`，让上游 renderer 与 Falcor 光栅管线加载同一路径，并在报告/capture 中核对几何 SHA-256；随后用无纹理核心 probe 检查 closure 公式，再验证全部 8 个原始 4K 材质。报告位于 `artifacts/validation/materialx-parity/suite/report.json`；验收门槛由 `references/acceptance.json` 版本化，逐材质通过证据保存在 `references/materialx-polyhaven-v1/falcor-parity.json`。
 
 ## Windows viewer
 
@@ -67,6 +112,10 @@ conda run -n neural-shading python -m compileall -q src tests tools
 git diff --check
 git -C external\Falcor status --short
 git -C external\pbrt-v4 status --short
+git -C external\OpenPBR status --short
+git -C external\openpbr-bsdf status --short
+git -C external\glm status --short
+git -C external\MaterialX status --short
 ```
 
-两个上游工作树必须为空。`build/`、`data/`、`artifacts/`、`external/` 和缓存不得进入根仓库。
+所有上游工作树必须为空。`build/`、`data/`、`artifacts/`、`external/` 和缓存不得进入根仓库。

@@ -55,6 +55,26 @@ mean 相对误差 0.172%，max 0.384%。差值均不超过本次 Falcor standard
   --optical-thickness 0.4 --medium-albedo 0.5 --g 0.3
 ```
 
+### Coated conductor 扩展验证
+
+同日补充的 probe 加入 `CoatedConductorBxDF`，并把方向集合扩展为 9 个带不同方位角的切片。conductor 使用彩色 `eta/k`、各向异性底层粗糙度和旋转后的 tangent frame；suite 同时覆盖 clear slab、彩色吸收 slab 和有体散射 slab。8192 samples、2 个独立 pbrt batches、max depth 32 的结果为：
+
+| case | RGB/方向 mean 相对误差 | max 相对误差 |
+|---|---:|---:|
+| diffuse-clear | 0.261% | 0.547% |
+| conductor-clear | 0.512% | 2.554% |
+| conductor-absorbing | 0.434% | 1.855% |
+| conductor-scattering | 0.448% | 1.930% |
+| suite | 0.414% | 2.554% |
+
+这组 smoke 结果确认 rough conductor 的实际两界面分支已经被独立覆盖；它仍是有限样本统计验证，不能被表述为任意 `N≥2` 的 pbrt 真值或无噪声等价证明。
+
+```powershell
+.\scripts\run_falcor_python.ps1 tools\reference\pbrt_compare.py `
+  --pbrt-exe build\pbrt-probe-current\Release\ncls_pbrt_probe.exe `
+  --samples 8192 --batches 2 --max-depth 32
+```
+
 ## 其他物理门槛
 
 新的 integration tests 还覆盖：单界面 Lambert 解析响应、三界面互易性、八界面各向异性路径执行，以及对“有体散射但 RGB 总消光不同”这一 v1 不支持状态的显式拒绝。

@@ -1,0 +1,23 @@
+{
+  "schema_name": "ncls.reference-package",
+  "schema_version": 1,
+  "reference_id": "ncls.layer-stack-random-walk@1",
+  "source_material_family_id": "ncls.layer-stack@1",
+  "role": "ground-truth",
+  "native_representation": "ncls.layer-stack-ir@1",
+  "query_contract": {
+    "domain": "local-surface-reflection",
+    "measure": "rgb-bsdf-times-positive-light-cosine",
+    "directions": "right-handed-tangent-frame-positive-z-hemisphere"
+  },
+  "implementations": [
+    {
+      "implementation_id": "ncls.slang-random-walk@1",
+      "kind": "project-slang-monte-carlo",
+      "path_root": "project",
+      "path": "shaders/ncls/reference/random_walk_reference.slang",
+      "license": "project"
+    }
+  ],
+  "source_assets": []
+}
