@@ -622,7 +622,7 @@ class AnalyticResidualE1Pipeline(DenseStandardizedLog1pE1Pipeline):
 
     def _reverse_prediction(
         self,
-        model: SingleMaterialNeuralEvaluator,
+        model: SingleMaterialEvaluatorModel,
         batch: Mapping[str, torch.Tensor],
     ) -> torch.Tensor:
         wo = batch["view"].float()
@@ -652,8 +652,8 @@ class AnalyticResidualE1Pipeline(DenseStandardizedLog1pE1Pipeline):
     ) -> torch.Tensor:
         del device
         self._require_batch_state(batch, store)
-        if not isinstance(model, SingleMaterialNeuralEvaluator):
-            raise TypeError("analytic residual pipeline requires SingleMaterialNeuralEvaluator")
+        if not isinstance(model, SingleMaterialEvaluatorModel):
+            raise TypeError("analytic residual pipeline requires SingleMaterialEvaluatorModel")
         core = self._core(batch, batch["view"].float(), batch["lights"].float())
         residual = self._decode(model(batch["view"].float(), batch["lights"].float()))
         prediction = torch.clamp(core + residual, min=0.0)
@@ -704,8 +704,8 @@ class AnalyticResidualE1Pipeline(DenseStandardizedLog1pE1Pipeline):
     ) -> Mapping[str, np.ndarray]:
         del device
         self._require_batch_state(batch, store)
-        if not isinstance(model, SingleMaterialNeuralEvaluator):
-            raise TypeError("analytic residual pipeline requires SingleMaterialNeuralEvaluator")
+        if not isinstance(model, SingleMaterialEvaluatorModel):
+            raise TypeError("analytic residual pipeline requires SingleMaterialEvaluatorModel")
         core = self._core(batch, batch["view"].float(), batch["lights"].float())
         residual = self._decode(model(batch["view"].float(), batch["lights"].float()))
         forward = torch.clamp(core + residual, min=0.0)

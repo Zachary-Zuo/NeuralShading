@@ -11,10 +11,11 @@ from ncls.learning.models.plane_evaluator import (
 )
 
 from .base import LearningPipelineDescriptor
-from .dense_evaluator import DenseEnergyShapeE1Pipeline
+from .dense_evaluator import AnalyticResidualEnergyShapeE1Pipeline, DenseEnergyShapeE1Pipeline
 
 
 PIPELINE_ID = "plane-factorized-small-mlp-energy-shape-e1@1"
+ANALYTIC_RESIDUAL_PIPELINE_ID = "plane-factorized-analytic-residual-energy-shape-e1@1"
 
 
 class PlaneFactorizedEnergyShapeE1Pipeline(DenseEnergyShapeE1Pipeline):
@@ -50,6 +51,34 @@ class PlaneFactorizedEnergyShapeE1Pipeline(DenseEnergyShapeE1Pipeline):
             "openpbr.surface@1.1.1",
             "materialx.textured-surface@1",
         ),
+        scope="single-material-complete-directional-evaluator",
+    )
+
+    def create_model(self, model_parameters: Mapping[str, Any]) -> nn.Module:
+        return PlaneFactorizedNeuralEvaluator(
+            PlaneFactorizedModelConfig.from_mapping(model_parameters)
+        )
+
+
+class PlaneFactorizedAnalyticResidualE1Pipeline(AnalyticResidualEnergyShapeE1Pipeline):
+    feature_contract = PlaneFactorizedEnergyShapeE1Pipeline.feature_contract
+    descriptor = LearningPipelineDescriptor(
+        pipeline_id=ANALYTIC_RESIDUAL_PIPELINE_ID,
+        candidate_id="ncls.plane-tensor-factorization@1",
+        research_role="e1-single-material-capacity",
+        response_reader_id="ncls.reference-query-store@1",
+        partition_policy_id="ncls.query-role-within-state@1",
+        source_adapter_id="ncls.layer-stack-direct-top-adapter@1",
+        feature_transform_id="ncls.direction-disk-pairwise-planes@1",
+        target_transform_id=AnalyticResidualEnergyShapeE1Pipeline.target_transform_id,
+        representation_id="ncls.analytic-direct-top-plus-pairwise-plane-residual@1",
+        architecture_id=ARCHITECTURE_ID,
+        latent_inference_id="ncls.optimized-plane-features@1",
+        compiler_id="ncls.none-capacity-study@1",
+        loss_id="ncls.standardized-asinh-residual-energy-shape-reciprocity@1",
+        metric_suite_id="ncls.evaluator-quality-suite-with-core-ablation@1",
+        exporter_id="ncls.plane-factorized-method-bundle-planned@1",
+        supported_family_ids=("ncls.layer-stack@1",),
         scope="single-material-complete-directional-evaluator",
     )
 

@@ -12,7 +12,10 @@ from .dense_evaluator import (
     DenseStandardizedLog1pE1Pipeline,
 )
 from .legacy_ltc_k2 import LegacyLtcK2Pipeline
-from .plane_factorized import PlaneFactorizedEnergyShapeE1Pipeline
+from .plane_factorized import (
+    PlaneFactorizedAnalyticResidualE1Pipeline,
+    PlaneFactorizedEnergyShapeE1Pipeline,
+)
 
 
 _FACTORIES: dict[str, Callable[[], LearningPipeline]] = {}
@@ -45,3 +48,4 @@ register_pipeline(AnalyticResidualE1Pipeline)
 register_pipeline(AnalyticResidualEnergyShapeE1Pipeline)
 register_pipeline(DenseEnergyShapeE1Pipeline)
 register_pipeline(PlaneFactorizedEnergyShapeE1Pipeline)
+register_pipeline(PlaneFactorizedAnalyticResidualE1Pipeline)
