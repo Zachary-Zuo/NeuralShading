@@ -15,7 +15,8 @@ Falcor Python 必须由项目脚本启动。下面命令把当前四个正式 pr
   --provider all `
   --output data\reference-responses\all-current.h5 `
   --families 128 --local-states 8 `
-  --views 16 --lights 128 --spatial-samples 16 `
+  --views 16 --validation-views 8 --test-views 8 --adversarial-views 8 `
+  --lights 128 --spatial-samples 16 `
   --adaptive --batch-samples 256 `
   --min-samples 512 --max-samples 16384
 ```
@@ -78,7 +79,7 @@ conda run -n neural-shading python -m ncls.cli data validate `
 from ncls.data import ReferenceDataset
 
 with ReferenceDataset.open("data/reference-responses/all-current.h5") as dataset:
-    train_groups = dataset.group_indices("train")
+    train_groups = dataset.group_indices(source_split="train", query_role="train")
     batch = dataset.group_batch(train_groups[:32])
     print(batch["wo"].shape)
     print(batch["wi"].shape)
@@ -92,9 +93,11 @@ response-only learning 使用 `ReferenceQueryStore`。当前 LayerStack baseline
 
 公共 collector 不替 provider 决定“恰当分布”。每个 provider 的 `source_states()` 决定原生参数/资产状态采样，`surface_samples()` 决定空间密度与 footprint，`query_plan()` 决定 `wo/wi` 及 proposal。所有实际 query、PDF、积分权重和 seed 都落盘，所以 learning 不需要猜测数据如何产生。
 
-当前公共默认是确定性 stratified `wo` 与均匀立体角 `wi`：反射 family 使用上半球，含透射的 OpenPBR 使用完整球面。train、validation、test 的方位角按 split 确定性扰动，不再复用完全相同的方向表。这是可复现基线，不足以自动覆盖极窄高光。
+当前公共默认是确定性 stratified `wo` 与均匀立体角 `wi`：反射 family 使用上半球，含透射的 OpenPBR 使用完整球面。各 source split 与 query role 的方位角确定性扰动，不再复用完全相同的方向表。这是可复现基线，不足以自动覆盖极窄高光。
 
-`QueryPlan` 允许共享的 `[light, 3]` 方向表，也允许按 `wo` 提供 `[view, light, 3]`，内部统一为后者。因此 peak 能随 `wo` 移动，而不需要在公共 collector 中加入材质族或网络分支。需要注意，当前 HDF5 的 split 仍属于 source state；“同一材质上的未见 query”角色不能只靠 state split 表达。E1 正式数据开始前必须把 train、validation、held-out test 和 adversarial probe 的 query 角色做成显式、可验证且不泄漏的合同，不能把 split 方位扰动冒充完整的 held-out query 设计。
+`QueryPlan` 允许共享的 `[light, 3]` 方向表，也允许按 `wo` 提供 `[view, light, 3]`，内部统一为后者。因此 peak 能随 `wo` 移动，而不需要在公共 collector 中加入材质族或网络分支。v4 还为每个 `wo` 保存 query role；`--views` 是 train query 数，其他三类由 `--validation-views`、`--test-views`、`--adversarial-views` 明确给出。计数为零只适用于快速 provider/legacy smoke，不能通过正式 E0 gate。
+
+选择 `ncls.e0-peak-grazing-mixture@1` 时，train 与 adversarial role 使用 mixture；validation/test 使用不同方位与种子的固定 uniform probe。这样模型不会在与训练完全相同的离散方向表上被选择或宣称 held-out。source state split 与 query role 仍是两个独立轴，公共 reader 可按任一轴或交集随机访问。
 
 ## 新增材质族
 

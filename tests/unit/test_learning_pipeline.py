@@ -76,11 +76,15 @@ def test_learning_base_store_is_source_independent_and_layer_stack_decode_is_exp
         assert batch["lights"].shape == (3, 4, 3)
     with LayerStackReferenceStore(dataset_path) as store:
         assert store.features.continuous.shape == (3, 8, CONTINUOUS_FEATURE_COUNT)
-        assert {name: len(indices) for name, indices in store.split_indices.items()} == {
+        assert {name: len(indices) for name, indices in store.source_split_indices.items()} == {
             "train": 1,
             "validation": 1,
             "test": 1,
         }
+        assert {
+            name: len(store.partition_indices("ncls.source-state-split@1", name))
+            for name in ("train", "validation", "test")
+        } == {"train": 1, "validation": 1, "test": 1}
         batch = store.batch(np.asarray([0, 1, 2]))
         assert batch["standard_error"].shape == (3, 4, 3)
         np.testing.assert_allclose(batch["standard_error"], np.sqrt(0.0101 / 8.0), rtol=2e-5)
@@ -113,6 +117,7 @@ def test_training_writes_tensorboard_best_last_and_keeps_test_held_out(tmp_path:
     assert manifest["status"] == "complete"
     assert manifest["pipeline_id"] == "legacy-ltc-k2-p1-deployment-regression@1"
     assert manifest["pipeline_contract"]["target_transform_id"] == "ncls.identity-linear-response@1"
+    assert manifest["partition_policy_id"] == "ncls.source-state-split@1"
     assert manifest["held_out_test_accessed"] is False
     assert manifest["feature_contract"]["feature_contract_id"] == FEATURE_CONTRACT_ID
     for name in ("best.pt", "last.pt"):

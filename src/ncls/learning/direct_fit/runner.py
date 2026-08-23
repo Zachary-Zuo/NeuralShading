@@ -77,7 +77,7 @@ def run_direct_fit(
     output.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(str(output / "tensorboard"))
     store = LayerStackReferenceStore(dataset_path)
-    indices = store.split_indices[split]
+    indices = store.source_split_indices[split]
     if max_query_groups is not None and len(indices) > max_query_groups:
         indices = indices[np.linspace(0, len(indices) - 1, max_query_groups, dtype=np.int64)]
     if len(indices) == 0:

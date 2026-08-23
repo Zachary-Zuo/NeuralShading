@@ -101,8 +101,12 @@ def train(
     if config.research_stage != pipeline.descriptor.research_role:
         raise ValueError("training config research_stage does not match the registered pipeline role")
     store = pipeline.open_store(str(dataset_path))
-    if len(store.split_indices["train"]) == 0 or len(store.split_indices["validation"]) == 0:
-        raise ValueError("training requires nonempty train and validation family splits")
+    lifecycle_indices = {
+        role: pipeline.lifecycle_indices(store, role)
+        for role in ("train", "validation", "test")
+    }
+    if len(lifecycle_indices["train"]) == 0 or len(lifecycle_indices["validation"]) == 0:
+        raise ValueError("training requires nonempty train and validation lifecycle partitions")
     model = pipeline.create_model(config.model_parameters).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -134,6 +138,10 @@ def train(
         "parameter_count": sum(parameter.numel() for parameter in model.parameters()),
         "device": str(device),
         "selection_split": "validation",
+        "partition_policy_id": pipeline.descriptor.partition_policy_id,
+        "lifecycle_query_group_counts": {
+            role: int(len(indices)) for role, indices in lifecycle_indices.items()
+        },
         "held_out_test_accessed": False,
         "checkpoints": {},
     }
@@ -148,7 +156,7 @@ def train(
     try:
         for step in range(1, config.steps + 1):
             model.train()
-            indices = store.sample_batch_indices("train", config.batch_size, np_rng)
+            indices = store.sample_batch_indices(lifecycle_indices["train"], config.batch_size, np_rng)
             batch = tensor_batch(store.batch(indices), device)
             optimizer.zero_grad(set_to_none=True)
             prediction = pipeline.predict(model, batch, store, device)
@@ -166,7 +174,7 @@ def train(
                     model,
                     pipeline,
                     store,
-                    store.split_indices["validation"],
+                    lifecycle_indices["validation"],
                     device,
                     batch_size=config.batch_size,
                     max_query_groups=config.max_validation_query_groups,

@@ -10,6 +10,14 @@ import numpy as np
 
 
 SPLIT_NAMES = ("train", "validation", "test")
+QUERY_ROLE_NAMES = ("train", "validation", "test", "adversarial_probe")
+
+
+class QueryRole(IntEnum):
+    TRAIN = 0
+    VALIDATION = 1
+    TEST = 2
+    ADVERSARIAL_PROBE = 3
 
 
 class PositionKind(IntEnum):
@@ -133,8 +141,9 @@ class QueryPlan:
     light_directions: np.ndarray
     solid_angle_weights: np.ndarray
     proposal_pdf: np.ndarray
-    proposal_id: str
+    proposal_id: str | Sequence[str]
     seed: int
+    query_roles: np.ndarray | Sequence[int] | None = None
 
     def __post_init__(self) -> None:
         views = _unit_vectors("view_directions", self.view_directions, ndim=2)
@@ -161,12 +170,25 @@ class QueryPlan:
             raise ValueError("direction weights and proposal PDF must match [view, light]")
         if np.any(weights <= 0.0) or np.any(pdf <= 0.0) or not np.all(np.isfinite(weights)) or not np.all(np.isfinite(pdf)):
             raise ValueError("direction weights and proposal PDF must be positive and finite")
-        if not self.proposal_id or self.seed < 0:
+        if isinstance(self.proposal_id, str):
+            proposal_ids = (self.proposal_id,) * len(views)
+        else:
+            proposal_ids = tuple(map(str, self.proposal_id))
+        if len(proposal_ids) != len(views) or any(not value for value in proposal_ids) or self.seed < 0:
             raise ValueError("query proposal identity must be nonempty and seed nonnegative")
+        roles = (
+            np.full(len(views), int(QueryRole.TRAIN), dtype=np.uint8)
+            if self.query_roles is None
+            else np.asarray(self.query_roles, dtype=np.uint8)
+        )
+        if roles.shape != (len(views),) or np.any(roles >= len(QUERY_ROLE_NAMES)):
+            raise ValueError("query_roles must match views and use a known lifecycle role")
         object.__setattr__(self, "view_directions", views)
         object.__setattr__(self, "light_directions", lights)
         object.__setattr__(self, "solid_angle_weights", np.ascontiguousarray(weights))
         object.__setattr__(self, "proposal_pdf", np.ascontiguousarray(pdf))
+        object.__setattr__(self, "proposal_id", proposal_ids)
+        object.__setattr__(self, "query_roles", np.ascontiguousarray(roles))
 
     @property
     def direction_count(self) -> int:

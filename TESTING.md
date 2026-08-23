@@ -37,7 +37,7 @@ E0 pilot audit 与冻结 gate：
 conda run -n neural-shading python -m ncls.cli learn audit `
   --dataset data\reference-responses\layer-stack-evaluator-pilot-v3.h5 `
   --output artifacts\research\supervision-audit\<dataset-id> `
-  --gate configs\research\e0-supervision-gates-v1.json
+  --gate configs\research\e0-supervision-gates-v2.json
 ```
 
 `gate_result.json` 失败是可执行研究结果，不是测试进程错误；只有合同、hash 或 audit 自身错误才返回非零。训练入口应显式检查 gate 证据，不能把失败 pilot 当作正式 E1 数据。

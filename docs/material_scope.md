@@ -60,7 +60,7 @@ reference adapter 只负责把共同查询所需的几何、方向、光谱/颜�
 2. **reference 响应数据**：reference 对查询采样后产生的方向响应、方差、图像或其他监督；
 3. **方法产物**：direct-fit latent/evaluator、共享 decoder、compiler checkpoint、matched sampler、`MethodBundle` 和评测结果；解析 closure 产物属于对照或可选 physical core。
 
-`ncls.reference-dataset@3` 只属于第二类。它不是源材质库，也不规定第一类必须如何表达。
+`ncls.reference-dataset@4` 只属于第二类。它不是源材质库，也不规定第一类必须如何表达。
 
 ## 候选源材质族
 

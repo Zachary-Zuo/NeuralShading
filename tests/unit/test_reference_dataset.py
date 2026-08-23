@@ -12,6 +12,7 @@ from ncls.cli import main as cli_main
 from ncls.data import (
     FORMAT_NAME,
     FORMAT_VERSION,
+    QUERY_ROLE_NAMES,
     CollectionConfig,
     EvaluatedBlock,
     QueryPlan,
@@ -76,8 +77,9 @@ class _FakeProvider:
             per_view_lights,
             weights,
             np.full(4, 1.0 / (2.0 * np.pi), dtype=np.float32),
-            "test-uniform@1",
+            ("train-uniform@1", "test-uniform@1"),
             17,
+            (0, 2),
         )
 
     def evaluate(self, state, surfaces, plan):
@@ -182,6 +184,34 @@ def test_full_sphere_mixture_includes_reflection_transmission_and_grazing() -> N
     assert np.all(pdf > 0.0)
 
 
+def test_e0_query_suite_separates_train_validation_test_and_adversarial_roles() -> None:
+    collection = CollectionConfig(
+        view_count=2,
+        validation_view_count=1,
+        test_view_count=1,
+        adversarial_view_count=2,
+        light_count=32,
+        seed=67,
+        query_profile_id="ncls.e0-peak-grazing-mixture@1",
+    )
+    provider = LayerStackProvider(
+        collection,
+        LayerStackProviderConfig(family_count=1, local_state_count=1),
+    )
+    plan = provider.query_plan(provider.source_states()[0])
+    role_names = [QUERY_ROLE_NAMES[int(role)] for role in plan.query_roles]
+    assert role_names == ["train", "train", "validation", "test", "adversarial_probe", "adversarial_probe"]
+    assert all("peak" in plan.proposal_id[index] for index in (0, 1, 4, 5))
+    assert all("peak" not in plan.proposal_id[index] for index in (2, 3))
+    assert len(set(plan.proposal_id)) == 4
+    np.testing.assert_allclose(
+        plan.proposal_pdf * plan.solid_angle_weights,
+        1.0 / collection.light_count,
+        rtol=1e-6,
+        atol=1e-7,
+    )
+
+
 def test_layer_stack_provider_wraps_per_view_seeds_to_uint32() -> None:
     collection = CollectionConfig(view_count=8, light_count=4, seed=20260824)
     evaluator = _SeedRecordingEvaluator(collection.light_count)
@@ -219,11 +249,13 @@ def test_hdf5_contract_preserves_native_state_queries_and_responses(tmp_path: Pa
 
     with ReferenceDataset.open(path) as dataset:
         assert json.loads(dataset.state_payload(1)) == {"value": 2}
-        assert {name: len(dataset.group_indices(name)) for name in ("train", "validation", "test")} == {
+        assert {name: len(dataset.group_indices(source_split=name)) for name in ("train", "validation", "test")} == {
             "train": 2,
             "validation": 2,
             "test": 2,
         }
+        assert len(dataset.group_indices(query_role="train")) == 3
+        assert len(dataset.group_indices(query_role="test")) == 3
         batch = dataset.group_batch((0, 3, 5))
         assert batch["wo"].shape == (3, 3)
         assert batch["wi"].shape == (3, 4, 3)
@@ -247,7 +279,7 @@ def test_dataset_cli_and_semantic_hash_validation(tmp_path: Path, capsys: pytest
 
 
 def test_reference_dataset_layout_tracks_runtime_constants() -> None:
-    layout_path = PROJECT_ROOT / "src" / "ncls" / "data" / "schemas" / "reference_dataset_v3.layout.json"
+    layout_path = PROJECT_ROOT / "src" / "ncls" / "data" / "schemas" / "reference_dataset_v4.layout.json"
     layout = json.loads(layout_path.read_text(encoding="utf-8"))
     assert layout["format_name"] == FORMAT_NAME
     assert layout["format_version"] == FORMAT_VERSION

@@ -51,7 +51,7 @@ MaterialProgram + MethodBundle → Windows viewer
 | 根级旧测试 | 重组为 `tests/unit`、`tests/gpu`、`tests/integration/reference` |
 | 根级阶段计划和 v0 操作文档 | 删除；有效结论进入稳定文档，逐次运行指标只保存在被忽略的 `artifacts/` 中 |
 
-数据层只接受当前 HDF5 `ncls.reference-dataset@3`。迁移前数据不读取、不转换，必须从锁定 source package、reference 和采集配置重新生成。
+数据层只接受当前 HDF5 `ncls.reference-dataset@4`。v4 显式区分 source split 与 query role；更早数据不读取、不转换，必须从锁定 source package、reference 和采集配置重新生成。
 
 ## viewer 当前实现
 

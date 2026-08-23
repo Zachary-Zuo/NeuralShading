@@ -2,7 +2,7 @@
 
 ## 1. 定位
 
-`ncls.reference-dataset@3` 是项目唯一的数据持久化合同。它保存某组源材质状态在一组明确查询上的 reference 响应，不规定源材质必须是层模型、OpenPBR、测量表或 MaterialX 图，也不包含 neural backend 的 latent、网络权重和私有 `ScatteringState`。
+`ncls.reference-dataset@4` 是项目唯一的数据持久化合同。它保存某组源材质状态在一组明确查询上的 reference 响应，不规定源材质必须是层模型、OpenPBR、测量表或 MaterialX 图，也不包含 neural backend 的 latent、网络权重和私有 `ScatteringState`。v4 在每个 query group 上显式增加 lifecycle role，使同一源状态内的训练 query、validation、held-out test 与对抗性 probe 不再借用 source split 表达。
 
 公共数据流只有一条：
 
@@ -62,13 +62,13 @@ pbrt coated package用于独立验证 LayerStack reference，不是一个独立�
 
 ## 4. HDF5 固定布局
 
-文件根属性记录格式、生成时间、Git 提交、query profile、采集配置、provider metadata、proposal code 表、计数和语义内容哈希。实现对应的机器可读清单位于 `src/ncls/data/schemas/reference_dataset_v3.layout.json`。
+文件根属性记录格式、生成时间、Git 提交、query profile、采集配置、provider metadata、proposal code 表、计数和语义内容哈希。实现对应的机器可读清单位于 `src/ncls/data/schemas/reference_dataset_v4.layout.json`。
 
 ```text
 /
   attrs
     format_name = ncls.reference-dataset
-    format_version = 3
+    format_version = 4
     dataset_id = SHA-256(全部语义内容)
     response_measure
     color_model
@@ -86,7 +86,7 @@ pbrt coated package用于独立验证 LayerStack reference，不是一个独立�
     payload_offsets, payload_blob
 
   /queries
-    state_index, position_kind
+    state_index, query_role, position_kind
     position, uv, uv_dx, uv_dy
     geometric_normal, geometric_tangent
     wo
@@ -123,22 +123,24 @@ RGB f(wo, wi) × |dot(Ns, wi)|
 
 `proposal_pdf` 描述采集 `wi` 的分布，`solid_angle_weight` 描述当前离散积分权重，二者不能互相替代。固定 probe、均匀采样、microfacet/peak proposal 和自适应 query 都通过这两个字段保留真实语义。
 
-版本化 E0 mixture `ncls.e0-peak-grazing-mixture@1` 是按 `wo` 构造的 uniform + 多尺度反射 peak + grazing 混合分布；完整球面时另含透射 peak。它使用可计算的归一化 PDF 和 `1/(N p)` 权重，目标是诊断 peak、掠射与透射覆盖，不预先宣告为最终训练分布。默认 uniform profile 和该 mixture 都对不同 state split 使用确定性独立方向；文件仍须由 supervision audit 检查实际方向哈希，不能只相信 profile 名称。
+版本化 E0 mixture `ncls.e0-peak-grazing-mixture@1` 是按 `wo` 构造的 uniform + 多尺度反射 peak + grazing 混合分布；完整球面时另含透射 peak。它使用可计算的归一化 PDF 和 `1/(N p)` 权重，目标是诊断 peak、掠射与透射覆盖，不预先宣告为最终训练分布。train/adversarial 使用 mixture，validation/test 使用独立 uniform probe；文件仍须由 supervision audit 检查实际 query role 与方向哈希，不能只相信 profile 名称。
 
 `rng_seed` 由 provider 返回，必须是 reference 实际执行该 query 使用的随机流 seed，writer 不得根据 query 行号再合成。确定性 reference 写 0；LayerStack 当前按 `(state, wo)` 使用一个 query-group seed，再在 shader 内结合 `wi` 索引派生随机流，因此同组各方向记录相同的 seed。
 
-## 6. 状态、split 与原生语义
+## 6. source split、query role 与原生语义
 
 `native_payload` 由 `payload_offsets/payload_blob` 保存，解释方式只由 `native_schema_id` 选择。公共 reader 将其视为 opaque bytes。LayerStack learning adapter 可以解码 `MaterialProgram`；其他 family 可以拥有各自 adapter，但 response-only reader 不加载任何 adapter。
 
-`split_group_id` 是不可跨 split 的最小语义单位：
+`states/split` 是 source state/asset 泛化轴；`split_group_id` 是不可跨 source split 的最小语义单位：
 
 - LayerStack：同一结构 family 及其编辑状态；
 - MERL：同一物理样本；
 - OpenPBR：同一原生资产及其派生编辑；
 - MaterialX：同一图、纹理资产及其 crop/mip/query。
 
-状态表保存 split，所有引用该 state 的 query 自动继承。训练只能读取 train，checkpoint 选择只能读取 validation，held-out test 由独立评测命令读取。
+`queries/query_role` 是同一状态内的查询生命周期轴，固定枚举为 `train`、`validation`、`test` 和 `adversarial_probe`。它解决两类不同问题：source split 判断未见材质/资产泛化，query role 判断未见方向查询泛化。二者必须同时记录，不能用一项冒充另一项。
+
+公共 learning pipeline 用版本化 partition policy 决定实验切片：source compiler 通常使用 source split 与同名 query role 的交集；单材质容量实验固定一个状态，只按 query role 切分；legacy 部署回归才允许只按 source split。target transform 统计只能读取 source train × query train，对抗性 probe 不参与 checkpoint 选择。
 
 ## 7. 统计与有效性
 

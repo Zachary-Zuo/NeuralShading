@@ -10,11 +10,11 @@ from typing import Any, Iterable, Mapping, Sequence
 import h5py
 import numpy as np
 
-from .contract import EvaluatedBlock, QueryPlan, SourceState, SurfaceSample
+from .contract import QUERY_ROLE_NAMES, SPLIT_NAMES, EvaluatedBlock, QueryPlan, SourceState, SurfaceSample
 
 
 FORMAT_NAME = "ncls.reference-dataset"
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 RESPONSE_MEASURE = "rgb-bsdf-times-absolute-shading-normal-light-cosine"
 COLOR_MODEL = "linear-srgb"
 _STRING = h5py.string_dtype(encoding="utf-8")
@@ -51,7 +51,7 @@ _STATE_DATASETS = (
     "payload_offsets", "payload_blob",
 )
 _QUERY_DATASETS = (
-    "state_index", "position_kind", "position", "uv", "uv_dx", "uv_dy",
+    "state_index", "query_role", "position_kind", "position", "uv", "uv_dx", "uv_dy",
     "geometric_normal", "geometric_tangent", "wo", "wi", "proposal_code", "proposal_pdf",
     "solid_angle_weight", "rng_seed",
 )
@@ -183,7 +183,7 @@ class ReferenceDatasetWriter:
     def _initialize_query_datasets(self, direction_count: int) -> None:
         self.direction_count = direction_count
         for name, tail, dtype in (
-            ("state_index", (), "<u4"), ("position_kind", (), "u1"),
+            ("state_index", (), "<u4"), ("query_role", (), "u1"), ("position_kind", (), "u1"),
             ("position", (3,), "<f4"), ("uv", (2,), "<f4"),
             ("uv_dx", (2,), "<f4"), ("uv_dy", (2,), "<f4"),
             ("geometric_normal", (3,), "<f4"), ("geometric_tangent", (3,), "<f4"),
@@ -227,11 +227,15 @@ class ReferenceDatasetWriter:
         group_count = len(surfaces) * len(plan.view_directions)
         start = self.query_group_count
         end = start + group_count
-        proposal_code = self._proposal_codes.setdefault(plan.proposal_id, len(self._proposal_codes))
+        view_proposal_codes = np.asarray([
+            self._proposal_codes.setdefault(name, len(self._proposal_codes))
+            for name in plan.proposal_id
+        ], dtype=np.uint16)
         surface_rows = [surface for surface in surfaces for _ in plan.view_directions]
         views = np.tile(plan.view_directions, (len(surfaces), 1))
         query_values: dict[str, np.ndarray] = {
             "state_index": np.full(group_count, state_index, dtype=np.uint32),
+            "query_role": np.tile(plan.query_roles, len(surfaces)),
             "position_kind": np.asarray([surface.position_kind for surface in surface_rows], dtype=np.uint8),
             "position": np.asarray([surface.position for surface in surface_rows], dtype=np.float32),
             "uv": np.asarray([surface.uv for surface in surface_rows], dtype=np.float32),
@@ -251,7 +255,7 @@ class ReferenceDatasetWriter:
             dataset[start:end] = values
         codes = self._query_group["proposal_code"]
         codes.resize(end, axis=0)
-        codes[start:end] = proposal_code
+        codes[start:end] = np.tile(view_proposal_codes, len(surfaces))
         for name in _RESPONSE_DATASETS:
             values = np.asarray(getattr(evaluated, name)).reshape(group_count, *getattr(evaluated, name).shape[2:])
             dataset = self._response_group[name]
@@ -366,13 +370,27 @@ class ReferenceDataset:
         start, end = int(offsets[index]), int(offsets[index + 1])
         return np.asarray(self.stream["states/payload_blob"][start:end], dtype=np.uint8).tobytes()
 
-    def group_indices(self, split: str) -> np.ndarray:
-        from .contract import SPLIT_NAMES
+    @property
+    def query_roles(self) -> np.ndarray:
+        return np.asarray(self.stream["queries/query_role"], dtype=np.uint8)
 
-        if split not in SPLIT_NAMES:
-            raise ValueError(f"split must be one of {SPLIT_NAMES}")
+    def group_indices(
+        self,
+        *,
+        source_split: str | None = None,
+        query_role: str | None = None,
+    ) -> np.ndarray:
+        if source_split is not None and source_split not in SPLIT_NAMES:
+            raise ValueError(f"source_split must be one of {SPLIT_NAMES}")
+        if query_role is not None and query_role not in QUERY_ROLE_NAMES:
+            raise ValueError(f"query_role must be one of {QUERY_ROLE_NAMES}")
         state_indices = np.asarray(self.stream["queries/state_index"], dtype=np.int64)
-        return np.flatnonzero(self.state_splits[state_indices] == SPLIT_NAMES.index(split)).astype(np.int64)
+        mask = np.ones(len(state_indices), dtype=bool)
+        if source_split is not None:
+            mask &= self.state_splits[state_indices] == SPLIT_NAMES.index(source_split)
+        if query_role is not None:
+            mask &= self.query_roles == QUERY_ROLE_NAMES.index(query_role)
+        return np.flatnonzero(mask).astype(np.int64)
 
     @staticmethod
     def _read_rows(dataset: h5py.Dataset, indices: np.ndarray) -> np.ndarray:
@@ -398,7 +416,7 @@ class ReferenceDataset:
             for name in _RESPONSE_DATASETS
         })
         state_indices = result["state_index"].astype(np.int64)
-        result["split"] = self.state_splits[state_indices]
+        result["source_split"] = self.state_splits[state_indices]
         result["query_group_id"] = requested
         denominator = np.maximum(result["sample_count"].astype(np.float32), 1.0)[..., None]
         result["standard_error"] = np.sqrt(np.maximum(result["variance"], 0.0) / denominator).astype(np.float32)
@@ -422,6 +440,8 @@ class ReferenceDataset:
             raise ValueError("ReferenceDataset state payload offsets are invalid")
         if np.any(self.state_splits >= 3):
             raise ValueError("ReferenceDataset contains an invalid split code")
+        if np.any(self.query_roles >= len(QUERY_ROLE_NAMES)):
+            raise ValueError("ReferenceDataset contains an invalid query role code")
         state_ids = self.state_strings("state_id")
         source_hashes = self.state_strings("source_sha256")
         if len(set(state_ids.tolist())) != states:

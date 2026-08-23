@@ -4,7 +4,14 @@ from pathlib import Path
 
 import numpy as np
 
-from ncls.data import ReferenceDataset, SPLIT_NAMES
+from ncls.data import QUERY_ROLE_NAMES, ReferenceDataset, SPLIT_NAMES
+
+
+PARTITION_POLICY_IDS = (
+    "ncls.source-state-split@1",
+    "ncls.query-role-within-state@1",
+    "ncls.source-state-and-query-role@1",
+)
 
 from .features import StackFeatureTable, load_feature_table
 
@@ -15,9 +22,13 @@ class ReferenceQueryStore:
     def __init__(self, dataset_path: Path | str, *, verify_hashes: bool = True) -> None:
         self.dataset = ReferenceDataset.open(dataset_path, verify_hashes=verify_hashes)
         self.query_group_count = self.dataset.query_group_count
-        self.split_indices = {
-            name: self.dataset.group_indices(name)
+        self.source_split_indices = {
+            name: self.dataset.group_indices(source_split=name)
             for name in SPLIT_NAMES
+        }
+        self.query_role_indices = {
+            name: self.dataset.group_indices(query_role=name)
+            for name in QUERY_ROLE_NAMES
         }
 
     def close(self) -> None:
@@ -29,12 +40,21 @@ class ReferenceQueryStore:
     def __exit__(self, *_: object) -> None:
         self.close()
 
-    def sample_batch_indices(self, split: str, batch_size: int, rng: np.random.Generator) -> np.ndarray:
-        if split not in SPLIT_NAMES or batch_size < 1:
-            raise ValueError("invalid split or batch size")
-        candidates = self.split_indices[split]
+    def partition_indices(self, policy_id: str, lifecycle_role: str) -> np.ndarray:
+        if policy_id not in PARTITION_POLICY_IDS:
+            raise ValueError(f"unsupported dataset partition policy: {policy_id}")
+        if lifecycle_role not in SPLIT_NAMES:
+            raise ValueError(f"lifecycle role must be one of {SPLIT_NAMES}")
+        source_split = lifecycle_role if policy_id != "ncls.query-role-within-state@1" else None
+        query_role = lifecycle_role if policy_id != "ncls.source-state-split@1" else None
+        return self.dataset.group_indices(source_split=source_split, query_role=query_role)
+
+    @staticmethod
+    def sample_batch_indices(candidates: np.ndarray, batch_size: int, rng: np.random.Generator) -> np.ndarray:
+        if batch_size < 1:
+            raise ValueError("batch size must be positive")
         if not len(candidates):
-            raise ValueError(f"dataset split {split!r} is empty")
+            raise ValueError("dataset lifecycle partition is empty")
         return np.asarray(rng.choice(candidates, size=batch_size, replace=True), dtype=np.int64)
 
     def batch(self, query_group_indices: np.ndarray) -> dict[str, np.ndarray]:

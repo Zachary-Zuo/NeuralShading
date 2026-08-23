@@ -141,6 +141,9 @@ def test_reference_generator_smoke(tmp_path: Path) -> None:
 def test_reference_generator_supports_per_view_peak_grazing_queries(tmp_path: Path) -> None:
     collection = CollectionConfig(
         view_count=2,
+        validation_view_count=1,
+        test_view_count=1,
+        adversarial_view_count=1,
         light_count=32,
         seed=31,
         query_profile_id="ncls.e0-peak-grazing-mixture@1",
@@ -161,8 +164,9 @@ def test_reference_generator_supports_per_view_peak_grazing_queries(tmp_path: Pa
         generator_git_commit="test",
     )
     with ReferenceDataset.open(tmp_path / "mixture-reference.h5") as dataset:
-        batch = dataset.group_batch((0, 1))
-        assert batch["wi"].shape == (2, 32, 3)
+        batch = dataset.group_batch((0, 1, 2, 3, 4))
+        assert batch["wi"].shape == (5, 32, 3)
+        np.testing.assert_array_equal(batch["query_role"], [0, 0, 1, 2, 3])
         assert not np.array_equal(batch["wi"][0], batch["wi"][1])
         np.testing.assert_allclose(
             batch["proposal_pdf"] * batch["solid_angle_weight"],

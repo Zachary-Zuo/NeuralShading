@@ -10,11 +10,11 @@ import numpy as np
 import torch
 from torch import nn
 
-from ncls.learning.data import ReferenceQueryStore
+from ncls.learning.data import PARTITION_POLICY_IDS, ReferenceQueryStore
 
 
 PIPELINE_CONTRACT_FORMAT = "ncls.learning-pipeline"
-PIPELINE_CONTRACT_VERSION = 1
+PIPELINE_CONTRACT_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,7 @@ class LearningPipelineDescriptor:
     candidate_id: str
     research_role: str
     response_reader_id: str
+    partition_policy_id: str
     source_adapter_id: str
     feature_transform_id: str
     target_transform_id: str
@@ -45,6 +46,7 @@ class LearningPipelineDescriptor:
             self.pipeline_id,
             self.candidate_id,
             self.response_reader_id,
+            self.partition_policy_id,
             self.source_adapter_id,
             self.feature_transform_id,
             self.target_transform_id,
@@ -58,6 +60,8 @@ class LearningPipelineDescriptor:
         )
         if any("@" not in value for value in identifiers):
             raise ValueError("all learning pipeline component IDs must be versioned")
+        if self.partition_policy_id not in PARTITION_POLICY_IDS:
+            raise ValueError("learning pipeline partition policy is unsupported")
         if not self.research_role or not self.scope or not self.supported_family_ids:
             raise ValueError("learning pipeline role, scope and supported families are required")
 
@@ -83,6 +87,10 @@ class LearningPipeline(ABC):
     @abstractmethod
     def open_store(self, dataset_path: str) -> ReferenceQueryStore:
         raise NotImplementedError
+
+    def lifecycle_indices(self, store: ReferenceQueryStore, lifecycle_role: str) -> np.ndarray:
+        return store.partition_indices(self.descriptor.partition_policy_id, lifecycle_role)
+
     @abstractmethod
     def create_model(self, model_parameters: Mapping[str, Any]) -> nn.Module:
         raise NotImplementedError

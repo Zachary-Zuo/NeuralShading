@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 
 GATE_FORMAT = "ncls.supervision-gate"
-GATE_VERSION = 1
+GATE_VERSION = 2
 
 
 def _sha256(value: Any) -> str:
@@ -45,19 +45,23 @@ def evaluate_supervision_gate(audit: Mapping[str, Any], gate: Mapping[str, Any])
     parent_actual = int(split["parent_child_cross_split_count"])
     check("split.parent_child", parent_actual, {"maximum": 0}, parent_actual == 0)
     for split_name, count in split["query_group_counts"].items():
-        check(f"split.nonempty.{split_name}", int(count), {"minimum": 1}, int(count) >= 1)
+        check(f"source_split.nonempty.{split_name}", int(count), {"minimum": 1}, int(count) >= 1)
+    for role_name in base["required_query_roles"]:
+        count = int(split["query_role_counts"].get(role_name, 0))
+        check(f"query_role.nonempty.{role_name}", count, {"minimum": 1}, count >= 1)
 
-    grid = audit["coverage"]["direction_grid_independence"]
-    maximum_grid_overlap = int(base["maximum_cross_split_direction_grid_overlap"])
-    for direction_kind in ("wi_grid", "wo"):
-        for pair in ("train_validation_overlap_count", "train_test_overlap_count"):
-            actual = int(grid[direction_kind][pair])
-            check(
-                f"coverage.{direction_kind}.{pair}",
-                actual,
-                {"maximum": maximum_grid_overlap},
-                actual <= maximum_grid_overlap,
-            )
+    grids = audit["coverage"]["direction_grid_independence"]
+    maximum_grid_overlap = int(base["maximum_cross_partition_direction_grid_overlap"])
+    for partition_axis in ("source_split", "query_role"):
+        for direction_kind in ("wi_grid", "wo"):
+            for pair, value in grids[partition_axis][direction_kind]["overlap_counts"].items():
+                actual = int(value)
+                check(
+                    f"coverage.{partition_axis}.{direction_kind}.{pair}",
+                    actual,
+                    {"maximum": maximum_grid_overlap},
+                    actual <= maximum_grid_overlap,
+                )
 
     proposal_ids = [str(item["proposal_id"]).lower() for item in audit["coverage"]["proposals"]]
     for keyword in base["required_proposal_keywords"]:
@@ -69,8 +73,20 @@ def evaluate_supervision_gate(audit: Mapping[str, Any], gate: Mapping[str, Any])
         check(f"coverage.adversarial.{profile}", actual, True, actual)
 
     transform = audit["target_transform_statistics"]
-    expected_split = str(base["target_transform_fit_split"])
-    check("transform.fit_split", transform["fit_split"], expected_split, transform["fit_split"] == expected_split)
+    expected_source_split = str(base["target_transform_fit_source_split"])
+    expected_query_role = str(base["target_transform_fit_query_role"])
+    check(
+        "transform.fit_source_split",
+        transform["fit_source_split"],
+        expected_source_split,
+        transform["fit_source_split"] == expected_source_split,
+    )
+    check(
+        "transform.fit_query_role",
+        transform["fit_query_role"],
+        expected_query_role,
+        transform["fit_query_role"] == expected_query_role,
+    )
     check(
         "transform.statistics_sha256",
         transform["statistics_sha256"],
@@ -115,7 +131,7 @@ def evaluate_supervision_gate(audit: Mapping[str, Any], gate: Mapping[str, Any])
 
     return {
         "format_name": "ncls.supervision-gate-result",
-        "format_version": 1,
+        "format_version": 2,
         "gate_id": gate["gate_id"],
         "gate_sha256": _sha256(gate),
         "audit_sha256": audit["audit_sha256"],

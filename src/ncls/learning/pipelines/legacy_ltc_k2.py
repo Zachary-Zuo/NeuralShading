@@ -26,6 +26,7 @@ class LegacyLtcK2Pipeline(LearningPipeline):
         candidate_id="legacy-ltc-k2-deployment-regression@1",
         research_role="deployment-regression",
         response_reader_id="ncls.reference-query-store@1",
+        partition_policy_id="ncls.source-state-split@1",
         source_adapter_id="ncls.layer-stack-source-adapter@2",
         feature_transform_id=FEATURE_CONTRACT_ID,
         target_transform_id="ncls.identity-linear-response@1",

@@ -2,7 +2,7 @@
 
 训练、direct fit、独立评测和部署导出是项目的长期功能层。具体 representation、网络结构、latent 获取方式和 loss 通过版本化配置与注册实现替换；更换研究候选不会删除或重定义这些生命周期。
 
-公共 runner 现在只依赖 `ncls.learning-pipeline@1`：它从 registry 取得 response reader、source adapter、feature/target transform、representation/model、latent inference、compiler、loss、metric suite 和 exporter 的版本化身份，再执行训练、validation、checkpoint 与独立评测。candidate-specific 实现负责把公共 response batch 变成自己的模型输入；runner 不再导入 LayerStack 或某个 backend 的预测函数。机器可读合同和配置 schema 分别位于 `src/ncls/learning/schemas/learning_pipeline_v1.schema.json` 与 `training_config_v3.schema.json`。
+公共 runner 现在只依赖 `ncls.learning-pipeline@2`：它从 registry 取得 response reader、dataset partition policy、source adapter、feature/target transform、representation/model、latent inference、compiler、loss、metric suite 和 exporter 的版本化身份，再执行训练、validation、checkpoint 与独立评测。candidate-specific 实现负责把公共 response batch 变成自己的模型输入；runner 不再导入 LayerStack 或某个 backend 的预测函数。机器可读合同和配置 schema 分别位于 `src/ncls/learning/schemas/learning_pipeline_v2.schema.json` 与 `training_config_v3.schema.json`。
 
 当前唯一已注册项是 `legacy-ltc-k2-p1-deployment-regression@1`。它被明确标为 `deployment-regression`，只负责保留既有 compiler、MethodBundle、Slang 和 viewer 生命周期，不进入 E1 目标 neural evaluator 的候选排名。它是迁移适配而不是第二套 runner：E1 pipeline 建立并迁移部署回归后，删除条件是没有 checkpoint/export/viewer 调用仍需直接依赖 legacy feature/prediction 入口。
 
@@ -94,7 +94,7 @@ p  = Proposal.pdf(proposal_parameters, wi)
 
 ```powershell
 conda run -n neural-shading ncls learn train `
-  --dataset data\reference-responses\layer-stack-v3.h5 `
+  --dataset data\reference-responses\layer-stack-v4.h5 `
   --run artifacts\runs\legacy-ltc-k2-p1-001 `
   --config configs\legacy-ltc-k2-p1.json
 ```
@@ -122,12 +122,12 @@ checkpoint 保存 architecture、representation、feature contract、dataset ID�
 
 ```powershell
 conda run -n neural-shading ncls learn audit `
-  --dataset data\reference-responses\layer-stack-evaluator-pilot-v3.h5 `
+  --dataset data\reference-responses\layer-stack-v4.h5 `
   --output artifacts\research\supervision-audit\<dataset-id> `
-  --gate configs\research\e0-supervision-gates-v1.json
+  --gate configs\research\e0-supervision-gates-v2.json
 ```
 
-输出包含 `audit.json`、中文 `report.md`、只由 train split 拟合且带内容哈希的 `target_transform_statistics.json`，以及可选的 `gate_result.json`。`ncls.supervision-audit@2` 检查 state/source/split 泄漏、train/validation/test 方向表复用、proposal、peak/掠射/透射/footprint profile、reference standard error 与 replica 差异、response 长尾、积分能量和 top-energy 集中度。noise 除全局分位数外，还按 state、split 和积分能量分档，并列出最坏 query 的 state/asset、`wo`、能量和样本数；正式采样预算应由这些分档决定，不能因少量高方差状态而无差别提高全部 H5 的样本数。validation/test 不参与 transform scale、均值、方差或 codebook 统计。
+输出包含 `audit.json`、中文 `report.md`、只由 source train × query train 拟合且带内容哈希的 `target_transform_statistics.json`，以及可选的 `gate_result.json`。`ncls.supervision-audit@2` 检查 source state/asset split 泄漏、四种 query role 的完整性与方向表复用、proposal、peak/掠射/透射/footprint profile、reference standard error 与 replica 差异、response 长尾、积分能量和 top-energy 集中度。noise 除全局分位数外，还按 state、source split、query role 和积分能量分档，并列出最坏 query 的 state/asset、`wo`、能量和样本数；正式采样预算应由这些分档决定，不能因少量高方差状态而无差别提高全部 H5 的样本数。validation/test/adversarial 不参与 transform scale、均值、方差或 codebook 统计。
 
 ## TensorBoard
 
@@ -146,7 +146,7 @@ best checkpoint 确定后，单独执行：
 
 ```powershell
 conda run -n neural-shading ncls learn evaluate `
-  --dataset data\reference-responses\layer-stack-v3.h5 `
+  --dataset data\reference-responses\layer-stack-v4.h5 `
   --checkpoint artifacts\runs\legacy-ltc-k2-p1-001\checkpoints\best.pt `
   --split test `
   --output artifacts\runs\legacy-ltc-k2-p1-001\test_metrics.json
@@ -170,7 +170,7 @@ direct fit 必须在 manifest 中记录 scope：
 
 ```powershell
 conda run -n neural-shading ncls learn direct-fit `
-  --dataset data\reference-responses\layer-stack-v3.h5 `
+  --dataset data\reference-responses\layer-stack-v4.h5 `
   --output artifacts\direct-fit\legacy-ltc-k2-test `
   --split test --family ltc --lobes 2 `
   --steps 800 --restarts 3

@@ -18,6 +18,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 @dataclass(frozen=True)
 class CollectionConfig:
     view_count: int = 16
+    validation_view_count: int = 0
+    test_view_count: int = 0
+    adversarial_view_count: int = 0
     light_count: int = 128
     spatial_sample_count: int = 1
     footprint_width: float = 1.0 / 4096.0
@@ -27,7 +30,9 @@ class CollectionConfig:
 
     def __post_init__(self) -> None:
         if min(self.view_count, self.light_count, self.spatial_sample_count) < 1:
-            raise ValueError("query counts must be positive")
+            raise ValueError("train query counts must be positive")
+        if min(self.validation_view_count, self.test_view_count, self.adversarial_view_count) < 0:
+            raise ValueError("non-train query role counts must be nonnegative")
         if self.footprint_width < 0.0 or self.seed < 0:
             raise ValueError("footprint width and seed must be nonnegative")
         if self.query_profile_id not in {

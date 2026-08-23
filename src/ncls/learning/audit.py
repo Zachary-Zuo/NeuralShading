@@ -9,15 +9,16 @@ from typing import Any, Iterable
 
 import numpy as np
 
-from ncls.data import ReferenceDataset, SPLIT_NAMES
+from ncls.data import QUERY_ROLE_NAMES, ReferenceDataset, SPLIT_NAMES
 from ncls.learning.gates import evaluate_supervision_gate, load_supervision_gate
 
 
 AUDIT_FORMAT = "ncls.supervision-audit"
 AUDIT_VERSION = 2
 TRANSFORM_STATISTICS_FORMAT = "ncls.target-transform-statistics"
-TRANSFORM_STATISTICS_VERSION = 1
+TRANSFORM_STATISTICS_VERSION = 2
 _SPLIT_CODES = {name: index for index, name in enumerate(SPLIT_NAMES)}
+_QUERY_ROLE_CODES = {name: index for index, name in enumerate(QUERY_ROLE_NAMES)}
 _LUMINANCE = np.asarray((0.2126, 0.7152, 0.0722), dtype=np.float64)
 
 
@@ -143,16 +144,22 @@ def _row_hashes(values: Any, *, chunk_size: int = 256) -> np.ndarray:
     return np.asarray(hashes, dtype=object)
 
 
-def _cross_split_hash_audit(hashes: np.ndarray, splits: np.ndarray) -> dict[str, Any]:
+def _cross_partition_hash_audit(
+    hashes: np.ndarray,
+    partition_codes: np.ndarray,
+    names: tuple[str, ...],
+) -> dict[str, Any]:
     sets = {
-        name: set(map(str, hashes[splits == code].tolist()))
-        for name, code in _SPLIT_CODES.items()
+        name: set(map(str, hashes[partition_codes == code].tolist()))
+        for code, name in enumerate(names)
     }
     return {
-        "unique_count_by_split": {name: len(values) for name, values in sets.items()},
-        "train_validation_overlap_count": len(sets["train"] & sets["validation"]),
-        "train_test_overlap_count": len(sets["train"] & sets["test"]),
-        "validation_test_overlap_count": len(sets["validation"] & sets["test"]),
+        "unique_count_by_partition": {name: len(values) for name, values in sets.items()},
+        "overlap_counts": {
+            f"{first}_{second}": len(sets[first] & sets[second])
+            for first_index, first in enumerate(names)
+            for second in names[first_index + 1 :]
+        },
     }
 
 
@@ -172,7 +179,8 @@ def _audit_markdown(audit: dict[str, Any]) -> str:
         "## 当前结论",
         "",
         f"- HDF5 合同与内容哈希：通过；抽样了 {audit['sampling']['query_group_count_used']} / {audit['sampling']['query_group_count_available']} 个 query group 计算分布统计。",
-        f"- split_group 泄漏：{split['split_group_id']['leak_count']}；source asset 泄漏：{split['source_sha256']['leak_count']}；父子状态跨 split：{split['parent_child_cross_split_count']}。",
+        f"- split_group 泄漏：{split['split_group_id']['leak_count']}；source asset 泄漏：{split['source_sha256']['leak_count']}；父子状态跨 source split：{split['parent_child_cross_split_count']}。",
+        f"- query role 计数：{json.dumps(split['query_role_counts'], ensure_ascii=False)}。",
         f"- 当前 proposal：{proposal_names or '无'}。",
         f"- peak/grazing/transmission 高分辨率 profile：{json.dumps(high_resolution, ensure_ascii=False)}。",
         f"- replica normalized L1 p95：{uncertainty['replica_normalized_l1'].get('p95', 0.0):.6g}；相对 standard error p95：{uncertainty['relative_standard_error'].get('p95', 0.0):.6g}。",
@@ -210,13 +218,15 @@ def audit_supervision(
         source_hashes = dataset.state_strings("source_sha256")
         parent_ids = dataset.state_strings("parent_state_id")
         state_index = np.asarray(dataset.stream["queries/state_index"], dtype=np.int64)
-        query_splits = state_splits[state_index]
+        query_source_splits = state_splits[state_index]
+        query_roles = dataset.query_roles.astype(np.int64)
         query_families = family_ids[state_index]
         all_indices = np.arange(dataset.query_group_count, dtype=np.int64)
         selected = _select_evenly(all_indices, max_distribution_query_groups)
         batch = dataset.group_batch(selected)
         selected_families = query_families[selected]
-        selected_splits = query_splits[selected]
+        selected_source_splits = query_source_splits[selected]
+        selected_roles = query_roles[selected]
 
         parent_lookup = {str(state_id): index for index, state_id in enumerate(state_ids.tolist())}
         parent_cross_split: list[dict[str, Any]] = []
@@ -237,9 +247,13 @@ def audit_supervision(
                 "code": int(code),
                 "proposal_id": str(proposal_ids[str(int(code))]),
                 "query_group_count": int(np.sum(mask)),
-                "by_split": {
-                    name: int(np.sum(mask & (query_splits == split_code)))
+                "by_source_split": {
+                    name: int(np.sum(mask & (query_source_splits == split_code)))
                     for name, split_code in _SPLIT_CODES.items()
+                },
+                "by_query_role": {
+                    name: int(np.sum(mask & (query_roles == role_code)))
+                    for name, role_code in _QUERY_ROLE_CODES.items()
                 },
             }
             proposals.append(item)
@@ -302,7 +316,8 @@ def audit_supervision(
                     "state_id": str(state_ids[state]),
                     "asset_id": str(asset_ids[state]),
                     "family_id": family_id,
-                    "split": SPLIT_NAMES[int(selected_splits[selected_position])],
+                    "source_split": SPLIT_NAMES[int(selected_source_splits[selected_position])],
+                    "query_role": QUERY_ROLE_NAMES[int(selected_roles[selected_position])],
                     "wo": np.asarray(batch["wo"][selected_position]).astype(float).tolist(),
                     "peak_wi": np.asarray(batch["wi"][selected_position, peak_index]).astype(float).tolist(),
                     "peak_response_rgb": np.asarray(batch["mean"][selected_position, peak_index]).astype(float).tolist(),
@@ -358,7 +373,7 @@ def audit_supervision(
                 "state_id": str(state_ids[state]),
                 "asset_id": str(asset_ids[state]),
                 "family_id": str(family_ids[state]),
-                "split": SPLIT_NAMES[int(state_splits[state])],
+                "source_split": SPLIT_NAMES[int(state_splits[state])],
                 **grouped_uncertainty(state_mask),
             })
         uncertainty_by_state.sort(
@@ -388,7 +403,8 @@ def audit_supervision(
                 "state_id": str(state_ids[state]),
                 "asset_id": str(asset_ids[state]),
                 "family_id": str(family_ids[state]),
-                "split": SPLIT_NAMES[int(selected_splits[selected_position])],
+                "source_split": SPLIT_NAMES[int(selected_source_splits[selected_position])],
+                "query_role": QUERY_ROLE_NAMES[int(selected_roles[selected_position])],
                 "wo": np.asarray(batch["wo"][selected_position]).astype(float).tolist(),
                 "integrated_absolute_energy": float(group_energy[selected_position]),
                 "relative_standard_error_p95": float(group_relative_p95[selected_position]),
@@ -396,7 +412,10 @@ def audit_supervision(
                 "maximum_sample_count": int(group_sample_count[selected_position]),
             })
 
-        train_available = np.flatnonzero(query_splits == _SPLIT_CODES["train"])
+        train_available = np.flatnonzero(
+            (query_source_splits == _SPLIT_CODES["train"])
+            & (query_roles == _QUERY_ROLE_CODES["train"])
+        )
         train_selected = _select_evenly(train_available, max_distribution_query_groups)
         train_batch = dataset.group_batch(train_selected)
         train_families = query_families[train_selected]
@@ -411,7 +430,8 @@ def audit_supervision(
             "format_name": TRANSFORM_STATISTICS_FORMAT,
             "format_version": TRANSFORM_STATISTICS_VERSION,
             "dataset_id": dataset.manifest.dataset_id,
-            "fit_split": "train",
+            "fit_source_split": "train",
+            "fit_query_role": "train",
             "query_group_count_available": int(len(train_available)),
             "query_group_count_used": int(len(train_selected)),
             "selection": "all-or-evenly-spaced@1",
@@ -419,15 +439,16 @@ def audit_supervision(
         }
         transform_statistics["statistics_sha256"] = _sha256_json(transform_statistics)
 
-        profile_text = " ".join((
-            *dataset.manifest.query_profile_ids,
-            *(str(item["proposal_id"]) for item in proposals),
-        )).lower()
+        adversarial_proposal_text = " ".join(
+            str(item["proposal_id"])
+            for item in proposals
+            if int(item["by_query_role"]["adversarial_probe"]) > 0
+        ).lower()
         adversarial_presence = {
-            "peak": "peak" in profile_text or "microfacet" in profile_text,
-            "grazing": "graz" in profile_text,
-            "transmission_critical": "transmission" in profile_text or "critical" in profile_text,
-            "spatial_footprint_rotation": "footprint" in profile_text and "rotation" in profile_text,
+            "peak": "peak" in adversarial_proposal_text or "microfacet" in adversarial_proposal_text,
+            "grazing": "graz" in adversarial_proposal_text,
+            "transmission_critical": "transmission" in adversarial_proposal_text or "critical" in adversarial_proposal_text,
+            "spatial_footprint_rotation": "footprint" in adversarial_proposal_text and "rotation" in adversarial_proposal_text,
         }
         wi = np.asarray(batch["wi"], dtype=np.float64)
         wo = np.asarray(batch["wo"], dtype=np.float64)
@@ -463,10 +484,11 @@ def audit_supervision(
                 "content_hash_verified": verify_hashes,
             },
             "roles": {
-                "train": "target transform statistics、optimization 与训练监督",
-                "validation": "checkpoint 选择与 gate；不参与 transform 统计",
-                "test": "独立 held-out 评测；不参与选择或 transform 统计",
-                "adversarial_probe": "独立覆盖诊断；不参与模型选择",
+                "source_split": "源状态/资产泛化轴；train、validation、test 的 split_group 不得交叉",
+                "query_role.train": "训练 query；只有 source train × query train 可拟合 target transform",
+                "query_role.validation": "同一合同中的固定 validation query；不参与 transform 统计",
+                "query_role.test": "独立 held-out query；不参与模型选择或 transform 统计",
+                "query_role.adversarial_probe": "peak/掠射/透射/footprint 覆盖诊断；不参与模型选择",
             },
             "sampling": {
                 "selection": "all-or-evenly-spaced@1",
@@ -491,7 +513,10 @@ def audit_supervision(
                     name: int(np.sum(state_splits == code)) for name, code in _SPLIT_CODES.items()
                 },
                 "query_group_counts": {
-                    name: int(np.sum(query_splits == code)) for name, code in _SPLIT_CODES.items()
+                    name: int(np.sum(query_source_splits == code)) for name, code in _SPLIT_CODES.items()
+                },
+                "query_role_counts": {
+                    name: int(np.sum(query_roles == code)) for name, code in _QUERY_ROLE_CODES.items()
                 },
             },
             "response": {
@@ -513,9 +538,13 @@ def audit_supervision(
                 "replica_normalized_l1": _percentiles(replica_delta, (0.5, 0.9, 0.95, 0.99)),
                 "deterministic_query_fraction": float(np.mean(np.asarray(batch["variance"]) == 0.0)),
                 "sample_count": _distribution(np.asarray(batch["sample_count"], dtype=np.float64)),
-                "by_split": {
-                    name: grouped_uncertainty(selected_splits == code)
+                "by_source_split": {
+                    name: grouped_uncertainty(selected_source_splits == code)
                     for name, code in _SPLIT_CODES.items()
+                },
+                "by_query_role": {
+                    name: grouped_uncertainty(selected_roles == code)
+                    for name, code in _QUERY_ROLE_CODES.items()
                 },
                 "by_state": uncertainty_by_state,
                 "by_integrated_energy": uncertainty_by_energy,
@@ -525,9 +554,15 @@ def audit_supervision(
                 "proposals": proposals,
                 "adversarial_profile_presence": adversarial_presence,
                 "direction_grid_independence": {
-                    "wi_grid": _cross_split_hash_audit(wi_grid_hashes, query_splits),
-                    "wo": _cross_split_hash_audit(wo_hashes, query_splits),
-                    "interpretation": "exact float32 hash overlap；非零表示不同 split 复用了离散方向或方向表",
+                    "source_split": {
+                        "wi_grid": _cross_partition_hash_audit(wi_grid_hashes, query_source_splits, SPLIT_NAMES),
+                        "wo": _cross_partition_hash_audit(wo_hashes, query_source_splits, SPLIT_NAMES),
+                    },
+                    "query_role": {
+                        "wi_grid": _cross_partition_hash_audit(wi_grid_hashes, query_roles, QUERY_ROLE_NAMES),
+                        "wo": _cross_partition_hash_audit(wo_hashes, query_roles, QUERY_ROLE_NAMES),
+                    },
+                    "interpretation": "exact float32 hash overlap；正式 gate 使用 query role 轴，source split 轴另行报告",
                 },
                 "absolute_wo_cosine": _distribution(np.abs(wo[:, 2])),
                 "absolute_wi_cosine": _distribution(np.abs(wi[..., 2])),
@@ -547,7 +582,8 @@ def audit_supervision(
             "target_transform_statistics": {
                 "uri": "target_transform_statistics.json",
                 "statistics_sha256": transform_statistics["statistics_sha256"],
-                "fit_split": "train",
+                "fit_source_split": "train",
+                "fit_query_role": "train",
             },
         }
         audit["audit_sha256"] = _sha256_json(audit)

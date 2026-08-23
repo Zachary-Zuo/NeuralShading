@@ -8,7 +8,15 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from ncls.data.collector import CollectionConfig
-from ncls.data.contract import PositionKind, QueryPlan, ReferenceDescriptor, SourceState, SurfaceSample
+from ncls.data.contract import (
+    QUERY_ROLE_NAMES,
+    PositionKind,
+    QueryPlan,
+    QueryRole,
+    ReferenceDescriptor,
+    SourceState,
+    SurfaceSample,
+)
 from ncls.data.directions import (
     equal_area_hemisphere,
     equal_area_sphere,
@@ -65,41 +73,70 @@ class BaseProvider:
             if self.config.split_direction_scramble
             else 0.0
         )
-        views = stratified_view_directions(self.config.view_count, azimuth_offset=split_offset)
-        if self.config.query_profile_id == "ncls.e0-peak-grazing-mixture@1":
-            full_sphere = self.descriptor.incident_domain == "full-sphere"
-            query_seed = self.config.seed ^ int(state.state_id[:16], 16)
-            lights, weights, pdf = peak_grazing_mixture_query(
-                views,
-                self.config.light_count,
-                full_sphere=full_sphere,
-                seed=query_seed,
+        full_sphere = self.descriptor.incident_domain == "full-sphere"
+        domain = "full-sphere" if full_sphere else "upper-hemisphere"
+        query_seed = self.config.seed ^ int(state.state_id[:16], 16)
+        role_counts = (
+            self.config.view_count,
+            self.config.validation_view_count,
+            self.config.test_view_count,
+            self.config.adversarial_view_count,
+        )
+        view_parts: list[np.ndarray] = []
+        light_parts: list[np.ndarray] = []
+        weight_parts: list[np.ndarray] = []
+        pdf_parts: list[np.ndarray] = []
+        proposal_ids: list[str] = []
+        query_roles: list[int] = []
+        for role, count in enumerate(role_counts):
+            if count == 0:
+                continue
+            role_name = QUERY_ROLE_NAMES[role]
+            role_offset = split_offset + role * 0.419 * np.pi
+            views = stratified_view_directions(count, azimuth_offset=role_offset)
+            role_seed = query_seed ^ ((role + 1) * 0x9E3779B1)
+            use_mixture = (
+                self.config.query_profile_id == "ncls.e0-peak-grazing-mixture@1"
+                and role in {int(QueryRole.TRAIN), int(QueryRole.ADVERSARIAL_PROBE)}
             )
-            split_name = ("train", "validation", "test")[state.split]
-            domain = "full-sphere-transmission-critical" if full_sphere else "upper-hemisphere"
-            return QueryPlan(
-                views,
-                lights,
-                weights,
-                pdf,
-                f"uniform-peak-grazing-{domain}-{split_name}@1",
-                query_seed,
-            )
-        if self.descriptor.incident_domain == "full-sphere":
-            lights, weights = equal_area_sphere(self.config.light_count, azimuth_offset=0.5 * split_offset)
-            measure = 4.0 * np.pi
-            proposal = "uniform-solid-angle-full-sphere-split-scrambled@2"
-        else:
-            lights, weights = equal_area_hemisphere(self.config.light_count, azimuth_offset=0.5 * split_offset)
-            measure = 2.0 * np.pi
-            proposal = "uniform-solid-angle-upper-hemisphere-split-scrambled@3"
+            if use_mixture:
+                lights, weights, pdf = peak_grazing_mixture_query(
+                    views,
+                    self.config.light_count,
+                    full_sphere=full_sphere,
+                    seed=role_seed,
+                )
+                transmission = "-transmission-critical" if full_sphere else ""
+                proposal = f"{role_name}-uniform-peak-grazing-{domain}{transmission}@1"
+            else:
+                measure = 4.0 * np.pi if full_sphere else 2.0 * np.pi
+                direction_rows = []
+                for view_index in range(count):
+                    azimuth = 0.5 * role_offset + view_index * 0.173 * np.pi
+                    directions, _ = (
+                        equal_area_sphere(self.config.light_count, azimuth_offset=azimuth)
+                        if full_sphere
+                        else equal_area_hemisphere(self.config.light_count, azimuth_offset=azimuth)
+                    )
+                    direction_rows.append(directions)
+                lights = np.stack(direction_rows)
+                weights = np.full((count, self.config.light_count), measure / self.config.light_count, dtype=np.float32)
+                pdf = np.full((count, self.config.light_count), 1.0 / measure, dtype=np.float32)
+                proposal = f"{role_name}-uniform-solid-angle-{domain}-independent@1"
+            view_parts.append(views)
+            light_parts.append(lights)
+            weight_parts.append(weights)
+            pdf_parts.append(pdf)
+            proposal_ids.extend((proposal,) * count)
+            query_roles.extend((role,) * count)
         return QueryPlan(
-            views,
-            lights,
-            weights,
-            np.full(len(lights), 1.0 / measure, dtype=np.float32),
-            proposal,
-            self.config.seed ^ int(state.state_id[:16], 16),
+            np.concatenate(view_parts),
+            np.concatenate(light_parts),
+            np.concatenate(weight_parts),
+            np.concatenate(pdf_parts),
+            proposal_ids,
+            query_seed,
+            query_roles,
         )
 
     def surface_samples(self, state: SourceState) -> Sequence[SurfaceSample]:

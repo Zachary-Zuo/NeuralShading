@@ -1,6 +1,6 @@
 {
   "format_name": "ncls.reference-dataset",
-  "format_version": 3,
+  "format_version": 4,
   "container": "HDF5",
   "response_measure": "rgb-bsdf-times-absolute-shading-normal-light-cosine",
   "required_groups": {
@@ -10,7 +10,7 @@
       "payload_offsets", "payload_blob"
     ],
     "queries": [
-      "state_index", "position_kind", "position", "uv", "uv_dx", "uv_dy",
+      "state_index", "query_role", "position_kind", "position", "uv", "uv_dx", "uv_dy",
       "geometric_normal", "geometric_tangent", "wo", "wi", "proposal_code",
       "proposal_pdf", "solid_angle_weight", "rng_seed"
     ],
@@ -19,6 +19,8 @@
       "valid", "event_flags", "reference_pdf"
     ]
   },
+  "source_split_names": ["train", "validation", "test"],
+  "query_role_names": ["train", "validation", "test", "adversarial_probe"],
   "logical_query_shape": "query_group_count x direction_count",
   "native_state_payload": "UTF-8 or binary opaque bytes indexed by payload_offsets; interpretation is selected by native_schema_id",
   "legacy_reader": false,

@@ -79,6 +79,9 @@ def _generate_dataset(args: argparse.Namespace) -> int:
 
     collection = CollectionConfig(
         view_count=args.views,
+        validation_view_count=args.validation_views,
+        test_view_count=args.test_views,
+        adversarial_view_count=args.adversarial_views,
         light_count=args.lights,
         spatial_sample_count=args.spatial_samples,
         footprint_width=args.footprint_width,
@@ -263,6 +266,9 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--families", type=int, default=8)
     generate.add_argument("--local-states", type=int, default=4)
     generate.add_argument("--views", type=int, default=4)
+    generate.add_argument("--validation-views", type=int, default=0)
+    generate.add_argument("--test-views", type=int, default=0)
+    generate.add_argument("--adversarial-views", type=int, default=0)
     generate.add_argument("--lights", type=int, default=128)
     generate.add_argument("--spatial-samples", type=int, default=1)
     generate.add_argument("--footprint-width", type=float, default=1.0 / 4096.0)

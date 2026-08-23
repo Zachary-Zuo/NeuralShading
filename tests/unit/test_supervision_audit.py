@@ -33,7 +33,14 @@ class _ConstantEvaluator:
 
 
 def _dataset(path: Path) -> None:
-    collection = CollectionConfig(view_count=2, light_count=8, seed=53)
+    collection = CollectionConfig(
+        view_count=2,
+        validation_view_count=1,
+        test_view_count=1,
+        adversarial_view_count=1,
+        light_count=8,
+        seed=53,
+    )
     provider = LayerStackProvider(
         collection,
         LayerStackProviderConfig(
@@ -67,19 +74,23 @@ def test_supervision_audit_is_family_neutral_and_transform_stats_are_train_only(
     assert result["split_audit"]["split_group_id"]["leak_count"] == 0
     assert result["split_audit"]["source_sha256"]["leak_count"] == 0
     assert result["sampling"]["query_group_count_used"] == 4
-    assert result["coverage"]["proposals"][0]["proposal_id"].startswith("uniform-solid-angle")
-    assert result["coverage"]["direction_grid_independence"]["wi_grid"]["train_test_overlap_count"] == 0
+    assert "uniform-solid-angle" in result["coverage"]["proposals"][0]["proposal_id"]
+    assert all(
+        count == 0
+        for count in result["coverage"]["direction_grid_independence"]["query_role"]["wi_grid"]["overlap_counts"].values()
+    )
     assert "ncls.layer-stack@1" in result["response"]["by_family"]
     assert len(result["reference_uncertainty"]["by_state"]) == 3
     assert sum(
         item["query_group_count"]
-        for item in result["reference_uncertainty"]["by_split"].values()
+        for item in result["reference_uncertainty"]["by_source_split"].values()
     ) == 4
     assert result["reference_uncertainty"]["by_integrated_energy"]["high_ge_p90"]["query_group_count"] >= 1
     assert result["reference_uncertainty"]["highest_relative_standard_error_groups"][0]["asset_id"]
 
     statistics = json.loads((output / "target_transform_statistics.json").read_text(encoding="utf-8"))
-    assert statistics["fit_split"] == "train"
+    assert statistics["fit_source_split"] == "train"
+    assert statistics["fit_query_role"] == "train"
     assert statistics["query_group_count_available"] == 2
     assert statistics["families"]["ncls.layer-stack@1"]["channels"][0]["nonnegative_log1p_scale"] > 0.0
     assert (output / "audit.json").is_file()
@@ -91,7 +102,7 @@ def test_frozen_supervision_gate_reports_all_failures_without_mutating_audit(tmp
     output = tmp_path / "audit"
     _dataset(dataset_path)
     result = audit_supervision(dataset_path, output)
-    gate = load_supervision_gate(Path("configs/research/e0-supervision-gates-v1.json"))
+    gate = load_supervision_gate(Path("configs/research/e0-supervision-gates-v2.json"))
 
     gate_result = evaluate_supervision_gate(result, gate)
 

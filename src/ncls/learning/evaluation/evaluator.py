@@ -84,7 +84,7 @@ def evaluate_checkpoint(
         model,
         pipeline,
         store,
-        store.split_indices[split],
+        pipeline.lifecycle_indices(store, split),
         device,
         batch_size=config.batch_size,
         max_query_groups=max_query_groups,
@@ -94,6 +94,7 @@ def evaluate_checkpoint(
         "checkpoint": str(Path(checkpoint_path)),
         "checkpoint_step": int(checkpoint["step"]),
         "split": split,
+        "partition_policy_id": pipeline.descriptor.partition_policy_id,
         "metrics": metrics,
     }
     if output_path is not None:

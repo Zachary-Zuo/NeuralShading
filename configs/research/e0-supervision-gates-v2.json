@@ -1,12 +1,18 @@
 {
   "format_name": "ncls.supervision-gate",
-  "format_version": 1,
-  "gate_id": "ncls.e0-supervision-entry@1",
+  "format_version": 2,
+  "gate_id": "ncls.e0-supervision-entry@2",
   "status": "frozen",
-  "rationale": "现有 pilot 的 state split 干净，但 train/validation/test 复用相同 wo/wi 离散表；MERL/OpenPBR 的 top 1% 能量 p95 分别约 0.84/0.98，而 peak 最近邻角 p95 仍约 8.7/12.3 度；LayerStack replica normalized L1 p95 约 1.25、相对 standard error p95 约 0.58。后续训练入口因此要求独立方向 probe、peak/grazing proposal 和显著更低的随机 reference noise。",
+  "rationale": "v1 pilot 证明 source split 干净，但复用了方向表且缺少 peak/grazing；逐 wo mixture probe 随后把 MERL/OpenPBR peak 最近邻角 p95 从约 8.7/12.3 度降到约 1.15/0.52 度，并确认 LayerStack 在最高总样本数 1,048,576 时能达到 relative SE/replica p95 0.085/0.062。v2 进一步要求同一状态内显式区分 train、validation、held-out test 与 adversarial query，target transform 只能读取 source train × query train。",
   "base_requirements": {
     "maximum_split_leaks": 0,
-    "maximum_cross_split_direction_grid_overlap": 0,
+    "maximum_cross_partition_direction_grid_overlap": 0,
+    "required_query_roles": [
+      "train",
+      "validation",
+      "test",
+      "adversarial_probe"
+    ],
     "required_proposal_keywords": [
       "uniform",
       "peak",
@@ -16,7 +22,8 @@
       "peak",
       "grazing"
     ],
-    "target_transform_fit_split": "train",
+    "target_transform_fit_source_split": "train",
+    "target_transform_fit_query_role": "train",
     "maximum_stochastic_relative_standard_error_p95": 0.1,
     "maximum_stochastic_replica_normalized_l1_p95": 0.1
   },

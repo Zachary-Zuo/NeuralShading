@@ -2,7 +2,7 @@
 
 ## 1. 当前结论
 
-数据框架已经收敛为材质族无关的查询采集层。LayerStack、MERL、OpenPBR 和 MaterialX/Poly Haven 都能通过相同 provider 协议在 Falcor 中求值，并写入唯一的 `ncls.reference-dataset@3` HDF5；公共 collector 和 response-only learning reader 不含任何材质参数分支。
+数据框架已经收敛为材质族无关的查询采集层。LayerStack、MERL、OpenPBR 和 MaterialX/Poly Haven 都能通过相同 provider 协议在 Falcor 中求值，并写入唯一的 `ncls.reference-dataset@4` HDF5；公共 collector 和 response-only learning reader 不含任何材质参数分支。v4 分开保存 source state split 与 query role，支持在同一材质上严格隔离训练、validation、held-out test 和 adversarial probe。
 
 这解决的是“统一监督查询与持久化”，不是“把所有源材质变成同一参数表示”。各材质族仍保留自己的原生参数、图、纹理或测量表及权威 reference。source compiler 若要读取原生输入，仍需 family-specific encoder；它的输出才进入共享 evaluator/latent 合同。
 
@@ -90,7 +90,7 @@ validation/test 至少包含：
 - 当前固定方向集与局部高分辨率 probe 的峰值/能量差；
 - train/validation/test 的 state、资产和参数覆盖，确认无 group 泄漏。
 
-target transform 的统计量只能由 train split 生成并带 hash 保存。首轮比较 linear、`log1p`、标准化 log、energy+shape 和 analytic-core residual；运行时逻辑输出仍为 `f`，HDF5 的监督测度为 `f×|cos|`。
+target transform 的统计量只能由 source train × query train 生成并带 hash 保存。首轮比较 linear、`log1p`、标准化 log、energy+shape 和 analytic-core residual；运行时逻辑输出仍为 `f`，HDF5 的监督测度为 `f×|cos|`。
 
 ## 7. Learning 分层
 
@@ -134,7 +134,7 @@ target transform 的统计量只能由 train split 生成并带 hash 保存。�
 
 ### 2026-08-24 E0 pilot 审计结论
 
-四个现有 pilot H5 已通过合同与内容哈希，但都没有通过 `configs/research/e0-supervision-gates-v1.json`。稳定发现如下：
+四个开始时已有的 v3 pilot H5 曾通过各自生成时的合同与内容哈希，但都没有通过当时冻结的 E0 v1 gate。它们的历史 audit 仍保留为 proposal 缺口证据；当前唯一 reader 已升级为 v4，因此这些文件不再是可消费数据，必须从锁定 source/reference/config 重生。稳定发现如下：
 
 - 四族的 `split_group_id`、source hash 与父子状态都没有跨 split 泄漏；
 - 四族都在 train/validation/test 复用完全相同的 `wi` 表和 `wo` 集，因此不能把这些 pilot 当作连续方向泛化证据；
@@ -144,7 +144,7 @@ target transform 的统计量只能由 train split 生成并带 hash 保存。�
 
 因此这些文件只保留为 provider/合同 smoke，E1 不得直接消费。下一步先让 query plan 支持按 `wo` 的 peak-aware 方向与 split 独立 probe，再生成最小的 targeted H5；不能用扩大同一均匀表代替修正 proposal。完整运行结果位于 `artifacts/research/supervision-audit/<dataset-id>/`。
 
-逐 `wo` 查询合同已经实现并通过 CPU 与 Falcor GPU 回归：`QueryPlan` 支持 `[view, light, 3]`，LayerStack shader 和四个 provider 都按 query group 消费真实方向。`ncls.e0-peak-grazing-mixture@1` 提供有显式归一化 PDF 的 uniform、三尺度 peak、grazing，以及完整球面的 transmission peak；uniform 基线也对不同 state split 使用确定性方位扰动。该结果只说明采集机制成立，尚不说明 E0 gate 已通过。同一 state 内 train/validation/test query 角色仍需在 E1 正式数据前显式建模，不能用 state split 方向扰动替代 held-out query。
+逐 `wo` 查询合同已经实现并通过 CPU 与 Falcor GPU 回归：`QueryPlan` 支持 `[view, light, 3]`，LayerStack shader 和四个 provider 都按 query group 消费真实方向。`ncls.e0-peak-grazing-mixture@1` 提供有显式归一化 PDF 的 uniform、三尺度 peak、grazing，以及完整球面的 transmission peak；uniform 基线也对不同 partition 使用确定性方位扰动。随后 v4 加入显式 query role：train/adversarial 使用 mixture，validation/test 使用独立 fixed uniform probe。source split 与 query role 的独立性由 audit 和 `ncls.e0-supervision-entry@2` 分别检查，不能再用 state split 方位扰动替代 held-out query。
 
 真实 targeted probe 给出了两项稳定结果。MERL `black-obsidian` 使用 8 个 `wo`、每个 512 个 mixture query 后，peak 最近邻角 p95 从 pilot 的约 `8.73°` 降至 `1.15°`；OpenPBR `open_pbr_glass` 从约 `12.25°` 降至 `0.52°`，并实际包含约 `47.1%` 透射侧 query 与 `11.4%` 的五度内掠射 query。两个单资产 probe 的 proposal/profile 检查通过，gate 只因它们故意没有 validation/test state 而失败，不能把该预期失败解释为 proposal 失败。
 
@@ -159,11 +159,11 @@ target transform 的统计量只能由 train split 生成并带 hash 保存。�
 
 因此冻结 noise gate 可达，但百万样本是高方差状态的诊断上界，不是所有正式数据的默认预算。一次把单 batch 提高到 16,384 触发 Windows D3D12 TDR；保持 8,192 batch、增加迭代次数可稳定完成。audit v2 必须先按 state/split/积分能量列出最坏 query，再决定哪些状态需要高预算或更好的 reference proposal。
 
-1. ~~扩展 query plan，使每个 `wo` 可以拥有独立的 `wi` proposal，并让 train/validation/test 使用互不重合但测度明确的方向 probe；~~ 已完成逐 `wo` proposal 与 state-split 独立方向，query role 合同仍待单独冻结；
+1. ~~扩展 query plan，使每个 `wo` 可以拥有独立的 `wi` proposal，并让 train/validation/test 使用互不重合但测度明确的方向 probe；~~ 已完成逐 `wo` proposal、ReferenceDataset v4 query role 与三种版本化 partition policy；
 2. 对 LayerStack 极低 roughness、MERL 高光材质和 OpenPBR transmission 做高分辨率 peak probe；
 3. 把默认均匀 proposal 扩展成带显式 mixture component 的训练 proposal，并保持固定 validation/test proposal；
 4. 针对 LayerStack reference noise 调整自适应采样后，只重生成最小必要 H5，并重新执行合同、hash、split 与 gate；
-5. 用通过 E0 的 LayerStack v3 数据完成 E1 的方向编码、target transform 与 evaluator 容量比较；
+5. 用通过 E0 的 LayerStack v4 数据完成 E1 的方向编码、target transform 与 evaluator 容量比较；
 6. 在同一公共 reader 上把 MERL/OpenPBR 加入 target-visible shared decoder 实验；
 7. evaluator 成形后再进入 MaterialX spatial latent、sampler 和 integration。
 
