@@ -111,7 +111,7 @@ def _train_learning(args: argparse.Namespace) -> int:
     from .learning.training import TrainingConfig, train
 
     config = TrainingConfig.load(args.config) if args.config else TrainingConfig(
-        width=args.width,
+        model_parameters={"width": args.width},
         steps=args.steps,
         batch_size=args.batch_size,
         learning_rate=args.learning_rate,
@@ -141,6 +141,36 @@ def _evaluate_learning(args: argparse.Namespace) -> int:
         f"{args.split}: relative-L1 median={relative['median']:.6f}, "
         f"p90={relative['p90']:.6f}"
     )
+    return 0
+
+
+def _audit_learning(args: argparse.Namespace) -> int:
+    from .learning.audit import audit_supervision
+
+    result = audit_supervision(
+        args.dataset,
+        args.output,
+        verify_hashes=not args.skip_hashes,
+        max_distribution_query_groups=args.max_query_groups,
+        gate_path=args.gate,
+    )
+    split = result["split_audit"]
+    print(
+        f"Supervision audit {result['audit_sha256']}: "
+        f"split-group leaks={split['split_group_id']['leak_count']}, "
+        f"source leaks={split['source_sha256']['leak_count']}"
+    )
+    return 0
+
+
+def _list_learning_pipelines() -> int:
+    from .learning.pipelines import pipeline_descriptors
+
+    for descriptor in pipeline_descriptors():
+        print(
+            f"{descriptor.pipeline_id}\t{descriptor.candidate_id}\t"
+            f"{descriptor.research_role}\t{descriptor.scope}"
+        )
     return 0
 
 
@@ -247,6 +277,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     learn = commands.add_parser("learn", help="训练、validation 与 held-out test 工具")
     learn_commands = learn.add_subparsers(dest="learn_command", required=True)
+    audit = learn_commands.add_parser("audit", help="只读审计监督覆盖、split、reference noise 与 train-only transform 统计")
+    audit.add_argument("--dataset", type=Path, required=True)
+    audit.add_argument("--output", type=Path, required=True)
+    audit.add_argument("--max-query-groups", type=int, default=8192)
+    audit.add_argument("--gate", type=Path, help="可选的冻结 E0 gate 配置；结果写入 gate_result.json")
+    audit.add_argument("--skip-hashes", action="store_true", help="仅用于局部诊断，不验证 HDF5 内容哈希")
+    learn_commands.add_parser("list-pipelines", help="列出已注册且带版本的 learning pipeline")
     train_command = learn_commands.add_parser("train", help="训练明确命名的研究 baseline")
     train_command.add_argument("--dataset", type=Path, required=True)
     train_command.add_argument("--run", type=Path, required=True)
@@ -308,6 +345,10 @@ def main(argv: list[str] | None = None) -> int:
         return _generate_dataset(args)
     if args.command == "learn" and args.learn_command == "train":
         return _train_learning(args)
+    if args.command == "learn" and args.learn_command == "audit":
+        return _audit_learning(args)
+    if args.command == "learn" and args.learn_command == "list-pipelines":
+        return _list_learning_pipelines()
     if args.command == "learn" and args.learn_command == "evaluate":
         return _evaluate_learning(args)
     if args.command == "learn" and args.learn_command == "direct-fit":

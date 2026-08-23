@@ -1,0 +1,39 @@
+{
+  "format_name": "ncls.supervision-gate",
+  "format_version": 1,
+  "gate_id": "ncls.e0-supervision-entry@1",
+  "status": "frozen",
+  "rationale": "现有 pilot 的 state split 干净，但 train/validation/test 复用相同 wo/wi 离散表；MERL/OpenPBR 的 top 1% 能量 p95 分别约 0.84/0.98，而 peak 最近邻角 p95 仍约 8.7/12.3 度；LayerStack replica normalized L1 p95 约 1.25、相对 standard error p95 约 0.58。后续训练入口因此要求独立方向 probe、peak/grazing proposal 和显著更低的随机 reference noise。",
+  "base_requirements": {
+    "maximum_split_leaks": 0,
+    "maximum_cross_split_direction_grid_overlap": 0,
+    "required_proposal_keywords": [
+      "uniform",
+      "peak",
+      "graz"
+    ],
+    "required_adversarial_profiles": [
+      "peak",
+      "grazing"
+    ],
+    "target_transform_fit_split": "train",
+    "maximum_stochastic_relative_standard_error_p95": 0.1,
+    "maximum_stochastic_replica_normalized_l1_p95": 0.1
+  },
+  "family_requirements": {
+    "ncls.layer-stack@1": {},
+    "merl.measured-brdf@1": {},
+    "openpbr.surface@1.1.1": {
+      "required_adversarial_profiles": [
+        "transmission_critical"
+      ]
+    },
+    "materialx.textured-surface@1": {
+      "required_adversarial_profiles": [
+        "spatial_footprint_rotation"
+      ],
+      "minimum_unique_footprint_scales": 4,
+      "minimum_unique_footprint_rotations": 4
+    }
+  }
+}

@@ -8,14 +8,12 @@ import numpy as np
 import torch
 
 from ncls.data import SPLIT_NAMES
-from ncls.learning.data import LayerStackReferenceStore
-from ncls.learning.features import FEATURE_CONTRACT_ID
-from ncls.learning.models import create_model
-from ncls.learning.prediction import predict_legacy_ltc_k2_response
+from ncls.learning.data import ReferenceQueryStore
+from ncls.learning.pipelines import LearningPipeline, create_pipeline
 from ncls.learning.training.checkpoint import load_checkpoint
 from ncls.learning.training.config import TrainingConfig
 
-from .metrics import directional_relative_l1, response_loss, summarize
+from .metrics import summarize
 
 
 def tensor_batch(raw: dict[str, np.ndarray], device: torch.device) -> dict[str, torch.Tensor]:
@@ -25,7 +23,8 @@ def tensor_batch(raw: dict[str, np.ndarray], device: torch.device) -> dict[str, 
 @torch.no_grad()
 def evaluate_model(
     model: torch.nn.Module,
-    store: LayerStackReferenceStore,
+    pipeline: LearningPipeline,
+    store: ReferenceQueryStore,
     indices: np.ndarray,
     device: torch.device,
     *,
@@ -38,31 +37,22 @@ def evaluate_model(
         selected = indices[np.linspace(0, len(indices) - 1, max_query_groups, dtype=np.int64)]
     else:
         selected = indices
-    lights = torch.as_tensor(store.lights, dtype=torch.float32, device=device)
-    losses: list[float] = []
-    relative_parts: list[np.ndarray] = []
-    noise_parts: list[np.ndarray] = []
+    weighted_loss = 0.0
+    metric_parts: dict[str, list[np.ndarray]] = {}
     model.eval()
     for start in range(0, len(selected), batch_size):
         batch = tensor_batch(store.batch(selected[start : start + batch_size]), device)
-        prediction = predict_legacy_ltc_k2_response(model, batch, lights)
-        target = batch["mean"].float()
-        standard_error = batch["standard_error"].float()
-        losses.append(float(response_loss(prediction, target, standard_error)))
-        relative_parts.append(directional_relative_l1(prediction, target).cpu().numpy())
-        replica_noise = torch.sum(
-            torch.abs(batch["replica_mean_a"].float() - batch["replica_mean_b"].float()),
-            dim=(1, 2),
-        ) / torch.clamp(torch.sum(torch.abs(target), dim=(1, 2)), min=1e-8)
-        noise_parts.append(replica_noise.cpu().numpy())
-    relative = np.concatenate(relative_parts)
-    replica_noise = np.concatenate(noise_parts)
-    return {
+        prediction = pipeline.predict(model, batch, store, device)
+        count = len(batch["mean"])
+        weighted_loss += float(pipeline.training_loss(prediction, batch)) * count
+        for name, values in pipeline.metric_distributions(prediction, batch).items():
+            metric_parts.setdefault(name, []).append(np.asarray(values))
+    result: dict[str, Any] = {
         "query_group_count": int(len(selected)),
-        "loss": float(np.mean(losses)),
-        "relative_l1": summarize(relative),
-        "replica_relative_l1": summarize(replica_noise),
+        "loss": weighted_loss / len(selected),
     }
+    result.update({name: summarize(np.concatenate(parts)) for name, parts in metric_parts.items()})
+    return result
 
 
 def evaluate_checkpoint(
@@ -79,15 +69,20 @@ def evaluate_checkpoint(
     device = torch.device(device_name or ("cuda" if torch.cuda.is_available() else "cpu"))
     checkpoint = load_checkpoint(checkpoint_path, map_location=device)
     config = TrainingConfig.from_dict(checkpoint["training_config"])
-    store = LayerStackReferenceStore(dataset_path)
+    pipeline_id = str(checkpoint.get("pipeline_id", ""))
+    pipeline = create_pipeline(pipeline_id)
+    if checkpoint.get("pipeline_contract_sha256") != pipeline.descriptor.sha256:
+        raise ValueError("checkpoint learning pipeline contract is unsupported")
+    store = pipeline.open_store(str(dataset_path))
     if checkpoint["dataset_id"] != store.dataset.manifest.dataset_id:
         raise ValueError("checkpoint dataset_id does not match the requested dataset")
-    if checkpoint["feature_contract_id"] != FEATURE_CONTRACT_ID:
+    if checkpoint["feature_contract_id"] != pipeline.descriptor.feature_transform_id:
         raise ValueError("checkpoint feature contract is unsupported")
-    model = create_model(config.architecture_id, width=config.width).to(device)
+    model = pipeline.create_model(config.model_parameters).to(device)
     model.load_state_dict(checkpoint["model_state"])
     metrics = evaluate_model(
         model,
+        pipeline,
         store,
         store.split_indices[split],
         device,

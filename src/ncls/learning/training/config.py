@@ -1,19 +1,19 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from ncls.learning.models.legacy_ltc_k2_p1 import ARCHITECTURE_ID
+from ncls.learning.pipelines.legacy_ltc_k2 import PIPELINE_ID
 
 
 @dataclass(frozen=True)
 class TrainingConfig:
-    architecture_id: str = ARCHITECTURE_ID
-    representation_id: str = "legacy-ltc-k2@1"
-    width: int = 64
+    pipeline_id: str = PIPELINE_ID
+    research_stage: str = "deployment-regression"
+    model_parameters: Mapping[str, Any] = field(default_factory=lambda: {"width": 64})
     steps: int = 10000
     batch_size: int = 256
     learning_rate: float = 3e-4
@@ -25,16 +25,18 @@ class TrainingConfig:
     seed: int = 20260822
     device: str | None = None
     deterministic: bool = True
+    selection_metric: str = "relative_l1.median"
     schema_name: str = "ncls.training-config"
-    schema_version: int = 2
+    schema_version: int = 3
 
     def __post_init__(self) -> None:
-        if self.schema_name != "ncls.training-config" or self.schema_version != 2:
+        if self.schema_name != "ncls.training-config" or self.schema_version != 3:
             raise ValueError("unsupported training config schema")
-        if self.architecture_id != ARCHITECTURE_ID or self.representation_id != "legacy-ltc-k2@1":
-            raise ValueError("only the explicitly named legacy-ltc-k2 P1 baseline is currently registered")
+        if "@" not in self.pipeline_id or not self.research_stage or self.selection_metric.count(".") != 1:
+            raise ValueError("training config requires a versioned pipeline, research stage and selection metric")
+        if not isinstance(self.model_parameters, Mapping):
+            raise ValueError("model_parameters must be an object")
         positive = (
-            self.width,
             self.steps,
             self.batch_size,
             self.learning_rate,
@@ -46,7 +48,9 @@ class TrainingConfig:
             raise ValueError("training config contains invalid numeric values")
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        value = asdict(self)
+        value["model_parameters"] = dict(self.model_parameters)
+        return value
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), ensure_ascii=False, allow_nan=False, indent=2) + "\n"

@@ -91,7 +91,7 @@ def export_legacy_ltc_k2_checkpoint(
     if checkpoint["representation_id"] != "legacy-ltc-k2@1":
         raise ValueError("checkpoint does not target legacy-ltc-k2")
 
-    width = int(checkpoint["training_config"]["width"])
+    width = int(checkpoint["training_config"]["model_parameters"]["width"])
     model = create_model(checkpoint["architecture_id"], width=width)
     model.load_state_dict(checkpoint["model_state"], strict=True)
     model.eval()

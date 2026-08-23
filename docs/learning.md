@@ -2,6 +2,10 @@
 
 训练、direct fit、独立评测和部署导出是项目的长期功能层。具体 representation、网络结构、latent 获取方式和 loss 通过版本化配置与注册实现替换；更换研究候选不会删除或重定义这些生命周期。
 
+公共 runner 现在只依赖 `ncls.learning-pipeline@1`：它从 registry 取得 response reader、source adapter、feature/target transform、representation/model、latent inference、compiler、loss、metric suite 和 exporter 的版本化身份，再执行训练、validation、checkpoint 与独立评测。candidate-specific 实现负责把公共 response batch 变成自己的模型输入；runner 不再导入 LayerStack 或某个 backend 的预测函数。机器可读合同和配置 schema 分别位于 `src/ncls/learning/schemas/learning_pipeline_v1.schema.json` 与 `training_config_v3.schema.json`。
+
+当前唯一已注册项是 `legacy-ltc-k2-p1-deployment-regression@1`。它被明确标为 `deployment-regression`，只负责保留既有 compiler、MethodBundle、Slang 和 viewer 生命周期，不进入 E1 目标 neural evaluator 的候选排名。它是迁移适配而不是第二套 runner：E1 pipeline 建立并迁移部署回归后，删除条件是没有 checkpoint/export/viewer 调用仍需直接依赖 legacy feature/prediction 入口。
+
 ## 三条路径的边界
 
 Python 侧的工具生命周期仍分成三条路径，但必须记录拟合对象和结论范围：
@@ -62,13 +66,13 @@ p  = Proposal.pdf(proposal_parameters, wi)
 
 ## TrainingConfig
 
-所有超参数先解析为 `ncls.training-config@2`，并将完整 JSON 与 SHA-256 写入 run。最小示例：
+所有超参数先解析为 `ncls.training-config@3`，并将完整 JSON、pipeline contract 与各自 SHA-256 写入 run。最小示例：
 
 ```json
 {
-  "architecture_id": "legacy-ltc-k2-p1@2",
-  "representation_id": "legacy-ltc-k2@1",
-  "width": 64,
+  "pipeline_id": "legacy-ltc-k2-p1-deployment-regression@1",
+  "research_stage": "deployment-regression",
+  "model_parameters": {"width": 64},
   "steps": 10000,
   "batch_size": 256,
   "learning_rate": 0.0003,
@@ -80,8 +84,9 @@ p  = Proposal.pdf(proposal_parameters, wi)
   "seed": 20260822,
   "device": "cuda",
   "deterministic": true,
+  "selection_metric": "relative_l1.median",
   "schema_name": "ncls.training-config",
-  "schema_version": 2
+  "schema_version": 3
 }
 ```
 
@@ -110,6 +115,19 @@ run/
 ```
 
 checkpoint 保存 architecture、representation、feature contract、dataset ID、模型/optimizer/RNG 状态和 validation 证据。loader 总是先验证 sidecar hash。
+
+## E0 supervision audit
+
+训练前先对每个 H5 运行只读 audit；它只使用公共 `ReferenceDataset`，不会解码任何源材质 payload：
+
+```powershell
+conda run -n neural-shading ncls learn audit `
+  --dataset data\reference-responses\layer-stack-evaluator-pilot-v3.h5 `
+  --output artifacts\research\supervision-audit\<dataset-id> `
+  --gate configs\research\e0-supervision-gates-v1.json
+```
+
+输出包含 `audit.json`、中文 `report.md`、只由 train split 拟合且带内容哈希的 `target_transform_statistics.json`，以及可选的 `gate_result.json`。audit 检查 state/source/split 泄漏、train/validation/test 方向表复用、proposal、peak/掠射/透射/footprint profile、reference standard error 与 replica 差异、response 长尾、积分能量和 top-energy 集中度。validation/test 不参与 transform scale、均值、方差或 codebook 统计。
 
 ## TensorBoard
 

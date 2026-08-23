@@ -132,11 +132,24 @@ target transform 的统计量只能由 train split 生成并带 hash 保存。�
 
 ## 9. 最近可执行任务
 
-1. 为 v3 HDF5 实现 supervision-audit，输出到 `artifacts/research/supervision-audit/<dataset-id>/`；
+### 2026-08-24 E0 pilot 审计结论
+
+四个现有 pilot H5 已通过合同与内容哈希，但都没有通过 `configs/research/e0-supervision-gates-v1.json`。稳定发现如下：
+
+- 四族的 `split_group_id`、source hash 与父子状态都没有跨 split 泄漏；
+- 四族都在 train/validation/test 复用完全相同的 `wi` 表和 `wo` 集，因此不能把这些 pilot 当作连续方向泛化证据；
+- 当前 proposal 只有均匀立体角。MERL 与 OpenPBR 的 top 1% 能量占比 p95 分别约为 `0.836` 与 `0.982`，但 peak 最近邻方向角 p95 仍约为 `8.73°` 与 `12.25°`，说明窄峰监督明显不足；
+- LayerStack 的 replica normalized L1 p95 约为 `1.252`，相对 standard error p95 约为 `0.583`，未达到冻结 gate 的 `0.1`；正式监督必须增加自适应样本并针对高能量/窄峰查询诊断；
+- OpenPBR pilot 虽含上下半球各一半方向，但没有临界透射 probe；MaterialX pilot 只有一个 footprint 尺度与一个轴向，没有 footprint 旋转、seam 或 zoom/LOD 证据。
+
+因此这些文件只保留为 provider/合同 smoke，E1 不得直接消费。下一步先让 query plan 支持按 `wo` 的 peak-aware 方向与 split 独立 probe，再生成最小的 targeted H5；不能用扩大同一均匀表代替修正 proposal。完整运行结果位于 `artifacts/research/supervision-audit/<dataset-id>/`。
+
+1. 扩展 query plan，使每个 `wo` 可以拥有独立的 `wi` proposal，并让 train/validation/test 使用互不重合但测度明确的方向 probe；
 2. 对 LayerStack 极低 roughness、MERL 高光材质和 OpenPBR transmission 做高分辨率 peak probe；
 3. 把默认均匀 proposal 扩展成带显式 mixture component 的训练 proposal，并保持固定 validation/test proposal；
-4. 用重新生成的 LayerStack v3 数据完成 E1 的方向编码、target transform 与 evaluator 容量比较；
-5. 在同一公共 reader 上把 MERL/OpenPBR 加入 target-visible shared decoder 实验；
-6. evaluator 成形后再进入 MaterialX spatial latent、sampler 和 integration。
+4. 针对 LayerStack reference noise 调整自适应采样后，只重生成最小必要 H5，并重新执行合同、hash、split 与 gate；
+5. 用通过 E0 的 LayerStack v3 数据完成 E1 的方向编码、target transform 与 evaluator 容量比较；
+6. 在同一公共 reader 上把 MERL/OpenPBR 加入 target-visible shared decoder 实验；
+7. evaluator 成形后再进入 MaterialX spatial latent、sampler 和 integration。
 
 单次数据、audit、训练和报告都位于 `data/reference-responses/` 或 `artifacts/`，不进入根 Git。本文只维护稳定结论、实验依赖和验收逻辑。

@@ -13,12 +13,8 @@ import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from ncls.learning.data import LayerStackReferenceStore
 from ncls.learning.evaluation.evaluator import evaluate_model, tensor_batch
-from ncls.learning.evaluation.metrics import response_loss
-from ncls.learning.features import FEATURE_CONTRACT, FEATURE_CONTRACT_ID
-from ncls.learning.models import create_model
-from ncls.learning.prediction import predict_legacy_ltc_k2_response
+from ncls.learning.pipelines import LearningPipeline, create_pipeline
 
 from .checkpoint import CHECKPOINT_FORMAT, CHECKPOINT_VERSION, save_checkpoint_atomic
 from .config import TrainingConfig
@@ -50,7 +46,8 @@ def _checkpoint_payload(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     config: TrainingConfig,
-    store: LayerStackReferenceStore,
+    pipeline: LearningPipeline,
+    store,
     *,
     step: int,
     validation_metrics: dict[str, Any] | None,
@@ -59,9 +56,12 @@ def _checkpoint_payload(
     return {
         "format_name": CHECKPOINT_FORMAT,
         "format_version": CHECKPOINT_VERSION,
-        "architecture_id": config.architecture_id,
-        "representation_id": config.representation_id,
-        "feature_contract_id": FEATURE_CONTRACT_ID,
+        "pipeline_id": pipeline.descriptor.pipeline_id,
+        "pipeline_contract": pipeline.descriptor.to_dict(),
+        "pipeline_contract_sha256": pipeline.descriptor.sha256,
+        "architecture_id": pipeline.descriptor.architecture_id,
+        "representation_id": pipeline.descriptor.representation_id,
+        "feature_contract_id": pipeline.descriptor.feature_transform_id,
         "dataset_id": store.dataset.manifest.dataset_id,
         "training_config": config.to_dict(),
         "training_config_sha256": config.resolved_sha256,
@@ -97,32 +97,39 @@ def train(
     if config.deterministic:
         torch.use_deterministic_algorithms(True)
     device = torch.device(config.device or ("cuda" if torch.cuda.is_available() else "cpu"))
-    store = LayerStackReferenceStore(dataset_path)
+    pipeline = create_pipeline(config.pipeline_id)
+    if config.research_stage != pipeline.descriptor.research_role:
+        raise ValueError("training config research_stage does not match the registered pipeline role")
+    store = pipeline.open_store(str(dataset_path))
     if len(store.split_indices["train"]) == 0 or len(store.split_indices["validation"]) == 0:
         raise ValueError("training requires nonempty train and validation family splits")
-    model = create_model(config.architecture_id, width=config.width).to(device)
+    model = pipeline.create_model(config.model_parameters).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=config.learning_rate,
         weight_decay=config.weight_decay,
     )
-    lights = torch.as_tensor(store.lights, dtype=torch.float32, device=device)
     created_at = datetime.now(timezone.utc).isoformat()
     run_id = hashlib.sha256(
         f"{store.dataset.manifest.dataset_id}\0{config.resolved_sha256}\0{created_at}".encode("utf-8")
     ).hexdigest()
     manifest: dict[str, Any] = {
         "format_name": "ncls.training-run",
-        "format_version": 1,
+        "format_version": 2,
         "run_id": run_id,
         "status": "running",
         "created_at": created_at,
         "completed_at": None,
         "source_git_commit": _git_commit(),
         "dataset_id": store.dataset.manifest.dataset_id,
-        "architecture_id": config.architecture_id,
-        "representation_id": config.representation_id,
-        "feature_contract": FEATURE_CONTRACT,
+        "pipeline_id": pipeline.descriptor.pipeline_id,
+        "candidate_id": pipeline.descriptor.candidate_id,
+        "research_role": pipeline.descriptor.research_role,
+        "pipeline_contract": pipeline.descriptor.to_dict(),
+        "pipeline_contract_sha256": pipeline.descriptor.sha256,
+        "architecture_id": pipeline.descriptor.architecture_id,
+        "representation_id": pipeline.descriptor.representation_id,
+        "feature_contract": dict(pipeline.feature_contract),
         "training_config_sha256": config.resolved_sha256,
         "parameter_count": sum(parameter.numel() for parameter in model.parameters()),
         "device": str(device),
@@ -144,12 +151,8 @@ def train(
             indices = store.sample_batch_indices("train", config.batch_size, np_rng)
             batch = tensor_batch(store.batch(indices), device)
             optimizer.zero_grad(set_to_none=True)
-            prediction = predict_legacy_ltc_k2_response(model, batch, lights)
-            loss = response_loss(
-                prediction,
-                batch["mean"].float(),
-                batch["standard_error"].float(),
-            )
+            prediction = pipeline.predict(model, batch, store, device)
+            loss = pipeline.training_loss(prediction, batch)
             loss.backward()
             gradient_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip)
             optimizer.step()
@@ -161,6 +164,7 @@ def train(
             if should_validate:
                 latest_validation = evaluate_model(
                     model,
+                    pipeline,
                     store,
                     store.split_indices["validation"],
                     device,
@@ -170,9 +174,13 @@ def train(
                 record = {"step": step, **latest_validation}
                 validation_history.append(record)
                 writer.add_scalar("validation/loss", latest_validation["loss"], step)
-                for name, value in latest_validation["relative_l1"].items():
-                    writer.add_scalar(f"validation/relative_l1_{name}", value, step)
-                score = float(latest_validation["relative_l1"]["median"])
+                for metric_name, summary in latest_validation.items():
+                    if not isinstance(summary, dict):
+                        continue
+                    for summary_name, value in summary.items():
+                        writer.add_scalar(f"validation/{metric_name}_{summary_name}", value, step)
+                metric_name, summary_name = config.selection_metric.split(".", 1)
+                score = float(latest_validation[metric_name][summary_name])
                 if score < best_score:
                     best_score = score
                     best_hash = save_checkpoint_atomic(
@@ -181,6 +189,7 @@ def train(
                             model,
                             optimizer,
                             config,
+                            pipeline,
                             store,
                             step=step,
                             validation_metrics=latest_validation,
@@ -195,6 +204,7 @@ def train(
                         model,
                         optimizer,
                         config,
+                        pipeline,
                         store,
                         step=step,
                         validation_metrics=latest_validation,
@@ -209,7 +219,10 @@ def train(
         manifest["status"] = "complete"
         manifest["completed_at"] = datetime.now(timezone.utc).isoformat()
         manifest["seconds"] = time.perf_counter() - start_time
-        manifest["best_validation_relative_l1_median"] = best_score
+        manifest["best_validation"] = {
+            "selection_metric": config.selection_metric,
+            "value": best_score,
+        }
         manifest["checkpoints"] = {
             "best": {"uri": "checkpoints/best.pt", "sha256": best_hash},
             "last": {"uri": "checkpoints/last.pt", "sha256": last_hash},
