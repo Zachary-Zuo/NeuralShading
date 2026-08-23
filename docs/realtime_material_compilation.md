@@ -114,10 +114,11 @@ f = EvaluateMLP(h, wi)
 同一个 neural evaluator 可以配合不同资产生成方式，它们对应不同的研究与工业价值：
 
 1. **逐资产优化 latent**：每个材质 cook 时优化自己的 latent；适合测量表示容量和获得质量上界，但编辑代价可能较高。
-2. **feed-forward compiler**：共享编译网络从原生参数、图或资源直接生成 latent；适合未见材质和即时参数编辑，是项目希望最终达到的形态。
-3. **compiler + optional refinement**：先即时生成 latent，发布 cook 时再短程优化；兼顾交互工作流和最终资产质量。
+2. **target-tensor encoder**：把已生成的完整 reference response/多通道 texture tensor 输入 encoder 得到 latent，烘焙后丢弃 encoder；它可能提高压缩优化效率和确定性，但仍需先取得完整目标数据。
+3. **feed-forward source compiler**：共享编译网络从原生参数、图或资源直接生成 latent，不读取完整 reference tensor；适合未见材质和即时参数编辑，是项目希望最终达到的形态。
+4. **source compiler + optional refinement**：先即时生成 latent，发布 cook 时再短程优化；兼顾交互工作流和最终资产质量。
 
-因此“单材质能被一个 MLP 拟合”只证明函数容量；“共享 decoder + 每材质 latent”证明统一运行时表示；“未见材质由 compiler 直接生成 latent”才证明通用编译和编辑工作流。实验必须把这三层结论分开。
+因此“单材质能被一个 MLP 拟合”只证明函数容量；“共享 decoder + 每材质 latent”证明统一运行时表示；“target encoder 更快地产生 latent”证明的是压缩算法；“未见材质由不读取完整 GT 的 source compiler 直接生成 latent”才证明通用编译和编辑工作流。实验必须把这四层结论分开。
 
 ## Deferred、path tracing 与 UE 的调用方式
 
@@ -186,7 +187,11 @@ Neural Dynamic GI 对本项目最有价值的不是“它也使用网络”，�
 - mip、tile、virtual texture、缓存和常规 shader pipeline 仍然存在，神经网络只是其中的解码执行单元；
 - 资产专属 latent 与共享 decoder 分开版本化，便于跨场景和跨引擎部署。
 
+更准确地说，动态 lightmap 的核心是压缩查询域 `(t, u, v) → RGB`：空间邻近 texel 的时间轨迹相关，而空间维和时间维也不必具有相同频率。NDGI 用 `uv`、`ut`、`vt` 平面和低分辨率 `uvt` 体积显式分配这些相关性，再由小网络随机访问解码。项目经验还提出另一个可验证假设：把每个 texel 的 26 个 RGB 时刻视为 78 维向量，以 K-means++ 建立共享原型字典；每个 texel 只保存两个原型索引和一个凸混合权重，查询时间 `t` 时读取两组 RGB 并混合。它不是 NDGI 论文的方法，而是说明“高维查询不等于每一维都需同等高频容量”。完整编码过程已固化在[问题定义](research/problem_definition.md)中；该启发应作为 dictionary oracle 与 neural factorization 做同 byte/同时间比较，而不能只凭经验认定更优。
+
 材质问题在这个模式上增加了新的难点：查询不仅依赖位置和 footprint，还依赖 `wo/wi`；evaluator 之外还要构造匹配的 sampling distribution；环境光和面积光需要对方向函数积分。因此 NDGI 是系统模板和工程先验，不是可直接套用的材质解法。
+
+对这一问题本质、可证伪假设、相关工作和目标数据的详细整理统一维护在[当前研究入口](research/README.md)，不再另存不可修改的日期快照。
 
 ## 为什么 path tracing 还需要 `sample` 和 `pdf`
 

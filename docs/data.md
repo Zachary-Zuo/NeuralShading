@@ -2,9 +2,9 @@
 
 ## 它是什么
 
-`ncls.reference-dataset@2` 是 neural evaluator 建模、direct fit、编译器训练和回归测试共用的方向响应数据合同。每个 tile 对应一个源材质状态与一个观察方向，保存全部入射光方向上的 `response_cos = f(wo, wi) * max(dot(Ns, wi), 0)`、统计方差、总样本数和可选的独立随机流均值。
+reference 响应的采集、验证、版本化和读取是项目的长期功能层，不依赖最终选择哪一种 neural representation。当前已实现的序列化合同是 `ncls.reference-dataset@2`；它服务 LayerStack 材质族的 neural evaluator 建模、direct fit、编译器训练和回归测试。每个 tile 对应一个源材质状态与一个观察方向，保存全部入射光方向上的 `response_cos = f(wo, wi) * max(dot(Ns, wi), 0)`、统计方差、总样本数和可选的独立随机流均值。
 
-它不包含任何 neural material backend 的状态、latent 或网络参数。evaluator、compiler 或 sampler 发生变化时，只要 reference 和源材质语义没有变化，就不需要重新采集。
+它不包含任何 neural material backend 的状态、latent 或网络参数。evaluator、compiler 或 sampler 发生变化时，只要 reference、源材质语义和查询采样仍满足新实验需要，就不需要重新采集。v2 schema 仍显式依赖 `LayerStackIR`，因此不能把它称为跨源材质族的最终公共合同；其他材质族接入统一训练前，需要设计保留各族原生状态追溯、但不硬编码某个 canonical IR 的后继版本。
 
 它也不是源材质资产合同。源材质的原生参数、图、程序、纹理、测量表和其他资源必须独立保存并可追溯；本数据集只记录 reference 对这些源材质状态执行查询后得到的监督。完整边界见 `docs/material_scope.md`。
 

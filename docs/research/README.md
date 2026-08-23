@@ -1,25 +1,22 @@
-# 研究过程文档
+# 当前研究入口
 
-本目录保存项目早期问题推导、可行性分析和任务规划。带日期的三份文档从 Git 历史恢复，正文保留当时的 `teacher`、`oracle`、固定解析 closure、旧 claim 和旧 kill test，用于追溯研究方向如何形成；每份文件顶部已加历史快照说明，它们不覆盖当前稳定合同。
+本目录只维护仍然指导当前研究的分析，不再把已经失效的方案、排期和验收条件以“历史快照”长期留在主线文档中。研究方向改变时，直接修改或删除这里的内容；需要追溯旧判断时使用 Git 历史。
 
-当前方向已经从“网络输出固定解析 closure”收敛为 neural material program：
+当前研究围绕一个问题展开：如何把保持原生语义的源材质，编译成可随机访问、运行成本有界的 neural material program。目标运行时由 `prepare()` 形成可复用的 view-conditioned state，再由小型 MLP 直接执行 `evaluate(wo, wi)`。完整接口定义仍以 [`docs/realtime_material_compilation.md`](../realtime_material_compilation.md) 为准。
 
-- 小型 MLP 直接实现 `evaluate(wo, wi)`；
-- `compile_material` 生成 material/spatial latent 与共享 decoder 所需资产；
-- `prepare` 获取、过滤并编码 latent、footprint 和 `wo`，形成可复用 state；
-- path-tracing profile 在 evaluator 成形后增加匹配且 PDF 可计算的 sampler；
-- deferred 环境/面光积分是后续独立建模问题；
-- 当前先做 evaluator 模型定义、单材质容量、共享 decoder + latent、compiler 泛化和 Slang 最小部署，不提前做多灯、PT 方差或 UE 系统 kill test。
+## 当前文档
 
-当前问题定义与执行路线以以下文档为准：
+- [问题本质、表示假设与边界](problem_definition.md)：把任务说成一个受运行时约束的条件函数压缩问题，分析 `uv/footprint/wo/wi/material state` 各维的相关性，区分 target-tensor encoder、autodecoder 与 source compiler，整理长尾目标变换，以及用户提供的时序 lightmap 字典压缩经验如何迁移。
+- [相关工作与可迁移机制](prior_art.md)：按“解决什么问题—怎么解决—本项目具体参考什么—哪些假设不能照搬”整理学术界和工业界的一手资料。
+- [目标材质数据、监督审计与实验路线](data_and_experiments.md)：审计现有 reference package 和 `ReferenceDataset`，确定新增数据的优先级、下一版查询合同，以及从单材质容量到共享 decoder、compiler 和空间 LOD 的实验顺序。
 
-- [实时材质编译：问题与解决路线](../realtime_material_compilation.md)
-- [项目目标架构](../architecture.md)
-- [散射后端合同](../contracts/scattering_backend.md)
-- [源材质族、reference 与统一神经材质程序](../material_scope.md)
+## 文档维护规则
 
-历史文档：
+1. 只保留对当前目标、当前候选方法或当前实验判据仍有作用的内容。
+2. 已被实验否定或被目标变化取代的结论直接删改；不在正文叠加“旧说法不再适用”的注释层。
+3. 文献条目必须回答“本项目具体参考什么”，不能只列标题。
+4. 用户经验、代码审计结论、论文事实和项目假设要分开标明，避免把经验观察写成已经发表或已经实测的事实。
+5. 数据、方法和部署结论分层：材质语料是否丰富、表示是否有容量、compiler 是否泛化、shader 是否高效，是四个不同问题。
+6. `docs/data.md`、`docs/learning.md` 和 `docs/contracts/` 描述长期功能与可执行合同；研究候选、实验顺序和阶段性判断留在本目录。只有实现或公共合同的客观事实改变时，才同步修改这些稳定功能文档。
 
-- [P0 任务清单](idea-neural-layered-materials-P0-任务清单-2026-08-21.md)
-- [神经闭包代数方向可行性深评](idea-neural-layered-materials-analysis-2026-08-21.md)
-- [SIGGRAPH 研究调研](idea-neural-layered-materials-siggraph-research-2026-08-21.md)
+最近一次一手资料核对日期：2026-08-24。

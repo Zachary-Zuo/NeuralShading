@@ -56,6 +56,6 @@ conda run -n neural-shading ncls bundle export-legacy-ltc-k2 `
 - [稳定合同](docs/contracts/)
 - [分层测试](TESTING.md)
 - [仓库边界](docs/repository_policy.md)
-- [早期调研与研究过程](docs/research/README.md)
+- [当前研究问题、相关工作与实验路线](docs/research/README.md)
 
 Falcor 8.0、pbrt-v4、OpenPBR、openpbr-bsdf、GLM 和 MaterialX 位于被 Git 忽略的 `external/` 独立克隆，固定提交见 `AGENTS.md`。本项目源码不会把未说明修改留在上游工作树。
