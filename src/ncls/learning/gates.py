@@ -49,6 +49,15 @@ def evaluate_supervision_gate(audit: Mapping[str, Any], gate: Mapping[str, Any])
     for role_name in base["required_query_roles"]:
         count = int(split["query_role_counts"].get(role_name, 0))
         check(f"query_role.nonempty.{role_name}", count, {"minimum": 1}, count >= 1)
+    required_query_profile = base.get("required_query_profile_id")
+    if required_query_profile is not None:
+        actual = list(map(str, audit["dataset"]["query_profile_ids"]))
+        check(
+            "dataset.query_profile_id",
+            actual,
+            {"contains": str(required_query_profile)},
+            str(required_query_profile) in actual,
+        )
 
     grids = audit["coverage"]["direction_grid_independence"]
     maximum_grid_overlap = int(base["maximum_cross_partition_direction_grid_overlap"])
@@ -159,6 +168,15 @@ def evaluate_supervision_gate(audit: Mapping[str, Any], gate: Mapping[str, Any])
                 required_state_profile,
                 actual == [str(required_state_profile)],
             )
+        required_surface_profile = requirements.get("required_surface_profile_id")
+        if required_surface_profile is not None:
+            actual = str(audit["dataset"].get("generation_config", {}).get("surface_profile_id", ""))
+            check(
+                f"family.{family_id}.surface_profile_id",
+                actual,
+                str(required_surface_profile),
+                actual == str(required_surface_profile),
+            )
         minimum_source_states = requirements.get("minimum_source_state_count")
         if minimum_source_states is not None:
             actual = int(sum(audit["state_distribution"][family_id].values()))
@@ -188,6 +206,15 @@ def evaluate_supervision_gate(audit: Mapping[str, Any], gate: Mapping[str, Any])
                 actual,
                 {"minimum": int(minimum_rotations)},
                 actual >= int(minimum_rotations),
+            )
+        minimum_seam_axes = requirements.get("minimum_uv_seam_opposite_edge_pair_axes")
+        if minimum_seam_axes is not None:
+            actual = int(audit["coverage"]["uv_seam"]["opposite_edge_pair_axis_count"])
+            check(
+                f"family.{family_id}.uv_seam_opposite_edge_pair_axes",
+                actual,
+                {"minimum": int(minimum_seam_axes)},
+                actual >= int(minimum_seam_axes),
             )
         minimum_transmission = requirements.get("minimum_adversarial_wi_transmission_fraction")
         if minimum_transmission is not None:

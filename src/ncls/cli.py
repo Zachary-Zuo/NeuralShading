@@ -85,6 +85,7 @@ def _generate_dataset(args: argparse.Namespace) -> int:
         light_count=args.lights,
         spatial_sample_count=args.spatial_samples,
         footprint_width=args.footprint_width,
+        surface_profile_id=args.surface_profile,
         seed=args.seed,
         query_profile_id=args.query_profile,
     )
@@ -279,6 +280,11 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--lights", type=int, default=128)
     generate.add_argument("--spatial-samples", type=int, default=1)
     generate.add_argument("--footprint-width", type=float, default=1.0 / 4096.0)
+    generate.add_argument(
+        "--surface-profile",
+        choices=("ncls.constant-footprint@1", "ncls.e0-footprint-scale-rotation-seam@1"),
+        default="ncls.constant-footprint@1",
+    )
     generate.add_argument("--samples-per-replica", type=int, default=64)
     generate.add_argument("--query-group-batch", type=int, default=64)
     generate.add_argument("--seed", type=int, default=20260822)

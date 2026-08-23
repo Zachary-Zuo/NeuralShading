@@ -22,9 +22,9 @@ from ncls.data.directions import (
     equal_area_hemisphere,
     equal_area_sphere,
     peak_grazing_mixture_query,
-    stratified_uv,
     stratified_view_directions,
 )
+from ncls.data.surfaces import uv_surface_samples
 from ncls.paths import PROJECT_ROOT
 from ncls.source_materials.identity import sha256_file
 
@@ -144,19 +144,11 @@ class BaseProvider:
         if self.descriptor.position_kind == PositionKind.CONSTANT:
             return (SurfaceSample(),)
         if self.descriptor.position_kind == PositionKind.UV:
-            uv_values = stratified_uv(
+            return uv_surface_samples(
                 self.config.spatial_sample_count,
+                self.config.footprint_width,
                 self.config.seed ^ int(state.state_id[-16:], 16),
-            )
-            width = self.config.footprint_width
-            return tuple(
-                SurfaceSample(
-                    PositionKind.UV,
-                    uv=(float(uv[0]), float(uv[1])),
-                    uv_dx=(width, 0.0),
-                    uv_dy=(0.0, width),
-                )
-                for uv in uv_values
+                self.config.surface_profile_id,
             )
         raise NotImplementedError("surface-point providers must define their own surface sampler")
 

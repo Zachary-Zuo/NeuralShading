@@ -113,6 +113,8 @@ pbrt coated package用于独立验证 LayerStack reference，不是一个独立�
 - `uv`：`uv + uv_dx/uv_dy` 定义纹理位置和 footprint；
 - `surface-point`：为以后需要真实表面点的 reference 保留。
 
+`generation_config.surface_profile_id` 记录 surface query 的版本化生成语义。当前默认 `ncls.constant-footprint@1` 使用单一轴向 footprint；MaterialX E0 使用 `ncls.e0-footprint-scale-rotation-seam@1`，至少提供 4 档尺度、4 个旋转以及 U/V 两轴 seam 两侧的配对查询。该 ID 只是 provenance；验收必须从实际 `uv/uv_dx/uv_dy` 重算覆盖，不能只核对字符串。
+
 持久化响应统一为：
 
 ```text

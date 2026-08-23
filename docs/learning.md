@@ -124,10 +124,10 @@ checkpoint 保存 architecture、representation、feature contract、dataset ID�
 conda run -n neural-shading ncls learn audit `
   --dataset data\reference-responses\layer-stack-v4.h5 `
   --output artifacts\research\supervision-audit\<dataset-id> `
-  --gate configs\research\e0-supervision-gates-v4.json
+  --gate configs\research\e0-supervision-gates-v5.json
 ```
 
-输出包含 `audit.json`、中文 `report.md`、只由 source train × query train 拟合且带内容哈希的 `target_transform_statistics.json`，以及可选的 `gate_result.json`。`ncls.supervision-audit@4` 检查 source state/asset split 泄漏、四种 query role 的完整性与方向表复用、proposal、按 query role 的 peak/掠射/透射/footprint 覆盖、reference standard error 与 replica 差异、response 长尾、积分能量和 top-energy 集中度。peak 位置按原始 response 幅值确定，top-energy 仍使用正确的积分权重，二者不能混用。noise 除全局分位数外，还按 state、source split、query role 和积分能量分档，并把最坏 query-group relative SE 与 replica 差异作为独立 gate；正式采样预算应由这些分档决定，不能因总体 p95 较低就掩盖少数高方差状态，也不能无差别提高全部 H5 的样本数。validation/test/adversarial 不参与 transform scale、均值、方差或 codebook 统计。
+输出包含 `audit.json`、中文 `report.md`、只由 source train × query train 拟合且带内容哈希的 `target_transform_statistics.json`，以及可选的 `gate_result.json`。`ncls.supervision-audit@5` 检查 source state/asset split 泄漏、四种 query role 的完整性与方向表复用、版本化 query profile、按 query role 的 peak/掠射/透射覆盖、reference standard error 与 replica 差异、response 长尾、积分能量和 top-energy 集中度。对 UV 数据，它从落盘的 `uv/uv_dx/uv_dy` 重算 footprint 尺度与旋转，并检查 U/V seam 两侧配对，不根据 proposal 文本猜测 spatial 覆盖。peak 位置按原始 response 幅值确定，top-energy 仍使用正确的积分权重，二者不能混用。noise 除全局分位数外，还按 state、source split、query role 和积分能量分档，并把最坏 query-group relative SE 与 replica 差异作为独立 gate；正式采样预算应由这些分档决定，不能因总体 p95 较低就掩盖少数高方差状态，也不能无差别提高全部 H5 的样本数。validation/test/adversarial 不参与 transform scale、均值、方差或 codebook 统计。
 
 ## TensorBoard
 

@@ -9,12 +9,12 @@ from typing import Any, Iterable
 
 import numpy as np
 
-from ncls.data import QUERY_ROLE_NAMES, ReferenceDataset, SPLIT_NAMES
+from ncls.data import PositionKind, QUERY_ROLE_NAMES, ReferenceDataset, SPLIT_NAMES
 from ncls.learning.gates import evaluate_supervision_gate, load_supervision_gate
 
 
 AUDIT_FORMAT = "ncls.supervision-audit"
-AUDIT_VERSION = 4
+AUDIT_VERSION = 5
 TRANSFORM_STATISTICS_FORMAT = "ncls.target-transform-statistics"
 TRANSFORM_STATISTICS_VERSION = 2
 _SPLIT_CODES = {name: index for index, name in enumerate(SPLIT_NAMES)}
@@ -160,6 +160,53 @@ def _cross_partition_hash_audit(
             for first_index, first in enumerate(names)
             for second in names[first_index + 1 :]
         },
+    }
+
+
+def _footprint_scale_keys(length_x: np.ndarray, length_y: np.ndarray) -> set[tuple[float, float]]:
+    """以 log2 尺度量化 footprint，避免旋转后的 float32 舍入被误计为新尺度。"""
+
+    result: set[tuple[float, float]] = set()
+    for x_value, y_value in zip(length_x, length_y, strict=True):
+        if x_value <= 0.0 and y_value <= 0.0:
+            continue
+        result.add((
+            round(float(np.log2(max(x_value, np.finfo(np.float64).tiny))), 4),
+            round(float(np.log2(max(y_value, np.finfo(np.float64).tiny))), 4),
+        ))
+    return result
+
+
+def _uv_seam_coverage(uv: np.ndarray, *, edge_threshold: float = 0.01) -> dict[str, Any]:
+    """检查 U/V 两轴是否各有横向坐标匹配的 seam 两侧 query。"""
+
+    values = np.asarray(uv, dtype=np.float64)
+    transverse_tolerance = 1e-5
+
+    def axis_coverage(axis: int) -> dict[str, Any]:
+        transverse_axis = 1 - axis
+        low = values[values[:, axis] <= edge_threshold]
+        high = values[values[:, axis] >= 1.0 - edge_threshold]
+        matched = bool(
+            len(low)
+            and len(high)
+            and np.min(np.abs(low[:, None, transverse_axis] - high[None, :, transverse_axis]))
+            <= transverse_tolerance
+        )
+        return {
+            "low_edge_count": int(len(low)),
+            "high_edge_count": int(len(high)),
+            "matched_opposite_edge_pair": matched,
+        }
+
+    by_axis = {"u": axis_coverage(0), "v": axis_coverage(1)}
+    return {
+        "edge_threshold": edge_threshold,
+        "transverse_tolerance": transverse_tolerance,
+        "by_axis": by_axis,
+        "opposite_edge_pair_axis_count": sum(
+            int(value["matched_opposite_edge_pair"]) for value in by_axis.values()
+        ),
     }
 
 
@@ -469,29 +516,55 @@ def audit_supervision(
             for item in proposals
             if int(item["by_query_role"]["adversarial_probe"]) > 0
         ).lower()
+        wi = np.asarray(batch["wi"], dtype=np.float64)
+        wo = np.asarray(batch["wo"], dtype=np.float64)
+        all_position_kinds = np.asarray(dataset.stream["queries/position_kind"], dtype=np.uint8)
+        all_uv = np.asarray(dataset.stream["queries/uv"], dtype=np.float64)
+        all_uv_dx = np.asarray(dataset.stream["queries/uv_dx"], dtype=np.float64)
+        all_uv_dy = np.asarray(dataset.stream["queries/uv_dy"], dtype=np.float64)
+        uv_mask = all_position_kinds == int(PositionKind.UV)
+        uv = all_uv[uv_mask]
+        uv_dx = all_uv_dx[uv_mask]
+        uv_dy = all_uv_dy[uv_mask]
+        footprint_length_x = np.linalg.norm(uv_dx, axis=1)
+        footprint_length_y = np.linalg.norm(uv_dy, axis=1)
+        footprint_dot = np.sum(uv_dx * uv_dy, axis=1)
+        footprint_scale_keys = _footprint_scale_keys(footprint_length_x, footprint_length_y)
+        footprint_rotations = np.mod(np.arctan2(uv_dx[:, 1], uv_dx[:, 0]), np.pi)
+        footprint_rotation_keys = {
+            round(float(value), 6)
+            for value, length in zip(footprint_rotations, footprint_length_x, strict=True)
+            if length > 0.0
+        }
+        adversarial_uv_mask = uv_mask & (query_roles == _QUERY_ROLE_CODES["adversarial_probe"])
+        adversarial_uv_dx = all_uv_dx[adversarial_uv_mask]
+        adversarial_uv_dy = all_uv_dy[adversarial_uv_mask]
+        adversarial_length_x = np.linalg.norm(adversarial_uv_dx, axis=1)
+        adversarial_length_y = np.linalg.norm(adversarial_uv_dy, axis=1)
+        adversarial_rotations = {
+            round(float(value), 6)
+            for value, length in zip(
+                np.mod(np.arctan2(adversarial_uv_dx[:, 1], adversarial_uv_dx[:, 0]), np.pi),
+                adversarial_length_x,
+                strict=True,
+            )
+            if length > 0.0
+        }
+        adversarial_scales = _footprint_scale_keys(adversarial_length_x, adversarial_length_y)
+        seam_coverage = _uv_seam_coverage(uv) if len(uv) else {
+            "edge_threshold": 0.01,
+            "transverse_tolerance": 1e-5,
+            "by_axis": {
+                "u": {"low_edge_count": 0, "high_edge_count": 0, "matched_opposite_edge_pair": False},
+                "v": {"low_edge_count": 0, "high_edge_count": 0, "matched_opposite_edge_pair": False},
+            },
+            "opposite_edge_pair_axis_count": 0,
+        }
         adversarial_presence = {
             "peak": "peak" in adversarial_proposal_text or "microfacet" in adversarial_proposal_text,
             "grazing": "graz" in adversarial_proposal_text,
             "transmission_critical": "transmission" in adversarial_proposal_text or "critical" in adversarial_proposal_text,
-            "spatial_footprint_rotation": "footprint" in adversarial_proposal_text and "rotation" in adversarial_proposal_text,
-        }
-        wi = np.asarray(batch["wi"], dtype=np.float64)
-        wo = np.asarray(batch["wo"], dtype=np.float64)
-        uv_dx = np.asarray(batch["uv_dx"], dtype=np.float64)
-        uv_dy = np.asarray(batch["uv_dy"], dtype=np.float64)
-        footprint_length_x = np.linalg.norm(uv_dx, axis=1)
-        footprint_length_y = np.linalg.norm(uv_dy, axis=1)
-        footprint_dot = np.sum(uv_dx * uv_dy, axis=1)
-        footprint_scales = np.stack((footprint_length_x, footprint_length_y), axis=1)
-        footprint_scale_keys = {
-            tuple(np.round(item, decimals=12).tolist()) for item in footprint_scales
-            if np.any(item > 0.0)
-        }
-        footprint_rotations = np.mod(np.arctan2(uv_dx[:, 1], uv_dx[:, 0]), np.pi)
-        footprint_rotation_keys = {
-            round(float(value), 10)
-            for value, length in zip(footprint_rotations, footprint_length_x, strict=True)
-            if length > 0.0
+            "spatial_footprint_rotation": len(adversarial_scales) >= 2 and len(adversarial_rotations) >= 2,
         }
 
         audit: dict[str, Any] = {
@@ -623,6 +696,7 @@ def audit_supervision(
                 "footprint_axis_dot": _distribution(footprint_dot),
                 "unique_footprint_scale_count": len(footprint_scale_keys),
                 "unique_footprint_rotation_count": len(footprint_rotation_keys),
+                "uv_seam": seam_coverage,
             },
             "target_transform_statistics": {
                 "uri": "target_transform_statistics.json",

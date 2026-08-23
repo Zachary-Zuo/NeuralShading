@@ -69,7 +69,7 @@ def test_supervision_audit_is_family_neutral_and_transform_stats_are_train_only(
     result = audit_supervision(dataset_path, output, max_distribution_query_groups=4)
 
     assert result["format_name"] == "ncls.supervision-audit"
-    assert result["format_version"] == 4
+    assert result["format_version"] == 5
     assert result["dataset"]["content_hash_verified"] is True
     assert result["split_audit"]["split_group_id"]["leak_count"] == 0
     assert result["split_audit"]["source_sha256"]["leak_count"] == 0
@@ -106,12 +106,13 @@ def test_frozen_supervision_gate_reports_all_failures_without_mutating_audit(tmp
     output = tmp_path / "audit"
     _dataset(dataset_path)
     result = audit_supervision(dataset_path, output)
-    gate = load_supervision_gate(Path("configs/research/e0-supervision-gates-v4.json"))
+    gate = load_supervision_gate(Path("configs/research/e0-supervision-gates-v5.json"))
 
     gate_result = evaluate_supervision_gate(result, gate)
 
     assert gate_result["passed"] is False
     failures = {item["name"] for item in gate_result["checks"] if not item["passed"]}
+    assert "dataset.query_profile_id" in failures
     assert "coverage.proposal.peak" in failures
     check_names = {item["name"] for item in gate_result["checks"]}
     assert "noise.worst_query_group_relative_standard_error_p95" in check_names

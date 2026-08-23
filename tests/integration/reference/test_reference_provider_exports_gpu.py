@@ -8,7 +8,9 @@ import sys
 import numpy as np
 import pytest
 
-from ncls.data import ReferenceDataset
+from ncls.data import E0_FOOTPRINT_PROFILE_ID, ReferenceDataset
+from ncls.learning.audit import audit_supervision
+from ncls.learning.gates import evaluate_supervision_gate, load_supervision_gate
 from ncls.paths import PROJECT_ROOT, SOURCE_MATERIAL_ROOT
 from ncls.source_materials.identity import materialx_asset_sha256
 from ncls.source_materials.materialx import MaterialXAssetCatalog
@@ -81,3 +83,62 @@ def test_all_current_reference_materials_export_one_fixed_hdf5(tmp_path: Path) -
             ),
         )
         assert dataset.state_strings("source_sha256")[materialx_index] == expected_source_hash
+
+
+def test_materialx_e0_surface_profile_persists_scale_rotation_and_seam_queries(tmp_path: Path) -> None:
+    path = tmp_path / "materialx-e0-surface-profile.h5"
+    subprocess.run(
+        [
+            sys.executable, "-m", "ncls.cli", "data", "collect-reference",
+            "--provider", "materialx",
+            "--material-id", "american_walnut_veneer",
+            "--views", "1",
+            "--validation-views", "1",
+            "--test-views", "1",
+            "--adversarial-views", "1",
+            "--lights", "16",
+            "--spatial-samples", "20",
+            "--surface-profile", E0_FOOTPRINT_PROFILE_ID,
+            "--query-profile", "ncls.e0-peak-grazing-mixture@2",
+            "--output", str(path),
+        ],
+        check=True,
+        timeout=300,
+    )
+
+    with ReferenceDataset.open(path) as dataset:
+        assert dataset.manifest.generation_config["surface_profile_id"] == E0_FOOTPRINT_PROFILE_ID
+        uv = np.asarray(dataset.stream["queries/uv"], dtype=np.float64)
+        dx = np.asarray(dataset.stream["queries/uv_dx"], dtype=np.float64)
+        dy = np.asarray(dataset.stream["queries/uv_dy"], dtype=np.float64)
+        scales = {
+            (
+                round(float(np.log2(np.linalg.norm(x))), 4),
+                round(float(np.log2(np.linalg.norm(y))), 4),
+            )
+            for x, y in zip(dx, dy, strict=True)
+        }
+        rotations = {
+            round(float(np.mod(np.arctan2(x[1], x[0]), np.pi)), 6)
+            for x in dx
+        }
+        assert len(scales) >= 4
+        assert len(rotations) >= 4
+        assert np.any(uv[:, 0] <= 0.01) and np.any(uv[:, 0] >= 0.99)
+        assert np.any(uv[:, 1] <= 0.01) and np.any(uv[:, 1] >= 0.99)
+
+    audit = audit_supervision(path, tmp_path / "audit")
+    assert audit["coverage"]["adversarial_profile_presence"]["spatial_footprint_rotation"]
+    assert audit["coverage"]["unique_footprint_scale_count"] >= 4
+    assert audit["coverage"]["unique_footprint_rotation_count"] >= 4
+    assert audit["coverage"]["uv_seam"]["opposite_edge_pair_axis_count"] == 2
+    gate = load_supervision_gate(PROJECT_ROOT / "configs/research/e0-supervision-gates-v5.json")
+    checks = {
+        item["name"]: item["passed"]
+        for item in evaluate_supervision_gate(audit, gate)["checks"]
+    }
+    assert checks["dataset.query_profile_id"]
+    assert checks["family.materialx.textured-surface@1.surface_profile_id"]
+    assert checks["family.materialx.textured-surface@1.footprint_scales"]
+    assert checks["family.materialx.textured-surface@1.footprint_rotations"]
+    assert checks["family.materialx.textured-surface@1.uv_seam_opposite_edge_pair_axes"]

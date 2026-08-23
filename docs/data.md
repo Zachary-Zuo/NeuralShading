@@ -50,9 +50,12 @@ E0 的定向覆盖诊断使用版本化的 `ncls.e0-peak-grazing-mixture@2`。�
 .\scripts\run_falcor_python.ps1 -m ncls.cli data collect-reference `
   --provider materialx --material-id american_walnut_veneer `
   --views 8 --lights 128 --spatial-samples 64 `
+  --surface-profile ncls.e0-footprint-scale-rotation-seam@1 `
   --footprint-width 0.000244140625 `
   --output data\reference-responses\materialx-walnut.h5
 ```
+
+MaterialX 的 `ncls.e0-footprint-scale-rotation-seam@1` 是 E0/E5 之间的最小空间查询合同：在真实 UV 材质上组成 4 档 footprint 尺度 × 4 个方向，并额外固定 U、V 两轴 seam 的两侧坐标。它至少要求 20 个 spatial sample 和正 footprint 宽度。方向、尺度和 seam 坐标都实际写入 HDF5；audit 从 `uv/uv_dx/uv_dy` 重算覆盖，不以 profile 名称代替证据。默认 `ncls.constant-footprint@1` 只用于兼容普通 provider smoke，不能通过 MaterialX E0 gate。
 
 快速 LayerStack smoke：
 

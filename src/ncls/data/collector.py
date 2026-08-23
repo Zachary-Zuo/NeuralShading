@@ -10,6 +10,7 @@ import numpy as np
 
 from .contract import ReferenceProvider
 from .dataset import ReferenceDatasetManifest, ReferenceDatasetWriter
+from .surfaces import CONSTANT_FOOTPRINT_PROFILE_ID, E0_FOOTPRINT_MINIMUM_SAMPLE_COUNT, E0_FOOTPRINT_PROFILE_ID, SURFACE_PROFILE_IDS
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -24,6 +25,7 @@ class CollectionConfig:
     light_count: int = 128
     spatial_sample_count: int = 1
     footprint_width: float = 1.0 / 4096.0
+    surface_profile_id: str = CONSTANT_FOOTPRINT_PROFILE_ID
     seed: int = 20260824
     split_direction_scramble: bool = True
     query_profile_id: str = "ncls.uniform-split-independent@1"
@@ -35,6 +37,16 @@ class CollectionConfig:
             raise ValueError("non-train query role counts must be nonnegative")
         if self.footprint_width < 0.0 or self.seed < 0:
             raise ValueError("footprint width and seed must be nonnegative")
+        if self.surface_profile_id not in SURFACE_PROFILE_IDS:
+            raise ValueError("unsupported surface profile")
+        if self.surface_profile_id == E0_FOOTPRINT_PROFILE_ID and (
+            self.spatial_sample_count < E0_FOOTPRINT_MINIMUM_SAMPLE_COUNT
+            or self.footprint_width <= 0.0
+        ):
+            raise ValueError(
+                f"{E0_FOOTPRINT_PROFILE_ID} requires at least "
+                f"{E0_FOOTPRINT_MINIMUM_SAMPLE_COUNT} spatial samples and a positive footprint width"
+            )
         if self.query_profile_id not in {
             "ncls.uniform-split-independent@1",
             "ncls.e0-peak-grazing-mixture@2",

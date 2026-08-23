@@ -1,6 +1,11 @@
 """材质族无关的 reference 查询采集与 HDF5 读写接口。"""
 
 from .collector import CollectionConfig, collect_reference_dataset
+from .surfaces import (
+    CONSTANT_FOOTPRINT_PROFILE_ID,
+    E0_FOOTPRINT_PROFILE_ID,
+    uv_surface_samples,
+)
 from .contract import (
     EvaluatedBlock,
     PositionKind,
@@ -38,6 +43,8 @@ from .statistics import ReplicaMoments, combine_replica_moments
 __all__ = [
     "COLOR_MODEL",
     "CollectionConfig",
+    "CONSTANT_FOOTPRINT_PROFILE_ID",
+    "E0_FOOTPRINT_PROFILE_ID",
     "EvaluatedBlock",
     "FORMAT_NAME",
     "FORMAT_VERSION",
@@ -57,6 +64,7 @@ __all__ = [
     "SourceState",
     "SurfaceSample",
     "collect_reference_dataset",
+    "uv_surface_samples",
     "combine_replica_moments",
     "equal_area_hemisphere",
     "equal_area_sphere",

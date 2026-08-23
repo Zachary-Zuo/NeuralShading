@@ -14,6 +14,7 @@ from ncls.data import (
     FORMAT_VERSION,
     QUERY_ROLE_NAMES,
     CollectionConfig,
+    E0_FOOTPRINT_PROFILE_ID,
     EvaluatedBlock,
     QueryPlan,
     ReferenceDataset,
@@ -28,6 +29,7 @@ from ncls.data import (
     peak_grazing_mixture_query,
     make_state_id,
     stratified_view_directions,
+    uv_surface_samples,
 )
 from ncls.data.providers import LayerStackProvider, LayerStackProviderConfig
 from ncls.data.directions import _folded_vmf_pdf
@@ -193,6 +195,29 @@ def test_full_sphere_mixture_includes_reflection_transmission_and_grazing() -> N
     assert np.any(directions[..., 2] < 0.0)
     assert np.any(np.abs(directions[..., 2]) < np.sin(np.deg2rad(5.0)))
     assert np.all(pdf > 0.0)
+
+
+def test_e0_surface_profile_covers_scales_rotations_and_both_uv_seams() -> None:
+    samples = uv_surface_samples(20, 1.0 / 4096.0, 71, E0_FOOTPRINT_PROFILE_ID)
+    assert len(samples) == 20
+    dx = np.asarray([sample.uv_dx for sample in samples])
+    dy = np.asarray([sample.uv_dy for sample in samples])
+    scales = {(round(float(np.linalg.norm(x)), 12), round(float(np.linalg.norm(y)), 12)) for x, y in zip(dx, dy, strict=True)}
+    rotations = {round(float(np.mod(np.arctan2(x[1], x[0]), np.pi)), 10) for x in dx}
+    assert len(scales) >= 4
+    assert len(rotations) >= 4
+    np.testing.assert_allclose(np.sum(dx * dy, axis=1), 0.0, atol=1e-12)
+    uv = np.asarray([sample.uv for sample in samples])
+    assert np.any(uv[:, 0] < 0.01) and np.any(uv[:, 0] > 0.99)
+    assert np.any(uv[:, 1] < 0.01) and np.any(uv[:, 1] > 0.99)
+
+
+def test_e0_surface_profile_requires_complete_coverage() -> None:
+    with pytest.raises(ValueError, match="at least 20 spatial samples"):
+        CollectionConfig(
+            spatial_sample_count=19,
+            surface_profile_id=E0_FOOTPRINT_PROFILE_ID,
+        )
 
 
 def test_e0_query_suite_separates_train_validation_test_and_adversarial_roles() -> None:

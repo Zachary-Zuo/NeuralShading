@@ -1,0 +1,57 @@
+{
+  "format_name": "ncls.supervision-gate",
+  "format_version": 3,
+  "gate_id": "ncls.e0-supervision-entry@5",
+  "status": "frozen",
+  "rationale": "继承 v4 的 source/query partition、noise、peak、掠射、透射和 train-only transform 门槛，并冻结球面 vMF peak proposal v2。MaterialX 入口必须使用显式的多尺度、旋转与 seam surface profile；audit 从落盘的 UV 与 uv_dx/uv_dy 验证实测覆盖，不能用 proposal 名称或配置声明代替。",
+  "base_requirements": {
+    "maximum_split_leaks": 0,
+    "maximum_cross_partition_direction_grid_overlap": 0,
+    "required_query_roles": [
+      "train",
+      "validation",
+      "test",
+      "adversarial_probe"
+    ],
+    "required_query_profile_id": "ncls.e0-peak-grazing-mixture@2",
+    "required_proposal_keywords": [
+      "uniform",
+      "peak",
+      "graz"
+    ],
+    "required_adversarial_profiles": [
+      "peak",
+      "grazing"
+    ],
+    "maximum_adversarial_peak_spacing_p95_degrees": 2.0,
+    "minimum_adversarial_wi_grazing_fraction": 0.08,
+    "target_transform_fit_source_split": "train",
+    "target_transform_fit_query_role": "train",
+    "maximum_stochastic_relative_standard_error_p95": 0.1,
+    "maximum_stochastic_replica_normalized_l1_p95": 0.1,
+    "maximum_stochastic_worst_query_group_relative_standard_error_p95": 0.1,
+    "maximum_stochastic_worst_query_group_replica_normalized_l1": 0.1
+  },
+  "family_requirements": {
+    "ncls.layer-stack@1": {
+      "required_state_profile_id": "ncls.e0-layer-stack-boundary@1",
+      "minimum_source_state_count": 6
+    },
+    "merl.measured-brdf@1": {},
+    "openpbr.surface@1.1.1": {
+      "required_adversarial_profiles": [
+        "transmission_critical"
+      ],
+      "minimum_adversarial_wi_transmission_fraction": 0.25
+    },
+    "materialx.textured-surface@1": {
+      "required_surface_profile_id": "ncls.e0-footprint-scale-rotation-seam@1",
+      "required_adversarial_profiles": [
+        "spatial_footprint_rotation"
+      ],
+      "minimum_unique_footprint_scales": 4,
+      "minimum_unique_footprint_rotations": 4,
+      "minimum_uv_seam_opposite_edge_pair_axes": 2
+    }
+  }
+}
