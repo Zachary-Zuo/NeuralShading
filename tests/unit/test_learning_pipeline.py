@@ -357,6 +357,27 @@ def test_analytic_residual_pipeline_uses_layer_stack_core_and_signed_train_state
         loss.backward()
 
 
+def test_multiscale_half_slope_encoding_has_fixed_small_evaluate_input() -> None:
+    pipeline = create_pipeline("dense-latent-small-mlp-standardized-log1p-e1@1")
+    model = pipeline.create_model({
+        "latent_dimension": 4,
+        "width": 8,
+        "prepare_layer_count": 1,
+        "evaluate_layer_count": 1,
+        "direction_encoding_id": "ncls.multiscale-half-slope-directions@1",
+        "fourier_band_count": 1,
+    })
+    wo = torch.tensor([[0.0, 0.0, 1.0], [0.4, 0.0, 0.9165151]])
+    wi = torch.tensor([
+        [[0.0, 0.0, 1.0], [0.001, 0.0, 0.9999995]],
+        [[-0.4, 0.0, 0.9165151], [-0.399, 0.001, 0.916949]],
+    ])
+    raw = model(wo, wi)
+    assert raw.shape == (2, 2, 3)
+    assert torch.all(torch.isfinite(raw))
+    assert model.evaluate_network[0].in_features == model.prepared_dimension + 30
+
+
 def test_direct_fit_is_a_separate_representation_ceiling_run(tmp_path: Path) -> None:
     dataset_path = tmp_path / "dataset.h5"
     output = tmp_path / "direct-fit"

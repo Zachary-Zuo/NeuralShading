@@ -13,6 +13,7 @@ DIRECTION_ENCODING_IDS = (
     "ncls.local-cartesian-directions@1",
     "ncls.fourier-cartesian-directions@1",
     "ncls.half-difference-directions@1",
+    "ncls.multiscale-half-slope-directions@1",
 )
 ACTIVATION_IDS = ("relu", "silu", "gelu")
 
@@ -105,6 +106,9 @@ class SingleMaterialNeuralEvaluator(nn.Module):
         elif config.direction_encoding_id == "ncls.half-difference-directions@1":
             view_dimension = 3
             light_dimension = 7
+        elif config.direction_encoding_id == "ncls.multiscale-half-slope-directions@1":
+            view_dimension = 3
+            light_dimension = 30
         else:
             view_dimension = light_dimension = 3
         prepare_input = config.latent_dimension + view_dimension
@@ -147,12 +151,32 @@ class SingleMaterialNeuralEvaluator(nn.Module):
     def _light_features(self, wo: torch.Tensor, wi: torch.Tensor) -> torch.Tensor:
         if self.config.direction_encoding_id == "ncls.fourier-cartesian-directions@1":
             return _fourier(wi, self.config.fourier_band_count)
-        if self.config.direction_encoding_id == "ncls.half-difference-directions@1":
+        if self.config.direction_encoding_id in {
+            "ncls.half-difference-directions@1",
+            "ncls.multiscale-half-slope-directions@1",
+        }:
             view = wo[:, None, :].expand_as(wi)
             half = _safe_normalize(view + wi)
             difference = _safe_normalize(wi - view)
             cosine = torch.sum(view * wi, dim=-1, keepdim=True)
-            return torch.cat((half, difference, cosine), dim=-1)
+            base = torch.cat((half, difference, cosine), dim=-1)
+            if self.config.direction_encoding_id == "ncls.half-difference-directions@1":
+                return base
+            slope = half[..., :2] / torch.clamp(torch.abs(half[..., 2:3]), min=1e-4)
+            slope_x, slope_y = slope[..., 0:1], slope[..., 1:2]
+            quadratic = torch.cat(
+                (slope, slope_x * slope_x, slope_x * slope_y, slope_y * slope_y), dim=-1
+            )
+            peak_parts = []
+            radial_squared = torch.sum(slope * slope, dim=-1, keepdim=True)
+            for scale in (0.001, 0.002, 0.004, 0.008, 0.02, 0.08):
+                inverse_variance = 0.5 / (scale * scale)
+                peak_parts.extend((
+                    torch.exp(-slope_x * slope_x * inverse_variance),
+                    torch.exp(-slope_y * slope_y * inverse_variance),
+                    torch.exp(-radial_squared * inverse_variance),
+                ))
+            return torch.cat((base, quadratic, *peak_parts), dim=-1)
         return wi
 
     def prepare(self, wo: torch.Tensor) -> torch.Tensor:
