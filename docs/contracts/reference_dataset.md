@@ -47,6 +47,8 @@ close()
 
 collector 不解析原生 payload，不认识材质参数，也没有按材质族分支。材质差异只存在于 provider 内。新增材质族时不得修改 HDF5 布局或公共 learning reader。
 
+内存中的 `QueryPlan` 接受共享的 `wi[light, 3]`，也接受逐 `wo` 的 `wi[view, light, 3]`；共享表会在校验时显式广播。PDF 与积分权重相应为 `[view, light]`。这使 proposal 可以跟随移动的镜面峰，同时 HDF5 仍保持一个 query group 对应一个 `(state, surface, wo)` 的固定布局。
+
 当前正式 provider：
 
 | provider | family | reference | 查询域 |
@@ -120,6 +122,8 @@ RGB f(wo, wi) × |dot(Ns, wi)|
 其中 `Ns` 是 reference 实际使用的 shading normal；MaterialX 可由 normal map 和 footprint 得到它。OpenPBR 的透射方向因此同样使用绝对余弦。运行时公共 `evaluate()` 仍返回不含余弦的 `f`，模型输出参数化必须自行声明。
 
 `proposal_pdf` 描述采集 `wi` 的分布，`solid_angle_weight` 描述当前离散积分权重，二者不能互相替代。固定 probe、均匀采样、microfacet/peak proposal 和自适应 query 都通过这两个字段保留真实语义。
+
+版本化 E0 mixture `ncls.e0-peak-grazing-mixture@1` 是按 `wo` 构造的 uniform + 多尺度反射 peak + grazing 混合分布；完整球面时另含透射 peak。它使用可计算的归一化 PDF 和 `1/(N p)` 权重，目标是诊断 peak、掠射与透射覆盖，不预先宣告为最终训练分布。默认 uniform profile 和该 mixture 都对不同 state split 使用确定性独立方向；文件仍须由 supervision audit 检查实际方向哈希，不能只相信 profile 名称。
 
 `rng_seed` 由 provider 返回，必须是 reference 实际执行该 query 使用的随机流 seed，writer 不得根据 query 行号再合成。确定性 reference 写 0；LayerStack 当前按 `(state, wo)` 使用一个 query-group seed，再在 shader 内结合 `wi` 索引派生随机流，因此同组各方向记录相同的 seed。
 

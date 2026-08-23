@@ -300,6 +300,7 @@ def audit_supervision(
                 worst_groups.append({
                     "query_group_id": group_index,
                     "state_id": str(state_ids[state]),
+                    "asset_id": str(asset_ids[state]),
                     "family_id": family_id,
                     "split": SPLIT_NAMES[int(selected_splits[selected_position])],
                     "wo": np.asarray(batch["wo"][selected_position]).astype(float).tolist(),
@@ -344,7 +345,10 @@ def audit_supervision(
         }
         transform_statistics["statistics_sha256"] = _sha256_json(transform_statistics)
 
-        profile_text = " ".join(dataset.manifest.query_profile_ids).lower()
+        profile_text = " ".join((
+            *dataset.manifest.query_profile_ids,
+            *(str(item["proposal_id"]) for item in proposals),
+        )).lower()
         adversarial_presence = {
             "peak": "peak" in profile_text or "microfacet" in profile_text,
             "grazing": "graz" in profile_text,

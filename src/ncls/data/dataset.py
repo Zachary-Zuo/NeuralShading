@@ -218,8 +218,8 @@ class ReferenceDatasetWriter:
         if not surfaces:
             raise ValueError("each provider state requires at least one surface sample")
         if self.direction_count is None:
-            self._initialize_query_datasets(len(plan.light_directions))
-        if len(plan.light_directions) != self.direction_count:
+            self._initialize_query_datasets(plan.direction_count)
+        if plan.direction_count != self.direction_count:
             raise ValueError("all query groups in one HDF5 dataset must share direction_count")
         expected = (len(surfaces), len(plan.view_directions), self.direction_count, 3)
         if evaluated.mean.shape != expected:
@@ -240,9 +240,9 @@ class ReferenceDatasetWriter:
             "geometric_normal": np.asarray([surface.geometric_normal for surface in surface_rows], dtype=np.float32),
             "geometric_tangent": np.asarray([surface.geometric_tangent for surface in surface_rows], dtype=np.float32),
             "wo": views,
-            "wi": np.broadcast_to(plan.light_directions, (group_count, self.direction_count, 3)),
-            "proposal_pdf": np.broadcast_to(plan.proposal_pdf, (group_count, self.direction_count)),
-            "solid_angle_weight": np.broadcast_to(plan.solid_angle_weights, (group_count, self.direction_count)),
+            "wi": np.tile(plan.light_directions, (len(surfaces), 1, 1)),
+            "proposal_pdf": np.tile(plan.proposal_pdf, (len(surfaces), 1)),
+            "solid_angle_weight": np.tile(plan.solid_angle_weights, (len(surfaces), 1)),
         }
         query_values["rng_seed"] = evaluated.rng_seed.reshape(group_count, self.direction_count)
         for name, values in query_values.items():

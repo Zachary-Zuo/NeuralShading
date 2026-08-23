@@ -136,3 +136,37 @@ def test_reference_generator_smoke(tmp_path: Path) -> None:
         assert np.all(np.isfinite(statistics.mean))
         assert np.all(statistics.mean >= 0.0)
         assert statistics.sample_count.tolist() == [8, 8, 8, 8]
+
+
+def test_reference_generator_supports_per_view_peak_grazing_queries(tmp_path: Path) -> None:
+    collection = CollectionConfig(
+        view_count=2,
+        light_count=32,
+        seed=31,
+        query_profile_id="ncls.e0-peak-grazing-mixture@1",
+    )
+    config = LayerStackProviderConfig(
+        family_count=1,
+        local_state_count=1,
+        samples_per_replica=2,
+        query_group_batch=2,
+        max_depth=8,
+    )
+    provider = LayerStackProvider(collection, config)
+    collect_reference_dataset(
+        tmp_path / "mixture-reference.h5",
+        [provider],
+        collection,
+        created_at="2026-08-24T00:00:00+00:00",
+        generator_git_commit="test",
+    )
+    with ReferenceDataset.open(tmp_path / "mixture-reference.h5") as dataset:
+        batch = dataset.group_batch((0, 1))
+        assert batch["wi"].shape == (2, 32, 3)
+        assert not np.array_equal(batch["wi"][0], batch["wi"][1])
+        np.testing.assert_allclose(
+            batch["proposal_pdf"] * batch["solid_angle_weight"],
+            1.0 / 32.0,
+            rtol=1e-6,
+            atol=1e-7,
+        )

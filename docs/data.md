@@ -24,6 +24,18 @@ Falcor Python 必须由项目脚本启动。下面命令把当前四个正式 pr
 
 这条命令的方向数可以用于工程 smoke，但不是最终训练密度的默认结论。正式数据生成前应先完成 peak/掠射角监督审计，再冻结每个 provider 的 query proposal 和 state distribution。
 
+E0 的定向覆盖诊断使用版本化的 `ncls.e0-peak-grazing-mixture@1`。它对每个 `wo` 分别生成 uniform、与镜面反射峰对齐的多尺度 peak，以及掠射角分量；完整球面的 OpenPBR 还包含透射侧 peak。每个落盘 `wi` 都保存 mixture 的真实 PDF，并使用 `1 / (N p(wi))` 作为 Monte Carlo 积分权重：
+
+```powershell
+.\scripts\run_falcor_python.ps1 -m ncls.cli data collect-reference `
+  --provider openpbr --material-id <transmission-asset-id> `
+  --query-profile ncls.e0-peak-grazing-mixture@1 `
+  --views 8 --lights 256 `
+  --output artifacts\research\learning-goal\e0\openpbr-mixture-probe.h5
+```
+
+该 profile 先用于 E0 probe 和 proposal 对比，不自动成为后续正式训练分布。只有 audit 证明覆盖、估计方差与加权积分均满足冻结 gate 后，才会用明确配置生成正式 H5。
+
 ## 单 provider 与指定资产
 
 `--provider` 可以重复，`--material-id` 只允许在恰好一个 provider 时使用：
@@ -80,7 +92,9 @@ response-only learning 使用 `ReferenceQueryStore`。当前 LayerStack baseline
 
 公共 collector 不替 provider 决定“恰当分布”。每个 provider 的 `source_states()` 决定原生参数/资产状态采样，`surface_samples()` 决定空间密度与 footprint，`query_plan()` 决定 `wo/wi` 及 proposal。所有实际 query、PDF、积分权重和 seed 都落盘，所以 learning 不需要猜测数据如何产生。
 
-当前公共默认是确定性 stratified `wo` 与均匀立体角 `wi`：反射 family 使用上半球，含透射的 OpenPBR 使用完整球面。这是可复现基线，不足以自动覆盖极窄高光。正式训练 proposal 应依据监督审计加入镜面峰、掠射角和边界状态采样；validation/test 保留独立固定 probe 与连续随机 query。
+当前公共默认是确定性 stratified `wo` 与均匀立体角 `wi`：反射 family 使用上半球，含透射的 OpenPBR 使用完整球面。train、validation、test 的方位角按 split 确定性扰动，不再复用完全相同的方向表。这是可复现基线，不足以自动覆盖极窄高光。
+
+`QueryPlan` 允许共享的 `[light, 3]` 方向表，也允许按 `wo` 提供 `[view, light, 3]`，内部统一为后者。因此 peak 能随 `wo` 移动，而不需要在公共 collector 中加入材质族或网络分支。需要注意，当前 HDF5 的 split 仍属于 source state；“同一材质上的未见 query”角色不能只靠 state split 表达。E1 正式数据开始前必须把 train、validation、held-out test 和 adversarial probe 的 query 角色做成显式、可验证且不泄漏的合同，不能把 split 方位扰动冒充完整的 held-out query 设计。
 
 ## 新增材质族
 

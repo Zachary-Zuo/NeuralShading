@@ -22,12 +22,19 @@ class CollectionConfig:
     spatial_sample_count: int = 1
     footprint_width: float = 1.0 / 4096.0
     seed: int = 20260824
+    split_direction_scramble: bool = True
+    query_profile_id: str = "ncls.uniform-split-independent@1"
 
     def __post_init__(self) -> None:
         if min(self.view_count, self.light_count, self.spatial_sample_count) < 1:
             raise ValueError("query counts must be positive")
         if self.footprint_width < 0.0 or self.seed < 0:
             raise ValueError("footprint width and seed must be nonnegative")
+        if self.query_profile_id not in {
+            "ncls.uniform-split-independent@1",
+            "ncls.e0-peak-grazing-mixture@1",
+        }:
+            raise ValueError("unsupported query profile")
 
 
 def _git_commit() -> str:
@@ -72,7 +79,7 @@ def collect_reference_dataset(
         state_records,
         created_at=created_at or datetime.now(timezone.utc).isoformat(),
         generator_git_commit=generator_git_commit or _git_commit(),
-        query_profile_ids=[provider.descriptor.query_profile_id for provider in providers],
+        query_profile_ids=[config.query_profile_id, *(provider.descriptor.query_profile_id for provider in providers)],
         generation_config=asdict(config),
         provider_metadata=[provider.metadata() for provider in providers],
     )
@@ -84,7 +91,7 @@ def collect_reference_dataset(
             plan = provider.query_plan(state)
             if np.any(plan.view_directions[:, 2] <= 0.0):
                 raise ValueError("surface reference view directions must lie above the local surface")
-            if provider.descriptor.incident_domain == "upper-hemisphere" and np.any(plan.light_directions[:, 2] <= 0.0):
+            if provider.descriptor.incident_domain == "upper-hemisphere" and np.any(plan.light_directions[..., 2] <= 0.0):
                 raise ValueError("upper-hemisphere provider emitted an incident direction below the surface")
             evaluated = provider.evaluate(state, surfaces, plan)
             writer.append(state_index, surfaces, plan, evaluated)

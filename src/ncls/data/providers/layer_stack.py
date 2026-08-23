@@ -101,7 +101,6 @@ class LayerStackProvider(BaseProvider):
                 )
         self._states = tuple(states)
         self._evaluator = evaluator
-        self._evaluator_lights: np.ndarray | None = None
 
     def source_states(self) -> Sequence[SourceState]:
         return self._states
@@ -113,14 +112,8 @@ class LayerStackProvider(BaseProvider):
                 max_depth=self.provider_config.max_depth,
                 max_query_group_batch=max(self.provider_config.query_group_batch, len(plan.view_directions)),
             )
-            self._evaluator_lights = plan.light_directions.copy()
-        elif self._evaluator_lights is None:
-            declared = getattr(self._evaluator, "light_directions", None)
-            self._evaluator_lights = plan.light_directions.copy() if declared is None else np.asarray(declared, dtype=np.float32)[..., :3]
-        if int(self._evaluator.light_count) != len(plan.light_directions) or not np.array_equal(
-            self._evaluator_lights, plan.light_directions
-        ):
-            raise ValueError("LayerStack evaluator query directions disagree with the persisted QueryPlan")
+        if int(self._evaluator.light_count) != plan.direction_count:
+            raise ValueError("LayerStack evaluator direction count disagrees with the persisted QueryPlan")
         return self._evaluator
 
     def evaluate(
@@ -146,6 +139,7 @@ class LayerStackProvider(BaseProvider):
                 materials,
                 plan.view_directions,
                 query_group_seeds=seeds,
+                light_directions=plan.light_directions,
                 batch_samples=self.provider_config.batch_samples,
                 min_samples=self.provider_config.min_samples,
                 max_samples=self.provider_config.max_samples,
@@ -157,9 +151,10 @@ class LayerStackProvider(BaseProvider):
                 materials,
                 plan.view_directions,
                 query_group_seeds=seeds,
+                light_directions=plan.light_directions,
                 samples_per_replica=self.provider_config.samples_per_replica,
             )
-        shape = (1, len(plan.view_directions), len(plan.light_directions))
+        shape = (1, len(plan.view_directions), plan.direction_count)
         return EvaluatedBlock(
             evaluated.mean[None].astype(np.float32),
             evaluated.variance[None].astype(np.float32),
@@ -177,4 +172,3 @@ class LayerStackProvider(BaseProvider):
 
     def close(self) -> None:
         self._evaluator = None
-        self._evaluator_lights = None

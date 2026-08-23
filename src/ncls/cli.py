@@ -83,6 +83,7 @@ def _generate_dataset(args: argparse.Namespace) -> int:
         spatial_sample_count=args.spatial_samples,
         footprint_width=args.footprint_width,
         seed=args.seed,
+        query_profile_id=args.query_profile,
     )
     layer_stack = LayerStackProviderConfig(
         family_count=args.families,
@@ -268,6 +269,11 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--samples-per-replica", type=int, default=64)
     generate.add_argument("--query-group-batch", type=int, default=64)
     generate.add_argument("--seed", type=int, default=20260822)
+    generate.add_argument(
+        "--query-profile",
+        choices=("ncls.uniform-split-independent@1", "ncls.e0-peak-grazing-mixture@1"),
+        default="ncls.uniform-split-independent@1",
+    )
     generate.add_argument("--max-depth", type=int, default=64)
     generate.add_argument("--adaptive", action="store_true")
     generate.add_argument("--batch-samples", type=int, default=256)

@@ -23,6 +23,8 @@ from ncls.data import (
     collect_reference_dataset,
     combine_replica_moments,
     equal_area_hemisphere,
+    peak_grazing_mixture_pdf,
+    peak_grazing_mixture_query,
     make_state_id,
     stratified_view_directions,
 )
@@ -68,9 +70,10 @@ class _FakeProvider:
 
     def query_plan(self, state):
         lights, weights = equal_area_hemisphere(4)
+        per_view_lights = np.stack((lights, np.roll(lights, 1, axis=0)))
         return QueryPlan(
             stratified_view_directions(2),
-            lights,
+            per_view_lights,
             weights,
             np.full(4, 1.0 / (2.0 * np.pi), dtype=np.float32),
             "test-uniform@1",
@@ -78,7 +81,7 @@ class _FakeProvider:
         )
 
     def evaluate(self, state, surfaces, plan):
-        shape = (len(surfaces), len(plan.view_directions), len(plan.light_directions), 3)
+        shape = (len(surfaces), len(plan.view_directions), plan.direction_count, 3)
         value = np.full(shape, state.runtime_state, dtype=np.float32)
         return EvaluatedBlock.deterministic(
             value,
@@ -104,6 +107,7 @@ class _SeedRecordingEvaluator:
         *,
         sample_count_per_replica: int,
         query_group_seeds: np.ndarray,
+        light_directions: np.ndarray | None = None,
         sample_offset: int = 0,
     ):
         self.query_group_seeds = np.asarray(query_group_seeds, dtype=np.uint32).copy()
@@ -142,6 +146,40 @@ def test_equal_area_directions_integrate_lambert_response() -> None:
     response_cos = albedo[None, :] * directions[:, 2:3] / np.pi
     integrated = np.sum(response_cos * weights[:, None], axis=0)
     assert integrated == pytest.approx(albedo, rel=1e-6, abs=1e-6)
+
+
+def test_peak_grazing_mixture_is_per_view_and_has_normalized_pdf() -> None:
+    views = stratified_view_directions(3)
+    directions, weights, pdf = peak_grazing_mixture_query(
+        views,
+        128,
+        full_sphere=False,
+        seed=59,
+    )
+    assert directions.shape == (3, 128, 3)
+    assert weights.shape == pdf.shape == (3, 128)
+    assert not np.array_equal(directions[0], directions[1])
+    np.testing.assert_allclose(weights * pdf, 1.0 / 128.0, rtol=1e-6, atol=1e-7)
+
+    quadrature, solid_angle = equal_area_hemisphere(65536)
+    integrated_pdf = np.sum(
+        peak_grazing_mixture_pdf(quadrature, views[1], full_sphere=False) * solid_angle
+    )
+    assert integrated_pdf == pytest.approx(1.0, rel=0.02, abs=0.02)
+
+
+def test_full_sphere_mixture_includes_reflection_transmission_and_grazing() -> None:
+    view = stratified_view_directions(1)
+    directions, _, pdf = peak_grazing_mixture_query(
+        view,
+        128,
+        full_sphere=True,
+        seed=61,
+    )
+    assert np.any(directions[..., 2] > 0.0)
+    assert np.any(directions[..., 2] < 0.0)
+    assert np.any(np.abs(directions[..., 2]) < np.sin(np.deg2rad(5.0)))
+    assert np.all(pdf > 0.0)
 
 
 def test_layer_stack_provider_wraps_per_view_seeds_to_uint32() -> None:
@@ -194,6 +232,7 @@ def test_hdf5_contract_preserves_native_state_queries_and_responses(tmp_path: Pa
         np.testing.assert_allclose(batch["standard_error"], 0.0)
         np.testing.assert_allclose(batch["mean"][:, 0, 0], [1.0, 2.0, 3.0])
         np.testing.assert_array_equal(batch["rng_seed"][:, 0], [101, 102, 103])
+        assert not np.array_equal(dataset.group_batch((0,))["wi"], dataset.group_batch((1,))["wi"])
 
 
 def test_dataset_cli_and_semantic_hash_validation(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

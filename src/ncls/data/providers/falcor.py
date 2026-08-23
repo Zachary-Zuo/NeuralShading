@@ -16,8 +16,15 @@ def import_falcor():
 
 
 def direction_rows(views: np.ndarray, lights: np.ndarray, surface_count: int) -> tuple[np.ndarray, np.ndarray]:
-    view_rows = np.repeat(np.tile(views, (surface_count, 1)), len(lights), axis=0)
-    light_rows = np.tile(lights, (surface_count * len(views), 1))
+    view_values = np.asarray(views, dtype=np.float32)
+    light_values = np.asarray(lights, dtype=np.float32)
+    if light_values.ndim == 2:
+        light_values = np.broadcast_to(light_values[None, ...], (len(view_values), *light_values.shape))
+    if light_values.ndim != 3 or light_values.shape[0] != len(view_values):
+        raise ValueError("lights must have shape [light, 3] or [view, light, 3]")
+    direction_count = light_values.shape[1]
+    view_rows = np.tile(np.repeat(view_values, direction_count, axis=0), (surface_count, 1))
+    light_rows = np.tile(light_values.reshape(-1, 3), (surface_count, 1))
     return np.ascontiguousarray(np.pad(view_rows, ((0, 0), (0, 1)))), np.ascontiguousarray(
         np.pad(light_rows, ((0, 0), (0, 1)))
     )
@@ -52,5 +59,5 @@ def execute_direction_kernel(compute, device, falcor, views: np.ndarray, lights:
     compute.execute(threads_x=query_count)
     return (
         output.to_numpy().view(np.float32).reshape(query_count, 4)[:, :3]
-        .reshape(surface_count, len(views), len(lights), 3).copy()
+        .reshape(surface_count, len(views), np.asarray(lights).shape[-2], 3).copy()
     )

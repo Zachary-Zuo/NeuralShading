@@ -146,10 +146,10 @@ class OpenPBRProvider(BaseProvider):
         response = rows[:, :3]
         if material.color_space == "acescg":
             response = response @ ACESCG_TO_LINEAR_SRGB.T
-        shape = (len(surfaces), len(plan.view_directions), len(plan.light_directions))
+        shape = (len(surfaces), len(plan.view_directions), plan.direction_count)
         response = response.reshape(*shape, 3).astype(np.float32)
         pdf = rows[:, 3].reshape(shape).astype(np.float32)
-        lights = np.broadcast_to(plan.light_directions, (*shape, 3))
+        lights = np.tile(plan.light_directions, (len(surfaces), 1, 1, 1))
         event_flags = np.where(lights[..., 2] >= 0.0, 1, 2).astype(np.uint32)
         return EvaluatedBlock.deterministic(response, event_flags=event_flags, reference_pdf=pdf)
 

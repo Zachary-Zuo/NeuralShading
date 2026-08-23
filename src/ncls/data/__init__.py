@@ -23,7 +23,14 @@ from .dataset import (
     ReferenceStatistics,
     validate_reference_dataset,
 )
-from .directions import equal_area_hemisphere, equal_area_sphere, stratified_uv, stratified_view_directions
+from .directions import (
+    equal_area_hemisphere,
+    equal_area_sphere,
+    peak_grazing_mixture_pdf,
+    peak_grazing_mixture_query,
+    stratified_uv,
+    stratified_view_directions,
+)
 from .statistics import ReplicaMoments, combine_replica_moments
 
 __all__ = [
@@ -50,6 +57,8 @@ __all__ = [
     "equal_area_hemisphere",
     "equal_area_sphere",
     "make_state_id",
+    "peak_grazing_mixture_pdf",
+    "peak_grazing_mixture_query",
     "stratified_uv",
     "stratified_view_directions",
     "validate_reference_dataset",

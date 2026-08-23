@@ -33,7 +33,7 @@ class ReferenceDescriptor:
     family_id: str
     reference_id: str
     native_schema_id: str
-    query_profile_id: str = "ncls.local-surface-rgb@1"
+    query_profile_id: str = "ncls.local-surface-rgb@2"
     incident_domain: str = "upper-hemisphere"
     position_kind: PositionKind = PositionKind.CONSTANT
     deterministic: bool = True
@@ -138,13 +138,27 @@ class QueryPlan:
 
     def __post_init__(self) -> None:
         views = _unit_vectors("view_directions", self.view_directions, ndim=2)
-        lights = _unit_vectors("light_directions", self.light_directions, ndim=2)
-        if len(views) < 1 or len(lights) < 1:
+        raw_lights = np.asarray(self.light_directions, dtype=np.float32)
+        if raw_lights.ndim == 2:
+            lights = _unit_vectors("light_directions", raw_lights, ndim=2)
+            lights = np.broadcast_to(lights[None, ...], (len(views), *lights.shape)).copy()
+        elif raw_lights.ndim == 3:
+            lights = _unit_vectors("light_directions", raw_lights, ndim=3)
+            if lights.shape[0] != len(views):
+                raise ValueError("per-view light directions must match view_directions")
+        else:
+            raise ValueError("light_directions must have shape [light, 3] or [view, light, 3]")
+        if len(views) < 1 or lights.shape[1] < 1:
             raise ValueError("QueryPlan requires at least one view and light direction")
         weights = np.asarray(self.solid_angle_weights, dtype=np.float32)
         pdf = np.asarray(self.proposal_pdf, dtype=np.float32)
-        if weights.shape != (len(lights),) or pdf.shape != (len(lights),):
-            raise ValueError("direction weights and proposal PDF must match light directions")
+        expected = (len(views), lights.shape[1])
+        if weights.ndim == 1 and weights.shape == (lights.shape[1],):
+            weights = np.broadcast_to(weights[None, :], expected).copy()
+        if pdf.ndim == 1 and pdf.shape == (lights.shape[1],):
+            pdf = np.broadcast_to(pdf[None, :], expected).copy()
+        if weights.shape != expected or pdf.shape != expected:
+            raise ValueError("direction weights and proposal PDF must match [view, light]")
         if np.any(weights <= 0.0) or np.any(pdf <= 0.0) or not np.all(np.isfinite(weights)) or not np.all(np.isfinite(pdf)):
             raise ValueError("direction weights and proposal PDF must be positive and finite")
         if not self.proposal_id or self.seed < 0:
@@ -153,6 +167,10 @@ class QueryPlan:
         object.__setattr__(self, "light_directions", lights)
         object.__setattr__(self, "solid_angle_weights", np.ascontiguousarray(weights))
         object.__setattr__(self, "proposal_pdf", np.ascontiguousarray(pdf))
+
+    @property
+    def direction_count(self) -> int:
+        return int(self.light_directions.shape[1])
 
 
 @dataclass(frozen=True)

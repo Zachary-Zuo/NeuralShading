@@ -44,12 +44,10 @@ class FalcorReferenceEvaluator:
             ) from exc
         self._falcor = falcor
         directions = np.asarray(light_directions, dtype=np.float32)
-        if directions.ndim != 2 or directions.shape[1] not in {3, 4}:
-            raise ValueError("light_directions must have shape [light_count, 3 or 4]")
-        self.light_directions = np.ascontiguousarray(directions[:, :3])
-        gpu_light_directions = np.zeros((len(directions), 4), dtype=np.float32)
-        gpu_light_directions[:, :3] = self.light_directions
-        self.light_count = len(self.light_directions)
+        if directions.ndim not in {2, 3} or directions.shape[-1] not in {3, 4}:
+            raise ValueError("light_directions must have shape [light, 3 or 4] or [group, light, 3 or 4]")
+        self.light_directions = np.ascontiguousarray(directions[..., :3])
+        self.light_count = int(self.light_directions.shape[-2])
         if max_query_group_batch < 1 or max_depth < 1:
             raise ValueError("max_query_group_batch and max_depth must be positive")
         self.max_query_group_batch = max_query_group_batch
@@ -59,9 +57,8 @@ class FalcorReferenceEvaluator:
         self.material_buffer = self._buffer(BINARY_SIZE, max_query_group_batch)
         self.view_buffer = self._buffer(16, max_query_group_batch)
         self.seed_buffer = self._buffer(4, max_query_group_batch)
-        self.light_buffer = self._buffer(16, self.light_count)
+        self.light_buffer = self._buffer(16, self.query_capacity)
         self.outputs = [self._buffer(16, self.query_capacity, writable=True) for _ in range(4)]
-        self.light_buffer.from_numpy(gpu_light_directions)
         self.compute = falcor.ComputePass(
             self.device,
             file=REFERENCE_LAYER_STACK_SHADER,
@@ -98,6 +95,7 @@ class FalcorReferenceEvaluator:
         *,
         sample_count_per_replica: int,
         query_group_seeds: np.ndarray,
+        light_directions: np.ndarray | None = None,
         sample_offset: int = 0,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         query_group_count = len(materials)
@@ -109,6 +107,14 @@ class FalcorReferenceEvaluator:
         seeds = np.asarray(query_group_seeds, dtype=np.uint32)
         if views.shape not in {(query_group_count, 3), (query_group_count, 4)} or seeds.shape != (query_group_count,):
             raise ValueError("materials, view_directions and query_group_seeds must have matching counts")
+        lights = self.light_directions if light_directions is None else np.asarray(light_directions, dtype=np.float32)
+        if lights.ndim == 2:
+            lights = np.broadcast_to(lights[None, ...], (query_group_count, *lights.shape))
+        if lights.shape not in {
+            (query_group_count, self.light_count, 3),
+            (query_group_count, self.light_count, 4),
+        }:
+            raise ValueError("light directions must match query groups and evaluator light_count")
 
         packed = np.zeros(BINARY_SIZE * self.max_query_group_batch, dtype=np.uint8)
         packed[: BINARY_SIZE * query_group_count] = np.frombuffer(
@@ -122,6 +128,9 @@ class FalcorReferenceEvaluator:
         self.view_buffer.from_numpy(padded_views)
         self.seed_buffer.from_numpy(padded_seeds)
         query_count = query_group_count * self.light_count
+        padded_lights = np.zeros((self.query_capacity, 4), dtype=np.float32)
+        padded_lights[:query_count, :3] = lights[..., :3].reshape(query_count, 3)
+        self.light_buffer.from_numpy(padded_lights)
         self.compute.globals.gQueryCount = query_count
         self.compute.globals.gSampleCountPerReplica = sample_count_per_replica
         self.compute.globals.gSampleOffset = sample_offset
@@ -159,6 +168,7 @@ def evaluate_reference_adaptive(
     view_directions: np.ndarray,
     *,
     query_group_seeds: np.ndarray,
+    light_directions: np.ndarray | None = None,
     batch_samples: int = 256,
     min_samples: int = 512,
     max_samples: int = 16384,
@@ -171,6 +181,7 @@ def evaluate_reference_adaptive(
     query_group_count = len(materials)
     views = np.asarray(view_directions, dtype=np.float32)
     seeds = np.asarray(query_group_seeds, dtype=np.uint32)
+    lights = None if light_directions is None else np.asarray(light_directions, dtype=np.float32)
     if views.shape not in {(query_group_count, 3), (query_group_count, 4)} or seeds.shape != (query_group_count,):
         raise ValueError("materials, view_directions and query_group_seeds must have matching counts")
     if batch_samples < 1 or min_samples < 1 or max_samples < min_samples:
@@ -195,6 +206,7 @@ def evaluate_reference_adaptive(
             views[active],
             sample_count_per_replica=batch_samples,
             query_group_seeds=seeds[active],
+            light_directions=None if lights is None else lights[active],
             sample_offset=int(offsets[0]),
         )
         for name, values in zip(("mean_a", "second_a", "mean_b", "second_b"), batch, strict=True):
@@ -250,6 +262,7 @@ def evaluate_reference_fixed(
     view_directions: np.ndarray,
     *,
     query_group_seeds: np.ndarray,
+    light_directions: np.ndarray | None = None,
     samples_per_replica: int,
 ) -> EvaluatedReferenceBatch:
     batch = evaluator.evaluate_query_groups(
@@ -257,6 +270,7 @@ def evaluate_reference_fixed(
         view_directions,
         sample_count_per_replica=samples_per_replica,
         query_group_seeds=query_group_seeds,
+        light_directions=light_directions,
     )
     mean_a, second_a, mean_b, second_b = (np.asarray(item, dtype=np.float64) for item in batch)
     for name, values in zip(("mean_a", "second_a", "mean_b", "second_b"), batch, strict=True):

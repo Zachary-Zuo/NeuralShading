@@ -42,7 +42,7 @@ void evaluateReferenceQueryGroups(uint3 dispatchThreadID : SV_DispatchThreadID)
     const uint lightIndex = lightBufferIndex + gLightIndexOffset;
     const NclsLayerStackIR material = gMaterialStates[queryGroupIndex];
     const float3 viewDirection = normalize(gViewDirections[queryGroupIndex].xyz);
-    const float3 lightDirection = normalize(gLightDirections[lightBufferIndex].xyz);
+    const float3 lightDirection = normalize(gLightDirections[queryIndex].xyz);
     const uint queryGroupSeed = gQueryGroupSeeds[queryGroupIndex] ^ gSeed;
     float3 sumA = float3(0.0f);
     float3 sumSquareA = float3(0.0f);

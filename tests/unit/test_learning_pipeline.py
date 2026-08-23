@@ -28,6 +28,7 @@ class _ConstantEvaluator:
         *,
         sample_count_per_replica: int,
         query_group_seeds: np.ndarray,
+        light_directions: np.ndarray | None = None,
         sample_offset: int = 0,
     ):
         shape = (len(materials), self.light_count, 3)
@@ -39,7 +40,12 @@ class _ConstantEvaluator:
 
 
 def _dataset(path: Path) -> None:
-    collection = CollectionConfig(view_count=1, light_count=4, seed=29)
+    collection = CollectionConfig(
+        view_count=1,
+        light_count=4,
+        seed=29,
+        split_direction_scramble=False,
+    )
     provider = LayerStackProvider(
         collection,
         LayerStackProviderConfig(

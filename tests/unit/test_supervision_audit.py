@@ -22,6 +22,7 @@ class _ConstantEvaluator:
         *,
         sample_count_per_replica: int,
         query_group_seeds: np.ndarray,
+        light_directions: np.ndarray | None = None,
         sample_offset: int = 0,
     ):
         shape = (len(materials), self.light_count, 3)
@@ -66,7 +67,7 @@ def test_supervision_audit_is_family_neutral_and_transform_stats_are_train_only(
     assert result["split_audit"]["source_sha256"]["leak_count"] == 0
     assert result["sampling"]["query_group_count_used"] == 4
     assert result["coverage"]["proposals"][0]["proposal_id"].startswith("uniform-solid-angle")
-    assert result["coverage"]["direction_grid_independence"]["wi_grid"]["train_test_overlap_count"] == 1
+    assert result["coverage"]["direction_grid_independence"]["wi_grid"]["train_test_overlap_count"] == 0
     assert "ncls.layer-stack@1" in result["response"]["by_family"]
 
     statistics = json.loads((output / "target_transform_statistics.json").read_text(encoding="utf-8"))
@@ -88,7 +89,6 @@ def test_frozen_supervision_gate_reports_all_failures_without_mutating_audit(tmp
 
     assert gate_result["passed"] is False
     failures = {item["name"] for item in gate_result["checks"] if not item["passed"]}
-    assert "coverage.wi_grid.train_test_overlap_count" in failures
     assert "coverage.proposal.peak" in failures
 
 

@@ -9,7 +9,13 @@ import numpy as np
 
 from ncls.data.collector import CollectionConfig
 from ncls.data.contract import PositionKind, QueryPlan, ReferenceDescriptor, SourceState, SurfaceSample
-from ncls.data.directions import equal_area_hemisphere, equal_area_sphere, stratified_uv, stratified_view_directions
+from ncls.data.directions import (
+    equal_area_hemisphere,
+    equal_area_sphere,
+    peak_grazing_mixture_query,
+    stratified_uv,
+    stratified_view_directions,
+)
 from ncls.paths import PROJECT_ROOT
 from ncls.source_materials.identity import sha256_file
 
@@ -54,15 +60,39 @@ class BaseProvider:
         self.config = config
 
     def query_plan(self, state: SourceState) -> QueryPlan:
-        views = stratified_view_directions(self.config.view_count)
+        split_offset = (
+            (0.0, 0.371, 0.743)[state.split] * np.pi
+            if self.config.split_direction_scramble
+            else 0.0
+        )
+        views = stratified_view_directions(self.config.view_count, azimuth_offset=split_offset)
+        if self.config.query_profile_id == "ncls.e0-peak-grazing-mixture@1":
+            full_sphere = self.descriptor.incident_domain == "full-sphere"
+            query_seed = self.config.seed ^ int(state.state_id[:16], 16)
+            lights, weights, pdf = peak_grazing_mixture_query(
+                views,
+                self.config.light_count,
+                full_sphere=full_sphere,
+                seed=query_seed,
+            )
+            split_name = ("train", "validation", "test")[state.split]
+            domain = "full-sphere-transmission-critical" if full_sphere else "upper-hemisphere"
+            return QueryPlan(
+                views,
+                lights,
+                weights,
+                pdf,
+                f"uniform-peak-grazing-{domain}-{split_name}@1",
+                query_seed,
+            )
         if self.descriptor.incident_domain == "full-sphere":
-            lights, weights = equal_area_sphere(self.config.light_count)
+            lights, weights = equal_area_sphere(self.config.light_count, azimuth_offset=0.5 * split_offset)
             measure = 4.0 * np.pi
-            proposal = "uniform-solid-angle-full-sphere@1"
+            proposal = "uniform-solid-angle-full-sphere-split-scrambled@2"
         else:
-            lights, weights = equal_area_hemisphere(self.config.light_count)
+            lights, weights = equal_area_hemisphere(self.config.light_count, azimuth_offset=0.5 * split_offset)
             measure = 2.0 * np.pi
-            proposal = "uniform-solid-angle-upper-hemisphere@2"
+            proposal = "uniform-solid-angle-upper-hemisphere-split-scrambled@3"
         return QueryPlan(
             views,
             lights,

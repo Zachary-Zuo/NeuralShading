@@ -359,7 +359,7 @@ class MaterialXProvider(BaseProvider):
         compute.globals.gBaseColor, compute.globals.gRoughness, compute.globals.gMetalness, compute.globals.gNormalMap = textures
         compute.globals.gMaterialSampler = device.create_sampler(max_anisotropy=16)
         view_rows, light_rows = direction_rows(plan.view_directions, plan.light_directions, len(surfaces))
-        repeat_count = len(plan.view_directions) * len(plan.light_directions)
+        repeat_count = len(plan.view_directions) * plan.direction_count
         uv = np.repeat(np.asarray([surface.uv for surface in surfaces], dtype=np.float32), repeat_count, axis=0)
         gradients = np.repeat(
             np.asarray([(*surface.uv_dx, *surface.uv_dy) for surface in surfaces], dtype=np.float32),
@@ -375,7 +375,7 @@ class MaterialXProvider(BaseProvider):
         compute.globals.gQueryCount = len(view_rows)
         compute.execute(threads_x=len(view_rows))
         response = output.to_numpy().view(np.float32).reshape(len(view_rows), 4)[:, :3].reshape(
-            len(surfaces), len(plan.view_directions), len(plan.light_directions), 3
+            len(surfaces), len(plan.view_directions), plan.direction_count, 3
         ).copy()
         del textures
         gc.collect()
