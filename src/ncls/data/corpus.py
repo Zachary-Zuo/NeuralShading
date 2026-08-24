@@ -14,7 +14,8 @@ import numpy as np
 from ncls.paths import PROJECT_ROOT
 
 from .collector import collect_reference_dataset
-from .dataset import ReferenceDataset
+from .contract import SourceState
+from .dataset import ReferenceDataset, ReferenceDatasetManifest
 from .profiles import CorpusPlan
 from .providers.layer_stack import LayerStackProvider, LayerStackProviderConfig
 
@@ -164,25 +165,100 @@ def _sample_spending(dataset: ReferenceDataset) -> tuple[int, int]:
     )
 
 
-def plan_layer_stack_corpus(
+def _layer_stack_provider_config(
     plan: CorpusPlan,
-    shard_root: Path | str,
-) -> ReferenceCorpusManifest:
-    if plan.provider.get("name") != "layer-stack":
-        raise ValueError("the first v1 corpus planner supports LayerStack only")
-    provider_config = LayerStackProviderConfig(
+    *,
+    adaptive: bool,
+    selected_state_ids: tuple[str, ...] = (),
+) -> LayerStackProviderConfig:
+    return LayerStackProviderConfig(
         family_count=int(plan.provider["family_count"]),
         states_per_family=int(plan.provider["states_per_family"]),
         heldout_family_count=int(plan.split["heldout_family_count"]),
         state_profile=str(plan.provider["state_profile"]),
         max_depth=int(plan.provider["maximum_path_depth"]),
+        adaptive=adaptive,
+        batch_samples_per_replica=int(plan.reference_budget["batch_samples_per_replica"]),
+        min_combined_samples=int(plan.reference_budget["minimum_combined_samples"]),
+        max_combined_samples=int(plan.reference_budget["maximum_combined_samples"]),
+        relative_standard_error=float(plan.reference_budget["target_relative_se_p95"]),
+        maximum_group_relative_standard_error=float(
+            plan.reference_budget["maximum_query_group_relative_se_p95"]
+        ),
+        max_dispatch_queries=int(plan.reference_budget["maximum_dispatch_queries"]),
         peak_calibration_directions=int(
             plan.document["sampling"]["moving_peak"]["probe_directions"]
         ),
         peak_calibration_samples_per_replica=int(
             plan.document["sampling"]["moving_peak"]["samples_per_replica"]
         ),
+        selected_state_ids=selected_state_ids,
     )
+
+
+def select_layer_stack_state(
+    plan: CorpusPlan,
+    structure_family_id: str,
+    local_state_index: int,
+) -> SourceState:
+    """用可读 family 与族内 index 解析一个确定的 LayerStack v1 state。"""
+
+    if local_state_index < 0:
+        raise ValueError("local state index must be nonnegative")
+    discovery = LayerStackProvider(
+        plan.collection_config("W", (), "test"),
+        _layer_stack_provider_config(plan, adaptive=False),
+    )
+    asset_id = f"{structure_family_id}/state-{local_state_index:04d}"
+    matches = [state for state in discovery.source_states() if state.asset_id == asset_id]
+    if len(matches) != 1:
+        families = sorted({state.structure_family_id for state in discovery.source_states()})
+        if structure_family_id not in families:
+            raise ValueError(
+                f"unknown LayerStack structure family {structure_family_id!r}; "
+                f"available examples: {families[:4]}"
+            )
+        raise ValueError(
+            f"LayerStack state index {local_state_index} is absent from {structure_family_id!r}"
+        )
+    return matches[0]
+
+
+def collect_layer_stack_state(
+    plan: CorpusPlan,
+    structure_family_id: str,
+    local_state_index: int,
+    role: str,
+    output: Path | str,
+) -> tuple[SourceState, ReferenceDatasetManifest]:
+    """采集一个正式密度的单-state shard；它用于 smoke，不冒充完整 corpus。"""
+
+    state = select_layer_stack_state(plan, structure_family_id, local_state_index)
+    collection = plan.collection_config(
+        state.difficulty_class,
+        state.difficulty_tags,
+        role,
+        state.state_id,
+    )
+    provider = LayerStackProvider(
+        collection,
+        _layer_stack_provider_config(
+            plan,
+            adaptive=True,
+            selected_state_ids=(state.state_id,),
+        ),
+    )
+    manifest = collect_reference_dataset(output, (provider,), collection)
+    return state, manifest
+
+
+def plan_layer_stack_corpus(
+    plan: CorpusPlan,
+    shard_root: Path | str,
+) -> ReferenceCorpusManifest:
+    if plan.provider.get("name") != "layer-stack":
+        raise ValueError("the first v1 corpus planner supports LayerStack only")
+    provider_config = _layer_stack_provider_config(plan, adaptive=False)
     discovery = LayerStackProvider(
         plan.collection_config("W", (), "test"),
         provider_config,
@@ -262,28 +338,7 @@ def collect_layer_stack_corpus(
         previous_shards = {shard.shard_id: shard for shard in previous.shards}
         manifest = replace(manifest, created_at=previous.created_at)
     completed: list[CorpusShard] = []
-    base_provider = LayerStackProviderConfig(
-        family_count=int(plan.provider["family_count"]),
-        states_per_family=int(plan.provider["states_per_family"]),
-        heldout_family_count=int(plan.split["heldout_family_count"]),
-        state_profile=str(plan.provider["state_profile"]),
-        max_depth=int(plan.provider["maximum_path_depth"]),
-        adaptive=True,
-        batch_samples_per_replica=int(plan.reference_budget["batch_samples_per_replica"]),
-        min_combined_samples=int(plan.reference_budget["minimum_combined_samples"]),
-        max_combined_samples=int(plan.reference_budget["maximum_combined_samples"]),
-        relative_standard_error=float(plan.reference_budget["target_relative_se_p95"]),
-        maximum_group_relative_standard_error=float(
-            plan.reference_budget["maximum_query_group_relative_se_p95"]
-        ),
-        max_dispatch_queries=int(plan.reference_budget["maximum_dispatch_queries"]),
-        peak_calibration_directions=int(
-            plan.document["sampling"]["moving_peak"]["probe_directions"]
-        ),
-        peak_calibration_samples_per_replica=int(
-            plan.document["sampling"]["moving_peak"]["samples_per_replica"]
-        ),
-    )
+    base_provider = _layer_stack_provider_config(plan, adaptive=True)
     state_lookup: dict[str, Any] | None = None
     for shard in manifest.shards:
         output = _resolve_uri(shard.uri)

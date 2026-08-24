@@ -86,6 +86,30 @@ def _collect_corpus(args: argparse.Namespace) -> int:
     return 0
 
 
+def _collect_state(args: argparse.Namespace) -> int:
+    from .data import CorpusPlan, collect_layer_stack_state
+
+    plan = CorpusPlan.load(args.config)
+    state, manifest = collect_layer_stack_state(
+        plan,
+        args.structure_family,
+        args.state_index,
+        args.role,
+        args.output,
+    )
+    counts = manifest.counts
+    print(
+        f"Collected {state.asset_id} (difficulty={state.difficulty_class}, "
+        f"tags={'+'.join(state.difficulty_tags) or 'none'}) as {args.role}: "
+        f"{manifest.dataset_id}"
+    )
+    print(
+        f"{counts['query_group_count']} query groups x "
+        f"{counts['direction_count']} directions -> {args.output}"
+    )
+    return 0
+
+
 def _validate_corpus(args: argparse.Namespace) -> int:
     from .data import validate_reference_corpus
 
@@ -204,6 +228,19 @@ def build_parser() -> argparse.ArgumentParser:
     collect_corpus.add_argument("--config", type=Path, required=True)
     collect_corpus.add_argument("--shard-root", type=Path, required=True)
     collect_corpus.add_argument("--output", type=Path, required=True, help="写入 artifacts 的 corpus manifest")
+    collect_state = data_commands.add_parser(
+        "collect-state",
+        help="按正式密度采集一个可读定位的 LayerStack state shard",
+    )
+    collect_state.add_argument("--config", type=Path, required=True)
+    collect_state.add_argument("--structure-family", required=True)
+    collect_state.add_argument("--state-index", type=int, required=True)
+    collect_state.add_argument(
+        "--role",
+        choices=("train", "validation", "test", "adversarial_probe", "dense_slice"),
+        required=True,
+    )
+    collect_state.add_argument("--output", type=Path, required=True)
     validate_corpus = data_commands.add_parser("validate-corpus", help="验证 corpus manifest 与全部 HDF5 hash")
     validate_corpus.add_argument("path", type=Path)
     audit_dense = data_commands.add_parser("audit-dense", help="审计 dense slice 峰邻域并给出 16,384 晋级清单")
@@ -262,6 +299,8 @@ def main(argv: list[str] | None = None) -> int:
         return _plan_corpus(args)
     if args.command == "data" and args.data_command == "collect-corpus":
         return _collect_corpus(args)
+    if args.command == "data" and args.data_command == "collect-state":
+        return _collect_state(args)
     if args.command == "data" and args.data_command == "validate-corpus":
         return _validate_corpus(args)
     if args.command == "data" and args.data_command == "audit-dense":

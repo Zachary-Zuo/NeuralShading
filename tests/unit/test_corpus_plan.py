@@ -5,7 +5,7 @@ from copy import deepcopy
 
 import numpy as np
 
-from ncls.data import CorpusPlan, plan_layer_stack_corpus
+from ncls.data import CorpusPlan, plan_layer_stack_corpus, select_layer_stack_state
 from ncls.data.priors import (
     LAYER_STACK_PROFILE,
     layer_stack_difficulty,
@@ -53,6 +53,20 @@ def test_density_table_resolves_m_and_t_without_hidden_ids() -> None:
     assert config.transmission_view_count == 32
     assert config.mixture_weights == (0.26, 0.26, 0.25, 0.10, 0.13)
     assert plan.resolve_query("S", (), "dense_slice").directions == 8192
+
+
+def test_single_state_selector_uses_readable_family_and_local_index() -> None:
+    plan = CorpusPlan.load("configs/corpus/layer-stack-v1.json")
+    state = select_layer_stack_state(
+        plan,
+        "layers-01-diffuse-variant-00",
+        3,
+    )
+    assert state.asset_id == "layers-01-diffuse-variant-00/state-0003"
+    assert state.structure_family_id == "layers-01-diffuse-variant-00"
+    assert len(state.state_id) == 64
+    with np.testing.assert_raises_regex(ValueError, "unknown LayerStack structure family"):
+        select_layer_stack_state(plan, "missing-family", 0)
 
 
 def test_layer_stack_corpus_plan_is_rectangular_and_has_enough_test_states(tmp_path) -> None:

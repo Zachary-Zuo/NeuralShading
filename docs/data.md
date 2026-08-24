@@ -22,6 +22,26 @@ train 查询按 response 难度选密度：
 
 ## 生成与续采
 
+### 单 state 冒烟采集
+
+正式全量采集前，可以用可读的结构 family 与族内 state index 采一个 v5 shard。该文件使用 CorpusPlan 中对应 role 的正式密度和 adaptive reference budget，但只用于验证 reference、统计量、reciprocal pair 与 HDF5 链路，不冒充完整 corpus：
+
+```powershell
+.\scripts\run_falcor_python.ps1 -m ncls.cli data collect-state `
+  --config configs/corpus/layer-stack-v1.json `
+  --structure-family layers-01-diffuse-variant-00 `
+  --state-index 3 `
+  --role validation `
+  --output data/reference-responses/smoke/layer-stack-v1-validation.h5
+
+conda run -n neural-shading python -m ncls.cli data validate `
+  data/reference-responses/smoke/layer-stack-v1-validation.h5
+```
+
+同一路径已存在时采集器会拒绝覆盖。单-state shard 可以直接交给 learning reader 做工程诊断；正式训练和结论仍必须使用通过完整验证的 `reference-corpus` manifest。
+
+### 完整 corpus
+
 先只生成计划，检查 state、split、密度和输出路径：
 
 ```powershell

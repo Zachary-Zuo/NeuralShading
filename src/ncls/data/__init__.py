@@ -27,7 +27,9 @@ from .corpus import (
     ReferenceCorpusManifest,
     audit_dense_slice_resolution,
     collect_layer_stack_corpus,
+    collect_layer_stack_state,
     plan_layer_stack_corpus,
+    select_layer_stack_state,
     validate_reference_corpus,
 )
 from .profiles import CorpusPlan, QueryDensity
@@ -85,6 +87,7 @@ __all__ = [
     "collect_reference_dataset",
     "audit_dense_slice_resolution",
     "collect_layer_stack_corpus",
+    "collect_layer_stack_state",
     "uv_surface_samples",
     "combine_replica_moments",
     "equal_area_hemisphere",
@@ -99,6 +102,7 @@ __all__ = [
     "FOOTPRINT_SWEEP_PROFILE",
     "QueryDensity",
     "plan_layer_stack_corpus",
+    "select_layer_stack_state",
     "validate_reference_corpus",
     "validate_reference_dataset",
 ]
