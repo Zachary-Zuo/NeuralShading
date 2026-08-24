@@ -9,7 +9,7 @@ from torch import nn
 
 from ncls.learning.data import LayerStackReferenceStore, ReferenceQueryStore
 from ncls.learning.evaluation.metrics import evaluator_metric_distributions, response_loss
-from ncls.learning.losses import energy_shape_terms
+from ncls.learning.losses import energy_shape_terms, reference_se_group_tail_loss
 from ncls.learning.models.neural_evaluator import (
     FACTORIZED_LATENT_ARCHITECTURE_ID,
     NeuralEvaluatorModelConfig,
@@ -54,6 +54,9 @@ TARGET_TENSOR_ENCODER_ANALYTIC_RESIDUAL_PIPELINE_ID = (
 )
 TARGET_ENCODER_REFINEMENT_ANALYTIC_RESIDUAL_PIPELINE_ID = (
     "target-encoder-initialization-bounded-refinement-e2@1"
+)
+TARGET_ENCODER_SE_TAIL_REFINEMENT_ANALYTIC_RESIDUAL_PIPELINE_ID = (
+    "target-encoder-se-tail-bounded-refinement-e2@1"
 )
 _TARGET_TRANSFORM_ID = "ncls.train-only-standardized-channel-log1p@1"
 _RESIDUAL_TARGET_TRANSFORM_ID = "ncls.train-only-standardized-asinh-analytic-residual@1"
@@ -1588,3 +1591,61 @@ class TargetEncoderRefinementAnalyticResidualSharedEvaluatorE2Pipeline(
             "are compression-only"
         )
         return costs
+
+
+class TargetEncoderSeTailRefinementAnalyticResidualSharedEvaluatorE2Pipeline(
+    TargetEncoderRefinementAnalyticResidualSharedEvaluatorE2Pipeline
+):
+    """固定表示与 cook，仅增加直接对齐正式 reference-SE group 长尾的 train loss。"""
+
+    descriptor = LearningPipelineDescriptor(
+        pipeline_id=TARGET_ENCODER_SE_TAIL_REFINEMENT_ANALYTIC_RESIDUAL_PIPELINE_ID,
+        candidate_id="ncls.target-encoder-initialization-bounded-refinement@1",
+        research_role="e2-shared-representation-capacity",
+        response_reader_id="ncls.reference-query-store@1",
+        partition_policy_id="ncls.query-role-within-state@1",
+        source_adapter_id="ncls.layer-stack-direct-top-adapter@1",
+        feature_transform_id=(
+            "ncls.train-response-tensor-to-local-frame-evaluator@1"
+        ),
+        target_transform_id=(
+            "ncls.train-only-per-state-standardized-asinh-analytic-residual@1"
+        ),
+        representation_id=(
+            "ncls.analytic-direct-top-target-encoded-bounded-refined-neural-residual@1"
+        ),
+        architecture_id=TARGET_TENSOR_REFINEMENT_ARCHITECTURE_ID,
+        latent_inference_id=(
+            "ncls.target-encoder-initialization-bounded-per-state-refinement@1"
+        ),
+        compiler_id="ncls.none-target-visible-response-compression-refinement@1",
+        loss_id=(
+            "ncls.per-state-asinh-energy-shape-source-reciprocity-"
+            "group-reference-se-cvar25@1"
+        ),
+        metric_suite_id=(
+            "ncls.evaluator-quality-by-state-source-reciprocity-peak-support@1"
+        ),
+        exporter_id="ncls.neural-evaluator-method-bundle-planned@1",
+        supported_family_ids=("ncls.layer-stack@1",),
+        scope=(
+            "multi-material-target-encoder-initialized-bounded-refinement-"
+            "group-reference-se-tail-diagnostic"
+        ),
+    )
+    reference_se_tail_fraction = 0.25
+    reference_se_tail_weight = 0.02
+
+    def training_loss(
+        self,
+        prediction: torch.Tensor,
+        batch: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor:
+        base_loss = super().training_loss(prediction, batch)
+        tail_loss = reference_se_group_tail_loss(
+            prediction,
+            batch["mean"].float(),
+            batch["standard_error"].float(),
+            tail_fraction=self.reference_se_tail_fraction,
+        )
+        return base_loss + self.reference_se_tail_weight * tail_loss

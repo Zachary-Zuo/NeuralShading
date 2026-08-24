@@ -16,6 +16,7 @@ from ncls.learning.data import LayerStackReferenceStore, ReferenceQueryStore
 from ncls.learning.direct_fit import DirectFitConfig, run_direct_fit
 from ncls.learning.evaluation import evaluate_checkpoint, evaluate_evaluator_gate
 from ncls.learning.features import CONTINUOUS_FEATURE_COUNT, FEATURE_CONTRACT_ID, encode_layer_stack
+from ncls.learning.losses import reference_se_group_tail_loss
 from ncls.learning.pipelines import create_pipeline
 from ncls.learning.training import TrainingConfig, train
 from ncls.learning.training.checkpoint import load_checkpoint
@@ -855,7 +856,6 @@ def test_target_encoder_bounded_refinement_loads_frozen_source_checkpoint(
 ) -> None:
     dataset_path = tmp_path / "target-refinement.h5"
     source_run = tmp_path / "target-encoder-source"
-    refinement_run = tmp_path / "target-encoder-refinement"
     _e1_dataset(dataset_path)
     common_model_parameters = {
         "latent_dimension": 4,
@@ -885,38 +885,68 @@ def test_target_encoder_bounded_refinement_loads_frozen_source_checkpoint(
     )
     train(dataset_path, source_run, source_config)
     source_checkpoint = source_run / "checkpoints" / "best.pt"
-    refinement_config = TrainingConfig(
-        schema_version=6,
-        pipeline_id="target-encoder-initialization-bounded-refinement-e2@1",
-        research_stage="e2-shared-representation-capacity",
-        model_parameters={**common_model_parameters, "refinement_bound": 0.25},
-        steps=2,
-        batch_size=3,
-        learning_rate=1e-2,
-        validation_interval=1,
-        checkpoint_interval=1,
-        max_validation_query_groups=3,
-        seed=61,
-        device="cpu",
-        selection_metric="solid_angle_normalized_l1.median",
-        initialization_checkpoint=str(source_checkpoint),
+    refinement_pipeline_ids = (
+        "target-encoder-initialization-bounded-refinement-e2@1",
+        "target-encoder-se-tail-bounded-refinement-e2@1",
     )
-    manifest = train(dataset_path, refinement_run, refinement_config)
-    assert manifest["initialization"]["source_pipeline_id"] == (
-        "target-tensor-encoder-analytic-residual-e2@1"
+    for pipeline_index, pipeline_id in enumerate(refinement_pipeline_ids):
+        refinement_run = tmp_path / f"target-encoder-refinement-{pipeline_index}"
+        refinement_config = TrainingConfig(
+            schema_version=6,
+            pipeline_id=pipeline_id,
+            research_stage="e2-shared-representation-capacity",
+            model_parameters={**common_model_parameters, "refinement_bound": 0.25},
+            steps=2,
+            batch_size=3,
+            learning_rate=1e-2,
+            validation_interval=1,
+            checkpoint_interval=1,
+            max_validation_query_groups=3,
+            seed=61,
+            device="cpu",
+            selection_metric="solid_angle_normalized_l1.median",
+            initialization_checkpoint=str(source_checkpoint),
+        )
+        manifest = train(dataset_path, refinement_run, refinement_config)
+        assert manifest["initialization"]["source_pipeline_id"] == (
+            "target-tensor-encoder-analytic-residual-e2@1"
+        )
+        assert manifest["initialization"]["refinement_parameter_count"] == 12
+        assert manifest["trainable_parameter_count"] == 12
+        assert manifest["model_costs"]["B_asset_fp32"] == 52
+        checkpoint = load_checkpoint(refinement_run / "checkpoints" / "best.pt")
+        assert checkpoint["initialization"]["sha256"] == (
+            manifest["initialization"]["sha256"]
+        )
+        result = evaluate_checkpoint(
+            dataset_path,
+            refinement_run / "checkpoints" / "best.pt",
+            split="test",
+            device_name="cpu",
+        )
+        assert len(result["metrics"]["by_state"]) == 3
+
+
+def test_reference_se_group_tail_loss_matches_group_metric_tail() -> None:
+    prediction = torch.tensor([
+        [[0.0, 0.0, 0.0]],
+        [[1.0, 1.0, 1.0]],
+        [[2.0, 2.0, 2.0]],
+        [[3.0, 3.0, 3.0]],
+    ], requires_grad=True)
+    target = torch.zeros_like(prediction)
+    standard_error = torch.ones_like(prediction)
+    loss = reference_se_group_tail_loss(
+        prediction, target, standard_error, tail_fraction=0.25
     )
-    assert manifest["initialization"]["refinement_parameter_count"] == 12
-    assert manifest["trainable_parameter_count"] == 12
-    assert manifest["model_costs"]["B_asset_fp32"] == 52
-    checkpoint = load_checkpoint(refinement_run / "checkpoints" / "best.pt")
-    assert checkpoint["initialization"]["sha256"] == manifest["initialization"]["sha256"]
-    result = evaluate_checkpoint(
-        dataset_path,
-        refinement_run / "checkpoints" / "best.pt",
-        split="test",
-        device_name="cpu",
-    )
-    assert len(result["metrics"]["by_state"]) == 3
+    assert loss.item() == pytest.approx(torch.log1p(torch.tensor(3.0)).item())
+    loss.backward()
+    assert torch.count_nonzero(prediction.grad) == 3
+
+    with pytest.raises(ValueError, match="tail_fraction"):
+        reference_se_group_tail_loss(
+            prediction, target, standard_error, tail_fraction=0.0
+        )
 
 
 def test_plane_factorized_pipeline_uses_the_common_e1_lifecycle(tmp_path: Path) -> None:

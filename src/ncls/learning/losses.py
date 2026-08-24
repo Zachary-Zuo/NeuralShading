@@ -1,8 +1,32 @@
 from __future__ import annotations
 
+import math
 from typing import Mapping
 
 import torch
+
+
+def reference_se_group_tail_loss(
+    prediction: torch.Tensor,
+    target: torch.Tensor,
+    standard_error: torch.Tensor,
+    *,
+    tail_fraction: float,
+) -> torch.Tensor:
+    """对齐正式 group-level error/reference-SE 指标的可微尾部损失。"""
+
+    if not 0.0 < tail_fraction <= 1.0:
+        raise ValueError("tail_fraction must be in (0, 1]")
+    if prediction.shape != target.shape or target.shape != standard_error.shape:
+        raise ValueError("prediction, target and standard_error must have identical shapes")
+    if prediction.ndim != 3 or prediction.shape[0] == 0:
+        raise ValueError("reference-SE group tail loss requires non-empty [group, wi, rgb]")
+    group_ratio = torch.sum(torch.abs(prediction - target), dim=(1, 2)) / torch.clamp(
+        torch.sum(torch.abs(standard_error), dim=(1, 2)), min=1e-8
+    )
+    tail_count = max(1, math.ceil(len(group_ratio) * tail_fraction))
+    tail = torch.topk(group_ratio, tail_count, largest=True, sorted=False).values
+    return torch.mean(torch.log1p(tail))
 
 
 def energy_shape_terms(
