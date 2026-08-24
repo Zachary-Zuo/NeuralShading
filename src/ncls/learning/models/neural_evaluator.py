@@ -19,6 +19,9 @@ FACTORIZED_LATENT_ARCHITECTURE_ID = (
 TARGET_TENSOR_ENCODER_ARCHITECTURE_ID = (
     "ncls.target-tensor-encoder-shared-small-view-conditioned-mlp@1"
 )
+TARGET_TENSOR_REFINEMENT_ARCHITECTURE_ID = (
+    "ncls.target-tensor-encoder-bounded-refinement-shared-small-mlp@1"
+)
 DIRECTION_ENCODING_IDS = (
     "ncls.local-cartesian-directions@1",
     "ncls.fourier-cartesian-directions@1",
@@ -77,7 +80,7 @@ class SingleMaterialEvaluatorModel(nn.Module):
 
     architecture_id: str
 
-    def cost_summary(self) -> dict[str, int]:
+    def cost_summary(self) -> dict[str, int | float]:
         raise NotImplementedError
 
 
@@ -535,6 +538,62 @@ class TargetTensorEncoderMaterialNeuralEvaluator(SharedMaterialNeuralEvaluator):
             "C_prepare_macs": _linear_macs(self.prepare_network),
             "C_eval_macs": _linear_macs(self.evaluate_network),
         }
+
+
+class RefinedTargetTensorEncoderMaterialNeuralEvaluator(
+    TargetTensorEncoderMaterialNeuralEvaluator
+):
+    """冻结 encoder/decoder，仅优化有界 per-state delta；runtime 烘焙最终 latent。"""
+
+    architecture_id = TARGET_TENSOR_REFINEMENT_ARCHITECTURE_ID
+
+    def __init__(
+        self,
+        config: NeuralEvaluatorModelConfig,
+        target_encoder_input: torch.Tensor,
+        *,
+        encoder_width: int,
+        encoder_layer_count: int,
+        refinement_bound: float,
+    ) -> None:
+        if not 0.0 < refinement_bound <= 4.0:
+            raise ValueError("target tensor refinement bound must lie in (0, 4]")
+        super().__init__(
+            config,
+            target_encoder_input,
+            encoder_width=encoder_width,
+            encoder_layer_count=encoder_layer_count,
+        )
+        self.refinement_bound = float(refinement_bound)
+        self.material_refinements = nn.Parameter(torch.zeros(
+            self.material_count, config.latent_dimension
+        ))
+        for name, parameter in self.named_parameters():
+            parameter.requires_grad_(name == "material_refinements")
+        self._frozen_base_latents: torch.Tensor | None = None
+
+    def clear_frozen_base_latents(self) -> None:
+        self._frozen_base_latents = None
+
+    def _material_latent_for_slots(self, material_slots: torch.Tensor) -> torch.Tensor:
+        if self._frozen_base_latents is None:
+            with torch.no_grad():
+                self._frozen_base_latents = self._encode_inputs(
+                    self.target_encoder_input
+                ).detach()
+        base = self._frozen_base_latents[material_slots.long()]
+        refinement = self.refinement_bound * torch.tanh(
+            self.material_refinements[material_slots.long()]
+        )
+        return base + refinement
+
+    def cost_summary(self) -> dict[str, int | float]:
+        costs = dict(super().cost_summary())
+        refinement_count = self.material_refinements.numel()
+        costs["B_shared_fp32"] = int(costs["B_shared_fp32"]) - 4 * refinement_count
+        costs["optimized_refinement_parameter_count"] = refinement_count
+        costs["refinement_bound"] = self.refinement_bound
+        return costs
 
 
 def positive_response(raw: torch.Tensor) -> torch.Tensor:

@@ -850,6 +850,75 @@ def test_target_tensor_encoder_fitted_state_records_only_train_response_points(
         assert costs["B_compiler_input_fp32_total"] == 3 * 16 * 10 * 4
 
 
+def test_target_encoder_bounded_refinement_loads_frozen_source_checkpoint(
+    tmp_path: Path,
+) -> None:
+    dataset_path = tmp_path / "target-refinement.h5"
+    source_run = tmp_path / "target-encoder-source"
+    refinement_run = tmp_path / "target-encoder-refinement"
+    _e1_dataset(dataset_path)
+    common_model_parameters = {
+        "latent_dimension": 4,
+        "encoder_width": 8,
+        "encoder_layer_count": 1,
+        "width": 8,
+        "prepare_layer_count": 1,
+        "evaluate_layer_count": 1,
+        "activation": "gelu",
+        "direction_encoding_id": "ncls.half-difference-directions@1",
+        "fourier_band_count": 1,
+        "output_bias": 0.0,
+    }
+    source_config = TrainingConfig(
+        pipeline_id="target-tensor-encoder-analytic-residual-e2@1",
+        research_stage="e2-shared-representation-capacity",
+        model_parameters=common_model_parameters,
+        steps=1,
+        batch_size=3,
+        learning_rate=1e-3,
+        validation_interval=1,
+        checkpoint_interval=1,
+        max_validation_query_groups=3,
+        seed=59,
+        device="cpu",
+        selection_metric="solid_angle_normalized_l1.median",
+    )
+    train(dataset_path, source_run, source_config)
+    source_checkpoint = source_run / "checkpoints" / "best.pt"
+    refinement_config = TrainingConfig(
+        schema_version=6,
+        pipeline_id="target-encoder-initialization-bounded-refinement-e2@1",
+        research_stage="e2-shared-representation-capacity",
+        model_parameters={**common_model_parameters, "refinement_bound": 0.25},
+        steps=2,
+        batch_size=3,
+        learning_rate=1e-2,
+        validation_interval=1,
+        checkpoint_interval=1,
+        max_validation_query_groups=3,
+        seed=61,
+        device="cpu",
+        selection_metric="solid_angle_normalized_l1.median",
+        initialization_checkpoint=str(source_checkpoint),
+    )
+    manifest = train(dataset_path, refinement_run, refinement_config)
+    assert manifest["initialization"]["source_pipeline_id"] == (
+        "target-tensor-encoder-analytic-residual-e2@1"
+    )
+    assert manifest["initialization"]["refinement_parameter_count"] == 12
+    assert manifest["trainable_parameter_count"] == 12
+    assert manifest["model_costs"]["B_asset_fp32"] == 52
+    checkpoint = load_checkpoint(refinement_run / "checkpoints" / "best.pt")
+    assert checkpoint["initialization"]["sha256"] == manifest["initialization"]["sha256"]
+    result = evaluate_checkpoint(
+        dataset_path,
+        refinement_run / "checkpoints" / "best.pt",
+        split="test",
+        device_name="cpu",
+    )
+    assert len(result["metrics"]["by_state"]) == 3
+
+
 def test_plane_factorized_pipeline_uses_the_common_e1_lifecycle(tmp_path: Path) -> None:
     dataset_path = tmp_path / "plane-factorized-dataset.h5"
     _e1_dataset(dataset_path)

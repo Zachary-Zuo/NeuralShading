@@ -2,6 +2,7 @@ from .legacy_ltc_k2_p1 import ARCHITECTURE_ID, LegacyLtcK2P1Compiler
 from .neural_evaluator import (
     FactorizedMaterialNeuralEvaluator,
     NeuralEvaluatorModelConfig,
+    RefinedTargetTensorEncoderMaterialNeuralEvaluator,
     SingleMaterialNeuralEvaluator,
     SparseDictionaryMaterialNeuralEvaluator,
     TargetTensorEncoderMaterialNeuralEvaluator,
@@ -16,5 +17,6 @@ __all__ = [
     "SparseDictionaryMaterialNeuralEvaluator",
     "FactorizedMaterialNeuralEvaluator",
     "TargetTensorEncoderMaterialNeuralEvaluator",
+    "RefinedTargetTensorEncoderMaterialNeuralEvaluator",
     "create_model",
 ]

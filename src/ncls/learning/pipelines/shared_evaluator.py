@@ -16,7 +16,9 @@ from ncls.learning.models.neural_evaluator import (
     SHARED_ARCHITECTURE_ID,
     SPARSE_DICTIONARY_ARCHITECTURE_ID,
     TARGET_TENSOR_ENCODER_ARCHITECTURE_ID,
+    TARGET_TENSOR_REFINEMENT_ARCHITECTURE_ID,
     FactorizedMaterialNeuralEvaluator,
+    RefinedTargetTensorEncoderMaterialNeuralEvaluator,
     SharedMaterialNeuralEvaluator,
     SparseDictionaryMaterialNeuralEvaluator,
     TargetTensorEncoderMaterialNeuralEvaluator,
@@ -49,6 +51,9 @@ FACTORIZED_LATENT_ANALYTIC_RESIDUAL_PIPELINE_ID = (
 )
 TARGET_TENSOR_ENCODER_ANALYTIC_RESIDUAL_PIPELINE_ID = (
     "target-tensor-encoder-analytic-residual-e2@1"
+)
+TARGET_ENCODER_REFINEMENT_ANALYTIC_RESIDUAL_PIPELINE_ID = (
+    "target-encoder-initialization-bounded-refinement-e2@1"
 )
 _TARGET_TRANSFORM_ID = "ncls.train-only-standardized-channel-log1p@1"
 _RESIDUAL_TARGET_TRANSFORM_ID = "ncls.train-only-standardized-asinh-analytic-residual@1"
@@ -1462,5 +1467,124 @@ class TargetTensorEncoderAnalyticResidualSharedEvaluatorE2Pipeline(
             "runtime shared decoder plus baked per-material target-encoded latent and "
             "train-only residual transform; target encoder/input are reported separately "
             "as compression cost"
+        )
+        return costs
+
+
+class TargetEncoderRefinementAnalyticResidualSharedEvaluatorE2Pipeline(
+    TargetTensorEncoderAnalyticResidualSharedEvaluatorE2Pipeline
+):
+    """从不可变 target-encoder checkpoint 初始化，只优化有界 per-state delta。"""
+
+    descriptor = LearningPipelineDescriptor(
+        pipeline_id=TARGET_ENCODER_REFINEMENT_ANALYTIC_RESIDUAL_PIPELINE_ID,
+        candidate_id="ncls.target-encoder-initialization-bounded-refinement@1",
+        research_role="e2-shared-representation-capacity",
+        response_reader_id="ncls.reference-query-store@1",
+        partition_policy_id="ncls.query-role-within-state@1",
+        source_adapter_id="ncls.layer-stack-direct-top-adapter@1",
+        feature_transform_id=(
+            "ncls.train-response-tensor-to-local-frame-evaluator@1"
+        ),
+        target_transform_id=(
+            "ncls.train-only-per-state-standardized-asinh-analytic-residual@1"
+        ),
+        representation_id=(
+            "ncls.analytic-direct-top-target-encoded-bounded-refined-neural-residual@1"
+        ),
+        architecture_id=TARGET_TENSOR_REFINEMENT_ARCHITECTURE_ID,
+        latent_inference_id=(
+            "ncls.target-encoder-initialization-bounded-per-state-refinement@1"
+        ),
+        compiler_id="ncls.none-target-visible-response-compression-refinement@1",
+        loss_id=(
+            "ncls.per-state-standardized-asinh-residual-energy-shape-reciprocity@1"
+        ),
+        metric_suite_id=(
+            "ncls.evaluator-quality-by-state-source-reciprocity-peak-support@1"
+        ),
+        exporter_id="ncls.neural-evaluator-method-bundle-planned@1",
+        supported_family_ids=("ncls.layer-stack@1",),
+        scope=(
+            "multi-material-target-encoder-initialized-bounded-refinement-capacity"
+        ),
+    )
+
+    def create_model(self, model_parameters: Mapping[str, Any]) -> nn.Module:
+        if self._training_state is None or self._target_encoder_input is None:
+            raise RuntimeError("target encoder refinement state has not been loaded")
+        parameters = dict(model_parameters)
+        try:
+            encoder_width = int(parameters.pop("encoder_width"))
+            encoder_layer_count = int(parameters.pop("encoder_layer_count"))
+            refinement_bound = float(parameters.pop("refinement_bound"))
+        except KeyError as error:
+            raise ValueError(
+                "target encoder refinement requires encoder dimensions and refinement_bound"
+            ) from error
+        config = NeuralEvaluatorModelConfig.from_mapping(parameters)
+        return RefinedTargetTensorEncoderMaterialNeuralEvaluator(
+            config,
+            torch.from_numpy(self._target_encoder_input),
+            encoder_width=encoder_width,
+            encoder_layer_count=encoder_layer_count,
+            refinement_bound=refinement_bound,
+        )
+
+    def initialize_model_from_checkpoint(
+        self,
+        model: nn.Module,
+        checkpoint: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        if not isinstance(model, RefinedTargetTensorEncoderMaterialNeuralEvaluator):
+            raise TypeError("target encoder refinement received an incompatible model")
+        if (
+            checkpoint.get("pipeline_id")
+            != TARGET_TENSOR_ENCODER_ANALYTIC_RESIDUAL_PIPELINE_ID
+            or checkpoint.get("architecture_id")
+            != TARGET_TENSOR_ENCODER_ARCHITECTURE_ID
+        ):
+            raise ValueError("refinement requires a target encoder-only source checkpoint")
+        source_state = checkpoint.get("fitted_training_state")
+        if not isinstance(source_state, Mapping) or self._training_state is None:
+            raise ValueError("refinement source checkpoint fitted state is missing")
+        if (
+            source_state.get("state_ids") != self._training_state.get("state_ids")
+            or source_state.get("target_encoder_input_sha256")
+            != self._training_state.get("target_encoder_input_sha256")
+            or source_state.get("target_transform_id")
+            != self._training_state.get("target_transform_id")
+        ):
+            raise ValueError("refinement source checkpoint target state/input is incompatible")
+        missing, unexpected = model.load_state_dict(checkpoint["model_state"], strict=False)
+        if set(missing) != {"material_refinements"} or unexpected:
+            raise ValueError(
+                "refinement source checkpoint model state is incompatible: "
+                f"missing={missing}, unexpected={unexpected}"
+            )
+        model.material_refinements.data.zero_()
+        model.clear_frozen_base_latents()
+        return {
+            "initialization_id": "ncls.target-encoder-checkpoint-initialization@1",
+            "source_checkpoint_pipeline_contract_sha256": checkpoint.get(
+                "pipeline_contract_sha256"
+            ),
+            "source_fitted_training_state_sha256": checkpoint.get(
+                "fitted_training_state_sha256"
+            ),
+            "frozen_parameter_count": sum(
+                parameter.numel()
+                for parameter in model.parameters()
+                if not parameter.requires_grad
+            ),
+            "refinement_parameter_count": model.material_refinements.numel(),
+        }
+
+    def parameter_costs(self, model: nn.Module) -> Mapping[str, Any]:
+        costs = dict(super().parameter_costs(model))
+        costs["cost_scope"] = (
+            "runtime shared frozen decoder plus baked encoder-initialized/refined latent "
+            "and train-only residual transform; encoder and optimized refinement state "
+            "are compression-only"
         )
         return costs

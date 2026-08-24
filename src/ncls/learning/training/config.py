@@ -29,11 +29,12 @@ class TrainingConfig:
     device: str | None = None
     deterministic: bool = True
     selection_metric: str = "relative_l1.median"
+    initialization_checkpoint: str | None = None
     schema_name: str = "ncls.training-config"
     schema_version: int = 5
 
     def __post_init__(self) -> None:
-        if self.schema_name != "ncls.training-config" or self.schema_version not in (4, 5):
+        if self.schema_name != "ncls.training-config" or self.schema_version not in (4, 5, 6):
             raise ValueError("unsupported training config schema")
         if self.schema_version == 4 and (
             self.learning_rate_schedule != "constant"
@@ -42,6 +43,13 @@ class TrainingConfig:
             raise ValueError("training config v4 only supports a constant learning rate")
         if self.learning_rate_schedule not in {"constant", "cosine"}:
             raise ValueError("unsupported learning rate schedule")
+        if self.schema_version < 6 and self.initialization_checkpoint is not None:
+            raise ValueError("initialization_checkpoint requires training config v6")
+        if self.initialization_checkpoint is not None and (
+            not isinstance(self.initialization_checkpoint, str)
+            or not self.initialization_checkpoint.strip()
+        ):
+            raise ValueError("initialization_checkpoint must be a nonempty path or null")
         if not 0.0 <= self.final_learning_rate_fraction <= 1.0:
             raise ValueError("final_learning_rate_fraction must lie in [0, 1]")
         if "@" not in self.pipeline_id or not self.research_stage or self.selection_metric.count(".") != 1:
@@ -77,6 +85,8 @@ class TrainingConfig:
         if self.schema_version == 4:
             value.pop("learning_rate_schedule")
             value.pop("final_learning_rate_fraction")
+        if self.schema_version < 6:
+            value.pop("initialization_checkpoint")
         value["model_parameters"] = dict(self.model_parameters)
         value["dataset_selection"] = {
             name: list(values) for name, values in self.dataset_selection.items()

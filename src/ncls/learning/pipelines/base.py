@@ -119,6 +119,16 @@ class LearningPipeline(ABC):
             "C_eval_macs": None,
         }
 
+    def initialize_model_from_checkpoint(
+        self,
+        model: nn.Module,
+        checkpoint: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        del model, checkpoint
+        raise ValueError(
+            f"pipeline {self.descriptor.pipeline_id} does not accept an initialization checkpoint"
+        )
+
     def additional_metric_distributions(
         self,
         model: nn.Module,

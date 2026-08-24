@@ -16,7 +16,13 @@ from torch.utils.tensorboard import SummaryWriter
 from ncls.learning.evaluation.evaluator import evaluate_model, tensor_batch
 from ncls.learning.pipelines import LearningPipeline, create_pipeline
 
-from .checkpoint import CHECKPOINT_FORMAT, CHECKPOINT_VERSION, save_checkpoint_atomic
+from .checkpoint import (
+    CHECKPOINT_FORMAT,
+    CHECKPOINT_VERSION,
+    load_checkpoint,
+    save_checkpoint_atomic,
+    sha256_file,
+)
 from .config import TrainingConfig
 
 
@@ -60,6 +66,7 @@ def _checkpoint_payload(
     validation_metrics: dict[str, Any] | None,
     numpy_rng: np.random.Generator,
     fitted_training_state: dict[str, Any],
+    initialization: dict[str, Any] | None,
 ) -> dict[str, Any]:
     return {
         "format_name": CHECKPOINT_FORMAT,
@@ -75,6 +82,7 @@ def _checkpoint_payload(
         "training_config_sha256": config.resolved_sha256,
         "fitted_training_state": fitted_training_state,
         "fitted_training_state_sha256": _sha256_json(fitted_training_state),
+        "initialization": initialization,
         "step": step,
         "model_state": model.state_dict(),
         "optimizer_state": optimizer.state_dict(),
@@ -123,8 +131,30 @@ def train(
     fitted_training_state = dict(pipeline.fit_training_state(store, lifecycle_indices["train"]))
     pipeline.load_training_state(fitted_training_state)
     model = pipeline.create_model(config.model_parameters).to(device)
+    initialization: dict[str, Any] | None = None
+    if config.initialization_checkpoint is not None:
+        initialization_path = Path(config.initialization_checkpoint)
+        if not initialization_path.is_absolute():
+            initialization_path = PROJECT_ROOT / initialization_path
+        initialization_path = initialization_path.resolve()
+        source_checkpoint = load_checkpoint(initialization_path, map_location=device)
+        if source_checkpoint.get("dataset_id") != store.dataset.manifest.dataset_id:
+            raise ValueError("initialization checkpoint dataset_id does not match training data")
+        details = dict(pipeline.initialize_model_from_checkpoint(model, source_checkpoint))
+        initialization = {
+            "uri": config.initialization_checkpoint,
+            "sha256": sha256_file(initialization_path),
+            "source_pipeline_id": source_checkpoint.get("pipeline_id"),
+            "source_run_step": source_checkpoint.get("step"),
+            **details,
+        }
+    trainable_parameters = [
+        parameter for parameter in model.parameters() if parameter.requires_grad
+    ]
+    if not trainable_parameters:
+        raise ValueError("training pipeline exposed no trainable parameters")
     optimizer = torch.optim.AdamW(
-        model.parameters(),
+        trainable_parameters,
         lr=config.learning_rate,
         weight_decay=config.weight_decay,
     )
@@ -163,9 +193,13 @@ def train(
         },
         "fitted_training_state": fitted_training_state,
         "fitted_training_state_sha256": _sha256_json(fitted_training_state),
+        "initialization": initialization,
         "training_config_sha256": config.resolved_sha256,
         "model_costs": dict(pipeline.parameter_costs(model)),
         "parameter_count": sum(parameter.numel() for parameter in model.parameters()),
+        "trainable_parameter_count": sum(
+            parameter.numel() for parameter in trainable_parameters
+        ),
         "device": str(device),
         "selection_split": "validation",
         "partition_policy_id": pipeline.descriptor.partition_policy_id,
@@ -198,7 +232,9 @@ def train(
             prediction = pipeline.predict(model, batch, store, device)
             loss = pipeline.training_loss(prediction, batch)
             loss.backward()
-            gradient_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip)
+            gradient_norm = torch.nn.utils.clip_grad_norm_(
+                trainable_parameters, config.gradient_clip
+            )
             optimizer.step()
             writer.add_scalar("train/loss", float(loss.detach()), step)
             writer.add_scalar("train/gradient_norm", float(gradient_norm), step)
@@ -244,6 +280,7 @@ def train(
                             validation_metrics=latest_validation,
                             numpy_rng=np_rng,
                             fitted_training_state=fitted_training_state,
+                            initialization=initialization,
                         ),
                     )
 
@@ -260,6 +297,7 @@ def train(
                         validation_metrics=latest_validation,
                         numpy_rng=np_rng,
                         fitted_training_state=fitted_training_state,
+                        initialization=initialization,
                     ),
                 )
         writer.flush()

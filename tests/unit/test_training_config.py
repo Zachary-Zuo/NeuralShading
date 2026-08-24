@@ -24,3 +24,14 @@ def test_v5_training_config_versions_cosine_schedule() -> None:
     assert config.to_dict()["final_learning_rate_fraction"] == 0.05
     with pytest.raises(ValueError, match="lie in"):
         TrainingConfig(schema_version=5, final_learning_rate_fraction=1.1)
+
+
+def test_v6_training_config_versions_initialization_checkpoint() -> None:
+    config = TrainingConfig(
+        schema_version=6,
+        initialization_checkpoint="artifacts/research/source/checkpoints/best.pt",
+    )
+    assert config.to_dict()["initialization_checkpoint"].endswith("best.pt")
+    assert "initialization_checkpoint" not in TrainingConfig(schema_version=5).to_dict()
+    with pytest.raises(ValueError, match="requires training config v6"):
+        TrainingConfig(schema_version=5, initialization_checkpoint="best.pt")
