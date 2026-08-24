@@ -182,6 +182,8 @@ E2 的共享表示监督入口已经通过冻结 gate。`ncls.e2-layer-stack-sha
 
 第一条 E2 pipeline 已冻结为 `dense-latent-shared-small-mlp-energy-shape-e2@1`。它通过 state-ID slot 表联合优化每 state dense latent 与共享小 MLP，使用 query-role train/validation/test 分离，因此度量的是 24 个 target-visible state 的共享压缩容量，而不是 source-held-out 编译。公共 evaluator 新增按 state/source split 的分布报告；模型将单 state latent bytes 与共享 decoder bytes 分开。正式训练前的 `ncls.e2-shared-evaluator-acceptance@1` 要求 test normalized L1 median/p95 不超过 `0.08/0.20`、peak angle p95 不超过 `2°`、top-energy recall p5 至少 `0.85`，并限制 `B_asset≤512 bytes`、`B_shared≤512 KiB` 和 prepare/evaluate 各 `65,536 MAC`。smoke 先验证这条上界；失败后仍需根据 by-state 证据决定 analytic residual 或容量调整，不能直接进入 compiler。
 
+首轮 500-step、64-wide direct shared smoke 的 train/test median 为 `0.777/0.816`，单界面 sheen 出现数量级能量错误，说明该短训练设置尚未形成 direct evaluator。换成同成本 shared analytic residual 后，2,000-step train/test median 降为 `0.222/0.235`，而 direct-top core-only test median 为 `0.688`，证明 neural residual 有非零贡献；但 test p95 `0.506`、energy p95 `0.389`、peak angle p95 `3.92°`、recall p5 `0.732`，仍未通过 gate。validation 到 step 1,800 才达到最佳，因此下一项只复用 E1 已通过的 108-wide、8,000-step envelope 做 shared-capacity 因果对照；当前不淘汰 dense latent 或 analytic residual，也不进入 target encoder/compiler。
+
 三组 LayerStack 的相同 state/query 在四档自适应预算下测得以下 noise 曲线；`sample_count` 是合并两个 replica 后的总样本数上限：
 
 | 最大总样本数 | relative SE p95 | replica normalized L1 p95 | gate |
