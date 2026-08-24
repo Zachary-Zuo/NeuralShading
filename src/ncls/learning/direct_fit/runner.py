@@ -67,7 +67,7 @@ def run_direct_fit(
     config: DirectFitConfig,
     max_query_groups: int | None = None,
 ) -> dict[str, object]:
-    """逐 query group 直接优化表示参数，用来测量方向切片上界。"""
+    """逐 query group 直接优化表示参数，用作方向切片 direct-fit control。"""
 
     if split not in SPLIT_NAMES:
         raise ValueError(f"split must be one of {SPLIT_NAMES}")

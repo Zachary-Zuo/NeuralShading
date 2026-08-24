@@ -86,7 +86,7 @@ LayerStack 的默认 `ncls.layer-stack-research-prior@1` 仍用于随机结构/�
   --output artifacts\research\learning-goal\e0\probes\layer-stack-boundary-v4.h5
 ```
 
-案例 ID、profile ID 和采样配置同时进入原生 `MaterialProgram` metadata、provider metadata 与 HDF5 generation config。修改固定案例必须发布新 profile ID，不能在原 ID 下静默换状态。先用低预算 H5 按 state/query role 定位 reference noise，再只给最坏状态增加自适应预算；不得把百万样本上界无差别用于所有状态。
+案例 ID、profile ID 和采样配置同时进入原生 `MaterialProgram` metadata、provider metadata 与 HDF5 generation config。修改固定案例必须发布新 profile ID，不能在原 ID 下静默换状态。先用低预算 H5 按 state/query role 定位 reference noise，再只给最坏状态增加自适应预算；不得把百万样本诊断 cap 无差别用于所有状态。
 
 ## 验证与读取
 

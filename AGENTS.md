@@ -10,13 +10,13 @@
 
 1. 可信的多层随机游走 reference；
 2. 该 reference 生成的方向响应数据；
-3. 定义少量可部署的 latent、`prepare` 和 evaluator MLP 候选，检查现有监督是否覆盖完整 `wo × wi` 查询域；
-4. 依次验证单材质 evaluator 容量、共享 decoder + 材质 latent，以及对未见状态的 feed-forward compiler；
-5. 把成形的 evaluator 导出到 Slang/Falcor，再扩展 matched sampler、环境积分和 UE 式实时工作流。
+3. 用最小 shared evaluator 候选打通 `reference → train → optimized-code/source-compiler control → MethodBundle/Slang → viewer/报告` 纵向回环，同时检查现有监督是否覆盖完整 `wo × wi` 查询域；
+4. 以 failure ledger 驱动单变量迭代，持续区分数据、方向表示、优化、shared code、compiler 与部署问题；单材质 teacher、learned frame、lobe、tensor field 和 target encoder 按问题启用；
+5. evaluator 与 compiler 的局部闭环稳定后，再扩展 matched sampler、环境积分和 UE 式实时工作流。
 
-当前已有一个端到端可部署方法用于验证 compiler、MethodBundle、Slang backend 和 viewer 生命周期。接下来的方法研究以 neural evaluator 的建模为中心：先确定 latent、方向编码、网络结构、输出参数化和共享方式，再测量其局部散射质量与实际单次查询成本。现有解析方法作为回归与成本对照，不决定目标 neural representation。
+当前已有一个端到端可部署方法用于验证 compiler、MethodBundle、Slang backend 和 viewer 生命周期。接下来的方法研究以 neural evaluator 的建模为中心：先让新的最小候选复用并打通这套生命周期，再根据每轮暴露的主要失败调整 latent、方向编码、网络结构、输出参数化和共享方式，同时测量局部散射质量与实际单次查询成本。现有解析方法作为回归与成本对照，不决定目标 neural representation。
 
-数据、学习、方法包和 Windows viewer 的基础闭环已经迁到正式架构。当前研究顺序固定为：evaluator 建模与监督审计 → 单材质/共享 latent 表示验证 → 通用 compiler 泛化 → Slang 最小部署 → matched sampler → 环境/面光积分 → Falcor/UE 式系统验收。不得在 evaluator 尚未成形时把多灯 scaling、PT 方差或 UE 集成写成当前可执行的 kill test。这个顺序不把 `LayerStackIR` 提升为所有源材质的 GT 表示，也不把某个 backend 的状态布局提升为公共接口。
+数据、学习、方法包和 Windows viewer 的基础闭环已经迁到正式架构。当前研究采用两层顺序：evaluator 主线内部先建立 `监督/训练 → optimized-code 与 source-compiler control → Slang parity/成本 → viewer slice` 的最小纵向回环，再按暴露问题持续迭代；evaluator 与 compiler 的局部闭环稳定后，才依次进入 matched sampler → 环境/面光积分 → Falcor/UE 式系统验收。不得在 evaluator 尚未成形时把多灯 scaling、PT 方差或 UE 集成写成当前可执行的 kill test，也不得因早期质量不够而推迟新 evaluator 的最小 Slang/parity/成本反馈。这个顺序不把 `LayerStackIR` 提升为所有源材质的 GT 表示，也不把某个 backend 的状态布局提升为公共接口。
 
 ## 文档与表述
 
@@ -27,6 +27,7 @@
 - 叙述以目标方法、执行路线和可验证判据为中心。历史 backend 名称与旧指标只在复现实验、兼容说明或具体命令中出现，不用反复否定旧方法来定义新方向。
 - 物理或工程限制必须说明适用范围，不能写得像普遍定律。例如 v0 为了让 RGB 三通道共用一次自由飞行采样，在有体散射时令三个通道的总消光系数相同；颜色差异仍可由各通道散射反照率表达。这是 v0 的实现约束，不是一般介质都满足的物理性质。
 - 新代码、稳定文档和用户入口统一使用 `reference`（对某个源材质族具有权威语义的求值实现）、`direct fit`（逐样本直接拟合）和 backend-specific `ScatteringState`。随机游走是当前层栈材质族的 reference，不是该术语的唯一实现。迁移前报告若从 Git 历史或外部归档中恢复，其原始字段可以保留旧名称，但必须标明它不代表当前接口；这不构成把报告重新持久化到根仓库的理由。
+- 有限数据、模型和训练预算下的实验不称为“上界”。新报告使用 `optimized-code control`、`high-capacity teacher`、`best observed candidate` 等限定表述；历史 schema/manifest 字段为复现可以保留。实时 backend 的单次执行、状态和访存仍必须静态有界，这是工程合同，不是模型质量宣称。
 
 ## 根 Git 仓库边界
 

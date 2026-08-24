@@ -159,7 +159,7 @@
 
 [项目页](https://perso.telecom-paristech.fr/boubek/papers/MIPNet/)学习从 normal 与 roughness 等固定 SVBRDF channels 生成下一级参数，使过滤后的单次 BRDF lookup 更接近 footprint 内平均 radiance，并把 normal variation 转移成 anisotropic roughness。
 
-本项目具体参考：它是传统 PBR channel 的强 LOD baseline，也说明 filter loss 应在 shaded response 上定义，而不是只匹配参数均值。它只输出固定材质参数，因此不能代表复杂 neural appearance 的容量上界。
+本项目具体参考：它是传统 PBR channel 的强 LOD baseline，也说明 filter loss 应在 shaded response 上定义，而不是只匹配参数均值。它只输出固定材质参数，因此不能作为复杂 neural appearance 的容量对照。
 
 ### 4.2 Constant-Cost Spatio-Angular Prefiltering of Glinty Appearance，TOG 2022
 

@@ -398,7 +398,7 @@ def build_parser() -> argparse.ArgumentParser:
     evaluator_gate.add_argument("--gate", type=Path, required=True)
     evaluator_gate.add_argument("--output", type=Path, required=True)
 
-    direct_fit = learn_commands.add_parser("direct-fit", help="逐 query group 优化参数，测量方向切片上界")
+    direct_fit = learn_commands.add_parser("direct-fit", help="逐 query group 优化参数，生成方向切片 direct-fit control")
     direct_fit.add_argument("--dataset", type=Path, required=True)
     direct_fit.add_argument("--output", type=Path, required=True)
     direct_fit.add_argument("--split", choices=("train", "validation", "test"), required=True)

@@ -212,7 +212,7 @@ PathTracingCompatible       完整 PT 所需的事件、权重与 sampling 组�
 
 `cost_model` 至少记录 CompiledMaterial/latent bytes、prepare 的纹理与编码成本、每次 evaluator MLP 的网络结构/精度/成本、可选 sample/pdf head、状态 bytes/pixel，以及每种专用积分器的查询预算。实际 GPU 时间由 viewer benchmark 补充。
 
-能称为实时部署候选的 backend 必须声明 `bounded_execution=true`：latent/state 大小、网络结构、单次 evaluate 成本和内部循环都具有显式上界，不随源材质图深度、层间随机游走次数或未受控随机状态增长。整帧时间可以按可见像素、实际灯数和 renderer 配置的固定积分 query 预算增长；这些 scaling curve 在 evaluator 完成最小部署后进入 Pareto 报告。尚未满足这一点的方法可以作为建模或诊断 backend，但不能进入实时排名。
+能称为实时部署候选的 backend 必须声明 `bounded_execution=true`：latent/state 大小、网络结构、单次 evaluate 成本和内部循环都可静态界定，不随源材质图深度、层间随机游走次数或未受控随机状态增长。整帧时间可以按可见像素、实际灯数和 renderer 配置的固定积分 query 预算增长；这些 scaling curve 在 evaluator 完成最小部署后进入 Pareto 报告。尚未满足这一点的方法可以作为建模或诊断 backend，但不能进入实时排名。
 
 ## 必需能力
 

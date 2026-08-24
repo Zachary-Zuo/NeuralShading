@@ -158,7 +158,7 @@ renderer 只使用不透明状态、capability 和统一散射操作，不读取
   → 统一曝光和 tone mapping
 ```
 
-`prepare()` 是稳定的共享编码阶段：它获取和过滤 material/spatial latent，编码 shading frame、footprint 与 `wo`，形成同一着色点多次查询可复用的 state。主要 neural shading 发生在 `evaluate()`：小型 MLP 接收 state 与 `wi`，直接输出方向散射。实现可以把 prepare inline 到 lighting 或 ray-hit shader，不要求一定写入独立 buffer。单次 `prepare` 和单次 `evaluate` 都必须有明确上界，整帧成本可以按可见像素、实际灯数和固定环境积分预算自然增长。
+`prepare()` 是稳定的共享编码阶段：它获取和过滤 material/spatial latent，编码 shading frame、footprint 与 `wo`，形成同一着色点多次查询可复用的 state。主要 neural shading 发生在 `evaluate()`：小型 MLP 接收 state 与 `wi`，直接输出方向散射。实现可以把 prepare inline 到 lighting 或 ray-hit shader，不要求一定写入独立 buffer。单次 `prepare` 和单次 `evaluate` 的执行与访存必须静态有界，整帧成本可以按可见像素、实际灯数和固定环境积分预算自然增长。
 
 所有实时表面 backend 都提供 `prepare + evaluate`。只有声明 scattering sampling、path-tracing compatibility 或相应次级光线能力的方法才必须提供与 evaluator 共享 state 且密度可计算的 `sample + pdf`；面光和环境光可以通过专用积分 capability 或固定预算的 `evaluate` 查询实现。
 
@@ -172,7 +172,7 @@ renderer 只使用不透明状态、capability 和统一散射操作，不读取
 - RGB 线性工作流；材质程序显式记录 `color_model`。
 - 支持各向异性，切线坐标系是标准 `SurfaceInteraction` 的一部分。
 - 该材质族的随机游走 reference、数据采集和 viewer 左侧复用同一套 reference shader。
-- 当前方法阶段先定义 latent、方向编码、evaluator MLP、输出参数化和共享方式，再依次验证单材质容量、共享 decoder + 材质 latent、未见状态 compiler 和 Slang 最小部署。sampler、环境积分和完整系统 benchmark 在 evaluator 成形后展开。
+- 当前方法阶段先让最小 shared evaluator 同时接入单材质/optimized-code 诊断、source-compiler control、Slang parity/成本和 viewer slice，形成纵向回环；再根据 failure ledger 调整 latent、方向编码、evaluator MLP、输出参数化和共享方式。sampler、环境积分和完整系统 benchmark 仍在 evaluator 与 compiler 局部闭环稳定后展开。
 
 ## 非局部能力
 

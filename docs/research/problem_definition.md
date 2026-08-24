@@ -2,7 +2,7 @@
 
 ## 一句话结论
 
-NeuralShading 的本质不是“用网络回归几个材质参数”，也不只是“把一个 BRDF 拟合得更快”，而是：**在保留源材质原生语义和编辑状态的前提下，压缩一个带材质状态、空间、尺度和双方向条件的查询函数，使它能够在 GPU shader 中随机访问，并让每次查询的时间、资产内存和共享运行时成本都有明确上界。**
+NeuralShading 的本质不是“用网络回归几个材质参数”，也不只是“把一个 BRDF 拟合得更快”，而是：**在保留源材质原生语义和编辑状态的前提下，压缩一个带材质状态、空间、尺度和双方向条件的查询函数，使它能够在 GPU shader 中随机访问，并让每次查询的时间、资产内存和共享运行时成本都可静态界定。**
 
 ## 1. 被压缩的对象是什么
 
@@ -175,7 +175,7 @@ autodecoder 不计算 `E(X)`，而是把每个资产的 latent `Z` 直接注册�
 Z_star = argmin_Z sum_q loss(D_phi(Z,q), X(q))
 ```
 
-Random-Access Neural Compression of Material Textures 的原始 feature grids 属于这类 per-asset 直接优化。它仍有不可替代的用途：提供 decoder/latent 的直接拟合上界；处理不规则、缺失或无法方便整理成固定 tensor 的观测；以及检查 target encoder 的 parameterization/inference gap。只有 corpus-shared encoder 才进一步存在通常意义上的 amortization gap。但 autodecoder 的收敛速度、噪声和最终质量会受 latent 初始化、query sampling 与优化器影响，因此“optimized latent”只有在预算、多次 seed 和收敛诊断充分时才是可信上界。
+Random-Access Neural Compression of Material Textures 的原始 feature grids 属于这类 per-asset 直接优化。它仍有不可替代的用途：提供同 decoder 下的 `optimized-code control`；处理不规则、缺失或无法方便整理成固定 tensor 的观测；以及检查 target encoder 的 parameterization/inference gap。只有 corpus-shared encoder 才进一步存在通常意义上的 amortization gap。autodecoder 的收敛速度、噪声和最终质量会受 latent 初始化、query sampling 与优化器影响，因此报告必须锁定预算、seed 和收敛诊断，只把它写成该配置下观测到的 control。
 
 ### 5.3 Target encoder initialization + optional latent refinement
 
@@ -251,6 +251,6 @@ analytic core + neural residual                  长尾与采样友好候选
 plane/tensor factorization                       高维分解对照
 ```
 
-当前 E1 证据没有改变这八类候选清单，但已经缩小三个实现范围：在 `alpha_x=0.002` 极窄单界面与冻结小 MLP 成本内，direct dense 因无法保持峰值能量而淘汰；在固定多界面 LayerStack 上，analytic core + neural residual 使用 energy/shape、multiscale half-slope、GELU 与 cosine 后通过既有数值/静态成本 gate；raw-direction 六成对 plane v1 在 32² 时对未见 query 过拟合、16² 时欠拟合，当前淘汰。第二项是 optimized-latent 的成本受限单材质候选，不再解释为 direct neural representation 的高保真上界；淘汰的 plane v1 也不否定带物理 warp 或空间语义轴的新 factorization。逐项数值与 hash 见 `artifacts/research/learning-goal/e1/comparisons/`。
+当前 E1 证据没有改变这八类候选清单，但已经缩小三个实现范围：在 `alpha_x=0.002` 极窄单界面与冻结小 MLP 成本内，direct dense 因无法保持峰值能量而淘汰；在固定多界面 LayerStack 上，analytic core + neural residual 使用 energy/shape、multiscale half-slope、GELU 与 cosine 后通过既有数值/静态成本 gate；raw-direction 六成对 plane v1 在 32² 时对未见 query 过拟合、16² 时欠拟合，当前淘汰。第二项是 optimized-latent 的成本受限单材质候选；淘汰的 plane v1 也不否定带物理 warp 或空间语义轴的新 factorization。逐项数值与 hash 见 `artifacts/research/learning-goal/e1/comparisons/`。
 
-下一步先按 [`fidelity_first_model_design.md`](fidelity_first_model_design.md) 建立高保真可达性，再逐级恢复压缩和部署约束。权威数据与分层实验角色见 [`data_and_experiments.md`](data_and_experiments.md)，各相关工作能提供的具体机制见 [`prior_art.md`](prior_art.md)。
+下一步按 [`fidelity_first_model_design.md`](fidelity_first_model_design.md) 先让最小 shared evaluator、source-compiler control、Slang 与 viewer 形成纵向回环，再根据 failure ledger 持续改进质量、压缩和部署布局。权威数据与实验角色见 [`data_and_experiments.md`](data_and_experiments.md)，各相关工作能提供的具体机制见 [`prior_art.md`](prior_art.md)。

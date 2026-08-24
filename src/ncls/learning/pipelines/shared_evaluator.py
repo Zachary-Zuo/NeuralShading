@@ -113,7 +113,7 @@ _TARGET_TENSOR_ENCODER_FEATURE_CONTRACT = {
 
 
 class DenseLatentSharedEvaluatorE2Pipeline(LearningPipeline):
-    """E2 target-visible autodecoder 上界；不读取 native payload，也不是 source compiler。"""
+    """E2 target-visible optimized-code control；不读取 native payload，也不是 source compiler。"""
 
     feature_contract = _FEATURE_CONTRACT
     target_transform_id = _TARGET_TRANSFORM_ID
@@ -422,7 +422,7 @@ class DenseLatentSharedEvaluatorE2Pipeline(LearningPipeline):
 
 
 class AnalyticResidualSharedEvaluatorE2Pipeline(DenseLatentSharedEvaluatorE2Pipeline):
-    """LayerStack direct-top analytic core + 共享 neural residual 的 E2 容量上界。"""
+    """LayerStack direct-top analytic core + 共享 neural residual 的 E2 capacity control。"""
 
     target_transform_id = _RESIDUAL_TARGET_TRANSFORM_ID
     descriptor = LearningPipelineDescriptor(
@@ -1258,7 +1258,7 @@ class FactorizedLatentAnalyticResidualSharedEvaluatorE2Pipeline(
 class TargetTensorEncoderAnalyticResidualSharedEvaluatorE2Pipeline(
     BoundaryCapacityPerStateAnalyticResidualSharedEvaluatorE2Pipeline
 ):
-    """只读取 train query tensor 的 permutation-invariant target encoder 上界。"""
+    """只读取 train query tensor 的 permutation-invariant target-encoder control。"""
 
     feature_contract = _TARGET_TENSOR_ENCODER_FEATURE_CONTRACT
     target_encoder_input_id = (
