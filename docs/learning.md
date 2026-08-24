@@ -28,6 +28,8 @@ E2 多峰/平顶 response 还要求把 raw argmax 峰位与“峰支持集”分
 
 E2 structured-latent smoke 注册为 `sparse-latent-dictionary-analytic-residual-e2@1` 与 `factorized-latent-analytic-residual-e2@1`。前者联合优化共享 `16×16` codebook 与每 state logits，部署资产只保留 top-4 `uint16` ID 和 fp32 mixing weight；完整 logits 只属于 target-visible 优化过程，不计入 runtime `B_asset`。后者把 `state×latent` 表分解为每 state rank-4 系数与共享 `4×16` basis。两者都在 `prepare()` 合成 16-D latent，显式计入 64 MAC，随后复用同一 width108 decoder、per-state train-only residual transform、source-aware reciprocity 和 peak-support metric；这次 factorization 只检验材质 latent 轴的低秩结构，不改写 E1 raw-direction plane v1 或 E5 spatial plane 的既有结论。
 
+3k smoke 中，随机初始化、纯梯度 hard top-k 的 test median/p95 为 `0.1291/0.2715`，同时失败 energy、recall、source reciprocity 与 SE，已在该范围淘汰；这个结论不排除只用 train response 做 K-means 或 target-encoder 初始化。rank-4 factorized latent 以 `B_asset=52 bytes` 得到 `0.0980/0.2287`，接近 matched dense16 3k 的 `0.0917/0.2233`，且 energy、peak 与 recall 通过；它保留为低 asset-bytes 对照，但 aggregate、source reciprocity 和 SE 尚未过 gate，当前不先做 rank sweep。两项 manifest 均证明 test 是训练结束后才独立读取。
+
 ## 三条路径的边界
 
 Python 侧的工具生命周期仍分成三条路径，但必须记录拟合对象和结论范围：

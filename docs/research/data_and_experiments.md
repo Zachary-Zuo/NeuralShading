@@ -184,6 +184,10 @@ E2 的共享表示监督入口已经通过冻结 gate。`ncls.e2-layer-stack-sha
 
 首轮 500-step、64-wide direct shared smoke 的 train/test median 为 `0.777/0.816`，单界面 sheen 出现数量级能量错误，说明该短训练设置尚未形成 direct evaluator。换成同成本 shared analytic residual 后，2,000-step train/test median 降为 `0.222/0.235`，而 direct-top core-only test median 为 `0.688`，证明 neural residual 有非零贡献；但 test p95 `0.506`、energy p95 `0.389`、peak angle p95 `3.92°`、recall p5 `0.732`，仍未通过 gate。validation 到 step 1,800 才达到最佳，因此下一项只复用 E1 已通过的 108-wide、8,000-step envelope 做 shared-capacity 因果对照；当前不淘汰 dense latent 或 analytic residual，也不进入 target encoder/compiler。
 
+后续 E2 证据把残差 transform 改为每 state 的 train-only 统计，并用 source-aware reciprocity 与 95% 峰高支持集修正 source 语义和 reference argmax noise；冻结 gate 已演进到 `ncls.e2-shared-evaluator-acceptance@3`，没有放宽 aggregate、energy、recall、SE 或成本阈值。width108/latent16 的 8k target-visible 上界 test median/p95 为 `0.05346/0.16889`，除 model/reference-SE p95 `19.06 > 6` 外通过全部正式项；width123 被支配，latent32 的 3k 对照虽改善 median 却恶化 p95/SE，均不再扩张。
+
+structured latent 已通过同一 lifecycle smoke。`16×16` dictionary/top-4 的随机初始化 hard top-k 只有 `60 bytes/state`，但 test median/p95 `0.12905/0.27149`，并失败 energy、recall、source reciprocity 和 SE，因此淘汰这套纯梯度初始化，不据此否定 train-only K-means/target encoder 初始化。rank-4 factorized latent 为 `52 bytes/state`，test `0.09797/0.22869`，energy、peak 与 recall 通过，接近 matched dense16 3k 的 `0.09172/0.22330`；它保留作低 `B_asset` 对照，但尚未通过 aggregate/source reciprocity/SE gate。下一步按既定依赖先验证 target response tensor encoder，再决定是否对 factorized latent 投入更长训练。
+
 三组 LayerStack 的相同 state/query 在四档自适应预算下测得以下 noise 曲线；`sample_count` 是合并两个 replica 后的总样本数上限：
 
 | 最大总样本数 | relative SE p95 | replica normalized L1 p95 | gate |
