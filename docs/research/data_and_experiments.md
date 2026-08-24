@@ -176,6 +176,10 @@ plane/tensor factorization 的 E1 smoke 已通过同一 lifecycle 完成。`ncls
 
 至此 E1 对实际候选需要的方向编码、target transform、direct/energy-shape/analytic residual、宽深/激活、prepare/evaluate 划分和 plane v1 都已有可复现结论，并保留一个通过冻结数值/静态成本 gate 的 optimized-latent 候选。下一步进入 E2 shared decoder + material latent；不能把 E1 的全部 asset-specific 网络 bytes 误写成最终 `B_shared/B_asset` Pareto。
 
+E2 的共享表示监督入口已经通过冻结 gate。`ncls.e2-layer-stack-shared-decoder@1` 固定 12 个 family × 2 个同拓扑局部状态，以 family 为 split group 得到 20/2/2 个 train/validation/test state；每个 state 有 `16/4/4/4` 个独立 query role 和每组 128 个 `wi`。`ncls.e2-layer-stack-independent-peak-grazing-mixture@3` 对单界面 sheen 使用原生 roughness 条件峰中心，对其余 LayerStack 状态使用围绕几何镜面方向的 75 点窄 vMF patch，以覆盖随机游走 response 相对镜面方向移动约 4–11° 的多界面峰；它仍保留 34 个 uniform 与 19 个 grazing query，并持久化连续 mixture PDF 和积分权重。正式 v5 dataset `bbcd51e7451e7e2b8df705abc4eeb1382684c37bce1152284d9c4900dc5fd515` 的四 role peak spacing p95 为 `1.771/1.771/1.776/1.808°`，relative SE / replica L1 p95 为 `0.0398/0.0317`，最坏 query 为 `0.0813/0.0887`，split/source/direction leak 为 0，通过 `ncls.e2-shared-decoder-supervision-entry@4` 全部 61 项检查。只有 `family-0002`、`family-0003` 使用有 provenance 的 262,144 samples/replica 定向上限；没有扩大其他 family。
+
+这个通过只允许公共 learning lifecycle 读取 v5，不是 shared decoder 已经成立。E2 必须按顺序报告 optimized/autodecoder latent 上界、target response encoder、encoder initialization + bounded refinement，以及 dictionary/factorized latent；target-visible 方法能读取 reference response，仍不得解释为 E3 source compiler。历史 v1–v4 H5 保留为掠射、response measure、moving peak 与 noise cap 的失败证据，不形成第二套 reader 或 runner。
+
 三组 LayerStack 的相同 state/query 在四档自适应预算下测得以下 noise 曲线；`sample_count` 是合并两个 replica 后的总样本数上限：
 
 | 最大总样本数 | relative SE p95 | replica normalized L1 p95 | gate |
