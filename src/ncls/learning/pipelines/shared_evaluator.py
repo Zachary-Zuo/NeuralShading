@@ -31,6 +31,9 @@ SOURCE_AWARE_ANALYTIC_RESIDUAL_PIPELINE_ID = (
 NOISE_AWARE_ANALYTIC_RESIDUAL_PIPELINE_ID = (
     "analytic-core-shared-neural-residual-energy-shape-e2@4"
 )
+BOUNDARY_CAPACITY_ANALYTIC_RESIDUAL_PIPELINE_ID = (
+    "analytic-core-shared-neural-residual-energy-shape-e2@5"
+)
 _TARGET_TRANSFORM_ID = "ncls.train-only-standardized-channel-log1p@1"
 _RESIDUAL_TARGET_TRANSFORM_ID = "ncls.train-only-standardized-asinh-analytic-residual@1"
 _FAMILIES = (
@@ -1014,3 +1017,49 @@ class NoiseAwarePerStateAnalyticResidualSharedEvaluatorE2Pipeline(
             peak_support_angle.detach().cpu().numpy()
         )
         return metrics
+
+
+class BoundaryCapacityPerStateAnalyticResidualSharedEvaluatorE2Pipeline(
+    NoiseAwarePerStateAnalyticResidualSharedEvaluatorE2Pipeline
+):
+    """保留峰支持 metric，但回到已验证的 base loss 以测试 decoder 容量边界。"""
+
+    descriptor = LearningPipelineDescriptor(
+        pipeline_id=BOUNDARY_CAPACITY_ANALYTIC_RESIDUAL_PIPELINE_ID,
+        candidate_id="ncls.analytic-core-neural-residual@1",
+        research_role="e2-shared-representation-capacity",
+        response_reader_id="ncls.reference-query-store@1",
+        partition_policy_id="ncls.query-role-within-state@1",
+        source_adapter_id="ncls.layer-stack-direct-top-adapter@1",
+        feature_transform_id="ncls.local-frame-wo-wi-material-slot@1",
+        target_transform_id=(
+            "ncls.train-only-per-state-standardized-asinh-analytic-residual@1"
+        ),
+        representation_id=(
+            "ncls.analytic-direct-top-shared-neural-residual-per-state-normalization@1"
+        ),
+        architecture_id=SHARED_ARCHITECTURE_ID,
+        latent_inference_id="ncls.optimized-target-visible-dense-material-latent-table@1",
+        compiler_id="ncls.none-target-visible-capacity-study@1",
+        loss_id=(
+            "ncls.per-state-standardized-asinh-residual-energy-shape-reciprocity@1"
+        ),
+        metric_suite_id=(
+            "ncls.evaluator-quality-by-state-source-reciprocity-peak-support@1"
+        ),
+        exporter_id="ncls.neural-evaluator-method-bundle-planned@1",
+        supported_family_ids=("ncls.layer-stack@1",),
+        scope=(
+            "multi-material-target-visible-boundary-capacity-per-state-normalized-"
+            "analytic-residual-autodecoder"
+        ),
+    )
+
+    def training_loss(
+        self,
+        prediction: torch.Tensor,
+        batch: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor:
+        return SourceAwarePerStateAnalyticResidualSharedEvaluatorE2Pipeline.training_loss(
+            self, prediction, batch
+        )

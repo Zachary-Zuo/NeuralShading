@@ -653,6 +653,11 @@ def test_noise_aware_shared_residual_uses_peak_support_and_finite_loss(
         )
         assert "peak_support_angle_degrees" in metrics
         assert metrics["peak_support_angle_degrees"].shape == (3,)
+    boundary = create_pipeline("analytic-core-shared-neural-residual-energy-shape-e2@5")
+    assert boundary.descriptor.loss_id == (
+        "ncls.per-state-standardized-asinh-residual-energy-shape-reciprocity@1"
+    )
+    assert boundary.descriptor.metric_suite_id == pipeline.descriptor.metric_suite_id
 
 
 def test_plane_factorized_pipeline_uses_the_common_e1_lifecycle(tmp_path: Path) -> None:

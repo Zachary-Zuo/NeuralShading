@@ -22,6 +22,8 @@ LayerStack 的 E2 对照 `analytic-core-shared-neural-residual-energy-shape-e2@1
 
 E2 多峰/平顶 response 还要求把 raw argmax 峰位与“峰支持集”分开。正式 reference 的两个独立 replica 在 test/adversarial 上已有约 `2.15°/2.55°` 的 raw peak angle p95；对 95% 峰高平台内两个近等值方向强行要求同一 argmax，会把 Monte Carlo 排序抖动写成模型峰位漂移。`analytic-core-shared-neural-residual-energy-shape-e2@4` 保留 raw peak angle，同时报告模型峰到 target 95% 峰值支持集的最近角距；`ncls.e2-shared-evaluator-acceptance@3` 对后者保持 `2°` 上限，并继续检查 peak ratio 与 top-energy recall。该 pipeline 另在既有 loss 上增加只读 train batch 的 reference-SE floor 项，直接压缩 `model_error_over_reference_standard_error` 长尾；floor 和权重属于版本化 loss，不从 validation/test 拟合。
 
+`@4` 的 3,000-step 因果 smoke 没有降低 model/reference-SE，且 aggregate 质量略退，因此该 SE-floor loss 组合不扩成正式训练。`analytic-core-shared-neural-residual-energy-shape-e2@5` 保留 source-aware reciprocity 与峰支持 metric，但恢复 `@3` 的已验证 loss，用于在同一成本 gate 内继续测试 shared decoder 容量；这避免把失败 loss 与架构容量变化混在同一个实验里。
+
 ## 三条路径的边界
 
 Python 侧的工具生命周期仍分成三条路径，但必须记录拟合对象和结论范围：

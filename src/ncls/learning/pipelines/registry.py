@@ -22,6 +22,7 @@ from .shared_evaluator import (
     PerStateAnalyticResidualSharedEvaluatorE2Pipeline,
     SourceAwarePerStateAnalyticResidualSharedEvaluatorE2Pipeline,
     NoiseAwarePerStateAnalyticResidualSharedEvaluatorE2Pipeline,
+    BoundaryCapacityPerStateAnalyticResidualSharedEvaluatorE2Pipeline,
 )
 
 
@@ -61,3 +62,4 @@ register_pipeline(AnalyticResidualSharedEvaluatorE2Pipeline)
 register_pipeline(PerStateAnalyticResidualSharedEvaluatorE2Pipeline)
 register_pipeline(SourceAwarePerStateAnalyticResidualSharedEvaluatorE2Pipeline)
 register_pipeline(NoiseAwarePerStateAnalyticResidualSharedEvaluatorE2Pipeline)
+register_pipeline(BoundaryCapacityPerStateAnalyticResidualSharedEvaluatorE2Pipeline)
