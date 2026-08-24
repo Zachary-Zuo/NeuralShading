@@ -12,6 +12,8 @@ LayerStack 另注册 `analytic-core-neural-residual-standardized-e1@1` 和带能
 
 E1 还注册了可复现淘汰用的 `plane-factorized-small-mlp-energy-shape-e1@1` 与 analytic-residual 变体。v1 每个 texel 只存一个 RGBA-width feature，prepare/evaluate 固定读取 4/20 个 plane texel；额外成本不会伪装成 MLP MAC。32² direct/residual 和 16² residual 都未通过 held-out query gate，因此 raw-direction 六成对 plane v1 已停止作为当前 Pareto 候选。保留这些版本化 pipeline/config 是为了复现实验，不代表 runner 维护第二套训练路径；删除条件是淘汰报告与 checkpoint 已进入可执行只读归档，且 registry/config 不再被复现入口引用。
 
+E2 的第一条公共路径是 `dense-latent-shared-small-mlp-energy-shape-e2@1`。它复用材质无关的 response reader、方向编码、train-only standardized `log1p` transform、energy/shape loss 与 evaluator metric suite，但把单材质参数拆成每个 state 一条 optimized dense latent 和跨 state 共享的 `prepare/evaluate` MLP。模型分别报告单材质 `B_asset`、全部已拟合 latent 的总 bytes、`B_shared`、`C_prepare` 与 `C_eval`；公共 evaluator 同时输出 `by_state`、`by_family` 和 `by_source_split` 分布。该 pipeline 按 query role 划分生命周期，所有 selected state 的 train response 都可见，因此它是 target-visible autodecoder 压缩上界，不承担未见 source state 泛化；descriptor 的 `compiler_id=ncls.none-target-visible-capacity-study@1` 防止把它误写成 E3 source compiler。
+
 ## 三条路径的边界
 
 Python 侧的工具生命周期仍分成三条路径，但必须记录拟合对象和结论范围：
@@ -72,7 +74,7 @@ p  = Proposal.pdf(proposal_parameters, wi)
 
 ## TrainingConfig
 
-所有新实验超参数先解析为 `ncls.training-config@5`，并将完整 JSON、pipeline contract、最终 dataset selection、train-only fitted state 与各自 SHA-256 写入 run。`dataset_selection` 只负责从 H5 选择明确的 state、asset 或 family，不改变落盘 split；E1 单材质 pipeline 要求选择后恰好只有一个 source state。最小示例：
+所有新实验超参数先解析为 `ncls.training-config@5`，并将完整 JSON、pipeline contract、最终 dataset selection、train-only fitted state 与各自 SHA-256 写入 run。`dataset_selection` 只负责从 H5 选择明确的 state、asset 或 family，不改变落盘 split；E1 单材质 pipeline 要求选择后恰好只有一个 source state。E2 autodecoder 则为每个 selected state 建立一个有版本化 state-ID 映射的 latent slot；transform 和 slot 的优化只读取 train query，validation 只选 checkpoint，test 不进入训练或选择。它读取 source test state 的 train query 时必须在报告中标作 target-visible compression upper bound，不能作为 source-held-out 结果。最小示例：
 
 ```json
 {
@@ -187,6 +189,8 @@ conda run -n neural-shading ncls learn gate-evaluator `
 ```
 
 `ncls.e1-single-material-evaluator-acceptance@1` 在正式 sweep 前冻结 normalized L1、log、能量、peak ratio/角度、top-energy recall、相对 reference standard error、互易性、finite/nonnegative 和 `B_asset/C_prepare/C_eval` 上限。失败命令本身仍返回成功并写出逐项检查，表示可复现的研究淘汰证据；只有合同、hash 或输入不一致才抛出错误。E4 的真实 GPU 时间、显存、带宽和 viewer 视觉 gate 不能被这些静态 MAC/byte 上限替代。
+
+E2 使用单独冻结的 `ncls.e2-shared-evaluator-acceptance@1`。它基于 v5 supervision noise floor 与 E1 optimized 单材质上界，放宽跨材质共享所需的质量 envelope，同时强制 `B_asset≤512 bytes`、`B_shared≤512 KiB` 以及 `C_prepare/C_eval≤65,536 MAC`。这个 gate 只筛选共享表示容量；E4 仍需 Python/Slang parity、真实 GPU 时间、显存/带宽和 viewer 对抗性视觉检查。
 
 ## Direct fit 的三种结论范围
 

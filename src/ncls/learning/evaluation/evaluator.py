@@ -69,7 +69,10 @@ def evaluate_model(
     concatenated = {name: np.concatenate(parts) for name, parts in metric_parts.items()}
     result.update({name: summarize(values) for name, values in concatenated.items()})
     query_states = np.asarray(store.dataset.stream["queries/state_index"], dtype=np.int64)[selected]
+    state_ids = store.dataset.state_strings("state_id")
+    state_assets = store.dataset.state_strings("asset_id")
     state_families = store.dataset.state_strings("family_id")
+    state_splits = np.asarray(store.dataset.stream["states/split"], dtype=np.int64)
     selected_families = state_families[query_states]
     result["by_family"] = {
         family_id: {
@@ -77,6 +80,30 @@ def evaluate_model(
             for name, values in concatenated.items()
         }
         for family_id in sorted(set(map(str, selected_families.tolist())))
+    }
+    result["by_state"] = {
+        str(state_ids[state_index]): {
+            "asset_id": str(state_assets[state_index]),
+            "family_id": str(state_families[state_index]),
+            "source_split": SPLIT_NAMES[int(state_splits[state_index])],
+            "query_group_count": int(np.count_nonzero(query_states == state_index)),
+            "metrics": {
+                name: summarize(values[query_states == state_index])
+                for name, values in concatenated.items()
+            },
+        }
+        for state_index in sorted(set(map(int, query_states.tolist())))
+    }
+    selected_splits = np.asarray(
+        [SPLIT_NAMES[int(state_splits[state_index])] for state_index in query_states]
+    )
+    result["by_source_split"] = {
+        split_name: {
+            name: summarize(values[selected_splits == split_name])
+            for name, values in concatenated.items()
+        }
+        for split_name in SPLIT_NAMES
+        if np.any(selected_splits == split_name)
     }
     return result
 

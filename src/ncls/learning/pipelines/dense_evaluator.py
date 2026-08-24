@@ -12,6 +12,7 @@ from ncls.core.representations.legacy_ltc_k2.torch_eval import (
 )
 from ncls.learning.data import LayerStackReferenceStore, ReferenceQueryStore
 from ncls.learning.evaluation.metrics import evaluator_metric_distributions, response_loss
+from ncls.learning.losses import energy_shape_terms
 from ncls.learning.models.neural_evaluator import (
     ARCHITECTURE_ID,
     NeuralEvaluatorModelConfig,
@@ -724,34 +725,6 @@ class AnalyticResidualE1Pipeline(DenseStandardizedLog1pE1Pipeline):
         }
 
 
-def _energy_shape_terms(
-    prediction: torch.Tensor,
-    batch: Mapping[str, torch.Tensor],
-) -> tuple[torch.Tensor, torch.Tensor]:
-    target = torch.clamp(batch["mean"].float(), min=0.0)
-    weights = batch["solid_angle_weight"].float()[..., None]
-    predicted_contribution = torch.clamp(prediction, min=0.0) * weights
-    target_contribution = target * weights
-    predicted_energy = torch.sum(predicted_contribution, dim=1)
-    target_energy = torch.sum(target_contribution, dim=1)
-    energy_floor = 1e-5 * torch.amax(target_energy, dim=1, keepdim=True) + 1e-8
-    energy_loss = torch.mean(torch.square(
-        torch.log(predicted_energy + energy_floor)
-        - torch.log(target_energy + energy_floor)
-    ))
-    predicted_distribution = predicted_contribution / torch.clamp(
-        predicted_energy[:, None, :], min=1e-12
-    )
-    target_distribution = target_contribution / torch.clamp(
-        target_energy[:, None, :], min=1e-12
-    )
-    shape_loss = torch.mean(torch.sum(torch.square(
-        torch.sqrt(predicted_distribution + 1e-12)
-        - torch.sqrt(target_distribution + 1e-12)
-    ), dim=1))
-    return energy_loss, shape_loss
-
-
 class AnalyticResidualEnergyShapeE1Pipeline(AnalyticResidualE1Pipeline):
     descriptor = LearningPipelineDescriptor(
         pipeline_id=ANALYTIC_RESIDUAL_ENERGY_SHAPE_PIPELINE_ID,
@@ -779,7 +752,7 @@ class AnalyticResidualEnergyShapeE1Pipeline(AnalyticResidualE1Pipeline):
         batch: Mapping[str, torch.Tensor],
     ) -> torch.Tensor:
         base_loss = super().training_loss(prediction, batch)
-        energy_loss, shape_loss = _energy_shape_terms(prediction, batch)
+        energy_loss, shape_loss = energy_shape_terms(prediction, batch)
         return 0.25 * base_loss + 0.5 * energy_loss + 2.0 * shape_loss
 
 
@@ -810,5 +783,5 @@ class DenseEnergyShapeE1Pipeline(DenseStandardizedLog1pE1Pipeline):
         batch: Mapping[str, torch.Tensor],
     ) -> torch.Tensor:
         base_loss = super().training_loss(prediction, batch)
-        energy_loss, shape_loss = _energy_shape_terms(prediction, batch)
+        energy_loss, shape_loss = energy_shape_terms(prediction, batch)
         return 0.25 * base_loss + 0.5 * energy_loss + 2.0 * shape_loss

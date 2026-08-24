@@ -9,6 +9,7 @@ from torch.nn import functional as F
 
 
 ARCHITECTURE_ID = "ncls.small-view-conditioned-mlp@1"
+SHARED_ARCHITECTURE_ID = "ncls.shared-small-view-conditioned-mlp@1"
 DIRECTION_ENCODING_IDS = (
     "ncls.local-cartesian-directions@1",
     "ncls.fourier-cartesian-directions@1",
@@ -214,6 +215,66 @@ class SingleMaterialNeuralEvaluator(SingleMaterialEvaluatorModel):
         return {
             "parameter_count": latent_count + shared_count,
             "B_asset_fp32": 4 * latent_count,
+            "B_shared_fp32": 4 * shared_count,
+            "C_prepare_macs": linear_macs(self.prepare_network),
+            "C_eval_macs": linear_macs(self.evaluate_network),
+        }
+
+
+class SharedMaterialNeuralEvaluator(SingleMaterialNeuralEvaluator):
+    """共享 prepare/evaluate 权重，并为每个 target-visible state 优化一条 latent。"""
+
+    architecture_id = SHARED_ARCHITECTURE_ID
+
+    def __init__(self, config: NeuralEvaluatorModelConfig, material_count: int) -> None:
+        if material_count < 1:
+            raise ValueError("shared evaluator requires at least one material")
+        super().__init__(config)
+        del self.material_latent
+        self.material_latents = nn.Embedding(material_count, config.latent_dimension)
+        nn.init.normal_(self.material_latents.weight, mean=0.0, std=0.02)
+        self.material_count = material_count
+
+    def prepare(self, wo: torch.Tensor, material_slots: torch.Tensor) -> torch.Tensor:
+        if material_slots.ndim != 1 or len(material_slots) != len(wo):
+            raise ValueError("shared evaluator material slots must match wo groups")
+        latent = self.material_latents(material_slots.long())
+        return self.prepare_network(torch.cat((latent, self._view_features(wo)), dim=-1))
+
+    def forward(
+        self,
+        wo: torch.Tensor,
+        wi: torch.Tensor,
+        material_slots: torch.Tensor,
+    ) -> torch.Tensor:
+        if wo.ndim != 2 or wi.ndim != 3 or len(wo) != len(wi):
+            raise ValueError("shared evaluator expects wo [group,3] and wi [group,direction,3]")
+        prepared = self.prepare(wo, material_slots)
+        light_features = self._light_features(wo, wi)
+        repeated = prepared[:, None, :].expand(-1, wi.shape[1], -1)
+        return self.evaluate_network(torch.cat((repeated, light_features), dim=-1))
+
+    def cost_summary(self) -> dict[str, int]:
+        total_latent_count = self.material_latents.weight.numel()
+        shared_count = sum(
+            parameter.numel()
+            for name, parameter in self.named_parameters()
+            if name != "material_latents.weight"
+        )
+
+        def linear_macs(module: nn.Module) -> int:
+            return sum(
+                child.in_features * child.out_features
+                for child in module.modules()
+                if isinstance(child, nn.Linear)
+            )
+
+        per_material_count = self.config.latent_dimension
+        return {
+            "parameter_count": total_latent_count + shared_count,
+            "material_count": self.material_count,
+            "B_asset_fp32": 4 * per_material_count,
+            "B_asset_fp32_total": 4 * total_latent_count,
             "B_shared_fp32": 4 * shared_count,
             "C_prepare_macs": linear_macs(self.prepare_network),
             "C_eval_macs": linear_macs(self.evaluate_network),

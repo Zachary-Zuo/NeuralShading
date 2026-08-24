@@ -407,6 +407,96 @@ def test_energy_shape_loss_penalizes_missing_integrated_response() -> None:
     assert matching < missing
 
 
+def test_shared_e2_pipeline_uses_material_slots_and_reports_state_partitions(
+    tmp_path: Path,
+) -> None:
+    dataset_path = tmp_path / "shared-e2-dataset.h5"
+    run_path = tmp_path / "shared-e2-run"
+    _e1_dataset(dataset_path)
+    pipeline = create_pipeline("dense-latent-shared-small-mlp-energy-shape-e2@1")
+    assert pipeline.descriptor.latent_inference_id == (
+        "ncls.optimized-target-visible-dense-material-latent-table@1"
+    )
+    assert pipeline.descriptor.compiler_id == "ncls.none-target-visible-capacity-study@1"
+    with pipeline.open_store(str(dataset_path)) as store:
+        indices = pipeline.lifecycle_indices(store, "train")
+        state = pipeline.fit_training_state(store, indices)
+        assert state["fit_scope"] == "final-train-query-groups-only"
+        assert state["latent_scope"] == "target-visible-selected-states"
+        assert len(state["state_ids"]) == 3
+        assert state["train_query_group_count_by_state"] == [2, 2, 2]
+        pipeline.load_training_state(state)
+        model = pipeline.create_model({
+            "latent_dimension": 4,
+            "width": 8,
+            "prepare_layer_count": 1,
+            "evaluate_layer_count": 1,
+            "activation": "gelu",
+            "direction_encoding_id": "ncls.local-cartesian-directions@1",
+            "fourier_band_count": 1,
+            "output_bias": 0.0,
+        })
+        batch = {
+            name: torch.as_tensor(value)
+            for name, value in store.batch(indices[[0, 2, 4]]).items()
+        }
+        prediction = pipeline.predict(model, batch, store, torch.device("cpu"))
+        loss = pipeline.training_loss(prediction, batch)
+        assert prediction.shape == batch["mean"].shape
+        assert torch.isfinite(loss)
+        loss.backward()
+        costs = pipeline.parameter_costs(model)
+        assert costs["material_count"] == 3
+        assert costs["B_asset_fp32"] == 16
+        assert costs["B_asset_fp32_total"] == 48
+        assert costs["B_shared_fp32"] > 0
+
+    config = TrainingConfig(
+        pipeline_id="dense-latent-shared-small-mlp-energy-shape-e2@1",
+        research_stage="e2-shared-representation-capacity",
+        model_parameters={
+            "latent_dimension": 4,
+            "width": 8,
+            "prepare_layer_count": 1,
+            "evaluate_layer_count": 1,
+            "activation": "gelu",
+            "direction_encoding_id": "ncls.local-cartesian-directions@1",
+            "fourier_band_count": 1,
+            "output_bias": 0.0,
+        },
+        steps=2,
+        batch_size=3,
+        learning_rate=1e-3,
+        validation_interval=1,
+        checkpoint_interval=1,
+        max_validation_query_groups=3,
+        seed=47,
+        device="cpu",
+        selection_metric="solid_angle_normalized_l1.median",
+    )
+    manifest = train(dataset_path, run_path, config)
+    assert manifest["lifecycle_query_group_counts"] == {
+        "train": 6,
+        "validation": 3,
+        "test": 3,
+    }
+    assert manifest["lifecycle_source_state_counts"] == {
+        "train": 3,
+        "validation": 3,
+        "test": 3,
+    }
+    assert manifest["model_costs"]["B_asset_fp32"] == 16
+    assert manifest["model_costs"]["B_shared_fp32"] > 0
+    result = evaluate_checkpoint(
+        dataset_path,
+        run_path / "checkpoints" / "best.pt",
+        split="test",
+        device_name="cpu",
+    )
+    assert len(result["metrics"]["by_state"]) == 3
+    assert set(result["metrics"]["by_source_split"]) == {"train", "validation", "test"}
+
+
 def test_plane_factorized_pipeline_uses_the_common_e1_lifecycle(tmp_path: Path) -> None:
     dataset_path = tmp_path / "plane-factorized-dataset.h5"
     _e1_dataset(dataset_path)

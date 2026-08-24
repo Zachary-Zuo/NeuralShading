@@ -180,6 +180,8 @@ E2 的共享表示监督入口已经通过冻结 gate。`ncls.e2-layer-stack-sha
 
 这个通过只允许公共 learning lifecycle 读取 v5，不是 shared decoder 已经成立。E2 必须按顺序报告 optimized/autodecoder latent 上界、target response encoder、encoder initialization + bounded refinement，以及 dictionary/factorized latent；target-visible 方法能读取 reference response，仍不得解释为 E3 source compiler。历史 v1–v4 H5 保留为掠射、response measure、moving peak 与 noise cap 的失败证据，不形成第二套 reader 或 runner。
 
+第一条 E2 pipeline 已冻结为 `dense-latent-shared-small-mlp-energy-shape-e2@1`。它通过 state-ID slot 表联合优化每 state dense latent 与共享小 MLP，使用 query-role train/validation/test 分离，因此度量的是 24 个 target-visible state 的共享压缩容量，而不是 source-held-out 编译。公共 evaluator 新增按 state/source split 的分布报告；模型将单 state latent bytes 与共享 decoder bytes 分开。正式训练前的 `ncls.e2-shared-evaluator-acceptance@1` 要求 test normalized L1 median/p95 不超过 `0.08/0.20`、peak angle p95 不超过 `2°`、top-energy recall p5 至少 `0.85`，并限制 `B_asset≤512 bytes`、`B_shared≤512 KiB` 和 prepare/evaluate 各 `65,536 MAC`。smoke 先验证这条上界；失败后仍需根据 by-state 证据决定 analytic residual 或容量调整，不能直接进入 compiler。
+
 三组 LayerStack 的相同 state/query 在四档自适应预算下测得以下 noise 曲线；`sample_count` 是合并两个 replica 后的总样本数上限：
 
 | 最大总样本数 | relative SE p95 | replica normalized L1 p95 | gate |

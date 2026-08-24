@@ -172,6 +172,12 @@ def train(
         "lifecycle_query_group_counts": {
             role: int(len(indices)) for role, indices in lifecycle_indices.items()
         },
+        "lifecycle_source_state_counts": {
+            role: int(len(np.unique(np.asarray(
+                store.dataset.stream["queries/state_index"][indices], dtype=np.int64
+            ))))
+            for role, indices in lifecycle_indices.items()
+        },
         "held_out_test_accessed": False,
         "checkpoints": {},
     }
