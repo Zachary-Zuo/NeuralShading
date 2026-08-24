@@ -194,7 +194,9 @@ train-only target tensor encoder 已完成首个同预算 smoke。DeepSets encod
 
 8k target encoder 在 validation step 7,400 选中 best；test median/p95 `0.06018/0.17920`，log `0.10343`、energy `0.11525`、peak-support `0.02798°`、recall p5 `0.87498`、source reciprocity `0.02827`，adversarial 与成本全部通过。唯一失败是 model/reference-SE p95 `29.09 > 6`，且高于 dense16 8k 的 `19.06`，所以不能用 aggregate 通过掩盖噪声尺度上的模型误差。
 
-按冻结计划完成的 500-step refinement 只训练 384 个 latent delta，validation 在 step 300 选 best；test median/p95 改为 `0.05995/0.17698`，model/reference-SE 仅降至 `26.82`，其他质量、adversarial 和成本项保持通过。delta absolute p95/max 为 `0.0612/0.1229`，没有接近 `0.25` bound；validation SE 在 step 200/300 已约为 `17.72/17.75`。结论是停止增加 encoder/refinement cook 或放宽 bound。E2 最后只做一个使用 train split、直接对齐 group-level `sum|error|/sum(reference SE)` 尾部的 loss 诊断；它与已淘汰的逐 element noise-floor loss scope 不同。若该诊断仍失败，则冻结当前 shared-decoder 上界差距，不进行同类超参数笛卡尔积。
+按冻结计划完成的 500-step refinement 只训练 384 个 latent delta，validation 在 step 300 选 best；test median/p95 改为 `0.05995/0.17698`，model/reference-SE 仅降至 `26.82`，其他质量、adversarial 和成本项保持通过。delta absolute p95/max 为 `0.0612/0.1229`，没有接近 `0.25` bound；validation SE 在 step 200/300 已约为 `17.72/17.75`。结论是停止增加 encoder/refinement cook 或放宽 bound。
+
+最后的 train-only group reference-SE CVaR25 loss 直接复用正式 metric 的 `sum|error|/sum(SE)`，并由 validation SE p95 选 best。它把 train SE p95 从 `15.79` 小幅降到 `15.60`，但独立 test 从 `26.82` 退到 `28.42`；test normalized L1 median/p95 仍为通过的 `0.06067/0.17806`，其他 aggregate、shape、source reciprocity、adversarial 与成本项也全部通过。最坏 state 与原 refinement 相同，而 dense optimized latent 对这些 state 的 SE p95 仍为 `37.10/26.02/17.15`，证明当前主要限制在 shared representation/decoder 上界。固定 `weight=0.02/CVaR25` 淘汰，不做 weight、tail fraction、step 或 bound sweep；E2 当前 cook 分支冻结。下一步只为 source-state compiler 与 source compiler + bounded refinement 建立 E3 公共 smoke，分别量化 pure feed-forward 和 bounded cook 到 optimized/target-encoded 上界的 gap，不把它们预期更差的结果写成 shared evaluator 已通过。
 
 三组 LayerStack 的相同 state/query 在四档自适应预算下测得以下 noise 曲线；`sample_count` 是合并两个 replica 后的总样本数上限：
 
@@ -212,7 +214,7 @@ train-only target tensor encoder 已完成首个同预算 smoke。DeepSets encod
 3. ~~把默认均匀 proposal 扩展成带显式 mixture component 的训练 proposal，并保持固定 validation/test proposal；~~ 已完成球面 vMF `@2` 与 MaterialX local-normal adapter；
 4. ~~针对 LayerStack reference noise 调整自适应采样后，只重生成最小必要 H5，并重新执行合同、hash、split 与 gate；~~ 六状态 boundary adaptive H5 已通过 v6；
 5. ~~完成 E1 的方向编码、target transform、容量和 factorization 比较；~~ 已保留一个通过数值/静态成本 gate 的多界面 analytic residual 候选，并淘汰极窄 direct MLP 与 raw-direction pairwise-plane v1 的限定范围；
-6. 在同一公共 reader 上进入 E2 shared decoder，依次比较 optimized dense latent、target encoder、encoder initialization + bounded refinement、dictionary 和 factorized latent；
+6. ~~在同一公共 reader 上进入 E2 shared decoder，依次比较 optimized dense latent、target encoder、encoder initialization + bounded refinement、dictionary 和 factorized latent；~~ 已完成公共 smoke/容量比较并冻结当前 cook 分支：aggregate/shape/runtime 已成形，但所有共享上界仍失败 model/reference-SE gate；
 7. evaluator 成形后再进入 MaterialX spatial latent、sampler 和 integration。
 
 单次数据、audit、训练和报告都位于 `data/reference-responses/` 或 `artifacts/`，不进入根 Git。本文只维护稳定结论、实验依赖和验收逻辑。
