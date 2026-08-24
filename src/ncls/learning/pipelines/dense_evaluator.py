@@ -6,10 +6,6 @@ import numpy as np
 import torch
 from torch import nn
 
-from ncls.core.representations.legacy_ltc_k2.torch_eval import (
-    LegacyLtcK2Tensors,
-    eval_direct_top,
-)
 from ncls.learning.data import LayerStackReferenceStore, ReferenceQueryStore
 from ncls.learning.evaluation.metrics import evaluator_metric_distributions, response_loss
 from ncls.learning.losses import energy_shape_terms
@@ -20,6 +16,7 @@ from ncls.learning.models.neural_evaluator import (
     SingleMaterialNeuralEvaluator,
     positive_response,
 )
+from ncls.learning.source_adapters import evaluate_layer_stack_direct_top
 
 from .base import LearningPipeline, LearningPipelineDescriptor
 
@@ -517,32 +514,6 @@ class AnalyticResidualE1Pipeline(DenseStandardizedLog1pE1Pipeline):
     def open_store(self, dataset_path: str) -> ReferenceQueryStore:
         return LayerStackReferenceStore(dataset_path)
 
-    @staticmethod
-    def _state_tensors(
-        batch: Mapping[str, torch.Tensor],
-        *,
-        repeat_count: int = 1,
-    ) -> LegacyLtcK2Tensors:
-        def values(name: str) -> torch.Tensor:
-            tensor = batch[name]
-            return tensor if repeat_count == 1 else tensor.repeat_interleave(repeat_count, dim=0)
-
-        count = len(batch["top_kind"]) * repeat_count
-        device = batch["top_alpha"].device
-        return LegacyLtcK2Tensors(
-            interface_kind=values("top_kind").long(),
-            alpha=values("top_alpha").float(),
-            relative_ior=values("top_relative_ior").float(),
-            eta=values("top_eta").float(),
-            k=values("top_k").float(),
-            color=values("top_color").float(),
-            tangent_rotation=values("top_rotation").float(),
-            amplitude=torch.zeros((count, 2, 3), dtype=torch.float32, device=device),
-            inverse_scale=torch.ones((count, 2, 2), dtype=torch.float32, device=device),
-            shear=torch.zeros((count, 2, 3), dtype=torch.float32, device=device),
-            angle=torch.zeros((count, 2), dtype=torch.float32, device=device),
-        )
-
     def _core(
         self,
         batch: Mapping[str, torch.Tensor],
@@ -551,8 +522,8 @@ class AnalyticResidualE1Pipeline(DenseStandardizedLog1pE1Pipeline):
         *,
         repeat_count: int = 1,
     ) -> torch.Tensor:
-        return eval_direct_top(
-            self._state_tensors(batch, repeat_count=repeat_count), view, lights
+        return evaluate_layer_stack_direct_top(
+            batch, view, lights, repeat_count=repeat_count
         )
 
     def fit_training_state(

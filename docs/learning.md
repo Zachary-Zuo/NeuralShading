@@ -14,6 +14,8 @@ E1 还注册了可复现淘汰用的 `plane-factorized-small-mlp-energy-shape-e1
 
 E2 的第一条公共路径是 `dense-latent-shared-small-mlp-energy-shape-e2@1`。它复用材质无关的 response reader、方向编码、train-only standardized `log1p` transform、energy/shape loss 与 evaluator metric suite，但把单材质参数拆成每个 state 一条 optimized dense latent 和跨 state 共享的 `prepare/evaluate` MLP。模型分别报告单材质 `B_asset`、全部已拟合 latent 的总 bytes、`B_shared`、`C_prepare` 与 `C_eval`；公共 evaluator 同时输出 `by_state`、`by_family` 和 `by_source_split` 分布。该 pipeline 按 query role 划分生命周期，所有 selected state 的 train response 都可见，因此它是 target-visible autodecoder 压缩上界，不承担未见 source state 泛化；descriptor 的 `compiler_id=ncls.none-target-visible-capacity-study@1` 防止把它误写成 E3 source compiler。
 
+LayerStack 的 E2 对照 `analytic-core-shared-neural-residual-energy-shape-e2@1` 使用同一个 latent table、shared decoder、partition、checkpoint 和 metric 生命周期，只把 source adapter 与 target transform 换成显式版本化的 direct-top core + signed standardized `asinh` residual。direct-top adapter 位于 `ncls.learning.source_adapters`，E1/E2 共用，不再从某个 pipeline 私有实现互相调用。它只解释 LayerStack native payload；公共 runner、response reader 与其他 source family 不需要提供层参数。
+
 ## 三条路径的边界
 
 Python 侧的工具生命周期仍分成三条路径，但必须记录拟合对象和结论范围：

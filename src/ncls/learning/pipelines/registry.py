@@ -16,7 +16,10 @@ from .plane_factorized import (
     PlaneFactorizedAnalyticResidualE1Pipeline,
     PlaneFactorizedEnergyShapeE1Pipeline,
 )
-from .shared_evaluator import DenseLatentSharedEvaluatorE2Pipeline
+from .shared_evaluator import (
+    AnalyticResidualSharedEvaluatorE2Pipeline,
+    DenseLatentSharedEvaluatorE2Pipeline,
+)
 
 
 _FACTORIES: dict[str, Callable[[], LearningPipeline]] = {}
@@ -51,3 +54,4 @@ register_pipeline(DenseEnergyShapeE1Pipeline)
 register_pipeline(PlaneFactorizedEnergyShapeE1Pipeline)
 register_pipeline(PlaneFactorizedAnalyticResidualE1Pipeline)
 register_pipeline(DenseLatentSharedEvaluatorE2Pipeline)
+register_pipeline(AnalyticResidualSharedEvaluatorE2Pipeline)

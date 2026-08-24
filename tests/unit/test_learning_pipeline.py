@@ -497,6 +497,48 @@ def test_shared_e2_pipeline_uses_material_slots_and_reports_state_partitions(
     assert set(result["metrics"]["by_source_split"]) == {"train", "validation", "test"}
 
 
+def test_shared_analytic_residual_uses_explicit_layer_stack_adapter(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "shared-analytic-e2-dataset.h5"
+    _e1_dataset(dataset_path)
+    pipeline = create_pipeline("analytic-core-shared-neural-residual-energy-shape-e2@1")
+    assert pipeline.descriptor.source_adapter_id == "ncls.layer-stack-direct-top-adapter@1"
+    assert pipeline.descriptor.candidate_id == "ncls.analytic-core-neural-residual@1"
+    with pipeline.open_store(str(dataset_path)) as store:
+        indices = pipeline.lifecycle_indices(store, "train")
+        state = pipeline.fit_training_state(store, indices)
+        assert state["target_transform_id"] == (
+            "ncls.train-only-standardized-asinh-analytic-residual@1"
+        )
+        pipeline.load_training_state(state)
+        model = pipeline.create_model({
+            "latent_dimension": 4,
+            "width": 8,
+            "prepare_layer_count": 1,
+            "evaluate_layer_count": 1,
+            "activation": "gelu",
+            "direction_encoding_id": "ncls.half-difference-directions@1",
+            "fourier_band_count": 1,
+            "output_bias": 0.0,
+        })
+        batch = {
+            name: torch.as_tensor(value)
+            for name, value in store.batch(indices[[0, 2, 4]]).items()
+        }
+        prediction = pipeline.predict(model, batch, store, torch.device("cpu"))
+        loss = pipeline.training_loss(prediction, batch)
+        assert prediction.shape == batch["mean"].shape
+        assert torch.all(torch.isfinite(prediction))
+        assert torch.isfinite(loss)
+        loss.backward()
+        metrics = pipeline.additional_metric_distributions(
+            model.eval(), batch, store, torch.device("cpu")
+        )
+        assert set(metrics) == {
+            "reciprocity_relative_l1",
+            "analytic_core_solid_angle_normalized_l1",
+        }
+
+
 def test_plane_factorized_pipeline_uses_the_common_e1_lifecycle(tmp_path: Path) -> None:
     dataset_path = tmp_path / "plane-factorized-dataset.h5"
     _e1_dataset(dataset_path)

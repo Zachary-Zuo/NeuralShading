@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from ncls.learning.data import ReferenceQueryStore
+from ncls.learning.data import LayerStackReferenceStore, ReferenceQueryStore
 from ncls.learning.evaluation.metrics import evaluator_metric_distributions, response_loss
 from ncls.learning.losses import energy_shape_terms
 from ncls.learning.models.neural_evaluator import (
@@ -15,12 +15,15 @@ from ncls.learning.models.neural_evaluator import (
     SharedMaterialNeuralEvaluator,
     positive_response,
 )
+from ncls.learning.source_adapters import evaluate_layer_stack_direct_top
 
 from .base import LearningPipeline, LearningPipelineDescriptor
 
 
 PIPELINE_ID = "dense-latent-shared-small-mlp-energy-shape-e2@1"
+ANALYTIC_RESIDUAL_PIPELINE_ID = "analytic-core-shared-neural-residual-energy-shape-e2@1"
 _TARGET_TRANSFORM_ID = "ncls.train-only-standardized-channel-log1p@1"
+_RESIDUAL_TARGET_TRANSFORM_ID = "ncls.train-only-standardized-asinh-analytic-residual@1"
 _FAMILIES = (
     "ncls.layer-stack@1",
     "merl.measured-brdf@1",
@@ -44,6 +47,7 @@ class DenseLatentSharedEvaluatorE2Pipeline(LearningPipeline):
     """E2 target-visible autodecoder 上界；不读取 native payload，也不是 source compiler。"""
 
     feature_contract = _FEATURE_CONTRACT
+    target_transform_id = _TARGET_TRANSFORM_ID
     descriptor = LearningPipelineDescriptor(
         pipeline_id=PIPELINE_ID,
         candidate_id="ncls.dense-latent-small-mlp@1",
@@ -52,7 +56,7 @@ class DenseLatentSharedEvaluatorE2Pipeline(LearningPipeline):
         partition_policy_id="ncls.query-role-within-state@1",
         source_adapter_id="ncls.identity-source-adapter@1",
         feature_transform_id="ncls.local-frame-wo-wi-material-slot@1",
-        target_transform_id=_TARGET_TRANSFORM_ID,
+        target_transform_id=target_transform_id,
         representation_id="ncls.shared-neural-evaluator-dense-material-latent-table@1",
         architecture_id=SHARED_ARCHITECTURE_ID,
         latent_inference_id="ncls.optimized-target-visible-dense-material-latent-table@1",
@@ -107,7 +111,7 @@ class DenseLatentSharedEvaluatorE2Pipeline(LearningPipeline):
             "format_version": 3,
             "fit_scope": "final-train-query-groups-only",
             "latent_scope": "target-visible-selected-states",
-            "target_transform_id": _TARGET_TRANSFORM_ID,
+            "target_transform_id": self.target_transform_id,
             "state_ids": [str(state_ids[index]) for index in state_indices],
             "family_ids": selected_families,
             "train_query_group_count": int(len(train_indices)),
@@ -134,7 +138,7 @@ class DenseLatentSharedEvaluatorE2Pipeline(LearningPipeline):
             or state["format_version"] != 3
             or state["fit_scope"] != "final-train-query-groups-only"
             or state["latent_scope"] != "target-visible-selected-states"
-            or state["target_transform_id"] != _TARGET_TRANSFORM_ID
+            or state["target_transform_id"] != self.target_transform_id
         ):
             raise ValueError("shared E2 fitted training state contract is unsupported")
         state_ids = list(map(str, state["state_ids"]))
@@ -345,4 +349,215 @@ class DenseLatentSharedEvaluatorE2Pipeline(LearningPipeline):
         return {
             **model.cost_summary(),
             "cost_scope": "shared decoder plus per-material optimized target-visible dense latent",
+        }
+
+
+class AnalyticResidualSharedEvaluatorE2Pipeline(DenseLatentSharedEvaluatorE2Pipeline):
+    """LayerStack direct-top analytic core + 共享 neural residual 的 E2 容量上界。"""
+
+    target_transform_id = _RESIDUAL_TARGET_TRANSFORM_ID
+    descriptor = LearningPipelineDescriptor(
+        pipeline_id=ANALYTIC_RESIDUAL_PIPELINE_ID,
+        candidate_id="ncls.analytic-core-neural-residual@1",
+        research_role="e2-shared-representation-capacity",
+        response_reader_id="ncls.reference-query-store@1",
+        partition_policy_id="ncls.query-role-within-state@1",
+        source_adapter_id="ncls.layer-stack-direct-top-adapter@1",
+        feature_transform_id="ncls.local-frame-wo-wi-material-slot@1",
+        target_transform_id=target_transform_id,
+        representation_id="ncls.analytic-direct-top-shared-neural-residual@1",
+        architecture_id=SHARED_ARCHITECTURE_ID,
+        latent_inference_id="ncls.optimized-target-visible-dense-material-latent-table@1",
+        compiler_id="ncls.none-target-visible-capacity-study@1",
+        loss_id="ncls.standardized-asinh-residual-energy-shape-reciprocity@1",
+        metric_suite_id="ncls.evaluator-quality-suite-by-state-with-core-ablation@1",
+        exporter_id="ncls.neural-evaluator-method-bundle-planned@1",
+        supported_family_ids=("ncls.layer-stack@1",),
+        scope="multi-material-target-visible-analytic-residual-autodecoder-capacity",
+    )
+
+    def open_store(self, dataset_path: str) -> ReferenceQueryStore:
+        return LayerStackReferenceStore(dataset_path)
+
+    def _core(
+        self,
+        batch: Mapping[str, torch.Tensor],
+        view: torch.Tensor,
+        lights: torch.Tensor,
+        *,
+        repeat_count: int = 1,
+    ) -> torch.Tensor:
+        return evaluate_layer_stack_direct_top(
+            batch, view, lights, repeat_count=repeat_count
+        )
+
+    def fit_training_state(
+        self,
+        store: ReferenceQueryStore,
+        train_indices: np.ndarray,
+    ) -> Mapping[str, Any]:
+        if not isinstance(store, LayerStackReferenceStore):
+            raise TypeError("shared analytic residual requires LayerStackReferenceStore")
+        base = dict(super().fit_training_state(store, train_indices))
+        residual_parts = []
+        for start in range(0, len(train_indices), 256):
+            raw = store.batch(train_indices[start : start + 256])
+            tensor = {name: torch.as_tensor(value) for name, value in raw.items()}
+            core = self._core(tensor, tensor["view"].float(), tensor["lights"].float())
+            residual_parts.append(
+                raw["mean"].astype(np.float64)
+                - core.detach().cpu().numpy().astype(np.float64)
+            )
+        residual = np.concatenate(residual_parts, axis=0).reshape(-1, 3)
+        scale = np.empty(3, dtype=np.float64)
+        for channel in range(3):
+            absolute_nonzero = np.abs(residual[:, channel])
+            absolute_nonzero = absolute_nonzero[absolute_nonzero > 0.0]
+            scale[channel] = (
+                max(float(np.quantile(absolute_nonzero, 0.5)), 1e-8)
+                if len(absolute_nonzero)
+                else 1e-8
+            )
+        transformed = np.arcsinh(residual / scale)
+        return {
+            **base,
+            "target_transform_id": self.target_transform_id,
+            "target_channel_scale": [float(value) for value in scale],
+            "target_channel_mean": [float(value) for value in np.mean(transformed, axis=0)],
+            "target_channel_standard_deviation": [
+                float(value) for value in np.maximum(np.std(transformed, axis=0), 1e-6)
+            ],
+        }
+
+    def _decode(self, raw: torch.Tensor) -> torch.Tensor:
+        scale, mean, standard_deviation = self._transform_tensors(raw)
+        transformed = torch.clamp(raw * standard_deviation + mean, min=-15.0, max=15.0)
+        return scale * torch.sinh(transformed)
+
+    @staticmethod
+    def _reciprocity_values(
+        forward: torch.Tensor,
+        reverse: torch.Tensor,
+        wo: torch.Tensor,
+        wi: torch.Tensor,
+    ) -> torch.Tensor:
+        wi_cosine = torch.abs(wi[..., 2:3])
+        wo_cosine = torch.abs(wo[:, None, 2:3])
+        valid = (wi_cosine > 0.05) & (wo_cosine > 0.05)
+        forward_bsdf = forward / torch.clamp(wi_cosine, min=0.05)
+        reverse_bsdf = reverse / torch.clamp(wo_cosine, min=0.05)
+        delta = torch.where(
+            valid, torch.abs(forward_bsdf - reverse_bsdf), torch.zeros_like(forward)
+        )
+        magnitude = torch.where(valid, torch.abs(forward_bsdf), torch.zeros_like(forward))
+        return torch.sum(delta, dim=(1, 2)) / torch.clamp(
+            torch.sum(magnitude, dim=(1, 2)), min=1e-8
+        )
+
+    def _reverse_prediction(
+        self,
+        model: SharedMaterialNeuralEvaluator,
+        batch: Mapping[str, torch.Tensor],
+        store: ReferenceQueryStore,
+    ) -> torch.Tensor:
+        wo = batch["view"].float()
+        wi = batch["lights"].float()
+        slots = self._material_slots(batch, store)
+        group_count, direction_count, _ = wi.shape
+        reverse_view = wi.reshape(group_count * direction_count, 3)
+        reverse_light = wo[:, None, :].expand(-1, direction_count, -1).reshape(
+            group_count * direction_count, 1, 3
+        )
+        reverse_core = self._core(
+            batch, reverse_view, reverse_light, repeat_count=direction_count
+        )
+        reverse_residual = self._decode(model(
+            reverse_view,
+            reverse_light,
+            slots.repeat_interleave(direction_count),
+        ))
+        return torch.clamp(reverse_core + reverse_residual, min=0.0).reshape(
+            group_count, direction_count, 3
+        )
+
+    def predict(
+        self,
+        model: nn.Module,
+        batch: Mapping[str, torch.Tensor],
+        store: ReferenceQueryStore,
+        device: torch.device,
+    ) -> torch.Tensor:
+        del device
+        if not isinstance(model, SharedMaterialNeuralEvaluator):
+            raise TypeError("shared analytic residual requires SharedMaterialNeuralEvaluator")
+        core = self._core(batch, batch["view"].float(), batch["lights"].float())
+        residual = self._decode(self._raw_prediction(model, batch, store))
+        prediction = torch.clamp(core + residual, min=0.0)
+        if isinstance(batch, dict):
+            batch["_analytic_core"] = core
+            batch["_predicted_residual"] = residual
+            if model.training:
+                reverse = self._reverse_prediction(model, batch, store)
+                reciprocity = self._reciprocity_values(
+                    prediction, reverse, batch["view"].float(), batch["lights"].float()
+                )
+                batch["_reciprocity_penalty"] = torch.mean(torch.log1p(reciprocity))
+        return prediction
+
+    def training_loss(
+        self,
+        prediction: torch.Tensor,
+        batch: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor:
+        core = batch.get("_analytic_core")
+        predicted_residual = batch.get("_predicted_residual")
+        if not isinstance(core, torch.Tensor) or not isinstance(predicted_residual, torch.Tensor):
+            raise RuntimeError("shared analytic residual loss requires prediction state")
+        target = batch["mean"].float()
+        target_residual = target - core
+        scale, mean, standard_deviation = self._transform_tensors(prediction)
+        transformed_prediction = (
+            torch.asinh(predicted_residual / scale) - mean
+        ) / standard_deviation
+        transformed_target = (
+            torch.asinh(target_residual / scale) - mean
+        ) / standard_deviation
+        transform_loss = torch.mean(torch.square(transformed_prediction - transformed_target))
+        reciprocity = batch.get("_reciprocity_penalty")
+        reciprocity_loss = (
+            reciprocity if isinstance(reciprocity, torch.Tensor) else prediction.new_zeros(())
+        )
+        base_loss = (
+            transform_loss
+            + 0.02 * response_loss(prediction, target, batch["standard_error"].float())
+            + 0.02 * reciprocity_loss
+        )
+        energy_loss, shape_loss = energy_shape_terms(prediction, batch)
+        return 0.25 * base_loss + 0.5 * energy_loss + 2.0 * shape_loss
+
+    def additional_metric_distributions(
+        self,
+        model: nn.Module,
+        batch: Mapping[str, torch.Tensor],
+        store: ReferenceQueryStore,
+        device: torch.device,
+    ) -> Mapping[str, np.ndarray]:
+        del device
+        if not isinstance(model, SharedMaterialNeuralEvaluator):
+            raise TypeError("shared analytic residual requires SharedMaterialNeuralEvaluator")
+        core = self._core(batch, batch["view"].float(), batch["lights"].float())
+        residual = self._decode(self._raw_prediction(model, batch, store))
+        forward = torch.clamp(core + residual, min=0.0)
+        reverse = self._reverse_prediction(model, batch, store)
+        reciprocity = self._reciprocity_values(
+            forward, reverse, batch["view"].float(), batch["lights"].float()
+        )
+        weights = batch["solid_angle_weight"].float()[..., None]
+        target = batch["mean"].float()
+        core_error = torch.sum(torch.abs(core - target) * weights, dim=(1, 2)) / torch.clamp(
+            torch.sum(torch.abs(target) * weights, dim=(1, 2)), min=1e-8
+        )
+        return {
+            "reciprocity_relative_l1": reciprocity.detach().cpu().numpy(),
+            "analytic_core_solid_angle_normalized_l1": core_error.detach().cpu().numpy(),
         }
