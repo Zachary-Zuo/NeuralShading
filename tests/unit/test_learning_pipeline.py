@@ -660,6 +660,143 @@ def test_noise_aware_shared_residual_uses_peak_support_and_finite_loss(
     assert boundary.descriptor.metric_suite_id == pipeline.descriptor.metric_suite_id
 
 
+@pytest.mark.parametrize(
+    ("pipeline_id", "extra_parameters", "candidate_id", "asset_bytes", "total_bytes"),
+    (
+        (
+            "sparse-latent-dictionary-analytic-residual-e2@1",
+            {"dictionary_size": 8, "top_k": 2},
+            "ncls.sparse-latent-dictionary-top-k-mixture@1",
+            48,
+            144,
+        ),
+        (
+            "factorized-latent-analytic-residual-e2@1",
+            {"factor_rank": 2},
+            "ncls.plane-tensor-factorization@1",
+            44,
+            132,
+        ),
+    ),
+)
+def test_structured_e2_latents_use_common_source_aware_lifecycle(
+    tmp_path: Path,
+    pipeline_id: str,
+    extra_parameters: dict[str, int],
+    candidate_id: str,
+    asset_bytes: int,
+    total_bytes: int,
+) -> None:
+    dataset_path = tmp_path / f"{pipeline_id}.h5"
+    _e1_dataset(dataset_path)
+    pipeline = create_pipeline(pipeline_id)
+    assert pipeline.descriptor.candidate_id == candidate_id
+    assert pipeline.descriptor.compiler_id == "ncls.none-target-visible-capacity-study@1"
+    assert pipeline.descriptor.source_adapter_id == "ncls.layer-stack-direct-top-adapter@1"
+    with pipeline.open_store(str(dataset_path)) as store:
+        indices = pipeline.lifecycle_indices(store, "train")
+        pipeline.load_training_state(pipeline.fit_training_state(store, indices))
+        model = pipeline.create_model({
+            "latent_dimension": 4,
+            "width": 8,
+            "prepare_layer_count": 1,
+            "evaluate_layer_count": 1,
+            "activation": "gelu",
+            "direction_encoding_id": "ncls.half-difference-directions@1",
+            "fourier_band_count": 1,
+            "output_bias": 0.0,
+            **extra_parameters,
+        })
+        batch = {
+            name: torch.as_tensor(value)
+            for name, value in store.batch(indices[[0, 2, 4]]).items()
+        }
+        prediction = pipeline.predict(model, batch, store, torch.device("cpu"))
+        loss = pipeline.training_loss(prediction, batch)
+        assert prediction.shape == batch["mean"].shape
+        assert torch.isfinite(loss)
+        loss.backward()
+        costs = pipeline.parameter_costs(model)
+        assert costs["material_count"] == 3
+        assert costs["B_asset_target_transform_fp32"] == 36
+        assert costs["B_asset_fp32"] == asset_bytes
+        assert costs["B_asset_fp32_total"] == total_bytes
+        assert costs["C_prepare_macs"] > 0
+        assert costs["C_eval_macs"] > 0
+        metrics = pipeline.additional_metric_distributions(
+            model.eval(), batch, store, torch.device("cpu")
+        )
+        assert "source_reciprocity_deviation_relative_l1" in metrics
+        assert "peak_support_angle_degrees" in metrics
+
+    run_path = tmp_path / f"{pipeline_id}-run"
+    config = TrainingConfig(
+        pipeline_id=pipeline_id,
+        research_stage="e2-shared-representation-capacity",
+        model_parameters={
+            "latent_dimension": 4,
+            "width": 8,
+            "prepare_layer_count": 1,
+            "evaluate_layer_count": 1,
+            "activation": "gelu",
+            "direction_encoding_id": "ncls.half-difference-directions@1",
+            "fourier_band_count": 1,
+            "output_bias": 0.0,
+            **extra_parameters,
+        },
+        steps=1,
+        batch_size=3,
+        learning_rate=1e-3,
+        validation_interval=1,
+        checkpoint_interval=1,
+        max_validation_query_groups=3,
+        seed=53,
+        device="cpu",
+        selection_metric="solid_angle_normalized_l1.median",
+    )
+    manifest = train(dataset_path, run_path, config)
+    assert manifest["model_costs"]["B_asset_fp32"] == asset_bytes
+    result = evaluate_checkpoint(
+        dataset_path,
+        run_path / "checkpoints" / "best.pt",
+        split="test",
+        device_name="cpu",
+    )
+    assert len(result["metrics"]["by_state"]) == 3
+
+
+def test_structured_e2_latent_parameters_are_strictly_validated(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "structured-latent-validation.h5"
+    _e1_dataset(dataset_path)
+    cases = (
+        (
+            "sparse-latent-dictionary-analytic-residual-e2@1",
+            {"dictionary_size": 4, "top_k": 5},
+        ),
+        (
+            "factorized-latent-analytic-residual-e2@1",
+            {"factor_rank": 0},
+        ),
+    )
+    for pipeline_id, extra_parameters in cases:
+        pipeline = create_pipeline(pipeline_id)
+        with pipeline.open_store(str(dataset_path)) as store:
+            indices = pipeline.lifecycle_indices(store, "train")
+            pipeline.load_training_state(pipeline.fit_training_state(store, indices))
+            with pytest.raises(ValueError):
+                pipeline.create_model({
+                    "latent_dimension": 4,
+                    "width": 8,
+                    "prepare_layer_count": 1,
+                    "evaluate_layer_count": 1,
+                    "activation": "gelu",
+                    "direction_encoding_id": "ncls.half-difference-directions@1",
+                    "fourier_band_count": 1,
+                    "output_bias": 0.0,
+                    **extra_parameters,
+                })
+
+
 def test_plane_factorized_pipeline_uses_the_common_e1_lifecycle(tmp_path: Path) -> None:
     dataset_path = tmp_path / "plane-factorized-dataset.h5"
     _e1_dataset(dataset_path)

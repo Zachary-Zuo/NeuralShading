@@ -24,7 +24,9 @@ E2 多峰/平顶 response 还要求把 raw argmax 峰位与“峰支持集”分
 
 `@4` 的 3,000-step 因果 smoke 没有降低 model/reference-SE，且 aggregate 质量略退，因此该 SE-floor loss 组合不扩成正式训练。`analytic-core-shared-neural-residual-energy-shape-e2@5` 保留 source-aware reciprocity 与峰支持 metric，但恢复 `@3` 的已验证 loss，用于在同一成本 gate 内继续测试 shared decoder 容量；这避免把失败 loss 与架构容量变化混在同一个实验里。
 
-`@5` 的 width123 容量边界已经用尽 `C_eval` 预算，却在独立 test 上被 width108 支配，因此不再继续加宽同类 decoder。后续 dense-latent 对照先固定 width108，只比较 latent16/32；这一步仍属于 target-visible autodecoder 上界，不能把 latent table 当作 source compiler。
+`@5` 的 width123 容量边界已经用尽 `C_eval` 预算，却在独立 test 上被 width108 支配，因此不再继续加宽同类 decoder。固定 width108 的 latent32 3k 对照虽把 test median 从 latent16 的 `0.09172` 降到 `0.07772`，却把 p95 从 `0.22330` 提高到 `0.24785`，model/reference-SE p95 也从 `28.82` 增到 `31.43`；因此不扩成 8k。当前 dense autodecoder 上界保留 latent16/width108 的 8k run，仍未通过 SE gate；下一轮以同一 decoder/loss/metric lifecycle 比较 sparse dictionary/top-k 与 factorized latent。这些方法都属于 target-visible 压缩上界，不能把 optimized latent、字典系数或 factor 当作 source compiler。
+
+E2 structured-latent smoke 注册为 `sparse-latent-dictionary-analytic-residual-e2@1` 与 `factorized-latent-analytic-residual-e2@1`。前者联合优化共享 `16×16` codebook 与每 state logits，部署资产只保留 top-4 `uint16` ID 和 fp32 mixing weight；完整 logits 只属于 target-visible 优化过程，不计入 runtime `B_asset`。后者把 `state×latent` 表分解为每 state rank-4 系数与共享 `4×16` basis。两者都在 `prepare()` 合成 16-D latent，显式计入 64 MAC，随后复用同一 width108 decoder、per-state train-only residual transform、source-aware reciprocity 和 peak-support metric；这次 factorization 只检验材质 latent 轴的低秩结构，不改写 E1 raw-direction plane v1 或 E5 spatial plane 的既有结论。
 
 ## 三条路径的边界
 

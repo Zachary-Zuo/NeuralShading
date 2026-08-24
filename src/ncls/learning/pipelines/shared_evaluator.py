@@ -10,9 +10,13 @@ from ncls.learning.data import LayerStackReferenceStore, ReferenceQueryStore
 from ncls.learning.evaluation.metrics import evaluator_metric_distributions, response_loss
 from ncls.learning.losses import energy_shape_terms
 from ncls.learning.models.neural_evaluator import (
+    FACTORIZED_LATENT_ARCHITECTURE_ID,
     NeuralEvaluatorModelConfig,
     SHARED_ARCHITECTURE_ID,
+    SPARSE_DICTIONARY_ARCHITECTURE_ID,
+    FactorizedMaterialNeuralEvaluator,
     SharedMaterialNeuralEvaluator,
+    SparseDictionaryMaterialNeuralEvaluator,
     positive_response,
 )
 from ncls.learning.source_adapters import evaluate_layer_stack_direct_top
@@ -34,6 +38,12 @@ NOISE_AWARE_ANALYTIC_RESIDUAL_PIPELINE_ID = (
 BOUNDARY_CAPACITY_ANALYTIC_RESIDUAL_PIPELINE_ID = (
     "analytic-core-shared-neural-residual-energy-shape-e2@5"
 )
+SPARSE_DICTIONARY_ANALYTIC_RESIDUAL_PIPELINE_ID = (
+    "sparse-latent-dictionary-analytic-residual-e2@1"
+)
+FACTORIZED_LATENT_ANALYTIC_RESIDUAL_PIPELINE_ID = (
+    "factorized-latent-analytic-residual-e2@1"
+)
 _TARGET_TRANSFORM_ID = "ncls.train-only-standardized-channel-log1p@1"
 _RESIDUAL_TARGET_TRANSFORM_ID = "ncls.train-only-standardized-asinh-analytic-residual@1"
 _FAMILIES = (
@@ -52,6 +62,24 @@ _FEATURE_CONTRACT = {
     },
     "direction_space": "source-reference-local-frame",
     "material_addressing": "fitted-target-visible-state-slot",
+}
+_SPARSE_DICTIONARY_FEATURE_CONTRACT = {
+    **_FEATURE_CONTRACT,
+    "feature_contract_id": "ncls.local-frame-wo-wi-sparse-material-code@1",
+    "inputs": {
+        "prepare": ["top_k_dictionary_indices_and_weights", "wo"],
+        "evaluate": ["prepared_view_code", "wi"],
+    },
+    "material_addressing": "fitted-target-visible-top-k-dictionary-code",
+}
+_FACTORIZED_LATENT_FEATURE_CONTRACT = {
+    **_FEATURE_CONTRACT,
+    "feature_contract_id": "ncls.local-frame-wo-wi-factorized-material-code@1",
+    "inputs": {
+        "prepare": ["low_rank_material_coefficients", "wo"],
+        "evaluate": ["prepared_view_code", "wi"],
+    },
+    "material_addressing": "fitted-target-visible-low-rank-material-code",
 }
 
 
@@ -1063,3 +1091,136 @@ class BoundaryCapacityPerStateAnalyticResidualSharedEvaluatorE2Pipeline(
         return SourceAwarePerStateAnalyticResidualSharedEvaluatorE2Pipeline.training_loss(
             self, prediction, batch
         )
+
+
+class SparseDictionaryAnalyticResidualSharedEvaluatorE2Pipeline(
+    BoundaryCapacityPerStateAnalyticResidualSharedEvaluatorE2Pipeline
+):
+    """E2 top-k latent dictionary：共享 codebook，材质资产只保留局部 ID/权重。"""
+
+    feature_contract = _SPARSE_DICTIONARY_FEATURE_CONTRACT
+    descriptor = LearningPipelineDescriptor(
+        pipeline_id=SPARSE_DICTIONARY_ANALYTIC_RESIDUAL_PIPELINE_ID,
+        candidate_id="ncls.sparse-latent-dictionary-top-k-mixture@1",
+        research_role="e2-shared-representation-capacity",
+        response_reader_id="ncls.reference-query-store@1",
+        partition_policy_id="ncls.query-role-within-state@1",
+        source_adapter_id="ncls.layer-stack-direct-top-adapter@1",
+        feature_transform_id=(
+            "ncls.local-frame-wo-wi-sparse-material-code@1"
+        ),
+        target_transform_id=(
+            "ncls.train-only-per-state-standardized-asinh-analytic-residual@1"
+        ),
+        representation_id=(
+            "ncls.analytic-direct-top-shared-neural-residual-top-k-latent-dictionary@1"
+        ),
+        architecture_id=SPARSE_DICTIONARY_ARCHITECTURE_ID,
+        latent_inference_id=(
+            "ncls.optimized-target-visible-top-k-dictionary-coefficients@1"
+        ),
+        compiler_id="ncls.none-target-visible-capacity-study@1",
+        loss_id=(
+            "ncls.per-state-standardized-asinh-residual-energy-shape-reciprocity@1"
+        ),
+        metric_suite_id=(
+            "ncls.evaluator-quality-by-state-source-reciprocity-peak-support@1"
+        ),
+        exporter_id="ncls.neural-evaluator-method-bundle-planned@1",
+        supported_family_ids=("ncls.layer-stack@1",),
+        scope=(
+            "multi-material-target-visible-top-k-dictionary-analytic-residual-"
+            "capacity"
+        ),
+    )
+
+    def create_model(self, model_parameters: Mapping[str, Any]) -> nn.Module:
+        if self._training_state is None:
+            raise RuntimeError("sparse dictionary fitted training state has not been loaded")
+        parameters = dict(model_parameters)
+        try:
+            dictionary_size = int(parameters.pop("dictionary_size"))
+            top_k = int(parameters.pop("top_k"))
+        except KeyError as error:
+            raise ValueError(
+                "sparse dictionary model requires dictionary_size and top_k"
+            ) from error
+        config = NeuralEvaluatorModelConfig.from_mapping(parameters)
+        return SparseDictionaryMaterialNeuralEvaluator(
+            config,
+            len(self._training_state["state_ids"]),
+            dictionary_size=dictionary_size,
+            top_k=top_k,
+        )
+
+    def parameter_costs(self, model: nn.Module) -> Mapping[str, Any]:
+        costs = dict(super().parameter_costs(model))
+        costs["cost_scope"] = (
+            "shared dictionary/decoder plus per-material uint16 top-k IDs, fp32 "
+            "weights and train-only residual transform"
+        )
+        return costs
+
+
+class FactorizedLatentAnalyticResidualSharedEvaluatorE2Pipeline(
+    BoundaryCapacityPerStateAnalyticResidualSharedEvaluatorE2Pipeline
+):
+    """E2 factorized latent：材质系数乘共享 basis 后进入同一 decoder。"""
+
+    feature_contract = _FACTORIZED_LATENT_FEATURE_CONTRACT
+    descriptor = LearningPipelineDescriptor(
+        pipeline_id=FACTORIZED_LATENT_ANALYTIC_RESIDUAL_PIPELINE_ID,
+        candidate_id="ncls.plane-tensor-factorization@1",
+        research_role="e2-shared-representation-capacity",
+        response_reader_id="ncls.reference-query-store@1",
+        partition_policy_id="ncls.query-role-within-state@1",
+        source_adapter_id="ncls.layer-stack-direct-top-adapter@1",
+        feature_transform_id=(
+            "ncls.local-frame-wo-wi-factorized-material-code@1"
+        ),
+        target_transform_id=(
+            "ncls.train-only-per-state-standardized-asinh-analytic-residual@1"
+        ),
+        representation_id=(
+            "ncls.analytic-direct-top-shared-neural-residual-low-rank-material-latent@1"
+        ),
+        architecture_id=FACTORIZED_LATENT_ARCHITECTURE_ID,
+        latent_inference_id=(
+            "ncls.optimized-target-visible-low-rank-material-coefficients@1"
+        ),
+        compiler_id="ncls.none-target-visible-capacity-study@1",
+        loss_id=(
+            "ncls.per-state-standardized-asinh-residual-energy-shape-reciprocity@1"
+        ),
+        metric_suite_id=(
+            "ncls.evaluator-quality-by-state-source-reciprocity-peak-support@1"
+        ),
+        exporter_id="ncls.neural-evaluator-method-bundle-planned@1",
+        supported_family_ids=("ncls.layer-stack@1",),
+        scope=(
+            "multi-material-target-visible-low-rank-latent-analytic-residual-capacity"
+        ),
+    )
+
+    def create_model(self, model_parameters: Mapping[str, Any]) -> nn.Module:
+        if self._training_state is None:
+            raise RuntimeError("factorized latent fitted training state has not been loaded")
+        parameters = dict(model_parameters)
+        try:
+            factor_rank = int(parameters.pop("factor_rank"))
+        except KeyError as error:
+            raise ValueError("factorized latent model requires factor_rank") from error
+        config = NeuralEvaluatorModelConfig.from_mapping(parameters)
+        return FactorizedMaterialNeuralEvaluator(
+            config,
+            len(self._training_state["state_ids"]),
+            factor_rank=factor_rank,
+        )
+
+    def parameter_costs(self, model: nn.Module) -> Mapping[str, Any]:
+        costs = dict(super().parameter_costs(model))
+        costs["cost_scope"] = (
+            "shared latent basis/decoder plus per-material low-rank coefficients "
+            "and train-only residual transform"
+        )
+        return costs

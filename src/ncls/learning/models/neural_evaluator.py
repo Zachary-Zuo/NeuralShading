@@ -10,6 +10,12 @@ from torch.nn import functional as F
 
 ARCHITECTURE_ID = "ncls.small-view-conditioned-mlp@1"
 SHARED_ARCHITECTURE_ID = "ncls.shared-small-view-conditioned-mlp@1"
+SPARSE_DICTIONARY_ARCHITECTURE_ID = (
+    "ncls.shared-small-view-conditioned-mlp-sparse-latent-dictionary@1"
+)
+FACTORIZED_LATENT_ARCHITECTURE_ID = (
+    "ncls.shared-small-view-conditioned-mlp-factorized-material-latent@1"
+)
 DIRECTION_ENCODING_IDS = (
     "ncls.local-cartesian-directions@1",
     "ncls.fourier-cartesian-directions@1",
@@ -53,6 +59,14 @@ def _mlp(
         dimension = width
     layers.append(nn.Linear(dimension, output_dimension))
     return nn.Sequential(*layers)
+
+
+def _linear_macs(module: nn.Module) -> int:
+    return sum(
+        child.in_features * child.out_features
+        for child in module.modules()
+        if isinstance(child, nn.Linear)
+    )
 
 
 class SingleMaterialEvaluatorModel(nn.Module):
@@ -205,19 +219,12 @@ class SingleMaterialNeuralEvaluator(SingleMaterialEvaluatorModel):
         latent_count = self.material_latent.numel()
         shared_count = sum(parameter.numel() for name, parameter in self.named_parameters() if name != "material_latent")
 
-        def linear_macs(module: nn.Module) -> int:
-            return sum(
-                child.in_features * child.out_features
-                for child in module.modules()
-                if isinstance(child, nn.Linear)
-            )
-
         return {
             "parameter_count": latent_count + shared_count,
             "B_asset_fp32": 4 * latent_count,
             "B_shared_fp32": 4 * shared_count,
-            "C_prepare_macs": linear_macs(self.prepare_network),
-            "C_eval_macs": linear_macs(self.evaluate_network),
+            "C_prepare_macs": _linear_macs(self.prepare_network),
+            "C_eval_macs": _linear_macs(self.evaluate_network),
         }
 
 
@@ -262,13 +269,6 @@ class SharedMaterialNeuralEvaluator(SingleMaterialNeuralEvaluator):
             if name != "material_latents.weight"
         )
 
-        def linear_macs(module: nn.Module) -> int:
-            return sum(
-                child.in_features * child.out_features
-                for child in module.modules()
-                if isinstance(child, nn.Linear)
-            )
-
         per_material_count = self.config.latent_dimension
         return {
             "parameter_count": total_latent_count + shared_count,
@@ -276,8 +276,138 @@ class SharedMaterialNeuralEvaluator(SingleMaterialNeuralEvaluator):
             "B_asset_fp32": 4 * per_material_count,
             "B_asset_fp32_total": 4 * total_latent_count,
             "B_shared_fp32": 4 * shared_count,
-            "C_prepare_macs": linear_macs(self.prepare_network),
-            "C_eval_macs": linear_macs(self.evaluate_network),
+            "C_prepare_macs": _linear_macs(self.prepare_network),
+            "C_eval_macs": _linear_macs(self.evaluate_network),
+        }
+
+
+class SparseDictionaryMaterialNeuralEvaluator(SharedMaterialNeuralEvaluator):
+    """每个材质只保存 top-k 字典索引/权重，字典与 decoder 跨材质共享。"""
+
+    architecture_id = SPARSE_DICTIONARY_ARCHITECTURE_ID
+
+    def __init__(
+        self,
+        config: NeuralEvaluatorModelConfig,
+        material_count: int,
+        *,
+        dictionary_size: int,
+        top_k: int,
+    ) -> None:
+        if dictionary_size < 2 or dictionary_size > 65535:
+            raise ValueError("sparse latent dictionary size must lie in [2, 65535]")
+        if top_k < 1 or top_k > dictionary_size:
+            raise ValueError("sparse latent top_k must lie in [1, dictionary_size]")
+        super().__init__(config, material_count)
+        del self.material_latents
+        self.dictionary_size = dictionary_size
+        self.top_k = top_k
+        self.latent_dictionary = nn.Parameter(torch.empty(
+            dictionary_size, config.latent_dimension
+        ))
+        self.material_logits = nn.Parameter(torch.empty(material_count, dictionary_size))
+        nn.init.normal_(self.latent_dictionary, mean=0.0, std=0.02)
+        nn.init.normal_(self.material_logits, mean=0.0, std=0.01)
+
+    def _material_latent_for_slots(self, material_slots: torch.Tensor) -> torch.Tensor:
+        logits = self.material_logits[material_slots.long()]
+        values, indices = torch.topk(logits, self.top_k, dim=-1, sorted=True)
+        weights = torch.softmax(values, dim=-1)
+        codewords = self.latent_dictionary[indices]
+        return torch.sum(weights[..., None] * codewords, dim=-2)
+
+    def prepare(self, wo: torch.Tensor, material_slots: torch.Tensor) -> torch.Tensor:
+        if material_slots.ndim != 1 or len(material_slots) != len(wo):
+            raise ValueError("sparse dictionary material slots must match wo groups")
+        latent = self._material_latent_for_slots(material_slots)
+        return self.prepare_network(torch.cat((latent, self._view_features(wo)), dim=-1))
+
+    def cost_summary(self) -> dict[str, int]:
+        logits_count = self.material_logits.numel()
+        dictionary_count = self.latent_dictionary.numel()
+        decoder_count = sum(
+            parameter.numel()
+            for name, parameter in self.named_parameters()
+            if name not in {"material_logits", "latent_dictionary"}
+        )
+        # Runtime 资产使用 uint16 codeword ID 与 fp32 mixing weight；完整 logits 只在
+        # target-visible 优化期存在，不伪装成部署资产。
+        per_material_bytes = self.top_k * (2 + 4)
+        return {
+            "parameter_count": logits_count + dictionary_count + decoder_count,
+            "optimized_training_parameter_count": logits_count,
+            "material_count": self.material_count,
+            "dictionary_size": self.dictionary_size,
+            "top_k": self.top_k,
+            "B_asset_sparse_indices_u16": 2 * self.top_k,
+            "B_asset_sparse_weights_fp32": 4 * self.top_k,
+            "B_asset_fp32": per_material_bytes,
+            "B_asset_fp32_total": per_material_bytes * self.material_count,
+            "B_shared_fp32": 4 * (dictionary_count + decoder_count),
+            "C_prepare_latent_mix_macs": self.top_k * self.config.latent_dimension,
+            "C_prepare_macs": (
+                _linear_macs(self.prepare_network)
+                + self.top_k * self.config.latent_dimension
+            ),
+            "C_eval_macs": _linear_macs(self.evaluate_network),
+        }
+
+
+class FactorizedMaterialNeuralEvaluator(SharedMaterialNeuralEvaluator):
+    """把 state×latent 表分解为材质系数与共享低秩 basis。"""
+
+    architecture_id = FACTORIZED_LATENT_ARCHITECTURE_ID
+
+    def __init__(
+        self,
+        config: NeuralEvaluatorModelConfig,
+        material_count: int,
+        *,
+        factor_rank: int,
+    ) -> None:
+        if factor_rank < 1:
+            raise ValueError("factorized material latent rank must be positive")
+        super().__init__(config, material_count)
+        del self.material_latents
+        self.factor_rank = factor_rank
+        self.material_factors = nn.Parameter(torch.empty(material_count, factor_rank))
+        self.latent_basis = nn.Parameter(torch.empty(factor_rank, config.latent_dimension))
+        nn.init.normal_(self.material_factors, mean=0.0, std=0.1)
+        nn.init.normal_(self.latent_basis, mean=0.0, std=0.1)
+
+    def _material_latent_for_slots(self, material_slots: torch.Tensor) -> torch.Tensor:
+        return self.material_factors[material_slots.long()] @ self.latent_basis
+
+    def prepare(self, wo: torch.Tensor, material_slots: torch.Tensor) -> torch.Tensor:
+        if material_slots.ndim != 1 or len(material_slots) != len(wo):
+            raise ValueError("factorized latent material slots must match wo groups")
+        latent = self._material_latent_for_slots(material_slots)
+        return self.prepare_network(torch.cat((latent, self._view_features(wo)), dim=-1))
+
+    def cost_summary(self) -> dict[str, int]:
+        factor_count = self.material_factors.numel()
+        basis_count = self.latent_basis.numel()
+        decoder_count = sum(
+            parameter.numel()
+            for name, parameter in self.named_parameters()
+            if name not in {"material_factors", "latent_basis"}
+        )
+        per_material_count = self.factor_rank
+        return {
+            "parameter_count": factor_count + basis_count + decoder_count,
+            "material_count": self.material_count,
+            "factor_rank": self.factor_rank,
+            "B_asset_fp32": 4 * per_material_count,
+            "B_asset_fp32_total": 4 * factor_count,
+            "B_shared_fp32": 4 * (basis_count + decoder_count),
+            "C_prepare_latent_factor_macs": (
+                self.factor_rank * self.config.latent_dimension
+            ),
+            "C_prepare_macs": (
+                _linear_macs(self.prepare_network)
+                + self.factor_rank * self.config.latent_dimension
+            ),
+            "C_eval_macs": _linear_macs(self.evaluate_network),
         }
 
 
