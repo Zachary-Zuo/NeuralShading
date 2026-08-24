@@ -24,6 +24,8 @@ E2 多峰/平顶 response 还要求把 raw argmax 峰位与“峰支持集”分
 
 `@4` 的 3,000-step 因果 smoke 没有降低 model/reference-SE，且 aggregate 质量略退，因此该 SE-floor loss 组合不扩成正式训练。`analytic-core-shared-neural-residual-energy-shape-e2@5` 保留 source-aware reciprocity 与峰支持 metric，但恢复 `@3` 的已验证 loss，用于在同一成本 gate 内继续测试 shared decoder 容量；这避免把失败 loss 与架构容量变化混在同一个实验里。
 
+`@5` 的 width123 容量边界已经用尽 `C_eval` 预算，却在独立 test 上被 width108 支配，因此不再继续加宽同类 decoder。后续 dense-latent 对照先固定 width108，只比较 latent16/32；这一步仍属于 target-visible autodecoder 上界，不能把 latent table 当作 source compiler。
+
 ## 三条路径的边界
 
 Python 侧的工具生命周期仍分成三条路径，但必须记录拟合对象和结论范围：
