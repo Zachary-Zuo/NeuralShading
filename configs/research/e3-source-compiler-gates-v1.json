@@ -1,0 +1,42 @@
+{
+  "format_name": "ncls.evaluator-acceptance-gate",
+  "format_version": 1,
+  "gate_id": "ncls.e3-source-compiler-acceptance@1",
+  "status": "frozen",
+  "required_research_role": "e3-source-compiler-generalization",
+  "rationale": "在 E3 首次训练前冻结。质量、峰值、reference-SE、source reciprocity 与 runtime latent/decoder 门槛沿用 E2 @3，避免 source compiler 通过放宽 evaluator 标准获得伪进展；另显式限制离线 compiler 权重、原生 token 输入和单状态 MAC。test 必须同时使用 source test state 与 query test role，adversarial 只读取 source test state 的 adversarial role。该 gate 验收 LayerStack 未见 family/state 的 pure feed-forward 编译，不代表跨 source family、bounded refinement、Slang 或 viewer 已通过。",
+  "metric_requirements": {
+    "test": {
+      "solid_angle_normalized_l1.median": {"maximum": 0.08},
+      "solid_angle_normalized_l1.p95": {"maximum": 0.20},
+      "log_l1.p95": {"maximum": 0.15},
+      "energy_relative_error.p95": {"maximum": 0.15},
+      "peak_ratio_log_error.p95": {"maximum": 0.2231435513},
+      "peak_support_angle_degrees.p95": {"maximum": 2.0},
+      "top_5_percent_energy_recall.p5": {"minimum": 0.85},
+      "model_error_over_reference_standard_error.p95": {"maximum": 6.0},
+      "source_reciprocity_deviation_relative_l1.p95": {"maximum": 0.05},
+      "finite_rate.minimum": {"minimum": 1.0},
+      "nonnegative_rate.minimum": {"minimum": 1.0}
+    },
+    "adversarial_probe": {
+      "solid_angle_normalized_l1.median": {"maximum": 0.10},
+      "solid_angle_normalized_l1.p95": {"maximum": 0.25},
+      "energy_relative_error.p95": {"maximum": 0.20},
+      "peak_ratio_log_error.p95": {"maximum": 0.2876820725},
+      "peak_support_angle_degrees.p95": {"maximum": 2.0},
+      "top_5_percent_energy_recall.p5": {"minimum": 0.80},
+      "finite_rate.minimum": {"minimum": 1.0},
+      "nonnegative_rate.minimum": {"minimum": 1.0}
+    }
+  },
+  "cost_requirements": {
+    "B_asset_fp32": {"maximum": 512},
+    "B_shared_fp32": {"maximum": 524288},
+    "C_prepare_macs": {"maximum": 65536},
+    "C_eval_macs": {"maximum": 65536},
+    "B_compiler_shared_fp32": {"maximum": 262144},
+    "B_compiler_input_native_bytes": {"maximum": 4096},
+    "C_compile_source_macs": {"maximum": 1048576}
+  }
+}

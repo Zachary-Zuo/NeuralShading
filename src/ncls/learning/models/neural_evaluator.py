@@ -7,6 +7,9 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from ncls.core.material import MAX_INTERFACES
+from ncls.learning.features import CONTINUOUS_FEATURE_COUNT
+
 
 ARCHITECTURE_ID = "ncls.small-view-conditioned-mlp@1"
 SHARED_ARCHITECTURE_ID = "ncls.shared-small-view-conditioned-mlp@1"
@@ -21,6 +24,9 @@ TARGET_TENSOR_ENCODER_ARCHITECTURE_ID = (
 )
 TARGET_TENSOR_REFINEMENT_ARCHITECTURE_ID = (
     "ncls.target-tensor-encoder-bounded-refinement-shared-small-mlp@1"
+)
+LAYER_STACK_SOURCE_COMPILER_ARCHITECTURE_ID = (
+    "ncls.layer-stack-token-source-compiler-shared-small-mlp@1"
 )
 DIRECTION_ENCODING_IDS = (
     "ncls.local-cartesian-directions@1",
@@ -594,6 +600,190 @@ class RefinedTargetTensorEncoderMaterialNeuralEvaluator(
         costs["optimized_refinement_parameter_count"] = refinement_count
         costs["refinement_bound"] = self.refinement_bound
         return costs
+
+
+class LayerStackSourceCompilerNeuralEvaluator(SharedMaterialNeuralEvaluator):
+    """从 LayerStack 原生 token 前向编译 latent 与 residual transform。"""
+
+    architecture_id = LAYER_STACK_SOURCE_COMPILER_ARCHITECTURE_ID
+
+    def __init__(
+        self,
+        config: NeuralEvaluatorModelConfig,
+        *,
+        compiler_width: int,
+        compiler_type_width: int,
+        compiler_layer_count: int,
+        base_transform_scale: torch.Tensor,
+        base_transform_mean: torch.Tensor,
+        base_transform_standard_deviation: torch.Tensor,
+    ) -> None:
+        if min(compiler_width, compiler_type_width, compiler_layer_count) < 1:
+            raise ValueError("source compiler dimensions must be positive")
+        super().__init__(config, material_count=1)
+        del self.material_latents
+        self.compiler_width = compiler_width
+        self.compiler_type_width = compiler_type_width
+        self.compiler_layer_count = compiler_layer_count
+        for name, value in (
+            ("base_transform_scale", base_transform_scale),
+            ("base_transform_mean", base_transform_mean),
+            ("base_transform_standard_deviation", base_transform_standard_deviation),
+        ):
+            tensor = value.detach().to(dtype=torch.float32).reshape(3)
+            if not torch.all(torch.isfinite(tensor)) or (
+                name != "base_transform_mean" and torch.any(tensor <= 0.0)
+            ):
+                raise ValueError(f"source compiler {name} is invalid")
+            self.register_buffer(name, tensor)
+        self.type_embedding = nn.Embedding(4, compiler_type_width)
+        self.interface_encoder = _mlp(
+            CONTINUOUS_FEATURE_COUNT + compiler_type_width,
+            compiler_width,
+            compiler_width,
+            compiler_layer_count,
+            config.activation,
+        )
+        self.compose = nn.GRUCell(compiler_width, compiler_width)
+        self.compiled_state_head = _mlp(
+            compiler_width,
+            config.latent_dimension + 9,
+            compiler_width,
+            1,
+            config.activation,
+        )
+        for module in (
+            self.type_embedding,
+            self.interface_encoder,
+            self.compose,
+            self.compiled_state_head,
+        ):
+            for child in module.modules():
+                if isinstance(child, (nn.Linear, nn.GRUCell)):
+                    for name, parameter in child.named_parameters(recurse=False):
+                        if "weight" in name:
+                            nn.init.xavier_uniform_(parameter)
+                        elif "bias" in name:
+                            nn.init.zeros_(parameter)
+        final = self.compiled_state_head[-1]
+        if isinstance(final, nn.Linear):
+            nn.init.zeros_(final.weight)
+            nn.init.zeros_(final.bias)
+
+    def compile_source(
+        self,
+        interface_kinds: torch.Tensor,
+        continuous: torch.Tensor,
+        interface_counts: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        if (
+            interface_kinds.ndim != 2
+            or continuous.ndim != 3
+            or interface_counts.ndim != 1
+            or interface_kinds.shape[1] != MAX_INTERFACES
+            or continuous.shape[1:] != (MAX_INTERFACES, CONTINUOUS_FEATURE_COUNT)
+            or len(interface_kinds) != len(continuous)
+            or len(interface_kinds) != len(interface_counts)
+        ):
+            raise ValueError("source compiler expects padded LayerStack token tensors")
+        tokens = self.interface_encoder(torch.cat((
+            self.type_embedding(interface_kinds.long()), continuous.float()
+        ), dim=-1))
+        state = torch.zeros(
+            (len(interface_kinds), self.compiler_width),
+            dtype=continuous.dtype,
+            device=continuous.device,
+        )
+        for interface_index in range(MAX_INTERFACES):
+            candidate = self.compose(tokens[:, interface_index], state)
+            active = (interface_index < interface_counts)[:, None]
+            state = torch.where(active, candidate, state)
+        compiled = self.compiled_state_head(state)
+        latent_end = self.config.latent_dimension
+        latent = compiled[:, :latent_end]
+        scale_delta = torch.clamp(compiled[:, latent_end : latent_end + 3], -6.0, 6.0)
+        mean_delta = 3.0 * torch.tanh(compiled[:, latent_end + 3 : latent_end + 6])
+        standard_deviation_delta = torch.clamp(
+            compiled[:, latent_end + 6 : latent_end + 9], -4.0, 4.0
+        )
+        scale = self.base_transform_scale * torch.exp(scale_delta)
+        mean = self.base_transform_mean + mean_delta
+        standard_deviation = (
+            self.base_transform_standard_deviation
+            * torch.exp(standard_deviation_delta)
+        )
+        return (
+            latent,
+            scale[:, None, :],
+            mean[:, None, :],
+            standard_deviation[:, None, :],
+        )
+
+    def evaluate_compiled(
+        self,
+        wo: torch.Tensor,
+        wi: torch.Tensor,
+        interface_kinds: torch.Tensor,
+        continuous: torch.Tensor,
+        interface_counts: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        if wo.ndim != 2 or wi.ndim != 3 or len(wo) != len(wi):
+            raise ValueError("compiled evaluator expects wo [group,3] and wi [group,direction,3]")
+        latent, scale, mean, standard_deviation = self.compile_source(
+            interface_kinds, continuous, interface_counts
+        )
+        prepared = self.prepare_network(torch.cat((
+            latent, self._view_features(wo)
+        ), dim=-1))
+        light_features = self._light_features(wo, wi)
+        repeated = prepared[:, None, :].expand(-1, wi.shape[1], -1)
+        raw = self.evaluate_network(torch.cat((repeated, light_features), dim=-1))
+        return raw, scale, mean, standard_deviation
+
+    def cost_summary(self) -> dict[str, int | float]:
+        compiler_modules = (
+            self.type_embedding,
+            self.interface_encoder,
+            self.compose,
+            self.compiled_state_head,
+        )
+        compiler_parameter_ids = {
+            id(parameter)
+            for module in compiler_modules
+            for parameter in module.parameters()
+        }
+        compiler_count = sum(
+            parameter.numel()
+            for module in compiler_modules
+            for parameter in module.parameters()
+        )
+        decoder_count = sum(
+            parameter.numel()
+            for parameter in self.parameters()
+            if id(parameter) not in compiler_parameter_ids
+        )
+        compiled_float_count = self.config.latent_dimension + 9
+        gru_macs = self.compose.weight_ih.numel() + self.compose.weight_hh.numel()
+        compiler_macs = (
+            MAX_INTERFACES * (_linear_macs(self.interface_encoder) + gru_macs)
+            + _linear_macs(self.compiled_state_head)
+        )
+        return {
+            "parameter_count": compiler_count + decoder_count,
+            "compiler_parameter_count": compiler_count,
+            "B_asset_fp32": 4 * compiled_float_count,
+            "B_asset_latent_fp32": 4 * self.config.latent_dimension,
+            "B_asset_target_transform_fp32": 4 * 9,
+            "B_shared_fp32": 4 * decoder_count,
+            "B_compiler_shared_fp32": 4 * (compiler_count + 9),
+            "B_compiler_transform_base_fp32": 4 * 9,
+            "B_compiler_input_native_bytes": (
+                MAX_INTERFACES * (4 + 4 * CONTINUOUS_FEATURE_COUNT) + 4
+            ),
+            "C_compile_source_macs": compiler_macs,
+            "C_prepare_macs": _linear_macs(self.prepare_network),
+            "C_eval_macs": _linear_macs(self.evaluate_network),
+        }
 
 
 def positive_response(raw: torch.Tensor) -> torch.Tensor:

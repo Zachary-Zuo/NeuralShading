@@ -949,6 +949,103 @@ def test_reference_se_group_tail_loss_matches_group_metric_tail() -> None:
         )
 
 
+def test_e3_source_compiler_uses_only_native_source_and_source_train_statistics(
+    tmp_path: Path,
+) -> None:
+    dataset_path = tmp_path / "source-compiler.h5"
+    run_path = tmp_path / "source-compiler-run"
+    _e1_dataset(dataset_path)
+    pipeline_id = "layer-stack-source-state-compiler-analytic-residual-e3@1"
+    pipeline = create_pipeline(pipeline_id)
+    model_parameters = {
+        "latent_dimension": 4,
+        "compiler_width": 8,
+        "compiler_type_width": 2,
+        "compiler_layer_count": 1,
+        "width": 8,
+        "prepare_layer_count": 1,
+        "evaluate_layer_count": 1,
+        "activation": "gelu",
+        "direction_encoding_id": "ncls.half-difference-directions@1",
+        "fourier_band_count": 1,
+        "output_bias": 0.0,
+    }
+    with pipeline.open_store(str(dataset_path)) as store:
+        train_indices = pipeline.lifecycle_indices(store, "train")
+        validation_indices = pipeline.lifecycle_indices(store, "validation")
+        test_indices = pipeline.lifecycle_indices(store, "test")
+        adversarial_indices = pipeline.evaluation_indices(store, "adversarial_probe")
+        assert [len(value) for value in (
+            train_indices, validation_indices, test_indices, adversarial_indices
+        )] == [2, 1, 1, 1]
+        state = pipeline.fit_training_state(store, train_indices)
+        assert state["fit_scope"] == (
+            "source-train-states-and-train-query-groups-only"
+        )
+        assert state["source_train_state_count"] == 1
+        assert len(state["target_transform_supervision_by_state"]) == 1
+        source_train_state_ids = set(state["state_ids"])
+        all_state_ids = set(map(str, store.dataset.state_strings("state_id")))
+        assert source_train_state_ids < all_state_ids
+        pipeline.load_training_state(state)
+        model = pipeline.create_model(model_parameters)
+        train_batch = {
+            name: torch.as_tensor(value)
+            for name, value in store.batch(train_indices).items()
+        }
+        prediction = pipeline.predict(
+            model, train_batch, store, torch.device("cpu")
+        )
+        loss = pipeline.training_loss(prediction, train_batch)
+        assert prediction.shape == train_batch["mean"].shape
+        assert torch.isfinite(loss)
+        loss.backward()
+        model.eval()
+        test_batch = {
+            name: torch.as_tensor(value)
+            for name, value in store.batch(test_indices).items()
+        }
+        with torch.no_grad():
+            test_prediction = pipeline.predict(
+                model, test_batch, store, torch.device("cpu")
+            )
+        assert test_prediction.shape == test_batch["mean"].shape
+        costs = pipeline.parameter_costs(model)
+        assert costs["B_asset_fp32"] == (4 + 9) * 4
+        assert costs["B_compiler_input_native_bytes"] == 836
+
+    config = TrainingConfig(
+        pipeline_id=pipeline_id,
+        research_stage="e3-source-compiler-generalization",
+        model_parameters=model_parameters,
+        steps=1,
+        batch_size=1,
+        learning_rate=1e-3,
+        validation_interval=1,
+        checkpoint_interval=1,
+        max_validation_query_groups=1,
+        seed=67,
+        device="cpu",
+        selection_metric="solid_angle_normalized_l1.median",
+    )
+    manifest = train(dataset_path, run_path, config)
+    assert manifest["partition_policy_id"] == "ncls.source-state-and-query-role@1"
+    assert manifest["lifecycle_source_state_counts"] == {
+        "train": 1,
+        "validation": 1,
+        "test": 1,
+    }
+    assert manifest["held_out_test_accessed"] is False
+    result = evaluate_checkpoint(
+        dataset_path,
+        run_path / "checkpoints" / "best.pt",
+        split="test",
+        device_name="cpu",
+    )
+    assert result["metrics"]["query_group_count"] == 1
+    assert set(result["metrics"]["by_source_split"]) == {"test"}
+
+
 def test_plane_factorized_pipeline_uses_the_common_e1_lifecycle(tmp_path: Path) -> None:
     dataset_path = tmp_path / "plane-factorized-dataset.h5"
     _e1_dataset(dataset_path)

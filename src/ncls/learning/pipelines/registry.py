@@ -29,6 +29,7 @@ from .shared_evaluator import (
     TargetEncoderRefinementAnalyticResidualSharedEvaluatorE2Pipeline,
     TargetEncoderSeTailRefinementAnalyticResidualSharedEvaluatorE2Pipeline,
 )
+from .source_compiler import LayerStackSourceCompilerAnalyticResidualE3Pipeline
 
 
 _FACTORIES: dict[str, Callable[[], LearningPipeline]] = {}
@@ -73,3 +74,4 @@ register_pipeline(FactorizedLatentAnalyticResidualSharedEvaluatorE2Pipeline)
 register_pipeline(TargetTensorEncoderAnalyticResidualSharedEvaluatorE2Pipeline)
 register_pipeline(TargetEncoderRefinementAnalyticResidualSharedEvaluatorE2Pipeline)
 register_pipeline(TargetEncoderSeTailRefinementAnalyticResidualSharedEvaluatorE2Pipeline)
+register_pipeline(LayerStackSourceCompilerAnalyticResidualE3Pipeline)
