@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Sequence
 
 import numpy as np
 
@@ -89,8 +89,6 @@ class LayerStackProvider(BaseProvider):
         self,
         collection: CollectionConfig,
         config: LayerStackProviderConfig = LayerStackProviderConfig(),
-        *,
-        evaluator: Any | None = None,
     ) -> None:
         super().__init__(collection)
         self.provider_config = config
@@ -176,7 +174,7 @@ class LayerStackProvider(BaseProvider):
                 raise ValueError(f"selected LayerStack states are absent: {missing}")
             states = [available[state_id] for state_id in config.selected_state_ids]
         self._states = tuple(states)
-        self._evaluator = evaluator
+        self._evaluator_cache: dict[tuple[int, int, int], FalcorReferenceEvaluator] = {}
 
     def source_states(self) -> Sequence[SourceState]:
         return self._states
@@ -274,7 +272,6 @@ class LayerStackProvider(BaseProvider):
             probe,
             adaptive=False,
             fixed_samples_per_replica=self.provider_config.peak_calibration_samples_per_replica,
-            allow_injected_evaluator=False,
         )
         magnitude = np.sum(np.abs(evaluated.mean[0]), axis=-1)
         peak_index = np.argmax(magnitude, axis=1)
@@ -340,6 +337,26 @@ class LayerStackProvider(BaseProvider):
             base.query_roles,
         )
 
+    def _reference_evaluator(
+        self,
+        initial_light_directions: np.ndarray,
+        *,
+        query_group_batch: int,
+        light_index_offset: int,
+    ) -> FalcorReferenceEvaluator:
+        tile_count = int(initial_light_directions.shape[-2])
+        key = (tile_count, query_group_batch, light_index_offset)
+        evaluator = self._evaluator_cache.get(key)
+        if evaluator is None:
+            evaluator = FalcorReferenceEvaluator(
+                initial_light_directions,
+                max_depth=self.provider_config.max_depth,
+                max_query_group_batch=query_group_batch,
+                light_index_offset=light_index_offset,
+            )
+            self._evaluator_cache[key] = evaluator
+        return evaluator
+
     def _evaluate_queries(
         self,
         state: SourceState,
@@ -348,7 +365,6 @@ class LayerStackProvider(BaseProvider):
         *,
         adaptive: bool,
         fixed_samples_per_replica: int,
-        allow_injected_evaluator: bool,
     ) -> EvaluatedBlock:
         if len(surfaces) != 1:
             raise ValueError("constant LayerStack states require exactly one surface sample")
@@ -376,27 +392,16 @@ class LayerStackProvider(BaseProvider):
                 1,
                 self.provider_config.max_dispatch_queries // tile_count,
             )
+            evaluator = self._reference_evaluator(
+                plan.light_directions[0, light_start:light_stop],
+                query_group_batch=query_group_batch,
+                light_index_offset=light_start,
+            )
             for group_start in range(0, group_count, query_group_batch):
                 group_stop = min(group_start + query_group_batch, group_count)
                 lights = plan.light_directions[
                     group_start:group_stop, light_start:light_stop
                 ]
-                if (
-                    allow_injected_evaluator
-                    and
-                    self._evaluator is not None
-                    and light_start == 0
-                    and light_stop == direction_count
-                    and int(self._evaluator.light_count) == tile_count
-                ):
-                    evaluator = self._evaluator
-                else:
-                    evaluator = FalcorReferenceEvaluator(
-                        lights,
-                        max_depth=self.provider_config.max_depth,
-                        max_query_group_batch=group_stop - group_start,
-                        light_index_offset=light_start,
-                    )
                 if int(evaluator.light_count) != tile_count:
                     raise ValueError("LayerStack evaluator light tile disagrees with QueryPlan")
                 arguments = dict(
@@ -476,11 +481,10 @@ class LayerStackProvider(BaseProvider):
             plan,
             adaptive=self.provider_config.adaptive,
             fixed_samples_per_replica=self.provider_config.fixed_samples_per_replica,
-            allow_injected_evaluator=True,
         )
 
     def metadata(self):
         return {**super().metadata(), "provider_config": self.provider_config.__dict__}
 
     def close(self) -> None:
-        self._evaluator = None
+        self._evaluator_cache.clear()
