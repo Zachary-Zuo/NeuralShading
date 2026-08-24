@@ -192,6 +192,8 @@ train-only target tensor encoder 已完成首个同预算 smoke。DeepSets encod
 
 500-step bounded refinement 只训练 384 个 per-state delta，validation 在 step 200 选 best；test median `0.07668` 与 recall p5 `0.86242` 已通过，adversarial 全项通过，但 test p95 `0.22779`、model/reference-SE `27.91` 和 source reciprocity `0.05114` 仍失败。delta absolute p95/maximum 仅 `0.0773/0.1133`，没有撞到 `0.25` bound，且更晚 step 没有改善 validation；因此不通过增加 refinement budget 或放宽 bound 追指标。encoder-only validation 在 3k 附近仍有下降趋势，下一实验使用相同结构的 8k capacity envelope，之后最多复用一次同样的固定 refinement。
 
+8k target encoder 在 validation step 7,400 选中 best；test median/p95 `0.06018/0.17920`，log `0.10343`、energy `0.11525`、peak-support `0.02798°`、recall p5 `0.87498`、source reciprocity `0.02827`，adversarial 与成本全部通过。唯一失败是 model/reference-SE p95 `29.09 > 6`，且高于 dense16 8k 的 `19.06`，所以不能用 aggregate 通过掩盖噪声尺度上的模型误差。按冻结计划只从这个更好的 source checkpoint 再做一次相同 500-step refinement；若 SE 仍失败，就停止增加 E2 cook 预算并进入表示/loss 诊断。
+
 三组 LayerStack 的相同 state/query 在四档自适应预算下测得以下 noise 曲线；`sample_count` 是合并两个 replica 后的总样本数上限：
 
 | 最大总样本数 | relative SE p95 | replica normalized L1 p95 | gate |
