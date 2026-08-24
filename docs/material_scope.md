@@ -93,7 +93,7 @@ reference adapter 只负责把共同查询所需的几何、方向、光谱/颜�
 3. **OpenPBR 1.1.1 纯数学、原生可编辑材质族**：完整 resolved input 字段、83 个官方 MaterialX 示例索引、常量编辑 round-trip、直接纹理 binding、独立 `eval/sample/pdf` CPU reference 和离线预览已经接入。任意图节点保留原生连接，未实现图求值时显式拒绝。
 4. **MERL 测量 BRDF 材质族**：100 个原始密集表、发布包身份、官方 Rusinkiewicz 参数化、RGB scale、向量化查表和离线预览已经接入；没有制造不存在的解析 GT 参数。
 5. **原生 MaterialX 高分辨率纹理小集**：8 个 Poly Haven CC0 4K 材质已经锁定并下载，完整保留 `.mtlx`、纹理、物理尺寸、颜色空间、切线 normal 和 displacement 语义；均已在 Falcor 中直接呈现，并通过上游 MaterialX float renderer 的共同相机线性 HDR 图像验收。当前 surface-response 验收不移动 displacement 几何，但没有从原始 GT 删除该图或参数。
-6. **先完成 LayerStack neural evaluator 的最小研究闭环**：定义 latent/方向编码/MLP 候选，依次验证单材质容量、共享 decoder、未见状态 compiler 和 Slang 最小部署。现有多个源材质族先用于检查合同边界和后续泛化，不在建模尚未确定时继续堆新 reference。
+6. **先完成 LayerStack 主线**：按 `docs/research/experiment_framework.md` 的 P1–P3 依次回答单材质表达力、共享表示与 source compiler 问题。现有多个源材质族先用于检查合同边界，并在 P4 承担工作流稳健性考核，不在建模尚未确定时继续堆新 reference。
 7. **evaluator 成形后扩展 sampling 与环境积分**：matched sampler 必须提供同一 proposal 的 `sample/pdf`；环境/面光能力必须近似 evaluator 定义的积分。
 8. **再选择 microflake/汽车漆或 BTF 作为表示压力测试**：两者分别增加统计微结构和位置相关方向外观；空间 latent 测试需要先扩展 UV/footprint/LOD 监督合同。
 9. **BSSRDF、纤维和完整参与介质最后按独立 renderer capability 接入**：它们需要先扩展共同查询域，不能只向局部 BSDF tile 增加字段。

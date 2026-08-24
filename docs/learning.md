@@ -2,7 +2,7 @@
 
 训练、direct fit、独立评测和部署导出是项目的长期功能层。具体 representation、网络结构、latent 获取方式和 loss 通过版本化配置与注册实现替换；更换研究候选不会删除或重定义这些生命周期。
 
-当前已注册的 E1/E2 小型网络是生命周期与效率受限 capacity baseline。下一阶段按 [`research/fidelity_first_model_design.md`](research/fidelity_first_model_design.md) 先让 B0 shared evaluator 打通 `train → optimized-code/source-compiler control → MethodBundle/Slang → viewer/报告` 回环，再由 failure ledger 决定是否增加 directional teacher、learned frame、modulation、lobe、tensor field 或 target encoder；旧 pipeline/config/run 继续按原合同复现，不修改历史数值。
+当前已注册的 E1/E2 小型网络是生命周期与效率受限 capacity baseline。下一阶段按 [`research/experiment_framework.md`](research/experiment_framework.md) 的基准优先路线推进：先冻结 v1 语料与评测协议，再在稳定框架内比较 [`research/model_candidates.md`](research/model_candidates.md) 的候选；Slang/viewer 是每阶段收尾一次的部署轨道。旧 pipeline/config/run 继续按原合同复现，不修改历史数值。
 
 公共 runner 现在只依赖 `ncls.learning-pipeline@2`：它从 registry 取得 response reader、dataset partition policy、source adapter、feature/target transform、representation/model、latent inference、compiler、loss、metric suite 和 exporter 的版本化身份，再执行训练、validation、checkpoint 与独立评测。candidate-specific 实现负责把公共 response batch 变成自己的模型输入；runner 不再导入 LayerStack 或某个 backend 的预测函数。机器可读 pipeline 合同位于 `src/ncls/learning/schemas/learning_pipeline_v2.schema.json`；新训练配置使用 `training_config_v5.schema.json`。
 
@@ -40,7 +40,7 @@ encoder-only 3k 的 test median `0.08586` 优于 matched dense16 的 `0.09172`�
 
 8k target encoder source 在 validation step 7,400 选中 best，独立 test median/p95 `0.06018/0.17920`，energy、peak、recall、source reciprocity、adversarial 与 runtime 成本全部通过；唯一失败是 model/reference-SE p95 `29.09`。从该不可变 source 做的同一 500-step/`0.25`-bound refinement 在 step 300 选 best，把 test median/p95 改为 `0.05995/0.17698`、model/reference-SE 降到 `26.82`，其余正式项仍全部通过。实际 delta absolute p95/max 只有 `0.0612/0.1229`，且 validation SE 在 step 200–300 已停留于约 `17.7`；没有证据支持增加 step 或放宽 bound 能达到冻结阈值 6。
 
-最后的 train-only group reference-SE CVaR25 loss 用 validation SE p95 选 checkpoint，只把 train SE p95 从 `15.79` 降到 `15.60`，独立 test 却从 `26.82` 退到 `28.42`；aggregate、shape、source reciprocity、adversarial 与 runtime 项仍全部通过。最坏 state 排序未改变，且 dense optimized latent 的相同 state SE p95 仍有 `37.10/26.02/17.15`，远高于冻结阈值 6。固定 `weight=0.02/CVaR25` 因而淘汰，不扫权重、tail fraction、refinement step 或 bound；E2 当前小型 concat-decoder cook 分支冻结。dense16/width108 是该架构最强质量 baseline，target encoder/refinement 是 matched response-compression controls，rank-4 factor 是低 `B_asset` 对照；它们都不能进入 E4。E3 的旧 source compiler 只建立公共 smoke；新的 shared candidate 必须按 evaluator-first 闭环设计重新建立 evaluator 与 compiler control。
+最后的 train-only group reference-SE CVaR25 loss 用 validation SE p95 选 checkpoint，只把 train SE p95 从 `15.79` 降到 `15.60`，独立 test 却从 `26.82` 退到 `28.42`；aggregate、shape、source reciprocity、adversarial 与 runtime 项仍全部通过。最坏 state 排序未改变，且 dense optimized latent 的相同 state SE p95 仍有 `37.10/26.02/17.15`，远高于冻结阈值 6。固定 `weight=0.02/CVaR25` 因而淘汰，不扫权重、tail fraction、refinement step 或 bound；E2 当前小型 concat-decoder cook 分支冻结。dense16/width108 是该架构最强质量 baseline，target encoder/refinement 是 matched response-compression controls，rank-4 factor 是低 `B_asset` 对照；它们都不能进入部署轨道。E3 的旧 source compiler 只建立公共 smoke；新的 shared candidate 按 [`research/experiment_framework.md`](research/experiment_framework.md) 在 v1 语料上重建。
 
 ## 三条路径的边界
 
@@ -52,9 +52,9 @@ Python 侧的工具生命周期仍分成三条路径，但必须记录拟合对�
 
 目标方法的小型 MLP 直接实现 `evaluate(wo, wi)`。`prepare()` 获取和过滤 latent，并编码 footprint、局部 frame 与 `wo`，供多个 `wi` 查询复用。当前已注册网络是端到端可部署基线，用来验证训练、导出、Slang compiler 和 viewer 生命周期；它不代表目标 neural evaluator 已经确定。
 
-## 当前建模回环与证据轴
+## 当前建模证据轴
 
-在模型结构未确定前，不做多灯、PT 方差或 UE 环境积分的系统 kill test。E1-E4 是必须分开的证据轴，不再是前一层全指标通过后才实现下一层的瀑布：B0 walking skeleton 会尽早经过 optimized-code、source-compiler control、Slang parity/成本与 viewer slice，再根据 failure ledger 决定在哪一轴深入。
+在模型结构未确定前，不做多灯、PT 方差或 UE 环境积分的系统 kill test。下述五类证据必须分开归因，不构成前一层全指标通过后才实现下一层的瀑布；研究按 [`research/experiment_framework.md`](research/experiment_framework.md) 的基准优先路线在稳定评测框架内推进，Slang parity/成本与 viewer 证据由每阶段收尾一次的部署轨道提供。
 
 ### 1. 单材质 neural evaluator 容量
 
@@ -81,7 +81,7 @@ Python 侧的工具生命周期仍分成三条路径，但必须记录拟合对�
 
 ### 4. Slang 最小部署
 
-B0 walking skeleton 就导出共享权重和 latent，验证 Python/Slang parity，并测量 `prepare`、单次 `evaluate`、state/latent bytes；这提供反馈，不表示质量或实时排名已经成立。里程碑候选再补真实 GPU、材质分歧、精度路径和 iso-time/iso-byte 对照。
+部署轨道在每个研究阶段收尾对当期最优部署档候选导出共享权重和 latent，验证 Python/Slang parity，并测量 `prepare`、单次 `evaluate`、state/latent bytes；这提供反馈，不表示质量或实时排名已经成立。里程碑候选再补真实 GPU、材质分歧、精度路径和 iso-time/iso-byte 对照。
 
 ### 5. Sampler 与 integration 扩展
 
@@ -218,7 +218,7 @@ conda run -n neural-shading ncls learn gate-evaluator `
 
 `ncls.e1-single-material-evaluator-acceptance@1` 在正式 sweep 前冻结 normalized L1、log、能量、peak ratio/角度、top-energy recall、相对 reference standard error、互易性、finite/nonnegative 和 `B_asset/C_prepare/C_eval` 上限。失败命令本身仍返回成功并写出逐项检查，表示可复现的研究淘汰证据；只有合同、hash 或输入不一致才抛出错误。E4 的真实 GPU 时间、显存、带宽和 viewer 视觉 gate 不能被这些静态 MAC/byte 上限替代。
 
-E2 使用单独冻结的 `ncls.e2-shared-evaluator-acceptance@1`。它基于 v5 supervision noise floor 与 E1 成本受限单材质候选，定义旧小型 decoder 的质量/效率 envelope，同时强制 `B_asset≤512 bytes`、`B_shared≤512 KiB` 以及 `C_prepare/C_eval≤65,536 MAC`。这个历史 gate 继续复现旧实验，不用于提前淘汰新的结构。新 evaluator 按闭环设计分开使用硬不变量、研究 scorecard 和 claim-specific promotion criteria；Slang parity 与成本反馈从 walking skeleton 开始记录，真实 GPU Pareto 和 viewer 晋级仍需独立证据。
+E2 使用单独冻结的 `ncls.e2-shared-evaluator-acceptance@1`。它基于 v5 supervision noise floor 与 E1 成本受限单材质候选，定义旧小型 decoder 的质量/效率 envelope，同时强制 `B_asset≤512 bytes`、`B_shared≤512 KiB` 以及 `C_prepare/C_eval≤65,536 MAC`。这个历史 gate 继续复现旧实验，不用于提前淘汰新的结构。新 evaluator 使用 [`research/experiment_framework.md`](research/experiment_framework.md) 的四层指标体系（硬性 sanity、主指标、scorecard 诊断、里程碑指标），研究期成本只记录不淘汰；真实 GPU Pareto 与 viewer 证据由部署轨道提供。
 
 ## Direct fit 的三种结论范围
 

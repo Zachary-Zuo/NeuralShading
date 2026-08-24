@@ -6,17 +6,17 @@
 
 源材质的原生参数、图结构和资源是 GT 的一部分。除非源材质本身就是层模型，否则不得要求它提供层参数，也不得为了迁就当前 IR 或 neural material backend，先把它反演或改写成层模型后再称为 GT。如果源材质原生可调，项目必须保留这些参数的编辑能力并由对应 reference 正确呈现。完整边界见 `docs/material_scope.md`。
 
-当前已经实现的第一种源材质族是多层界面与均匀 slab，近期工作仍围绕它的最短研究闭环展开：
+当前已经实现的第一种源材质族是多层界面与均匀 slab，近期工作仍围绕它的研究主线展开：
 
 1. 可信的多层随机游走 reference；
 2. 该 reference 生成的方向响应数据；
-3. 用最小 shared evaluator 候选打通 `reference → train → optimized-code/source-compiler control → MethodBundle/Slang → viewer/报告` 纵向回环，同时检查现有监督是否覆盖完整 `wo × wi` 查询域；
-4. 以 failure ledger 驱动单变量迭代，持续区分数据、方向表示、优化、shared code、compiler 与部署问题；单材质 teacher、learned frame、lobe、tensor field 和 target encoder 按问题启用；
-5. evaluator 与 compiler 的局部闭环稳定后，再扩展 matched sampler、环境积分和 UE 式实时工作流。
+3. 按 `docs/research/experiment_framework.md` 的采样密度表生成 v1 语料，冻结按源表示类型定义的泛化考核（G1/G2/G2s 与工作流稳健性 W）和四层指标体系；
+4. 在稳定评测框架内按容量档位（S/M/L）比较 `docs/research/model_candidates.md` 中的候选；每个结论要求 matched 对照与 bootstrap 置信区间，结果登记在 `docs/research/experiment_log.md`；
+5. evaluator 与 compiler 主线稳定后，再扩展 matched sampler、环境积分和 UE 式实时工作流；MethodBundle/Slang/viewer 是每个研究阶段收尾执行一次的部署轨道。
 
-当前已有一个端到端可部署方法用于验证 compiler、MethodBundle、Slang backend 和 viewer 生命周期。接下来的方法研究以 neural evaluator 的建模为中心：先让新的最小候选复用并打通这套生命周期，再根据每轮暴露的主要失败调整 latent、方向编码、网络结构、输出参数化和共享方式，同时测量局部散射质量与实际单次查询成本。现有解析方法作为回归与成本对照，不决定目标 neural representation。
+当前已有一个端到端可部署方法用于验证 compiler、MethodBundle、Slang backend 和 viewer 生命周期。接下来的方法研究以 neural evaluator 的建模为中心：候选在统一评测框架内按容量档位比较，同时测量局部散射质量与实际单次查询成本；现有解析方法作为回归与成本对照，不决定目标 neural representation。
 
-数据、学习、方法包和 Windows viewer 的基础闭环已经迁到正式架构。当前研究采用两层顺序：evaluator 主线内部先建立 `监督/训练 → optimized-code 与 source-compiler control → Slang parity/成本 → viewer slice` 的最小纵向回环，再按暴露问题持续迭代；evaluator 与 compiler 的局部闭环稳定后，才依次进入 matched sampler → 环境/面光积分 → Falcor/UE 式系统验收。不得在 evaluator 尚未成形时把多灯 scaling、PT 方差或 UE 集成写成当前可执行的 kill test，也不得因早期质量不够而推迟新 evaluator 的最小 Slang/parity/成本反馈。这个顺序不把 `LayerStackIR` 提升为所有源材质的 GT 表示，也不把某个 backend 的状态布局提升为公共接口。
+数据、学习、方法包和 Windows viewer 的基础闭环已经迁到正式架构。当前研究采用基准优先顺序：先冻结 v1 语料与评测协议，再在稳定框架内迭代候选；运行时合同（`evaluate()` 输出线性 `f`、固定读取数、`prepare` 复用）保留为候选注册时的静态约束，MethodBundle/Slang parity 与 viewer 证据由每个研究阶段收尾执行一次的部署轨道提供。不得在 evaluator 尚未成形时把多灯 scaling、PT 方差或 UE 集成写成当前可执行的 kill test。这个顺序不把 `LayerStackIR` 提升为所有源材质的 GT 表示，也不把某个 backend 的状态布局提升为公共接口。
 
 ## 文档与表述
 

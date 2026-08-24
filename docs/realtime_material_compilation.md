@@ -230,19 +230,16 @@ sampler head 可以预测 GGX、vMF、spherical Gaussian 等可解析混合分�
 
 `integrate_*` 必须近似由同一个 `evaluate` 定义的积分，而不能在没有说明时变成包含阴影、可见性和场景 GI 的最终像素预测。后者属于另一项光传输研究。
 
-## 研究阶段：先建立 evaluator 纵向回环，再持续迭代
+## 研究阶段：基准优先，部署轨道按阶段收尾
 
-当前不能直接执行多灯性能、sampler 方差和 UE 环境光质量的“kill test”，因为 neural representation、latent 和执行图尚未确定。但 evaluator 主线也不等待质量完美后才接 compiler、Slang 和 viewer：最小候选先打通 `监督/训练 → optimized-code/source-compiler control → MethodBundle/Slang → viewer/成本` 回环，再按失败归因持续改进。以下阶段是证据范围与后续扩展顺序，不是前一项全指标通过后才能触碰后一项的瀑布 gate。
+当前不能直接执行多灯性能、sampler 方差和 UE 环境光质量的“kill test”，因为 neural representation、latent 和执行图尚未确定。研究按 `docs/research/experiment_framework.md` 的基准优先路线推进：先冻结语料与评测协议，再在稳定框架内比较 `docs/research/model_candidates.md` 的候选；本文的运行时合同保留为候选注册时的静态约束。以下阶段是证据范围与后续扩展顺序，不是前一项全指标通过后才能触碰后一项的瀑布 gate。
 
-### 阶段 A：固定语义并形成 walking skeleton
+### 阶段 A：固定语义与 v1 基准
 
 - 固定 `evaluate` 的方向、测度、颜色和余弦语义；
-- 确定 LayerStack 第一轮使用的材质状态、`wo/wi`、footprint 与监督覆盖；
-- 建立一个最小 shared MLP walking skeleton 和少量问题驱动候选，而不是无边界搜索；
+- 按材质难度分级冻结采样密度、split 与按源表示类型定义的泛化考核；
 - 明确每个候选的 latent bytes、网络结构、precision 和单次调用图；
-- 检查 HDF5 query groups 是否足以训练跨 `wo` 的 evaluator；空间 latent/LOD 使用合同中已有的 UV 与 footprint 查询，并在缺少尺度/旋转覆盖时重新采集。
-
-这一阶段的输出不仅是候选定义，还包括可训练 checkpoint、最小 source-compiler control、MethodBundle/Slang parity、成本 telemetry 和 viewer slice；它们用于暴露问题，不产生 UE 性能结论。
+- 空间 latent/LOD 使用合同中已有的 UV 与 footprint 查询，并在缺少尺度/旋转覆盖时重新采集。
 
 ### 阶段 B：验证 neural representation 本身
 
@@ -252,16 +249,16 @@ sampler head 可以预测 GGX、vMF、spherical Gaussian 等可解析混合分�
 2. 共享 decoder 加材质专属 latent 能否覆盖一组材质，并在给定 latent/MLP 预算下保持质量；
 3. feed-forward compiler 能否为未见材质状态直接生成可用 latent，并保留参数编辑。
 
-这里比较方向响应、能量诊断、连续 view/state sweep 和受控光照积分，不把 UE、多灯和 PT 方差混入模型选择。E1/E2/E3 是单材质、共享 code 和 source compiler 的不同证据轴；walking skeleton 可以同时暴露三者的差距，再由 failure ledger 决定在哪一轴深入。逐 `(material, wo)` query group 独立拟合只能测一张方向切片的容量；它可以保留为诊断，但不能单独证明 view-conditioned neural material program 可行。
+这里比较方向响应、能量诊断、连续 view/state sweep 和受控光照积分，不把 UE、多灯和 PT 方差混入模型选择。单材质表达力、共享表示和 source compiler 是三个必须分开归因的问题。逐 `(material, wo)` query group 独立拟合只能测一张方向切片的容量；它可以保留为诊断，但不能单独证明 view-conditioned neural material program 可行。
 
-### 阶段 C：形成 evaluator 的最小部署闭环
+### 阶段 C：部署轨道
 
 - 导出共享权重、CompiledMaterial/latent 和 Slang evaluator；
 - 验证 Python/Slang 数值与坐标语义一致；
 - 在 Falcor 中测量 `prepare`、单次 `evaluate`、state bytes 和方向响应图像；
 - 与解析/closure 基线在相同 GPU 时间和内存条件下比较。
 
-walking skeleton 在早期已经经过本节的最小 parity/成本路径；本阶段进一步把真实 GPU、材质分歧、精度和 viewer 晋级条件补齐，形成“是否进入实时 Pareto”的决策依据。
+部署轨道在每个研究阶段收尾对当期最优部署档候选执行一次；里程碑候选再补真实 GPU、材质分歧和精度路径，形成“是否进入实时 Pareto”的决策依据。
 
 ### 阶段 D：扩展 matched sampler
 

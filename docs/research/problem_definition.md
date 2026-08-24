@@ -253,4 +253,4 @@ plane/tensor factorization                       高维分解对照
 
 当前 E1 证据没有改变这八类候选清单，但已经缩小三个实现范围：在 `alpha_x=0.002` 极窄单界面与冻结小 MLP 成本内，direct dense 因无法保持峰值能量而淘汰；在固定多界面 LayerStack 上，analytic core + neural residual 使用 energy/shape、multiscale half-slope、GELU 与 cosine 后通过既有数值/静态成本 gate；raw-direction 六成对 plane v1 在 32² 时对未见 query 过拟合、16² 时欠拟合，当前淘汰。第二项是 optimized-latent 的成本受限单材质候选；淘汰的 plane v1 也不否定带物理 warp 或空间语义轴的新 factorization。逐项数值与 hash 见 `artifacts/research/learning-goal/e1/comparisons/`。
 
-下一步按 [`fidelity_first_model_design.md`](fidelity_first_model_design.md) 先让最小 shared evaluator、source-compiler control、Slang 与 viewer 形成纵向回环，再根据 failure ledger 持续改进质量、压缩和部署布局。权威数据与实验角色见 [`data_and_experiments.md`](data_and_experiments.md)，各相关工作能提供的具体机制见 [`prior_art.md`](prior_art.md)。
+下一步按 [`experiment_framework.md`](experiment_framework.md) 先冻结 v1 基准（采样密度、泛化合同、拟合协议、指标），再在稳定框架内迭代 [`model_candidates.md`](model_candidates.md) 中的候选；各相关工作能提供的具体机制见 [`prior_art.md`](prior_art.md)。

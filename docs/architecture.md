@@ -172,7 +172,7 @@ renderer 只使用不透明状态、capability 和统一散射操作，不读取
 - RGB 线性工作流；材质程序显式记录 `color_model`。
 - 支持各向异性，切线坐标系是标准 `SurfaceInteraction` 的一部分。
 - 该材质族的随机游走 reference、数据采集和 viewer 左侧复用同一套 reference shader。
-- 当前方法阶段先让最小 shared evaluator 同时接入单材质/optimized-code 诊断、source-compiler control、Slang parity/成本和 viewer slice，形成纵向回环；再根据 failure ledger 调整 latent、方向编码、evaluator MLP、输出参数化和共享方式。sampler、环境积分和完整系统 benchmark 仍在 evaluator 与 compiler 局部闭环稳定后展开。
+- 当前方法阶段按 `docs/research/experiment_framework.md` 的基准优先路线推进：先冻结语料与评测协议，再在稳定框架内按容量档位比较 `docs/research/model_candidates.md` 的候选；Slang parity/成本与 viewer 证据由每阶段收尾一次的部署轨道提供。sampler、环境积分和完整系统 benchmark 仍在 evaluator 与 compiler 主线稳定后展开。
 
 ## 非局部能力
 

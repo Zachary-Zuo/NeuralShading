@@ -8,8 +8,9 @@
 
 - [问题本质、表示假设与边界](problem_definition.md)：把任务说成一个受运行时约束的条件函数压缩问题，分析 `uv/footprint/wo/wi/material state` 各维的相关性，区分 target-tensor encoder、autodecoder 与 source compiler，整理长尾目标变换，以及用户提供的时序 lightmap 字典压缩经验如何迁移。
 - [相关工作与可迁移机制](prior_art.md)：按“解决什么问题—怎么解决—本项目具体参考什么—哪些假设不能照搬”整理学术界和工业界的一手资料。
-- [目标材质数据、监督审计与实验路线](data_and_experiments.md)：说明统一 HDF5 采集合同、监督域边界、采样审计，以及 evaluator 主线闭环稳定后如何扩展 compiler、空间 LOD 和 sampling。
-- [Evaluator-first 闭环建模与 compiler 设计](fidelity_first_model_design.md)：给出现有方案的对抗性评审，修正 `response_cos` 监督与运行时 `f` 输出的边界，并定义 B0 walking skeleton、failure ledger、按问题启用的 teacher/lobe/tensor/encoder 候选，以及纵向闭环式实验路线。
+- [实验框架：数据采集、拟合协议与检验流程](experiment_framework.md)：权威流程框架——材质难度分级与采样密度表、按源表示类型分别定义的泛化合同、三类拟合路径与预算档位、四层指标体系、阶段路线与实验注册/比较规则。
+- [模型候选设计](model_candidates.md)：每个候选（M1–M6、诊断 teacher T）的完整设计——动机、数学结构、S/M/L 容量档位、拟合方式、风险与判定实验，以及已有实验证据的适用边界。
+- [实验注册表](experiment_log.md)：每个正式 run 一行的结果索引（P0 建表，随首个正式 run 启用）。
 
 ## 文档维护规则
 
