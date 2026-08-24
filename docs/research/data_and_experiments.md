@@ -192,7 +192,9 @@ train-only target tensor encoder 已完成首个同预算 smoke。DeepSets encod
 
 500-step bounded refinement 只训练 384 个 per-state delta，validation 在 step 200 选 best；test median `0.07668` 与 recall p5 `0.86242` 已通过，adversarial 全项通过，但 test p95 `0.22779`、model/reference-SE `27.91` 和 source reciprocity `0.05114` 仍失败。delta absolute p95/maximum 仅 `0.0773/0.1133`，没有撞到 `0.25` bound，且更晚 step 没有改善 validation；因此不通过增加 refinement budget 或放宽 bound 追指标。encoder-only validation 在 3k 附近仍有下降趋势，下一实验使用相同结构的 8k capacity envelope，之后最多复用一次同样的固定 refinement。
 
-8k target encoder 在 validation step 7,400 选中 best；test median/p95 `0.06018/0.17920`，log `0.10343`、energy `0.11525`、peak-support `0.02798°`、recall p5 `0.87498`、source reciprocity `0.02827`，adversarial 与成本全部通过。唯一失败是 model/reference-SE p95 `29.09 > 6`，且高于 dense16 8k 的 `19.06`，所以不能用 aggregate 通过掩盖噪声尺度上的模型误差。按冻结计划只从这个更好的 source checkpoint 再做一次相同 500-step refinement；若 SE 仍失败，就停止增加 E2 cook 预算并进入表示/loss 诊断。
+8k target encoder 在 validation step 7,400 选中 best；test median/p95 `0.06018/0.17920`，log `0.10343`、energy `0.11525`、peak-support `0.02798°`、recall p5 `0.87498`、source reciprocity `0.02827`，adversarial 与成本全部通过。唯一失败是 model/reference-SE p95 `29.09 > 6`，且高于 dense16 8k 的 `19.06`，所以不能用 aggregate 通过掩盖噪声尺度上的模型误差。
+
+按冻结计划完成的 500-step refinement 只训练 384 个 latent delta，validation 在 step 300 选 best；test median/p95 改为 `0.05995/0.17698`，model/reference-SE 仅降至 `26.82`，其他质量、adversarial 和成本项保持通过。delta absolute p95/max 为 `0.0612/0.1229`，没有接近 `0.25` bound；validation SE 在 step 200/300 已约为 `17.72/17.75`。结论是停止增加 encoder/refinement cook 或放宽 bound。E2 最后只做一个使用 train split、直接对齐 group-level `sum|error|/sum(reference SE)` 尾部的 loss 诊断；它与已淘汰的逐 element noise-floor loss scope 不同。若该诊断仍失败，则冻结当前 shared-decoder 上界差距，不进行同类超参数笛卡尔积。
 
 三组 LayerStack 的相同 state/query 在四档自适应预算下测得以下 noise 曲线；`sample_count` 是合并两个 replica 后的总样本数上限：
 

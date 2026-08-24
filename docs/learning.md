@@ -36,7 +36,7 @@ encoder-only 3k 的 test median `0.08586` 优于 matched dense16 的 `0.09172`�
 
 首个 refinement smoke 从 encoder-only best checkpoint 初始化，500-step 预算内 validation 在 step 200 选中 best；test median 降到 `0.07668`、recall p5 提到 `0.86242`，adversarial 全项通过。剩余失败为 test p95 `0.22779`、model/reference-SE `27.91` 和 source reciprocity `0.05114`。实际 delta absolute p95 只有 `0.0773`，最大 `0.1133`，没有分量接近 `0.25` bound；继续增加 refinement step/bound 因而不是下一因果实验。encoder validation 到 3k 仍总体改善，下一项先把 encoder/decoder source 扩到已经用于 dense 上界的 8k envelope，再决定是否从新 source 做同样固定预算 refinement。
 
-8k target encoder source 在 validation step 7,400 选中 best，独立 test median/p95 `0.06018/0.17920`，energy、peak、recall、source reciprocity、adversarial 与 runtime 成本全部通过；唯一失败是 model/reference-SE p95 `29.09`。它相对 3k source 的 aggregate/shape 改善显著，证明 encoder/decoder source 值得完整训练；但 SE 比 dense16 8k 的 `19.06` 更差，不能宣称 target encoder 已通过。按预先约定只从该 best source 复用一次相同 500-step/0.25-bound refinement；其后不再延长 E2 同类训练，而根据剩余失败决定表示或 loss 诊断。
+8k target encoder source 在 validation step 7,400 选中 best，独立 test median/p95 `0.06018/0.17920`，energy、peak、recall、source reciprocity、adversarial 与 runtime 成本全部通过；唯一失败是 model/reference-SE p95 `29.09`。从该不可变 source 做的同一 500-step/`0.25`-bound refinement 在 step 300 选 best，把 test median/p95 改为 `0.05995/0.17698`、model/reference-SE 降到 `26.82`，其余正式项仍全部通过。实际 delta absolute p95/max 只有 `0.0612/0.1229`，且 validation SE 在 step 200–300 已停留于约 `17.7`；没有证据支持增加 step 或放宽 bound 能达到冻结阈值 6。因此 encoder/refinement cook 已停止扩张。最后只允许一个与正式 metric 直接对齐的 train-only group-tail loss 诊断，使用同一冻结 encoder/decoder、step budget 和 bound；若仍无实质 SE 改善，就把差距归入当前表示/loss 上界，而不是继续做同类 sweep。
 
 ## 三条路径的边界
 
