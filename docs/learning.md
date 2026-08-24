@@ -34,6 +34,8 @@ E2 structured-latent smoke 注册为 `sparse-latent-dictionary-analytic-residual
 
 encoder-only 3k 的 test median `0.08586` 优于 matched dense16 的 `0.09172`，且 log、energy、peak-support 与 adversarial p95 已通过；但 test p95 `0.23174`、recall p5 `0.82634`、model/reference-SE `29.79` 仍失败。它因此保留为有证据的 target initialization，下一比较是从该不可变 checkpoint 出发、冻结 encoder/decoder、只在固定小步数内优化 per-state bounded refinement；不能把“继续联合训练全部权重”写成 initialization + refinement。
 
+首个 refinement smoke 从 encoder-only best checkpoint 初始化，500-step 预算内 validation 在 step 200 选中 best；test median 降到 `0.07668`、recall p5 提到 `0.86242`，adversarial 全项通过。剩余失败为 test p95 `0.22779`、model/reference-SE `27.91` 和 source reciprocity `0.05114`。实际 delta absolute p95 只有 `0.0773`，最大 `0.1133`，没有分量接近 `0.25` bound；继续增加 refinement step/bound 因而不是下一因果实验。encoder validation 到 3k 仍总体改善，下一项先把 encoder/decoder source 扩到已经用于 dense 上界的 8k envelope，再决定是否从新 source 做同样固定预算 refinement。
+
 ## 三条路径的边界
 
 Python 侧的工具生命周期仍分成三条路径，但必须记录拟合对象和结论范围：

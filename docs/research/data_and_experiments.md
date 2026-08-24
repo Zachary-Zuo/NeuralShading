@@ -190,6 +190,8 @@ structured latent 已通过同一 lifecycle smoke。`16×16` dictionary/top-4 �
 
 train-only target tensor encoder 已完成首个同预算 smoke。DeepSets encoder 对每 state 的 `[2048,10]` response-residual points 做 permutation-invariant pooling；输入内容 hash `7534b2c6...` 随 checkpoint 持久化，验证重建只读取 train query。encoder-only 的 test median `0.08586` 优于 matched dense16 3k 的 `0.09172`，但 p95 `0.23174`、recall p5 `0.82634`、model/reference-SE `29.79` 仍失败；它保留为 target initialization。下一实验固定 encoder/decoder，只允许有限步 per-state refinement，以区分初始化质量与 optimized latent 上界。
 
+500-step bounded refinement 只训练 384 个 per-state delta，validation 在 step 200 选 best；test median `0.07668` 与 recall p5 `0.86242` 已通过，adversarial 全项通过，但 test p95 `0.22779`、model/reference-SE `27.91` 和 source reciprocity `0.05114` 仍失败。delta absolute p95/maximum 仅 `0.0773/0.1133`，没有撞到 `0.25` bound，且更晚 step 没有改善 validation；因此不通过增加 refinement budget 或放宽 bound 追指标。encoder-only validation 在 3k 附近仍有下降趋势，下一实验使用相同结构的 8k capacity envelope，之后最多复用一次同样的固定 refinement。
+
 三组 LayerStack 的相同 state/query 在四档自适应预算下测得以下 noise 曲线；`sample_count` 是合并两个 replica 后的总样本数上限：
 
 | 最大总样本数 | relative SE p95 | replica normalized L1 p95 | gate |
