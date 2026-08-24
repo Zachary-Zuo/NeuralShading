@@ -41,7 +41,7 @@ E1 的第一个单材质容量数据使用独立的 `ncls.e1-layer-stack-narrow-
 
 `ncls.e1-layer-stack-multi-interface@1` 是第二个一状态 E1 profile，只固定 E0 已验证的 `multi-interface-moving-peaks` 物理状态，用于区分 analytic core-only 与真正有贡献的 neural residual。它复用同一个独立 query profile 和 role 划分，但随机游走 reference 必须按 query group 自适应采样，并通过 `configs/research/e1-multi-interface-supervision-gates-v1.json` 后才能训练。新 ID 表明这是训练/残差压力用途；它不把整个 E0 boundary 集合变成训练 prior，也不改变公共 HDF5 或 reader 接口。
 
-`ncls.e2-layer-stack-shared-decoder@1` 是 E2 的版本化共享表示 profile：固定 12 个材质族、每族 2 个保持相同图结构的局部参数状态。前 8 个族分别固定 1–8 个界面，另外 4 个族继续从研究 prior 采样；family 粒度划分产生 20/2/2 个 train/validation/test 状态，禁止同族局部状态跨 split。它只定义 LayerStack source distribution，不向公共 response reader 暴露 `LayerStackIR`。E2 正式数据还必须包含每状态相互独立的 train/validation/test/adversarial query role，并通过 `configs/research/e2-supervision-gates-v1.json`，才能用于 optimized latent、target encoder 与共享 decoder 的比较。
+`ncls.e2-layer-stack-shared-decoder@1` 是 E2 的版本化共享表示 profile：固定 12 个材质族、每族 2 个保持相同图结构的局部参数状态。前 8 个族分别固定 1–8 个界面，另外 4 个族继续从研究 prior 采样；family 粒度划分产生 20/2/2 个 train/validation/test 状态，禁止同族局部状态跨 split。它只定义 LayerStack source distribution，不向公共 response reader 暴露 `LayerStackIR`。E2 使用 `ncls.e2-layer-stack-independent-peak-grazing-mixture@1`：每个 query role 明确锚定一个掠射 `wo`；LayerStack adapter 对单界面 Charlie sheen 从其原生 roughness 求解析峰中心，避免把镜面反射中心误当 sheen 峰。若 audit 证明某个 split group 已打满公共 adaptive 上限，CLI 可用 `--adaptive-max-samples-by-split-group GROUP=SAMPLES` 只提高该组上限；映射会写入 provider metadata，未知 group、重复 group、非 batch 整数倍或低于公共上限的值都拒绝。首份 v1 数据的失败仍由 `configs/research/e2-supervision-gates-v1.json` 复现；修正 proposal 后的数据必须通过 `configs/research/e2-supervision-gates-v2.json`，才能用于 optimized latent、target encoder 与共享 decoder 的比较。
 
 ## 单 provider 与指定资产
 

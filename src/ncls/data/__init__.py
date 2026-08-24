@@ -33,6 +33,7 @@ from .dataset import (
 from .directions import (
     equal_area_hemisphere,
     equal_area_sphere,
+    grazing_anchored_view_directions,
     peak_grazing_mixture_pdf,
     peak_grazing_mixture_query,
     stratified_uv,
@@ -68,6 +69,7 @@ __all__ = [
     "combine_replica_moments",
     "equal_area_hemisphere",
     "equal_area_sphere",
+    "grazing_anchored_view_directions",
     "make_state_id",
     "peak_grazing_mixture_pdf",
     "peak_grazing_mixture_query",

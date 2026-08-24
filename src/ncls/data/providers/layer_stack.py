@@ -7,9 +7,19 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from ncls.core.material import material_program_from_layer_stack
+from ncls.core.material import SheenInterface, material_program_from_layer_stack
 from ncls.data.collector import CollectionConfig
-from ncls.data.contract import EvaluatedBlock, PositionKind, QueryPlan, ReferenceDescriptor, SourceState, SurfaceSample, make_state_id
+from ncls.data.contract import (
+    EvaluatedBlock,
+    PositionKind,
+    QueryPlan,
+    QueryRole,
+    ReferenceDescriptor,
+    SourceState,
+    SurfaceSample,
+    make_state_id,
+)
+from ncls.data.directions import E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID, peak_grazing_mixture_query
 from ncls.data.priors import (
     E0_LAYER_STACK_BOUNDARY_CASE_IDS,
     E0_LAYER_STACK_BOUNDARY_PROFILE_ID,
@@ -43,6 +53,7 @@ class LayerStackProviderConfig:
     min_samples: int = 512
     max_samples: int = 16384
     relative_standard_error: float = 0.03
+    adaptive_max_samples_by_split_group: tuple[tuple[str, int], ...] = ()
     state_profile_id: str = LAYER_STACK_RESEARCH_PRIOR_ID
 
     def __post_init__(self) -> None:
@@ -56,6 +67,15 @@ class LayerStackProviderConfig:
             raise ValueError("adaptive sample limits must be multiples of batch_samples")
         if not 0.0 < self.relative_standard_error < 1.0:
             raise ValueError("relative_standard_error must lie in (0, 1)")
+        override_groups = [group_id for group_id, _ in self.adaptive_max_samples_by_split_group]
+        if len(set(override_groups)) != len(override_groups) or any(not value for value in override_groups):
+            raise ValueError("adaptive split-group overrides require unique nonempty group IDs")
+        for _, sample_count in self.adaptive_max_samples_by_split_group:
+            if sample_count < self.max_samples or sample_count % self.batch_samples:
+                raise ValueError(
+                    "adaptive split-group override counts must be at least max_samples "
+                    "and multiples of batch_samples"
+                )
         if self.state_profile_id not in LAYER_STACK_STATE_PROFILE_IDS:
             raise ValueError(f"unknown LayerStack state profile {self.state_profile_id!r}")
         fixed_profile_counts = {
@@ -144,6 +164,13 @@ class LayerStackProvider(BaseProvider):
             families = sample_stack_families(config.family_count, config.local_state_count, collection.seed)
             case_ids = [f"sampled-family-{index:06d}" for index in range(config.family_count)]
             group_ids = [f"layer-stack-family-{index:06d}" for index in range(config.family_count)]
+        unknown_override_groups = sorted(
+            set(dict(config.adaptive_max_samples_by_split_group)) - set(group_ids)
+        )
+        if unknown_override_groups:
+            raise ValueError(
+                f"adaptive sample overrides name unknown split groups: {unknown_override_groups}"
+            )
         splits = assign_group_splits(group_ids, collection.seed)
         states = []
         for family_index, family in enumerate(families):
@@ -181,6 +208,98 @@ class LayerStackProvider(BaseProvider):
     def source_states(self) -> Sequence[SourceState]:
         return self._states
 
+    @staticmethod
+    def _sheen_peak_centers(views: np.ndarray, roughness: float) -> np.ndarray:
+        z = np.linspace(1e-3, 1.0, 4096, dtype=np.float64)
+        inverse_alpha = 1.0 / max(roughness, 1e-3)
+        r = (1.0 - roughness) ** 2
+        one_minus_r = 1.0 - r
+        a = 25.3245 * r + 21.5473 * one_minus_r
+        b = 3.32435 * r + 3.82987 * one_minus_r
+        c = 0.16801 * r + 0.19823 * one_minus_r
+        d = -1.27393 * r - 1.97760 * one_minus_r
+        e = -4.85967 * r - 4.32054 * one_minus_r
+
+        def sheen_lambda(cosine: np.ndarray) -> np.ndarray:
+            cosine = np.clip(cosine, 0.0, 1.0)
+            value = a / (1.0 + b * np.power(cosine, c)) + d * cosine + e
+            complement = 1.0 - cosine
+            complement_value = (
+                a / (1.0 + b * np.power(complement, c)) + d * complement + e
+            )
+            mid = a / (1.0 + b * np.power(0.5, c)) + d * 0.5 + e
+            return np.where(
+                cosine < 0.5,
+                np.exp(value),
+                np.exp(2.0 * mid - complement_value),
+            )
+
+        result = np.empty_like(views, dtype=np.float64)
+        for index, view in enumerate(np.asarray(views, dtype=np.float64)):
+            xy = view[:2] / np.linalg.norm(view[:2])
+            wi = np.column_stack((np.sqrt(1.0 - z * z)[:, None] * xy[None, :], z))
+            half = wi + view[None, :]
+            half /= np.linalg.norm(half, axis=1, keepdims=True)
+            sin2 = np.maximum(1.0 - half[:, 2] * half[:, 2], 0.0078125)
+            distribution = (
+                (2.0 + inverse_alpha)
+                * np.power(sin2, 0.5 * inverse_alpha)
+                / (2.0 * np.pi)
+            )
+            softened = sheen_lambda(np.asarray([view[2]]))[0] ** (
+                1.0 + 2.0 * (1.0 - view[2]) ** 8
+            )
+            masking = 1.0 / (1.0 + softened + sheen_lambda(z))
+            response = distribution * masking / (4.0 * z * view[2])
+            result[index] = wi[int(np.argmax(response))]
+        return result.astype(np.float32)
+
+    def query_plan(
+        self,
+        state: SourceState,
+        surfaces: Sequence[SurfaceSample] = (),
+    ) -> QueryPlan:
+        base = super().query_plan(state, surfaces)
+        stack = state.runtime_state
+        if (
+            self.config.query_profile_id != E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID
+            or len(stack.interfaces) != 1
+            or not isinstance(stack.interfaces[0], SheenInterface)
+        ):
+            return base
+        centers = self._sheen_peak_centers(base.view_directions, stack.interfaces[0].roughness)
+        lights = base.light_directions.copy()
+        weights = base.solid_angle_weights.copy()
+        pdf = base.proposal_pdf.copy()
+        proposal_ids = list(base.proposal_id)
+        for role in QueryRole:
+            selected = base.query_roles == int(role)
+            if not np.any(selected):
+                continue
+            role_lights, role_weights, role_pdf = peak_grazing_mixture_query(
+                base.view_directions[selected],
+                base.direction_count,
+                full_sphere=False,
+                seed=base.seed ^ ((int(role) + 1) * 0x9E3779B1),
+                reflection_centers=centers[selected],
+            )
+            lights[selected] = role_lights
+            weights[selected] = role_weights
+            pdf[selected] = role_pdf
+            for index in np.flatnonzero(selected).tolist():
+                proposal_ids[index] = proposal_ids[index].replace(
+                    "-peak-grazing-", "-layer-stack-sheen-peak-grazing-"
+                ).replace("@2", "@1")
+        return QueryPlan(
+            base.view_directions,
+            lights,
+            weights,
+            pdf,
+            proposal_ids,
+            base.seed,
+            base.query_roles,
+        )
+
     def _active_evaluator(self, plan: QueryPlan):
         if self._evaluator is None:
             self._evaluator = FalcorReferenceEvaluator(
@@ -191,6 +310,12 @@ class LayerStackProvider(BaseProvider):
         if int(self._evaluator.light_count) != plan.direction_count:
             raise ValueError("LayerStack evaluator direction count disagrees with the persisted QueryPlan")
         return self._evaluator
+
+    def _adaptive_max_samples(self, state: SourceState) -> int:
+        return dict(self.provider_config.adaptive_max_samples_by_split_group).get(
+            state.split_group_id,
+            self.provider_config.max_samples,
+        )
 
     def evaluate(
         self,
@@ -226,7 +351,7 @@ class LayerStackProvider(BaseProvider):
                     light_directions=lights,
                     batch_samples=self.provider_config.batch_samples,
                     min_samples=self.provider_config.min_samples,
-                    max_samples=self.provider_config.max_samples,
+                    max_samples=self._adaptive_max_samples(state),
                     relative_standard_error=self.provider_config.relative_standard_error,
                 ))
             else:

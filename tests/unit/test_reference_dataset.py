@@ -25,6 +25,7 @@ from ncls.data import (
     collect_reference_dataset,
     combine_replica_moments,
     equal_area_hemisphere,
+    grazing_anchored_view_directions,
     peak_grazing_mixture_pdf,
     peak_grazing_mixture_query,
     make_state_id,
@@ -181,6 +182,13 @@ def test_peak_grazing_mixture_is_per_view_and_has_normalized_pdf() -> None:
     center /= np.linalg.norm(center)
     folded_integral = np.sum(_folded_vmf_pdf(quadrature, center, 8.0, 1.0) * solid_angle)
     assert folded_integral == pytest.approx(1.0, rel=2e-3, abs=2e-3)
+
+
+def test_grazing_anchored_views_include_one_boundary_probe() -> None:
+    views = grazing_anchored_view_directions(4, max_theta_degrees=89.0, azimuth_offset=0.3)
+    assert views.shape == (4, 3)
+    assert np.sum(views[:, 2] < np.sin(np.deg2rad(5.0))) == 1
+    assert views[-1, 2] == pytest.approx(np.cos(np.deg2rad(89.0)), abs=1e-7)
 
 
 def test_peak_mixture_accepts_explicit_surface_conditioned_reflection_centers() -> None:

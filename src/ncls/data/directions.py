@@ -10,6 +10,7 @@ SPHERE_PARAMETERIZATION_ID = "equal-area-fibonacci-sphere@1"
 VIEW_PARAMETERIZATION_ID = "grazing-weighted-fibonacci-hemisphere@2"
 MIXTURE_QUERY_PROFILE_ID = "ncls.e0-peak-grazing-mixture@2"
 E1_MIXTURE_QUERY_PROFILE_ID = "ncls.e1-independent-peak-grazing-mixture@1"
+E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID = "ncls.e2-layer-stack-independent-peak-grazing-mixture@1"
 _PEAK_ANGULAR_SCALES = (0.0025, 0.0125, 0.06)
 
 
@@ -59,6 +60,25 @@ def stratified_view_directions(
     return np.stack(
         (np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)), axis=1
     ).astype(np.float32)
+
+
+def grazing_anchored_view_directions(
+    view_count: int,
+    *,
+    max_theta_degrees: float = 89.0,
+    azimuth_offset: float = 0.0,
+) -> np.ndarray:
+    """生成分层 `wo`，并让每个非空 role 明确包含一个掠射 probe。"""
+
+    result = stratified_view_directions(
+        view_count,
+        max_theta_degrees=max_theta_degrees,
+        azimuth_offset=azimuth_offset,
+    )
+    phi = (view_count - 1) * (np.pi * (3.0 - np.sqrt(5.0))) + azimuth_offset
+    theta = np.deg2rad(max_theta_degrees)
+    result[-1] = (np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta))
+    return result
 
 
 def stratified_uv(sample_count: int, seed: int) -> np.ndarray:

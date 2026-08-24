@@ -67,6 +67,17 @@ def _validate_dataset(path: Path, *, skip_hashes: bool) -> int:
     return 0
 
 
+def _split_group_sample_override(value: str) -> tuple[str, int]:
+    group_id, separator, sample_count = value.rpartition("=")
+    if not separator or not group_id:
+        raise argparse.ArgumentTypeError("override must use GROUP=SAMPLES")
+    try:
+        parsed_count = int(sample_count)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("override sample count must be an integer") from error
+    return group_id, parsed_count
+
+
 def _generate_dataset(args: argparse.Namespace) -> int:
     from .data import CollectionConfig
     from .data.generator import generate_reference_dataset
@@ -100,6 +111,7 @@ def _generate_dataset(args: argparse.Namespace) -> int:
         min_samples=args.min_samples,
         max_samples=args.max_samples,
         relative_standard_error=args.relative_standard_error,
+        adaptive_max_samples_by_split_group=tuple(args.adaptive_max_samples_by_split_group),
         state_profile_id=args.layer_stack_state_profile,
     )
     manifest = generate_reference_dataset(
@@ -322,6 +334,7 @@ def build_parser() -> argparse.ArgumentParser:
             "ncls.uniform-split-independent@1",
             "ncls.e0-peak-grazing-mixture@2",
             "ncls.e1-independent-peak-grazing-mixture@1",
+            "ncls.e2-layer-stack-independent-peak-grazing-mixture@1",
         ),
         default="ncls.uniform-split-independent@1",
     )
@@ -331,6 +344,14 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--min-samples", type=int, default=512)
     generate.add_argument("--max-samples", type=int, default=16384)
     generate.add_argument("--relative-standard-error", type=float, default=0.03)
+    generate.add_argument(
+        "--adaptive-max-samples-by-split-group",
+        action="append",
+        default=[],
+        type=_split_group_sample_override,
+        metavar="GROUP=SAMPLES",
+        help="只给明确 split group 提高 LayerStack adaptive 每 replica 上限；可重复",
+    )
 
     learn = commands.add_parser("learn", help="训练、validation 与 held-out test 工具")
     learn_commands = learn.add_subparsers(dest="learn_command", required=True)

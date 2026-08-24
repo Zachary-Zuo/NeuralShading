@@ -195,6 +195,80 @@ def test_e2_shared_decoder_profile_rejects_shape_changes() -> None:
         )
 
 
+def test_e2_query_profile_anchors_wo_and_tracks_single_sheen_peak() -> None:
+    provider = LayerStackProvider(
+        CollectionConfig(
+            view_count=4,
+            validation_view_count=4,
+            test_view_count=4,
+            adversarial_view_count=4,
+            light_count=128,
+            seed=20260824,
+            query_profile_id="ncls.e2-layer-stack-independent-peak-grazing-mixture@1",
+        ),
+        LayerStackProviderConfig(
+            family_count=12,
+            local_state_count=2,
+            state_profile_id=E2_LAYER_STACK_SHARED_DECODER_PROFILE_ID,
+        ),
+        evaluator=object(),
+    )
+    sheen_state = provider.source_states()[0]
+    assert type(sheen_state.runtime_state.interfaces[0]).__name__ == "SheenInterface"
+    plan = provider.query_plan(sheen_state)
+    assert np.bincount(plan.query_roles, minlength=4).tolist() == [4, 4, 4, 4]
+    for role in range(4):
+        selected = plan.query_roles == role
+        assert np.sum(plan.view_directions[selected, 2] < np.sin(np.deg2rad(5.0))) == 1
+    assert all("layer-stack-sheen-peak" in value for value in plan.proposal_id)
+    centers = provider._sheen_peak_centers(
+        plan.view_directions,
+        sheen_state.runtime_state.interfaces[0].roughness,
+    )
+    nearest = np.degrees(np.arccos(np.clip(
+        np.max(np.sum(plan.light_directions * centers[:, None, :], axis=-1), axis=1),
+        -1.0,
+        1.0,
+    )))
+    assert np.max(nearest) < 0.5
+
+
+def test_e2_adaptive_override_is_split_group_scoped_and_traceable() -> None:
+    config = LayerStackProviderConfig(
+        family_count=12,
+        local_state_count=2,
+        adaptive=True,
+        batch_samples=2048,
+        min_samples=8192,
+        max_samples=131072,
+        adaptive_max_samples_by_split_group=(("layer-stack-e2-family-0003", 262144),),
+        state_profile_id=E2_LAYER_STACK_SHARED_DECODER_PROFILE_ID,
+    )
+    provider = LayerStackProvider(
+        CollectionConfig(view_count=1, light_count=16, seed=20260824),
+        config,
+        evaluator=object(),
+    )
+    states = provider.source_states()
+    assert provider._adaptive_max_samples(states[6]) == 262144
+    assert provider._adaptive_max_samples(states[7]) == 262144
+    assert provider._adaptive_max_samples(states[5]) == 131072
+    assert provider.metadata()["provider_config"]["adaptive_max_samples_by_split_group"] == (
+        ("layer-stack-e2-family-0003", 262144),
+    )
+    with pytest.raises(ValueError, match="unknown split groups"):
+        LayerStackProvider(
+            CollectionConfig(view_count=1, light_count=16),
+            LayerStackProviderConfig(
+                family_count=12,
+                local_state_count=2,
+                adaptive_max_samples_by_split_group=(("typo", 262144),),
+                state_profile_id=E2_LAYER_STACK_SHARED_DECODER_PROFILE_ID,
+            ),
+            evaluator=object(),
+        )
+
+
 def test_layer_stack_provider_honors_query_group_batch_for_dense_view_profiles() -> None:
     class RecordingEvaluator:
         light_count = 32
