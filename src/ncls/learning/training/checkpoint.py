@@ -8,8 +8,8 @@ from typing import Any, Mapping
 import torch
 
 
-CHECKPOINT_FORMAT = "ncls.learning-checkpoint"
-CHECKPOINT_VERSION = 3
+CHECKPOINT_FORMAT = "learning-checkpoint"
+CHECKPOINT_VERSION = 1
 
 
 def sha256_file(path: Path) -> str:

@@ -1,20 +1,25 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 
 import numpy as np
 
-from ncls.data import QUERY_ROLE_NAMES, ReferenceDataset, SPLIT_NAMES
+from ncls.data import (
+    QUERY_ROLE_NAMES,
+    ReferenceCorpusManifest,
+    ReferenceDataset,
+    SPLIT_NAMES,
+    validate_reference_corpus,
+)
+from ncls.paths import PROJECT_ROOT
 
 
 PARTITION_POLICY_IDS = (
-    "ncls.source-state-split@1",
-    "ncls.query-role-within-state@1",
-    "ncls.source-state-and-query-role@1",
+    "parametric-v1",
+    "target-visible-v1",
+    "workflow-v1",
 )
-
-from .features import StackFeatureTable, load_feature_table
 
 
 class ReferenceQueryStore:
@@ -35,6 +40,36 @@ class ReferenceQueryStore:
     def close(self) -> None:
         self.dataset.close()
 
+    @property
+    def data_id(self) -> str:
+        return self.dataset.manifest.dataset_id
+
+    @property
+    def state_count(self) -> int:
+        return self.dataset.state_count
+
+    def state_strings(self, field: str) -> np.ndarray:
+        return self.dataset.state_strings(field)
+
+    @property
+    def state_splits(self) -> np.ndarray:
+        return self.dataset.state_splits
+
+    def sanity_checks(self) -> dict[str, bool]:
+        split_groups = self.state_strings("split_group_id")
+        source_hashes = self.state_strings("source_sha256")
+
+        def leak_free(values: np.ndarray) -> bool:
+            seen: dict[str, set[int]] = {}
+            for value, split in zip(values, self.state_splits, strict=True):
+                seen.setdefault(str(value), set()).add(int(split))
+            return all(len(splits) == 1 for splits in seen.values())
+
+        return {
+            "split_group_leak_free": leak_free(split_groups),
+            "source_hash_leak_free": leak_free(source_hashes),
+        }
+
     def __enter__(self) -> "ReferenceQueryStore":
         return self
 
@@ -46,9 +81,12 @@ class ReferenceQueryStore:
             raise ValueError(f"unsupported dataset partition policy: {policy_id}")
         if lifecycle_role not in SPLIT_NAMES:
             raise ValueError(f"lifecycle role must be one of {SPLIT_NAMES}")
-        source_split = lifecycle_role if policy_id != "ncls.query-role-within-state@1" else None
-        query_role = lifecycle_role if policy_id != "ncls.source-state-split@1" else None
+        source_split = lifecycle_role if policy_id != "target-visible-v1" else None
+        query_role = lifecycle_role
         return self.dataset.group_indices(source_split=source_split, query_role=query_role)
+
+    def indices_for_query_role(self, role: str) -> np.ndarray:
+        return self.dataset.group_indices(query_role=role)
 
     def select_indices(
         self,
@@ -98,37 +136,211 @@ class ReferenceQueryStore:
         result["lights"] = result["wi"]
         return result
 
+    def iter_batches(
+        self,
+        query_group_indices: np.ndarray,
+        batch_size: int,
+    ) -> Iterator[dict[str, np.ndarray]]:
+        for start in range(0, len(query_group_indices), batch_size):
+            yield self.batch(query_group_indices[start : start + batch_size])
 
-class LayerStackReferenceStore(ReferenceQueryStore):
-    """当前 LayerStack baseline 的显式源材质解码层。"""
+    def query_state_indices(self, query_group_indices: np.ndarray) -> np.ndarray:
+        return np.asarray(
+            self.dataset.stream["queries/state_index"], dtype=np.int64
+        )[np.asarray(query_group_indices, dtype=np.int64)]
 
-    def __init__(self, dataset_path: Path | str, *, verify_hashes: bool = True) -> None:
-        super().__init__(dataset_path, verify_hashes=verify_hashes)
-        self.features: StackFeatureTable = load_feature_table(self.dataset)
-        first = self.dataset.group_batch((0,))["wi"][0]
-        shared = True
-        for start in range(0, self.query_group_count, 4096):
-            stop = min(start + 4096, self.query_group_count)
-            batch_lights = np.asarray(self.dataset.stream["queries/wi"][start:stop], dtype=np.float32)
-            if not np.all(batch_lights == first[None, ...]):
-                shared = False
-                break
-        self.lights = np.array(first, dtype=np.float32, copy=True) if shared else None
 
-    def batch(self, query_group_indices: np.ndarray) -> dict[str, np.ndarray]:
-        result = super().batch(query_group_indices)
-        states = result["state_index"].astype(np.int64)
-        table = self.features
-        result.update({
-            "interface_kinds": table.interface_kinds[states],
-            "continuous": table.continuous[states],
-            "interface_counts": table.interface_counts[states],
-            "top_kind": table.top_kind[states],
-            "top_alpha": table.top_alpha[states],
-            "top_relative_ior": table.top_relative_ior[states],
-            "top_eta": table.top_eta[states],
-            "top_k": table.top_k[states],
-            "top_color": table.top_color[states],
-            "top_rotation": table.top_rotation[states],
-        })
+class ReferenceCorpusStore:
+    """把矩形 HDF5 shard 暴露为一个语料；每个实际 batch 只来自一个 shard。"""
+
+    def __init__(self, manifest_path: Path | str) -> None:
+        self.manifest_path = Path(manifest_path)
+        self.manifest: ReferenceCorpusManifest = validate_reference_corpus(self.manifest_path)
+        self.shards: list[ReferenceQueryStore] = []
+        for shard in self.manifest.shards:
+            path = Path(shard.uri)
+            resolved = path if path.is_absolute() else PROJECT_ROOT / path
+            self.shards.append(ReferenceQueryStore(resolved))
+        metadata: dict[str, dict[str, Any]] = {}
+        for store in self.shards:
+            fields = {
+                name: store.state_strings(name)
+                for name in (
+                    "state_id", "family_id", "asset_id", "structure_family_id",
+                    "difficulty_class", "difficulty_tags_json", "evaluation_cohort",
+                )
+            }
+            state_ids = fields["state_id"]
+            for local_index, state_id in enumerate(state_ids):
+                record = {
+                    "state_id": str(state_id),
+                    "family_id": str(fields["family_id"][local_index]),
+                    "asset_id": str(fields["asset_id"][local_index]),
+                    "structure_family_id": str(fields["structure_family_id"][local_index]),
+                    "difficulty_class": str(fields["difficulty_class"][local_index]),
+                    "difficulty_tags_json": str(fields["difficulty_tags_json"][local_index]),
+                    "evaluation_cohort": str(fields["evaluation_cohort"][local_index]),
+                    "split": int(store.state_splits[local_index]),
+                }
+                previous = metadata.setdefault(str(state_id), record)
+                if previous != record:
+                    raise ValueError(f"state metadata changes across corpus shards: {state_id}")
+        self._state_ids = np.asarray(sorted(metadata), dtype=object)
+        self._state_index = {
+            str(state_id): index for index, state_id in enumerate(self._state_ids)
+        }
+        self._state_fields = {
+            field: np.asarray([metadata[str(state_id)][field] for state_id in self._state_ids], dtype=object)
+            for field in (
+                "state_id", "family_id", "asset_id", "structure_family_id",
+                "difficulty_class", "difficulty_tags_json", "evaluation_cohort",
+            )
+        }
+        self._state_splits = np.asarray(
+            [metadata[str(state_id)]["split"] for state_id in self._state_ids],
+            dtype=np.uint8,
+        )
+
+    @property
+    def data_id(self) -> str:
+        assert self.manifest.corpus_id is not None
+        return self.manifest.corpus_id
+
+    @property
+    def state_count(self) -> int:
+        return len(self._state_ids)
+
+    def state_strings(self, field: str) -> np.ndarray:
+        try:
+            return self._state_fields[field]
+        except KeyError as error:
+            raise KeyError(f"unsupported corpus state string field {field!r}") from error
+
+    @property
+    def state_splits(self) -> np.ndarray:
+        return self._state_splits
+
+    def sanity_checks(self) -> dict[str, bool]:
+        return {
+            "split_group_leak_free": True,
+            "source_hash_leak_free": True,
+            "corpus_roles_complete": True,
+        }
+
+    def close(self) -> None:
+        for store in self.shards:
+            store.close()
+
+    def __enter__(self) -> "ReferenceCorpusStore":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    def _join(self, rows: list[np.ndarray]) -> np.ndarray:
+        return np.concatenate(rows, axis=0) if rows else np.empty((0, 2), dtype=np.int64)
+
+    def partition_indices(self, policy_id: str, lifecycle_role: str) -> np.ndarray:
+        rows = []
+        for shard_index, store in enumerate(self.shards):
+            local = store.partition_indices(policy_id, lifecycle_role)
+            if len(local):
+                rows.append(np.column_stack((np.full(len(local), shard_index), local)))
+        return self._join(rows)
+
+    def indices_for_query_role(self, role: str) -> np.ndarray:
+        rows = []
+        for shard_index, store in enumerate(self.shards):
+            local = store.indices_for_query_role(role)
+            if len(local):
+                rows.append(np.column_stack((np.full(len(local), shard_index), local)))
+        return self._join(rows)
+
+    def select_indices(
+        self,
+        indices: np.ndarray,
+        selection: Mapping[str, Any],
+    ) -> np.ndarray:
+        requested = np.asarray(indices, dtype=np.int64)
+        if requested.ndim != 2 or requested.shape[1] != 2:
+            raise ValueError("corpus query references must have [shard, group] shape")
+        if not selection:
+            return requested
+        allowed = {"state_ids", "asset_ids", "family_ids"}
+        if set(selection) - allowed:
+            raise ValueError("dataset selection contains unsupported fields")
+        state_indices = self.query_state_indices(requested)
+        keep = np.ones(len(requested), dtype=bool)
+        for name, field in (
+            ("state_ids", "state_id"),
+            ("asset_ids", "asset_id"),
+            ("family_ids", "family_id"),
+        ):
+            if name in selection:
+                accepted = set(map(str, selection[name]))
+                available = self.state_strings(field)
+                unknown = accepted - set(map(str, available.tolist()))
+                if unknown:
+                    raise ValueError(f"dataset selection contains unknown {name}: {sorted(unknown)}")
+                keep &= np.asarray([str(available[index]) in accepted for index in state_indices])
+        return requested[keep]
+
+    @staticmethod
+    def sample_batch_indices(
+        candidates: np.ndarray,
+        batch_size: int,
+        rng: np.random.Generator,
+    ) -> np.ndarray:
+        values = np.asarray(candidates, dtype=np.int64)
+        if values.ndim != 2 or values.shape[1] != 2 or not len(values):
+            raise ValueError("corpus sampling requires nonempty [shard, group] candidates")
+        shard_ids, counts = np.unique(values[:, 0], return_counts=True)
+        shard = int(rng.choice(shard_ids, p=counts / np.sum(counts)))
+        local = values[values[:, 0] == shard]
+        selected = rng.choice(len(local), size=batch_size, replace=True)
+        return local[selected]
+
+    def batch(self, query_references: np.ndarray) -> dict[str, np.ndarray]:
+        requested = np.asarray(query_references, dtype=np.int64)
+        if requested.ndim != 2 or requested.shape[1] != 2 or not len(requested):
+            raise ValueError("corpus batch requires nonempty [shard, group] references")
+        if len(np.unique(requested[:, 0])) != 1:
+            raise ValueError("one rectangular batch may only read one shard")
+        shard_index = int(requested[0, 0])
+        raw = self.shards[shard_index].batch(requested[:, 1])
+        raw["shard_state_index"] = raw["state_index"].copy()
+        state_ids = self.shards[shard_index].state_strings("state_id")
+        raw["state_index"] = np.asarray(
+            [self._state_index[str(state_ids[index])] for index in raw["shard_state_index"]],
+            dtype=np.int64,
+        )
+        raw["shard_index"] = np.full(len(requested), shard_index, dtype=np.int64)
+        return raw
+
+    def iter_batches(
+        self,
+        query_references: np.ndarray,
+        batch_size: int,
+    ) -> Iterator[dict[str, np.ndarray]]:
+        values = np.asarray(query_references, dtype=np.int64)
+        for shard_index in sorted(set(map(int, values[:, 0].tolist()))):
+            selected = values[values[:, 0] == shard_index]
+            for start in range(0, len(selected), batch_size):
+                yield self.batch(selected[start : start + batch_size])
+
+    def query_state_indices(self, query_references: np.ndarray) -> np.ndarray:
+        values = np.asarray(query_references, dtype=np.int64)
+        result = np.empty(len(values), dtype=np.int64)
+        for shard_index in sorted(set(map(int, values[:, 0].tolist()))):
+            selected = np.flatnonzero(values[:, 0] == shard_index)
+            local_states = self.shards[shard_index].query_state_indices(values[selected, 1])
+            state_ids = self.shards[shard_index].state_strings("state_id")
+            result[selected] = [self._state_index[str(state_ids[index])] for index in local_states]
         return result
+
+
+def open_reference_store(path: Path | str) -> ReferenceQueryStore | ReferenceCorpusStore:
+    target = Path(path)
+    if target.suffix.lower() == ".json":
+        return ReferenceCorpusStore(target)
+    return ReferenceQueryStore(target)

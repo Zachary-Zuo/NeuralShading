@@ -25,6 +25,7 @@ where = ["src"]
 "ncls.core.material" = ["abi/*.json", "schemas/*.json"]
 "ncls.core.scattering" = ["abi/*.json"]
 "ncls.data" = ["schemas/*.json"]
+"ncls.learning" = ["schemas/*.json"]
 "ncls.bundle" = ["schemas/*.json"]
 "ncls.references" = ["schemas/*.json"]
 

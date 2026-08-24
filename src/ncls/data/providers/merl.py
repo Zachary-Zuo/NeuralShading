@@ -60,17 +60,21 @@ class MerlProvider(BaseProvider):
             payload = material.to_json().encode("utf-8")
             source_hash = str(record["sha256"])
             states.append(SourceState(
-                make_state_id(self.descriptor.family_id, self.descriptor.native_schema_id, payload, source_hash),
-                self.descriptor.family_id,
-                self.descriptor.reference_id,
-                material_id,
-                material_id,
-                self.descriptor.native_schema_id,
-                payload,
-                str(record["table_uri"]),
-                source_hash,
-                splits[material_id],
-                material,
+                state_id=make_state_id(self.descriptor.family_id, self.descriptor.native_schema_id, payload, source_hash),
+                family_id=self.descriptor.family_id,
+                reference_id=self.descriptor.reference_id,
+                asset_id=material_id,
+                split_group_id=material_id,
+                native_schema_id=self.descriptor.native_schema_id,
+                native_payload=payload,
+                source_uri=str(record["table_uri"]),
+                source_sha256=source_hash,
+                split=splits[material_id],
+                structure_family_id=material_id,
+                difficulty_class="unclassified",
+                difficulty_tags=(),
+                evaluation_cohort="workflow",
+                runtime_state=material,
             ))
         self._states = tuple(states)
         self._falcor = None

@@ -2,7 +2,7 @@
 
 ## 状态
 
-本文同时记录已经实现的生命周期边界和下一阶段目标方法。MaterialProgram、ReferenceDataset、MethodBundle、viewer 与散射语义已经形成基础闭环；以小型 MLP 直接实现 `evaluate(wo, wi)` 的 neural material program 尚处于建模阶段。架构不冻结 latent 布局、网络规模、sampler family 或 backend 的物理状态。
+本文同时记录已经实现的生命周期边界和下一阶段目标方法。MaterialProgram、CorpusPlan/reference-corpus、MethodBundle、viewer 与散射语义已经形成基础闭环；以小型 MLP 直接实现 `evaluate(wo, wi)` 的 neural material program 尚处于建模阶段。架构不冻结 latent 布局、网络规模、sampler family 或 backend 的物理状态。
 
 详细合同见：
 
@@ -33,7 +33,7 @@
 项目分成三个业务块，外加一层不包含独立工作流的公共核心：
 
 1. **源材质接入与数据采集**：保存或导入源材质资产和原生参数状态，通过该材质族的 reference 获得方向响应或图像 GT，写入可恢复、可验证的数据集。
-2. **Python 学习与评测**：逐样本直接拟合、通用编译器训练、测试集评测、TensorBoard、方法导出。
+2. **Python 学习与评测**：候选注册、梯度/直接/混合拟合、validation checkpoint 选择、固定 quality 评测、TensorBoard 和方法导出。
 3. **Windows 材质查看器**：在同一场景、相机和灯光下比较左侧累积参考图像与右侧可切换方法。
 4. **公共核心**：只保存三块共同遵守的 `MaterialProgram`、散射语义、数据合同、方法包合同和共用 shader，不形成第四条业务链路。
 
@@ -59,18 +59,21 @@ src/ncls/
     representations/       可被学习与导出复用的表示定义
     scattering/            公共散射语义与 backend descriptor
   data/
-    generator.py           材质先验、采集调度和可恢复分片 writer
-    reference.py           Falcor reference driver
-    dataset.py             manifest、reader 和完整性验证
+    contract.py            provider/state/query 公共语义
+    profiles.py            CorpusPlan 与采样密度解析
+    priors.py              族专属状态分布与 source split
+    collector.py           reference response 与 reciprocal pair 采集
+    dataset.py             reference-shard v5 writer/reader
+    corpus.py              shard 计划、续采、manifest、验证与 dense 审计
+    providers/             LayerStack、MERL、OpenPBR、MaterialX adapter
   references/              reference registry/package 解析与身份验证
   source_materials/        OpenPBR、MERL、MaterialX 原生源材质 adapter
-  bundle/                  MethodBundle manifest、导出和 loader
+  bundle/                  MethodBundle manifest 与 loader
   learning/
-    direct_fit/            neural representation 容量与 latent 实验
-    models/                evaluator、sampler 与通用材质编译器
+    data.py                单 shard / corpus 矩形 batch reader
+    pipelines/             候选 descriptor、生命周期与 registry
     training/              训练循环、TensorBoard、checkpoint
-    evaluation/            held-out 测试和图像/方向指标
-    export/                MethodBundle 导出
+    evaluation/            quality-v1 与 state-block paired bootstrap
 
 shaders/ncls/
   contracts/               共用语义结构和生成的 ABI
@@ -80,7 +83,10 @@ shaders/ncls/
 
 apps/viewer/                Windows/Falcor 查看器
 references/                 reference package registry、身份和轻量 adapter
-configs/                    数据、拟合、训练、评测配置
+configs/
+  corpus/                  正式 CorpusPlan
+  evaluation/              固定 quality suite
+  learning/                P1 起逐候选加入的 TrainingConfig
 tests/
   unit/
   integration/
@@ -93,6 +99,7 @@ scripts/
 
 ```text
 artifacts/
+  corpus/
   runs/
   exports/
   captures/
@@ -180,6 +187,6 @@ renderer 只使用不透明状态、capability 和统一散射操作，不读取
 
 ## 配置和实验身份
 
-所有数据、直接拟合、训练和评测都由显式配置启动。每次运行必须保存解析后的配置、Git 提交、参考实现哈希、合同版本、随机种子、依赖版本和输入产物 ID。命令行覆盖只允许修改配置中已声明的字段。
+所有数据、拟合、训练和评测都由显式配置启动。每次运行必须保存解析后的配置、Git 提交、reference 实现哈希、合同版本、随机种子、依赖版本和输入产物 ID。命令行覆盖只允许修改配置中已声明的字段。
 
 测试集只由独立评测命令读取。训练循环只能使用 train/validation，不能根据 test 结果选择 checkpoint 或超参数。

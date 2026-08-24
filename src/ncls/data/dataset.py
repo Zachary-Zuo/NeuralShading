@@ -13,8 +13,8 @@ import numpy as np
 from .contract import QUERY_ROLE_NAMES, SPLIT_NAMES, EvaluatedBlock, QueryPlan, SourceState, SurfaceSample
 
 
-FORMAT_NAME = "ncls.reference-dataset"
-FORMAT_VERSION = 4
+FORMAT_NAME = "reference-shard"
+FORMAT_VERSION = 5
 RESPONSE_MEASURE = "rgb-bsdf-times-absolute-shading-normal-light-cosine"
 COLOR_MODEL = "linear-srgb"
 _STRING = h5py.string_dtype(encoding="utf-8")
@@ -25,7 +25,7 @@ class ReferenceDatasetManifest:
     dataset_id: str
     created_at: str
     generator_git_commit: str
-    query_profile_ids: tuple[str, ...]
+    sampling_name: str
     counts: Mapping[str, int]
     generation_config: Mapping[str, Any]
     provider_metadata: tuple[Mapping[str, Any], ...]
@@ -47,7 +47,9 @@ class ReferenceStatistics:
 
 _STATE_DATASETS = (
     "state_id", "family_id", "reference_id", "asset_id", "split_group_id",
-    "native_schema_id", "source_uri", "source_sha256", "parent_state_id", "split",
+    "structure_family_id", "difficulty_class", "difficulty_tags_json",
+    "evaluation_cohort", "native_schema_id", "source_uri", "source_sha256",
+    "parent_state_id", "split",
     "payload_offsets", "payload_blob",
 )
 _QUERY_DATASETS = (
@@ -55,10 +57,14 @@ _QUERY_DATASETS = (
     "geometric_normal", "geometric_tangent", "wo", "wi", "proposal_code", "proposal_pdf",
     "solid_angle_weight", "rng_seed",
 )
-_RESPONSE_DATASETS = (
+_PRIMARY_RESPONSE_DATASETS = (
     "mean", "variance", "replica_mean_a", "replica_mean_b", "sample_count",
     "valid", "event_flags", "reference_pdf",
 )
+_RECIPROCAL_RESPONSE_DATASETS = (
+    "reciprocal_mean", "reciprocal_variance", "reciprocal_sample_count",
+)
+_RESPONSE_DATASETS = (*_PRIMARY_RESPONSE_DATASETS, *_RECIPROCAL_RESPONSE_DATASETS)
 
 
 def _json(value: Any) -> str:
@@ -72,8 +78,8 @@ def _decode(value: Any) -> str:
 def _semantic_hash(stream: h5py.File) -> str:
     digest = hashlib.sha256()
     for name in (
-        "format_name", "format_version", "created_at", "generator_git_commit",
-        "response_measure", "color_model", "query_profile_ids_json",
+        "format_name", "format_version", "generator_git_commit",
+        "response_measure", "color_model", "sampling_name",
         "generation_config_json", "provider_metadata_json", "proposal_ids_json",
     ):
         value = stream.attrs[name]
@@ -126,13 +132,15 @@ class ReferenceDatasetWriter:
         *,
         created_at: str,
         generator_git_commit: str,
-        query_profile_ids: Sequence[str],
+        sampling_name: str,
         generation_config: Mapping[str, Any],
         provider_metadata: Sequence[Mapping[str, Any]],
     ) -> None:
         self.path = Path(path)
         if self.path.suffix.lower() not in {".h5", ".hdf5"}:
             raise ValueError("ReferenceDataset output must be an .h5 or .hdf5 file")
+        if self.path.exists():
+            raise FileExistsError(f"reference shard already exists: {self.path}")
         if not states:
             raise ValueError("ReferenceDataset requires at least one source state")
         state_ids = [state.state_id for state in states]
@@ -150,7 +158,9 @@ class ReferenceDatasetWriter:
         attrs["generator_git_commit"] = generator_git_commit
         attrs["response_measure"] = RESPONSE_MEASURE
         attrs["color_model"] = COLOR_MODEL
-        attrs["query_profile_ids_json"] = _json(sorted(set(query_profile_ids)))
+        if not sampling_name:
+            raise ValueError("reference shard requires a sampling name")
+        attrs["sampling_name"] = sampling_name
         attrs["generation_config_json"] = _json(dict(generation_config))
         attrs["provider_metadata_json"] = _json([dict(item) for item in provider_metadata])
         attrs["proposal_ids_json"] = _json({})
@@ -158,10 +168,16 @@ class ReferenceDatasetWriter:
         state_group = self.stream.create_group("states")
         string_fields = (
             "state_id", "family_id", "reference_id", "asset_id", "split_group_id",
+            "structure_family_id", "difficulty_class", "evaluation_cohort",
             "native_schema_id", "source_uri", "source_sha256", "parent_state_id",
         )
         for field in string_fields:
             state_group.create_dataset(field, data=np.asarray([getattr(state, field) for state in states], dtype=object), dtype=_STRING)
+        state_group.create_dataset(
+            "difficulty_tags_json",
+            data=np.asarray([_json(list(state.difficulty_tags)) for state in states], dtype=object),
+            dtype=_STRING,
+        )
         state_group.create_dataset("split", data=np.asarray([state.split for state in states], dtype=np.uint8))
         payload_offsets = np.zeros(len(states) + 1, dtype=np.uint64)
         payload_parts = []
@@ -203,6 +219,9 @@ class ReferenceDatasetWriter:
             ("valid", (direction_count,), "u1"),
             ("event_flags", (direction_count,), "<u4"),
             ("reference_pdf", (direction_count,), "<f4"),
+            ("reciprocal_mean", (direction_count, 3), "<f4"),
+            ("reciprocal_variance", (direction_count, 3), "<f4"),
+            ("reciprocal_sample_count", (direction_count,), "<u4"),
         ):
             _create_extendible(self._response_group, name, tail, dtype)
 
@@ -212,6 +231,7 @@ class ReferenceDatasetWriter:
         surfaces: Sequence[SurfaceSample],
         plan: QueryPlan,
         evaluated: EvaluatedBlock,
+        reciprocal: EvaluatedBlock,
     ) -> None:
         if not 0 <= state_index < len(self.stream["states/state_id"]):
             raise IndexError("state_index is outside the state table")
@@ -224,6 +244,8 @@ class ReferenceDatasetWriter:
         expected = (len(surfaces), len(plan.view_directions), self.direction_count, 3)
         if evaluated.mean.shape != expected:
             raise ValueError(f"provider returned {evaluated.mean.shape}, expected {expected}")
+        if reciprocal.mean.shape != expected:
+            raise ValueError(f"reciprocal provider returned {reciprocal.mean.shape}, expected {expected}")
         group_count = len(surfaces) * len(plan.view_directions)
         start = self.query_group_count
         end = start + group_count
@@ -266,8 +288,18 @@ class ReferenceDatasetWriter:
         codes = self._query_group["proposal_code"]
         codes.resize(end, axis=0)
         codes[start:end] = np.tile(view_proposal_codes, len(surfaces))
-        for name in _RESPONSE_DATASETS:
+        for name in _PRIMARY_RESPONSE_DATASETS:
             values = np.asarray(getattr(evaluated, name)).reshape(group_count, *getattr(evaluated, name).shape[2:])
+            dataset = self._response_group[name]
+            dataset.resize(end, axis=0)
+            dataset[start:end] = values
+        for name, source_name in (
+            ("reciprocal_mean", "mean"),
+            ("reciprocal_variance", "variance"),
+            ("reciprocal_sample_count", "sample_count"),
+        ):
+            source = np.asarray(getattr(reciprocal, source_name))
+            values = source.reshape(group_count, *source.shape[2:])
             dataset = self._response_group[name]
             dataset.resize(end, axis=0)
             dataset[start:end] = values
@@ -312,7 +344,7 @@ class ReferenceDataset:
         stream = h5py.File(dataset_path, "r")
         try:
             if _decode(stream.attrs.get("format_name", "")) != FORMAT_NAME or int(stream.attrs.get("format_version", -1)) != FORMAT_VERSION:
-                raise ValueError("unsupported ReferenceDataset format; regenerate data with the current collector")
+                raise ValueError("unsupported ReferenceDataset format; collect a v5 shard from its CorpusPlan")
             if _decode(stream.attrs.get("response_measure", "")) != RESPONSE_MEASURE:
                 raise ValueError("unsupported ReferenceDataset response measure")
             if _decode(stream.attrs.get("color_model", "")) != COLOR_MODEL:
@@ -329,7 +361,7 @@ class ReferenceDataset:
                 dataset_id=dataset_id,
                 created_at=_decode(stream.attrs["created_at"]),
                 generator_git_commit=_decode(stream.attrs["generator_git_commit"]),
-                query_profile_ids=tuple(json.loads(_decode(stream.attrs["query_profile_ids_json"]))),
+                sampling_name=_decode(stream.attrs["sampling_name"]),
                 counts={
                     "state_count": int(stream.attrs["state_count"]),
                     "query_group_count": int(stream.attrs["query_group_count"]),
@@ -430,6 +462,12 @@ class ReferenceDataset:
         result["query_group_id"] = requested
         denominator = np.maximum(result["sample_count"].astype(np.float32), 1.0)[..., None]
         result["standard_error"] = np.sqrt(np.maximum(result["variance"], 0.0) / denominator).astype(np.float32)
+        reciprocal_denominator = np.maximum(
+            result["reciprocal_sample_count"].astype(np.float32), 1.0
+        )[..., None]
+        result["reciprocal_standard_error"] = np.sqrt(
+            np.maximum(result["reciprocal_variance"], 0.0) / reciprocal_denominator
+        ).astype(np.float32)
         return result
 
     def statistics(self, group_index: int) -> ReferenceStatistics:
@@ -454,6 +492,8 @@ class ReferenceDataset:
             raise ValueError("ReferenceDataset contains an invalid query role code")
         state_ids = self.state_strings("state_id")
         source_hashes = self.state_strings("source_sha256")
+        difficulty_classes = self.state_strings("difficulty_class")
+        evaluation_cohorts = self.state_strings("evaluation_cohort")
         if len(set(state_ids.tolist())) != states:
             raise ValueError("ReferenceDataset contains duplicate state IDs")
         for name, values in (("state_id", state_ids), ("source_sha256", source_hashes)):
@@ -462,6 +502,14 @@ class ReferenceDataset:
                 for value in values
             ):
                 raise ValueError(f"states/{name} contains an invalid SHA-256 digest")
+        if any(value not in {"W", "G", "S", "unclassified"} for value in difficulty_classes):
+            raise ValueError("states/difficulty_class contains an unsupported value")
+        if any(value not in {"train", "validation", "g2", "g2s", "workflow"} for value in evaluation_cohorts):
+            raise ValueError("states/evaluation_cohort contains an unsupported value")
+        for value in self.state_strings("difficulty_tags_json"):
+            tags = json.loads(str(value))
+            if not isinstance(tags, list) or any(tag not in {"T", "M"} for tag in tags):
+                raise ValueError("states/difficulty_tags_json contains an unsupported value")
         for name in _QUERY_DATASETS:
             if self.stream[f"queries/{name}"].shape[0] != groups:
                 raise ValueError(f"queries/{name} group count mismatch")
@@ -502,15 +550,20 @@ class ReferenceDataset:
         for path in (
             "responses/mean", "responses/variance", "responses/replica_mean_a",
             "responses/replica_mean_b", "responses/reference_pdf",
+            "responses/reciprocal_mean", "responses/reciprocal_variance",
         ):
             if any(not np.all(np.isfinite(values)) for values in chunks(path)):
                 raise ValueError(f"{path} contains a non-finite value")
         if any(np.any(values < 0.0) for values in chunks("responses/variance")):
             raise ValueError("responses/variance contains a negative value")
+        if any(np.any(values < 0.0) for values in chunks("responses/reciprocal_variance")):
+            raise ValueError("responses/reciprocal_variance contains a negative value")
         if any(np.any(values < 0.0) for values in chunks("responses/reference_pdf")):
             raise ValueError("responses/reference_pdf contains a negative value")
         if any(np.any(values < 1) for values in chunks("responses/sample_count")):
             raise ValueError("responses/sample_count contains zero")
+        if any(np.any(values < 1) for values in chunks("responses/reciprocal_sample_count")):
+            raise ValueError("responses/reciprocal_sample_count contains zero")
         if any(np.any(values > 1) for values in chunks("responses/valid")):
             raise ValueError("responses/valid must contain only zero or one")
 

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TrainingConfig v1",
+  "type": "object",
+  "required": ["pipeline", "stage", "capacity", "model"],
+  "properties": {
+    "pipeline": {"type": "string", "minLength": 1},
+    "stage": {"type": "string", "minLength": 1},
+    "capacity": {"enum": ["S", "M", "L"]},
+    "model": {"type": "object"},
+    "dataset_selection": {"type": "object"},
+    "steps": {"type": "integer", "minimum": 1},
+    "batch_size": {"type": "integer", "minimum": 1},
+    "learning_rate": {"type": "number", "exclusiveMinimum": 0},
+    "learning_rate_schedule": {"enum": ["constant", "cosine"]},
+    "final_learning_rate_fraction": {"type": "number", "minimum": 0, "maximum": 1},
+    "weight_decay": {"type": "number", "minimum": 0},
+    "gradient_clip": {"type": "number", "exclusiveMinimum": 0},
+    "validation_interval": {"type": "integer", "minimum": 1},
+    "checkpoint_interval": {"type": "integer", "minimum": 1},
+    "seed": {"type": "integer", "minimum": 0},
+    "device": {"type": ["string", "null"]},
+    "deterministic": {"type": "boolean"},
+    "initialization_checkpoint": {"type": ["string", "null"]},
+    "schema_name": {"const": "training-config"},
+    "schema_version": {"const": 1}
+  },
+  "additionalProperties": false
+}

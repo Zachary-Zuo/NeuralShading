@@ -27,9 +27,9 @@ assets/
     scenes/studio-v1/             viewer 固定几何
     environments/polyhaven-1k/    viewer/HDRI 原始输入
 data/
-  reference-responses/            只允许 .h5/.hdf5 ReferenceDataset
+  reference-responses/            只允许 CorpusPlan 生成的 .h5/.hdf5 reference shard
 artifacts/
-  legacy-data/                    迁移前数组与旧实验输出，仅供追溯
+  corpus/                         reference-corpus plan/manifest 与验证报告
   caches/                         可再生成 cache
   ...                             capture、报告、模型和 MethodBundle
 external/                         固定提交的第三方源码

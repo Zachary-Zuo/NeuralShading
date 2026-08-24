@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LearningPipeline v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name", "stage", "data", "model", "fitting", "runtime",
+    "supported_families", "scope", "schema_name", "schema_version"
+  ],
+  "properties": {
+    "name": {"type": "string", "minLength": 1},
+    "stage": {"type": "string", "minLength": 1},
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reader", "partition", "source_adapter"],
+      "properties": {
+        "reader": {"type": "string", "minLength": 1},
+        "partition": {"enum": ["parametric-v1", "target-visible-v1", "workflow-v1"]},
+        "source_adapter": {"type": "string", "minLength": 1}
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["representation", "architecture", "latent"],
+      "properties": {
+        "representation": {"type": "string", "minLength": 1},
+        "architecture": {"type": "string", "minLength": 1},
+        "latent": {"type": "string", "minLength": 1}
+      }
+    },
+    "fitting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "loss"],
+      "properties": {
+        "path": {"enum": ["gradient", "direct-fit", "hybrid"]},
+        "loss": {"type": "string", "minLength": 1}
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compiler", "exporter"],
+      "properties": {
+        "compiler": {"type": "string", "minLength": 1},
+        "exporter": {"type": "string", "minLength": 1}
+      }
+    },
+    "supported_families": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "scope": {"type": "string", "minLength": 1},
+    "schema_name": {"const": "learning-pipeline"},
+    "schema_version": {"const": 1}
+  }
+}

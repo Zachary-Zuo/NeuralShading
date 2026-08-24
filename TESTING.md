@@ -8,7 +8,7 @@
 conda run -n neural-shading python -m pytest tests\unit -q
 ```
 
-覆盖 `MaterialProgram`/`LayerStackIR`、HDF5 固定合同与内容哈希、材质无关 reader、散射合同、`legacy-ltc-k2` 私有状态、candidate-neutral 训练/评测/checkpoint/TensorBoard、E1 单材质 train-only transform 与独立 adversarial probe、MethodBundle 导出与内容哈希。
+覆盖 `MaterialProgram`/`LayerStackIR`、CorpusPlan 密度与 G2/G2s split、`reference-shard` v5、corpus reader 的矩形 batch、整球 T mixture、散射合同、`quality-v1` 四层报告、source-aware reciprocal 指标、state-block 配对 bootstrap、training/pipeline v1 schema，以及当前部署回归 fixture 的私有状态。
 
 ## Slang/GPU 与随机游走参考
 
@@ -17,7 +17,7 @@ conda run -n neural-shading python -m pytest tests\unit -q
   tests\gpu tests\integration\reference -q
 ```
 
-覆盖 Python/Slang ABI、方向和余弦语义、`prepare/evaluate`、sampling-capable backend 的 `sample/pdf`、各向异性、P1 compiler 的 PyTorch/Slang parity、解析 diffuse、互易性、八层执行、统计量，以及 LayerStack、MERL、OpenPBR、MaterialX 全部当前材质写入同一 HDF5 的真实导出。
+覆盖 Python/Slang ABI、方向和余弦语义、`prepare/evaluate`、sampling-capable backend 的 `sample/pdf`、各向异性、解析 diffuse、互易性、多层执行、统计量，以及各源材质 reference 的真实执行。P0 的正式大语料按 family/role 分 shard，不再用“全部材质写入同一 HDF5”作为架构测试。
 
 ## Neural material 方法的分阶段门槛
 
@@ -31,18 +31,22 @@ conda run -n neural-shading python -m pytest tests\unit -q
 6. integration head：与同一 evaluator 的高样本环境/面光积分对照；
 7. 系统阶段：多灯 scaling、viewer capture 和 Falcor/UE 式工作负载。
 
-E1 的监督入口与 evaluator acceptance 分别由 `configs/research/e1-supervision-gates-v1.json` 和 `configs/research/e1-evaluator-gates-v1.json` 固定。前者运行 `learn audit`，后者运行 `learn gate-evaluator`；gate 失败是实验结果，不应通过调高阈值让一次 run 事后通过。
-
-E0 pilot audit 与冻结 gate：
+P0 数据先验证 corpus manifest 与全部 shard：
 
 ```powershell
-conda run -n neural-shading python -m ncls.cli learn audit `
-  --dataset data\reference-responses\layer-stack-evaluator-pilot-v3.h5 `
-  --output artifacts\research\supervision-audit\<dataset-id> `
-  --gate configs\research\e0-supervision-gates-v6.json
+conda run -n neural-shading python -m ncls.cli data validate-corpus `
+  artifacts\corpus\layer-stack-v1.json
 ```
 
-`gate_result.json` 失败是可执行研究结果，不是测试进程错误；只有合同、hash 或 audit 自身错误才返回非零。训练入口应显式检查 gate 证据，不能把失败 pilot 当作正式 E1 数据。
+首次 dense slice 完成后还要执行分辨率审计，并把报告中的逐 state 晋升清单回填 CorpusPlan：
+
+```powershell
+conda run -n neural-shading python -m ncls.cli data audit-dense `
+  artifacts\corpus\layer-stack-v1.json `
+  --output artifacts\corpus\layer-stack-v1-dense-audit.json
+```
+
+模型正式结果只由 `quality-v1` sanity 判为有效或无效；主指标、scorecard、诊断量和成本均不使用独立 kill gate。候选比较必须使用 `learn compare` 的 matched state-block paired bootstrap。
 
 ## pbrt-v4 外部交叉验证
 

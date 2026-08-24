@@ -10,7 +10,10 @@ import numpy as np
 
 
 SPLIT_NAMES = ("train", "validation", "test")
-QUERY_ROLE_NAMES = ("train", "validation", "test", "adversarial_probe")
+QUERY_ROLE_NAMES = ("train", "validation", "test", "adversarial_probe", "dense_slice")
+DIFFICULTY_CLASSES = ("W", "G", "S", "unclassified")
+DIFFICULTY_TAGS = ("T", "M")
+EVALUATION_COHORTS = ("train", "validation", "g2", "g2s", "workflow")
 
 
 class QueryRole(IntEnum):
@@ -18,6 +21,7 @@ class QueryRole(IntEnum):
     VALIDATION = 1
     TEST = 2
     ADVERSARIAL_PROBE = 3
+    DENSE_SLICE = 4
 
 
 class PositionKind(IntEnum):
@@ -41,7 +45,7 @@ class ReferenceDescriptor:
     family_id: str
     reference_id: str
     native_schema_id: str
-    query_profile_id: str = "ncls.local-surface-rgb@2"
+    query_contract: str = "local-surface-rgb"
     incident_domain: str = "upper-hemisphere"
     position_kind: PositionKind = PositionKind.CONSTANT
     deterministic: bool = True
@@ -49,7 +53,7 @@ class ReferenceDescriptor:
     implementation_sha256: str = ""
 
     def __post_init__(self) -> None:
-        for name in ("family_id", "reference_id", "native_schema_id", "query_profile_id"):
+        for name in ("family_id", "reference_id", "native_schema_id", "query_contract"):
             if not getattr(self, name):
                 raise ValueError(f"{name} must be nonempty")
         if self.incident_domain not in {"upper-hemisphere", "full-sphere"}:
@@ -73,17 +77,29 @@ class SourceState:
     source_uri: str
     source_sha256: str
     split: int
+    structure_family_id: str
+    difficulty_class: str
+    difficulty_tags: tuple[str, ...]
+    evaluation_cohort: str
     runtime_state: Any = field(repr=False, compare=False)
     parent_state_id: str = ""
 
     def __post_init__(self) -> None:
         if not 0 <= self.split < len(SPLIT_NAMES):
             raise ValueError("split must be train, validation or test")
+        if self.difficulty_class not in DIFFICULTY_CLASSES:
+            raise ValueError(f"difficulty_class must be one of {DIFFICULTY_CLASSES}")
+        if any(tag not in DIFFICULTY_TAGS for tag in self.difficulty_tags):
+            raise ValueError(f"difficulty_tags must be drawn from {DIFFICULTY_TAGS}")
+        if len(set(self.difficulty_tags)) != len(self.difficulty_tags):
+            raise ValueError("difficulty_tags must be unique")
+        if self.evaluation_cohort not in EVALUATION_COHORTS:
+            raise ValueError(f"evaluation_cohort must be one of {EVALUATION_COHORTS}")
         if not self.native_payload:
             raise ValueError("native_payload must preserve the exact sampled state")
         for name in (
             "state_id", "family_id", "reference_id", "asset_id", "split_group_id",
-            "native_schema_id", "source_sha256",
+            "native_schema_id", "source_sha256", "structure_family_id",
         ):
             if not getattr(self, name):
                 raise ValueError(f"{name} must be nonempty")

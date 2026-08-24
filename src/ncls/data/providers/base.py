@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 import hashlib
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Mapping, Sequence
 
 import numpy as np
 
@@ -12,27 +12,19 @@ from ncls.data.contract import (
     QUERY_ROLE_NAMES,
     PositionKind,
     QueryPlan,
-    QueryRole,
     ReferenceDescriptor,
     SourceState,
     SurfaceSample,
 )
 from ncls.data.directions import (
-    E1_MIXTURE_QUERY_PROFILE_ID,
-    E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID,
-    E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID,
-    E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V2_ID,
-    MIXTURE_QUERY_PROFILE_ID,
     equal_area_hemisphere,
     equal_area_sphere,
     grazing_anchored_view_directions,
     peak_grazing_mixture_query,
-    stratified_view_directions,
+    polar_band_view_directions,
 )
 from ncls.data.surfaces import uv_surface_samples
 from ncls.paths import PROJECT_ROOT
-from ncls.source_materials.identity import sha256_file
-
 
 
 def implementation_hash(paths: Sequence[Path]) -> str:
@@ -81,94 +73,75 @@ class BaseProvider:
         full_sphere = self.descriptor.incident_domain == "full-sphere"
         domain = "full-sphere" if full_sphere else "upper-hemisphere"
         query_seed = self.config.seed ^ int(state.state_id[:16], 16)
-        role_counts = (
-            self.config.view_count,
-            self.config.validation_view_count,
-            self.config.test_view_count,
-            self.config.adversarial_view_count,
+        role = QUERY_ROLE_NAMES.index(self.config.query_role)
+        partition_index = role + (
+            state.split * len(QUERY_ROLE_NAMES)
+            if self.config.split_direction_scramble
+            else 0
         )
-        view_parts: list[np.ndarray] = []
-        light_parts: list[np.ndarray] = []
-        weight_parts: list[np.ndarray] = []
-        pdf_parts: list[np.ndarray] = []
-        proposal_ids: list[str] = []
-        query_roles: list[int] = []
-        for role, count in enumerate(role_counts):
-            if count == 0:
-                continue
-            role_name = QUERY_ROLE_NAMES[role]
-            partition_index = role + (
-                state.split * len(QUERY_ROLE_NAMES)
-                if self.config.split_direction_scramble
-                else 0
+        role_offset = np.mod(partition_index * 0.2718281828459045, 2.0) * np.pi
+        regular_view_count = self.config.view_count - self.config.transmission_view_count
+        regular_views = grazing_anchored_view_directions(
+            regular_view_count,
+            min_theta_degrees=self.config.grazing_min_degrees,
+            max_theta_degrees=self.config.grazing_max_degrees,
+            grazing_fraction=self.config.grazing_view_fraction,
+            azimuth_offset=role_offset,
+        )
+        if self.config.transmission_view_count:
+            if not full_sphere:
+                raise ValueError("transmission-relevant views require a full-sphere reference")
+            critical_views = polar_band_view_directions(
+                self.config.transmission_view_count,
+                self.config.critical_view_min_degrees,
+                self.config.critical_view_max_degrees,
+                azimuth_offset=role_offset + 0.5 * np.pi,
             )
-            role_offset = np.mod(partition_index * 0.2718281828459045, 2.0) * np.pi
-            if self.config.query_profile_id in {
-                E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID,
-                E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V2_ID,
-                E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID,
-            }:
-                views = grazing_anchored_view_directions(
-                    count,
-                    max_theta_degrees=89.0,
-                    azimuth_offset=role_offset,
-                )
-            else:
-                views = stratified_view_directions(
-                    count,
-                    max_theta_degrees=(
-                        89.0 if self.config.query_profile_id == E1_MIXTURE_QUERY_PROFILE_ID else 82.0
-                    ),
-                    azimuth_offset=role_offset,
-                )
-            role_seed = query_seed ^ ((role + 1) * 0x9E3779B1)
-            use_mixture = self.config.query_profile_id in {
-                E1_MIXTURE_QUERY_PROFILE_ID,
-                E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID,
-                E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V2_ID,
-                E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID,
-            } or (
-                self.config.query_profile_id == MIXTURE_QUERY_PROFILE_ID
-                and role in {int(QueryRole.TRAIN), int(QueryRole.ADVERSARIAL_PROBE)}
+            views = np.concatenate((regular_views, critical_views))
+        else:
+            views = regular_views
+        role_seed = query_seed ^ ((role + 1) * 0x9E3779B1)
+        if self.config.proposal != "uniform":
+            lights, weights, pdf = peak_grazing_mixture_query(
+                views,
+                self.config.light_count,
+                full_sphere=full_sphere,
+                seed=role_seed,
+                component_weights=self.config.mixture_weights,
+                critical_band_abs_cosine=(
+                    self.config.critical_wi_abs_cosine_min,
+                    self.config.critical_wi_abs_cosine_max,
+                ),
             )
-            if use_mixture:
-                lights, weights, pdf = peak_grazing_mixture_query(
-                    views,
-                    self.config.light_count,
-                    full_sphere=full_sphere,
-                    seed=role_seed,
+            transmission = "-transmission" if full_sphere else ""
+            proposal = f"{self.config.query_role}-peak-aware-{domain}{transmission}"
+        else:
+            measure = 4.0 * np.pi if full_sphere else 2.0 * np.pi
+            direction_rows = []
+            for view_index in range(self.config.view_count):
+                azimuth = 0.5 * role_offset + view_index * 0.173 * np.pi
+                directions, _ = (
+                    equal_area_sphere(self.config.light_count, azimuth_offset=azimuth)
+                    if full_sphere
+                    else equal_area_hemisphere(self.config.light_count, azimuth_offset=azimuth)
                 )
-                transmission = "-transmission-critical" if full_sphere else ""
-                proposal = f"{role_name}-uniform-peak-grazing-{domain}{transmission}@2"
-            else:
-                measure = 4.0 * np.pi if full_sphere else 2.0 * np.pi
-                direction_rows = []
-                for view_index in range(count):
-                    azimuth = 0.5 * role_offset + view_index * 0.173 * np.pi
-                    directions, _ = (
-                        equal_area_sphere(self.config.light_count, azimuth_offset=azimuth)
-                        if full_sphere
-                        else equal_area_hemisphere(self.config.light_count, azimuth_offset=azimuth)
-                    )
-                    direction_rows.append(directions)
-                lights = np.stack(direction_rows)
-                weights = np.full((count, self.config.light_count), measure / self.config.light_count, dtype=np.float32)
-                pdf = np.full((count, self.config.light_count), 1.0 / measure, dtype=np.float32)
-                proposal = f"{role_name}-uniform-solid-angle-{domain}-independent@1"
-            view_parts.append(views)
-            light_parts.append(lights)
-            weight_parts.append(weights)
-            pdf_parts.append(pdf)
-            proposal_ids.extend((proposal,) * count)
-            query_roles.extend((role,) * count)
+                direction_rows.append(directions)
+            lights = np.stack(direction_rows)
+            weights = np.full(
+                (self.config.view_count, self.config.light_count),
+                measure / self.config.light_count,
+                dtype=np.float32,
+            )
+            pdf = np.full_like(weights, 1.0 / measure)
+            proposal = f"{self.config.query_role}-uniform-{domain}"
         return QueryPlan(
-            np.concatenate(view_parts),
-            np.concatenate(light_parts),
-            np.concatenate(weight_parts),
-            np.concatenate(pdf_parts),
-            proposal_ids,
+            views,
+            lights,
+            weights,
+            pdf,
+            (proposal,) * len(views),
             query_seed,
-            query_roles,
+            np.full(len(views), role, dtype=np.uint8),
         )
 
     def surface_samples(self, state: SourceState) -> Sequence[SurfaceSample]:
@@ -179,7 +152,7 @@ class BaseProvider:
                 self.config.spatial_sample_count,
                 self.config.footprint_width,
                 self.config.seed ^ int(state.state_id[-16:], 16),
-                self.config.surface_profile_id,
+                self.config.surface_profile,
             )
         raise NotImplementedError("surface-point providers must define their own surface sampler")
 

@@ -1,0 +1,87 @@
+{
+  "schema": {"name": "corpus-plan", "version": 1},
+  "name": "layer-stack-v1",
+  "seed": 20260824,
+  "provider": {
+    "name": "layer-stack",
+    "state_profile": "layer-stack-v1",
+    "family_count": 28,
+    "states_per_family": 10,
+    "maximum_path_depth": 64
+  },
+  "sampling": {
+    "name": "peak-aware-v1",
+    "wo": {
+      "distribution": "stratified-cosine",
+      "grazing_fraction": 0.2,
+      "grazing_band_degrees": [75.0, 89.0]
+    },
+    "transmission": {
+      "additional_views": 32,
+      "direction_multiplier": 1.5,
+      "transmission_peak_weight": 0.25,
+      "critical_band_weight": 0.10,
+      "critical_view_band_degrees": [35.0, 55.0],
+      "critical_wi_abs_cosine_band": [0.65, 0.85]
+    },
+    "moving_peak": {
+      "name": "reference-peak-v1",
+      "probe_directions": 4096,
+      "samples_per_replica": 64
+    },
+    "dense_promotions": [],
+    "train": {
+      "W": {
+        "views": 48,
+        "directions": 512,
+        "proposal": "peak-aware",
+        "components": {"uniform": 0.6, "reflection_peak": 0.25, "grazing": 0.15}
+      },
+      "G": {
+        "views": 64,
+        "directions": 1024,
+        "proposal": "peak-aware",
+        "components": {"uniform": 0.4, "reflection_peak": 0.4, "grazing": 0.2}
+      },
+      "S": {
+        "views": 96,
+        "directions": 2048,
+        "proposal": "peak-aware",
+        "components": {"uniform": 0.3, "reflection_peak": 0.5, "grazing": 0.2}
+      }
+    },
+    "roles": {
+      "validation": {"views": 16, "directions": 256, "proposal": "uniform"},
+      "test": {"views": 24, "directions": 512, "proposal": "uniform"},
+      "adversarial_probe": {
+        "views": 16,
+        "directions": 128,
+        "proposal": "adversarial",
+        "components": {"uniform": 0.2, "reflection_peak": 0.55, "grazing": 0.25}
+      },
+      "dense_slice": {"views": 4, "directions": 8192, "proposal": "uniform"}
+    }
+  },
+  "split": {
+    "name": "parametric-v1",
+    "heldout_family_count": 4,
+    "validation_states_per_fitted_family": 1,
+    "test_states_per_fitted_family": 1,
+    "minimum_test_state_count": 50
+  },
+  "reference_budget": {
+    "name": "adaptive-v1",
+    "double_replica": true,
+    "target_relative_se_p95": 0.04,
+    "maximum_query_group_relative_se_p95": 0.1,
+    "minimum_combined_samples": 1024,
+    "maximum_combined_samples": 262144,
+    "batch_samples_per_replica": 256,
+    "maximum_dispatch_queries": 4096
+  },
+  "shards": {
+    "name": "family-role-v1",
+    "resume": "verified-file",
+    "manifest": "reference-corpus"
+  }
+}

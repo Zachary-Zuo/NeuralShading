@@ -58,7 +58,7 @@ def _validate_dataset(path: Path, *, skip_hashes: bool) -> int:
 
     dataset = validate_reference_dataset(path, verify_hashes=not skip_hashes)
     counts = dataset.manifest.counts
-    print(f"ReferenceDataset OK: {dataset.manifest.dataset_id}")
+    print(f"ReferenceShard OK: {dataset.manifest.dataset_id}")
     print(
         f"{counts['state_count']} states, {counts['query_group_count']} query groups, "
         f"{counts['direction_count']} directions per group"
@@ -67,78 +67,49 @@ def _validate_dataset(path: Path, *, skip_hashes: bool) -> int:
     return 0
 
 
-def _split_group_sample_override(value: str) -> tuple[str, int]:
-    group_id, separator, sample_count = value.rpartition("=")
-    if not separator or not group_id:
-        raise argparse.ArgumentTypeError("override must use GROUP=SAMPLES")
-    try:
-        parsed_count = int(sample_count)
-    except ValueError as error:
-        raise argparse.ArgumentTypeError("override sample count must be an integer") from error
-    return group_id, parsed_count
+def _plan_corpus(args: argparse.Namespace) -> int:
+    from .data import CorpusPlan, plan_layer_stack_corpus
+
+    plan = CorpusPlan.load(args.config)
+    manifest = plan_layer_stack_corpus(plan, args.shard_root)
+    manifest.write(args.output)
+    print(f"Planned {len(manifest.shards)} shards for {manifest.name}: {manifest.corpus_id}")
+    return 0
 
 
-def _generate_dataset(args: argparse.Namespace) -> int:
-    from .data import CollectionConfig
-    from .data.generator import generate_reference_dataset
-    from .data.providers import LayerStackProviderConfig
-    from .paths import DATA_ROOT, REFERENCE_RESPONSE_ROOT
+def _collect_corpus(args: argparse.Namespace) -> int:
+    from .data import CorpusPlan, collect_layer_stack_corpus
 
-    output = args.output.resolve()
-    if DATA_ROOT.resolve() in output.parents and REFERENCE_RESPONSE_ROOT.resolve() not in output.parents:
-        raise ValueError("data/ only accepts ReferenceDataset HDF5 under data/reference-responses/")
+    plan = CorpusPlan.load(args.config)
+    manifest = collect_layer_stack_corpus(plan, args.shard_root, args.output)
+    print(f"Collected ReferenceCorpus {manifest.corpus_id} to {args.output}")
+    return 0
 
-    collection = CollectionConfig(
-        view_count=args.views,
-        validation_view_count=args.validation_views,
-        test_view_count=args.test_views,
-        adversarial_view_count=args.adversarial_views,
-        light_count=args.lights,
-        spatial_sample_count=args.spatial_samples,
-        footprint_width=args.footprint_width,
-        surface_profile_id=args.surface_profile,
-        seed=args.seed,
-        query_profile_id=args.query_profile,
+
+def _validate_corpus(args: argparse.Namespace) -> int:
+    from .data import validate_reference_corpus
+
+    manifest = validate_reference_corpus(args.path)
+    print(f"ReferenceCorpus OK: {manifest.corpus_id} ({len(manifest.shards)} shards)")
+    return 0
+
+
+def _audit_dense(args: argparse.Namespace) -> int:
+    from .data import audit_dense_slice_resolution
+
+    report = audit_dense_slice_resolution(args.path, args.output)
+    print(
+        f"Dense slice audit {report['report_sha256']}: "
+        f"{len(report['promote_state_ids'])} states require 16,384 directions"
     )
-    layer_stack = LayerStackProviderConfig(
-        family_count=args.families,
-        local_state_count=args.local_states,
-        samples_per_replica=args.samples_per_replica,
-        query_group_batch=args.query_group_batch,
-        max_depth=args.max_depth,
-        adaptive=args.adaptive,
-        batch_samples=args.batch_samples,
-        min_samples=args.min_samples,
-        max_samples=args.max_samples,
-        relative_standard_error=args.relative_standard_error,
-        adaptive_max_samples_by_split_group=tuple(args.adaptive_max_samples_by_split_group),
-        state_profile_id=args.layer_stack_state_profile,
-    )
-    manifest = generate_reference_dataset(
-        output,
-        args.provider,
-        collection,
-        material_ids=args.material_id,
-        layer_stack=layer_stack,
-    )
-    print(f"Wrote ReferenceDataset {manifest.dataset_id} to {output}")
     return 0
 
 
 def _train_learning(args: argparse.Namespace) -> int:
     from .learning.training import TrainingConfig, train
 
-    config = TrainingConfig.load(args.config) if args.config else TrainingConfig(
-        model_parameters={"width": args.width},
-        steps=args.steps,
-        batch_size=args.batch_size,
-        learning_rate=args.learning_rate,
-        validation_interval=args.validation_interval,
-        checkpoint_interval=args.checkpoint_interval,
-        seed=args.seed,
-        device=args.device,
-    )
-    manifest = train(args.dataset, args.run, config)
+    config = TrainingConfig.load(args.config)
+    manifest = train(args.data, args.run, config)
     print(f"Completed training run {manifest['run_id']} at {args.run}")
     return 0
 
@@ -147,41 +118,17 @@ def _evaluate_learning(args: argparse.Namespace) -> int:
     from .learning.evaluation import evaluate_checkpoint
 
     result = evaluate_checkpoint(
-        args.dataset,
+        args.data,
         args.checkpoint,
         split=args.split,
         output_path=args.output,
         device_name=args.device,
         max_query_groups=args.max_query_groups,
     )
-    metric_name = (
-        "solid_angle_normalized_l1"
-        if "solid_angle_normalized_l1" in result["metrics"]
-        else "relative_l1"
-    )
-    relative = result["metrics"][metric_name]
+    relative = result["primary"]["directional_l1_by_state"]
     print(
-        f"{args.split}: {metric_name} median={relative['median']:.6f}, "
-        f"p90={relative['p90']:.6f}"
-    )
-    return 0
-
-
-def _audit_learning(args: argparse.Namespace) -> int:
-    from .learning.audit import audit_supervision
-
-    result = audit_supervision(
-        args.dataset,
-        args.output,
-        verify_hashes=not args.skip_hashes,
-        max_distribution_query_groups=args.max_query_groups,
-        gate_path=args.gate,
-    )
-    split = result["split_audit"]
-    print(
-        f"Supervision audit {result['audit_sha256']}: "
-        f"split-group leaks={split['split_group_id']['leak_count']}, "
-        f"source leaks={split['source_sha256']['leak_count']}"
+        f"{args.split}: directional L1 state-median={relative['median']:.6f}, "
+        f"state-p95={relative['p95']:.6f}; valid={result['valid']}"
     )
     return 0
 
@@ -191,66 +138,26 @@ def _list_learning_pipelines() -> int:
 
     for descriptor in pipeline_descriptors():
         print(
-            f"{descriptor.pipeline_id}\t{descriptor.candidate_id}\t"
-            f"{descriptor.research_role}\t{descriptor.scope}"
+            f"{descriptor.name}\t{descriptor.stage}\t{descriptor.scope}\t"
+            f"{descriptor.sha256[:12]}"
         )
     return 0
 
 
-def _gate_evaluator(args: argparse.Namespace) -> int:
-    from .learning.evaluation import evaluate_evaluator_gate
+def _compare_learning(args: argparse.Namespace) -> int:
+    from .learning.evaluation import compare_quality_reports, write_comparison_report
 
-    result = evaluate_evaluator_gate(
-        args.run_manifest,
-        args.test_metrics,
-        args.adversarial_metrics,
-        args.gate,
-        args.output,
+    result = compare_quality_reports(
+        args.baseline,
+        args.candidate,
+        iterations=args.iterations,
+        seed=args.seed,
     )
+    write_comparison_report(args.output, result)
     print(
-        f"Evaluator gate {result['gate_id']}: "
-        f"{'passed' if result['passed'] else 'failed'} ({result['result_sha256']})"
+        f"Compared {result['state_count']} matched states with "
+        f"{result['iterations']} bootstrap samples: {result['report_sha256']}"
     )
-    return 0
-
-
-def _direct_fit(args: argparse.Namespace) -> int:
-    from .learning.direct_fit import DirectFitConfig, run_direct_fit
-
-    result = run_direct_fit(
-        args.dataset,
-        args.output,
-        split=args.split,
-        config=DirectFitConfig(
-            family=args.family,
-            lobe_count=args.lobes,
-            fit_batch=args.fit_batch,
-            steps=args.steps,
-            restarts=args.restarts,
-            learning_rate=args.learning_rate,
-            seed=args.seed,
-            device=args.device,
-        ),
-        max_query_groups=args.max_query_groups,
-    )
-    relative = result["relative_l1"]
-    print(
-        f"Representation ceiling: relative-L1 median={relative['median']:.6f}, "
-        f"p90={relative['p90']:.6f}"
-    )
-    return 0
-
-
-def _export_bundle(args: argparse.Namespace) -> int:
-    from .bundle import export_legacy_ltc_k2_checkpoint
-
-    bundle = export_legacy_ltc_k2_checkpoint(
-        args.checkpoint,
-        args.output,
-        display_name=args.display_name,
-        source_run_manifest=args.run_manifest,
-    )
-    print(f"Wrote MethodBundle {bundle.manifest.method_id} to {args.output}")
     return 0
 
 
@@ -289,136 +196,53 @@ def build_parser() -> argparse.ArgumentParser:
     validate_data.add_argument("path", type=Path)
     validate_data.add_argument("--skip-hashes", action="store_true", help="仅用于快速诊断，不验证内容哈希")
 
-    generate = data_commands.add_parser("collect-reference", help="通过统一 Falcor provider 采集 HDF5 reference 数据")
-    generate.add_argument("--output", type=Path, required=True)
-    generate.add_argument(
-        "--provider",
-        action="append",
-        choices=("layer-stack", "merl", "openpbr", "materialx", "all"),
-        required=True,
-        help="可重复指定；all 导出当前全部正式 reference provider",
-    )
-    generate.add_argument("--material-id", action="append", default=[], help="单 provider 下只导出指定资产；可重复")
-    generate.add_argument("--families", type=int, default=8)
-    generate.add_argument("--local-states", type=int, default=4)
-    generate.add_argument(
-        "--layer-stack-state-profile",
-        choices=(
-            "ncls.layer-stack-research-prior@1",
-            "ncls.e0-layer-stack-boundary@1",
-            "ncls.e1-layer-stack-narrow-conductor@1",
-            "ncls.e1-layer-stack-multi-interface@1",
-            "ncls.e2-layer-stack-shared-decoder@1",
-        ),
-        default="ncls.layer-stack-research-prior@1",
-        help="LayerStack provider-local 的版本化状态分布",
-    )
-    generate.add_argument("--views", type=int, default=4)
-    generate.add_argument("--validation-views", type=int, default=0)
-    generate.add_argument("--test-views", type=int, default=0)
-    generate.add_argument("--adversarial-views", type=int, default=0)
-    generate.add_argument("--lights", type=int, default=128)
-    generate.add_argument("--spatial-samples", type=int, default=1)
-    generate.add_argument("--footprint-width", type=float, default=1.0 / 4096.0)
-    generate.add_argument(
-        "--surface-profile",
-        choices=("ncls.constant-footprint@1", "ncls.e0-footprint-scale-rotation-seam@1"),
-        default="ncls.constant-footprint@1",
-    )
-    generate.add_argument("--samples-per-replica", type=int, default=64)
-    generate.add_argument("--query-group-batch", type=int, default=64)
-    generate.add_argument("--seed", type=int, default=20260822)
-    generate.add_argument(
-        "--query-profile",
-        choices=(
-            "ncls.uniform-split-independent@1",
-            "ncls.e0-peak-grazing-mixture@2",
-            "ncls.e1-independent-peak-grazing-mixture@1",
-            "ncls.e2-layer-stack-independent-peak-grazing-mixture@1",
-            "ncls.e2-layer-stack-independent-peak-grazing-mixture@2",
-            "ncls.e2-layer-stack-independent-peak-grazing-mixture@3",
-        ),
-        default="ncls.uniform-split-independent@1",
-    )
-    generate.add_argument("--max-depth", type=int, default=64)
-    generate.add_argument("--adaptive", action="store_true")
-    generate.add_argument("--batch-samples", type=int, default=256)
-    generate.add_argument("--min-samples", type=int, default=512)
-    generate.add_argument("--max-samples", type=int, default=16384)
-    generate.add_argument("--relative-standard-error", type=float, default=0.03)
-    generate.add_argument(
-        "--adaptive-max-samples-by-split-group",
-        action="append",
-        default=[],
-        type=_split_group_sample_override,
-        metavar="GROUP=SAMPLES",
-        help="只给明确 split group 提高 LayerStack adaptive 每 replica 上限；可重复",
-    )
+    plan_corpus = data_commands.add_parser("plan-corpus", help="从 CorpusPlan 解析 state、密度与 shard 清单")
+    plan_corpus.add_argument("--config", type=Path, required=True)
+    plan_corpus.add_argument("--shard-root", type=Path, required=True)
+    plan_corpus.add_argument("--output", type=Path, required=True)
+    collect_corpus = data_commands.add_parser("collect-corpus", help="按 CorpusPlan 采集或续采经过校验的 shard")
+    collect_corpus.add_argument("--config", type=Path, required=True)
+    collect_corpus.add_argument("--shard-root", type=Path, required=True)
+    collect_corpus.add_argument("--output", type=Path, required=True, help="写入 artifacts 的 corpus manifest")
+    validate_corpus = data_commands.add_parser("validate-corpus", help="验证 corpus manifest 与全部 HDF5 hash")
+    validate_corpus.add_argument("path", type=Path)
+    audit_dense = data_commands.add_parser("audit-dense", help="审计 dense slice 峰邻域并给出 16,384 晋级清单")
+    audit_dense.add_argument("path", type=Path)
+    audit_dense.add_argument("--output", type=Path, required=True)
 
     learn = commands.add_parser("learn", help="训练、validation 与 held-out test 工具")
     learn_commands = learn.add_subparsers(dest="learn_command", required=True)
-    audit = learn_commands.add_parser("audit", help="只读审计监督覆盖、split、reference noise 与 train-only transform 统计")
-    audit.add_argument("--dataset", type=Path, required=True)
-    audit.add_argument("--output", type=Path, required=True)
-    audit.add_argument("--max-query-groups", type=int, default=8192)
-    audit.add_argument("--gate", type=Path, help="可选的冻结 E0 gate 配置；结果写入 gate_result.json")
-    audit.add_argument("--skip-hashes", action="store_true", help="仅用于局部诊断，不验证 HDF5 内容哈希")
-    learn_commands.add_parser("list-pipelines", help="列出已注册且带版本的 learning pipeline")
+    learn_commands.add_parser("list-pipelines", help="列出已注册的 learning pipeline")
     train_command = learn_commands.add_parser("train", help="训练明确命名的研究 baseline")
-    train_command.add_argument("--dataset", type=Path, required=True)
+    train_command.add_argument("--data", type=Path, required=True, help="reference-corpus manifest 或单 shard")
     train_command.add_argument("--run", type=Path, required=True)
-    train_command.add_argument("--config", type=Path, help="完整 TrainingConfig JSON；指定后忽略下列超参数")
-    train_command.add_argument("--width", type=int, default=64)
-    train_command.add_argument("--steps", type=int, default=10000)
-    train_command.add_argument("--batch-size", type=int, default=256)
-    train_command.add_argument("--learning-rate", type=float, default=3e-4)
-    train_command.add_argument("--validation-interval", type=int, default=250)
-    train_command.add_argument("--checkpoint-interval", type=int, default=250)
-    train_command.add_argument("--seed", type=int, default=20260822)
-    train_command.add_argument("--device", type=str)
+    train_command.add_argument("--config", type=Path, required=True)
 
     evaluate = learn_commands.add_parser(
         "evaluate", help="显式评测 validation、held-out test 或 adversarial probe"
     )
-    evaluate.add_argument("--dataset", type=Path, required=True)
+    evaluate.add_argument("--data", type=Path, required=True, help="reference-corpus manifest 或单 shard")
     evaluate.add_argument("--checkpoint", type=Path, required=True)
     evaluate.add_argument(
-        "--split", choices=("train", "validation", "test", "adversarial_probe"), required=True
+        "--split",
+        choices=("train", "validation", "test", "adversarial_probe", "dense_slice"),
+        required=True,
     )
     evaluate.add_argument("--output", type=Path)
     evaluate.add_argument("--device", type=str)
     evaluate.add_argument("--max-query-groups", type=int)
 
-    evaluator_gate = learn_commands.add_parser(
-        "gate-evaluator", help="用冻结 gate 检查独立 test、adversarial 与静态成本"
+    compare = learn_commands.add_parser(
+        "compare", help="在完全相同的 test state 上做 state-block 配对 bootstrap"
     )
-    evaluator_gate.add_argument("--run-manifest", type=Path, required=True)
-    evaluator_gate.add_argument("--test-metrics", type=Path, required=True)
-    evaluator_gate.add_argument("--adversarial-metrics", type=Path, required=True)
-    evaluator_gate.add_argument("--gate", type=Path, required=True)
-    evaluator_gate.add_argument("--output", type=Path, required=True)
+    compare.add_argument("--baseline", type=Path, required=True)
+    compare.add_argument("--candidate", type=Path, required=True)
+    compare.add_argument("--output", type=Path, required=True)
+    compare.add_argument("--iterations", type=int, default=1000)
+    compare.add_argument("--seed", type=int, default=20260824)
 
-    direct_fit = learn_commands.add_parser("direct-fit", help="逐 query group 优化参数，生成方向切片 direct-fit control")
-    direct_fit.add_argument("--dataset", type=Path, required=True)
-    direct_fit.add_argument("--output", type=Path, required=True)
-    direct_fit.add_argument("--split", choices=("train", "validation", "test"), required=True)
-    direct_fit.add_argument("--family", choices=("ggx", "ltc", "sg"), default="ltc")
-    direct_fit.add_argument("--lobes", type=int, default=2)
-    direct_fit.add_argument("--fit-batch", type=int, default=256)
-    direct_fit.add_argument("--steps", type=int, default=800)
-    direct_fit.add_argument("--restarts", type=int, default=3)
-    direct_fit.add_argument("--learning-rate", type=float, default=0.03)
-    direct_fit.add_argument("--seed", type=int, default=20260822)
-    direct_fit.add_argument("--device", type=str)
-    direct_fit.add_argument("--max-query-groups", type=int)
-
-    bundle = commands.add_parser("bundle", help="MethodBundle 导出与验证")
+    bundle = commands.add_parser("bundle", help="MethodBundle 验证")
     bundle_commands = bundle.add_subparsers(dest="bundle_command", required=True)
-    export = bundle_commands.add_parser("export-legacy-ltc-k2", help="从显式 checkpoint 导出 realtime bundle")
-    export.add_argument("--checkpoint", type=Path, required=True)
-    export.add_argument("--output", type=Path, required=True)
-    export.add_argument("--run-manifest", type=Path)
-    export.add_argument("--display-name", default="Legacy LTC K2 P1")
     validate_bundle = bundle_commands.add_parser("validate", help="验证 manifest 与全部内容哈希")
     validate_bundle.add_argument("path", type=Path)
     return parser
@@ -434,22 +258,22 @@ def main(argv: list[str] | None = None) -> int:
         return _pack_material(args.path, args.output)
     if args.command == "data" and args.data_command == "validate":
         return _validate_dataset(args.path, skip_hashes=args.skip_hashes)
-    if args.command == "data" and args.data_command == "collect-reference":
-        return _generate_dataset(args)
+    if args.command == "data" and args.data_command == "plan-corpus":
+        return _plan_corpus(args)
+    if args.command == "data" and args.data_command == "collect-corpus":
+        return _collect_corpus(args)
+    if args.command == "data" and args.data_command == "validate-corpus":
+        return _validate_corpus(args)
+    if args.command == "data" and args.data_command == "audit-dense":
+        return _audit_dense(args)
     if args.command == "learn" and args.learn_command == "train":
         return _train_learning(args)
-    if args.command == "learn" and args.learn_command == "audit":
-        return _audit_learning(args)
     if args.command == "learn" and args.learn_command == "list-pipelines":
         return _list_learning_pipelines()
-    if args.command == "learn" and args.learn_command == "gate-evaluator":
-        return _gate_evaluator(args)
     if args.command == "learn" and args.learn_command == "evaluate":
         return _evaluate_learning(args)
-    if args.command == "learn" and args.learn_command == "direct-fit":
-        return _direct_fit(args)
-    if args.command == "bundle" and args.bundle_command == "export-legacy-ltc-k2":
-        return _export_bundle(args)
+    if args.command == "learn" and args.learn_command == "compare":
+        return _compare_learning(args)
     if args.command == "bundle" and args.bundle_command == "validate":
         return _validate_bundle(args.path)
     raise AssertionError("unreachable command")

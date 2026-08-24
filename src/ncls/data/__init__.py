@@ -2,11 +2,14 @@
 
 from .collector import CollectionConfig, collect_reference_dataset
 from .surfaces import (
-    CONSTANT_FOOTPRINT_PROFILE_ID,
-    E0_FOOTPRINT_PROFILE_ID,
+    CONSTANT_FOOTPRINT_PROFILE,
+    FOOTPRINT_SWEEP_PROFILE,
     uv_surface_samples,
 )
 from .contract import (
+    DIFFICULTY_CLASSES,
+    DIFFICULTY_TAGS,
+    EVALUATION_COHORTS,
     EvaluatedBlock,
     PositionKind,
     QUERY_ROLE_NAMES,
@@ -19,6 +22,15 @@ from .contract import (
     SurfaceSample,
     make_state_id,
 )
+from .corpus import (
+    CorpusShard,
+    ReferenceCorpusManifest,
+    audit_dense_slice_resolution,
+    collect_layer_stack_corpus,
+    plan_layer_stack_corpus,
+    validate_reference_corpus,
+)
+from .profiles import CorpusPlan, QueryDensity
 from .dataset import (
     COLOR_MODEL,
     FORMAT_NAME,
@@ -36,6 +48,7 @@ from .directions import (
     grazing_anchored_view_directions,
     peak_grazing_mixture_pdf,
     peak_grazing_mixture_query,
+    polar_band_view_directions,
     stratified_uv,
     stratified_view_directions,
 )
@@ -44,8 +57,12 @@ from .statistics import ReplicaMoments, combine_replica_moments
 __all__ = [
     "COLOR_MODEL",
     "CollectionConfig",
-    "CONSTANT_FOOTPRINT_PROFILE_ID",
-    "E0_FOOTPRINT_PROFILE_ID",
+    "CONSTANT_FOOTPRINT_PROFILE",
+    "CorpusPlan",
+    "CorpusShard",
+    "DIFFICULTY_CLASSES",
+    "DIFFICULTY_TAGS",
+    "EVALUATION_COHORTS",
     "EvaluatedBlock",
     "FORMAT_NAME",
     "FORMAT_VERSION",
@@ -58,6 +75,7 @@ __all__ = [
     "ReferenceDataset",
     "ReferenceDatasetManifest",
     "ReferenceDatasetWriter",
+    "ReferenceCorpusManifest",
     "ReferenceProvider",
     "ReferenceStatistics",
     "ReplicaMoments",
@@ -65,6 +83,8 @@ __all__ = [
     "SourceState",
     "SurfaceSample",
     "collect_reference_dataset",
+    "audit_dense_slice_resolution",
+    "collect_layer_stack_corpus",
     "uv_surface_samples",
     "combine_replica_moments",
     "equal_area_hemisphere",
@@ -73,7 +93,12 @@ __all__ = [
     "make_state_id",
     "peak_grazing_mixture_pdf",
     "peak_grazing_mixture_query",
+    "polar_band_view_directions",
     "stratified_uv",
     "stratified_view_directions",
+    "FOOTPRINT_SWEEP_PROFILE",
+    "QueryDensity",
+    "plan_layer_stack_corpus",
+    "validate_reference_corpus",
     "validate_reference_dataset",
 ]

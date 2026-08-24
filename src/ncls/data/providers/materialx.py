@@ -13,7 +13,7 @@ import pyexr
 
 from ncls.data.collector import CollectionConfig
 from ncls.data.contract import EvaluatedBlock, PositionKind, QueryPlan, QueryRole, ReferenceDescriptor, SourceState, SurfaceSample, make_state_id
-from ncls.data.directions import MIXTURE_QUERY_PROFILE_ID, peak_grazing_mixture_query
+from ncls.data.directions import peak_grazing_mixture_query
 from ncls.source_materials import MaterialXReference, MaterialXSourceMaterial
 from ncls.paths import SOURCE_MATERIAL_ROOT
 from ncls.source_materials.identity import materialx_asset_sha256
@@ -260,7 +260,7 @@ class MaterialXProvider(BaseProvider):
             "materialx.textured-surface@1",
             "ncls.materialx-polyhaven@1",
             "ncls.materialx-source-material@1",
-            query_profile_id="ncls.materialx-local-normal-peak@1",
+            query_contract="materialx-local-normal-peak",
             incident_domain="upper-hemisphere",
             position_kind=PositionKind.UV,
             deterministic=True,
@@ -288,17 +288,21 @@ class MaterialXProvider(BaseProvider):
                 (runtime.base_color, runtime.roughness, runtime.metalness, runtime.normal, runtime.displacement),
             )
             states.append(SourceState(
-                make_state_id(self.descriptor.family_id, self.descriptor.native_schema_id, payload, source_hash),
-                self.descriptor.family_id,
-                self.descriptor.reference_id,
-                asset_id,
-                asset_id,
-                self.descriptor.native_schema_id,
-                payload,
-                loaded.material.document_uri,
-                source_hash,
-                splits[asset_id],
-                runtime,
+                state_id=make_state_id(self.descriptor.family_id, self.descriptor.native_schema_id, payload, source_hash),
+                family_id=self.descriptor.family_id,
+                reference_id=self.descriptor.reference_id,
+                asset_id=asset_id,
+                split_group_id=asset_id,
+                native_schema_id=self.descriptor.native_schema_id,
+                native_payload=payload,
+                source_uri=loaded.material.document_uri,
+                source_sha256=source_hash,
+                split=splits[asset_id],
+                structure_family_id=asset_id,
+                difficulty_class="unclassified",
+                difficulty_tags=(),
+                evaluation_cohort="workflow",
+                runtime_state=runtime,
             ))
         self._states = tuple(states)
         self._falcor = None
@@ -363,17 +367,14 @@ class MaterialXProvider(BaseProvider):
         surfaces: Sequence[SurfaceSample] = (),
     ) -> QueryPlan:
         base = super().query_plan(state, surfaces)
-        if self.config.query_profile_id != MIXTURE_QUERY_PROFILE_ID or not surfaces:
+        if self.config.proposal == "uniform" or not surfaces:
             return base
         normals = self._resolved_shading_normals(state, surfaces)
         surface_count = len(surfaces)
         lights = np.broadcast_to(base.light_directions[None, ...], (surface_count, *base.light_directions.shape)).copy()
         weights = np.broadcast_to(base.solid_angle_weights[None, ...], (surface_count, *base.solid_angle_weights.shape)).copy()
         pdf = np.broadcast_to(base.proposal_pdf[None, ...], (surface_count, *base.proposal_pdf.shape)).copy()
-        mixture_roles = np.isin(
-            base.query_roles,
-            (int(QueryRole.TRAIN), int(QueryRole.ADVERSARIAL_PROBE)),
-        )
+        mixture_roles = np.ones(len(base.view_directions), dtype=bool)
         mixture_views = base.view_directions[mixture_roles]
         for surface_index, normal in enumerate(normals):
             oriented_normals = np.broadcast_to(normal, mixture_views.shape).copy()
@@ -390,12 +391,17 @@ class MaterialXProvider(BaseProvider):
                 full_sphere=False,
                 seed=base.seed ^ ((surface_index + 1) * 0x85EBCA77),
                 reflection_centers=centers,
+                component_weights=self.config.mixture_weights,
+                critical_band_abs_cosine=(
+                    self.config.critical_wi_abs_cosine_min,
+                    self.config.critical_wi_abs_cosine_max,
+                ),
             )
             lights[surface_index, mixture_roles] = surface_lights
             weights[surface_index, mixture_roles] = surface_weights
             pdf[surface_index, mixture_roles] = surface_pdf
         proposal_ids = tuple(
-            value.replace("-peak-grazing-", "-local-normal-peak-grazing-").replace("@2", "@1")
+            value.replace("-peak-aware-", "-local-normal-peak-aware-")
             if mixture_roles[index] else value
             for index, value in enumerate(base.proposal_id)
         )

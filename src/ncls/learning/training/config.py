@@ -6,67 +6,47 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from ncls.learning.pipelines.legacy_ltc_k2 import PIPELINE_ID
-
 
 @dataclass(frozen=True)
 class TrainingConfig:
-    pipeline_id: str = PIPELINE_ID
-    research_stage: str = "deployment-regression"
-    model_parameters: Mapping[str, Any] = field(default_factory=lambda: {"width": 64})
+    pipeline: str
+    stage: str
+    capacity: str
+    model: Mapping[str, Any]
     dataset_selection: Mapping[str, Any] = field(default_factory=dict)
-    steps: int = 10000
-    batch_size: int = 256
+    steps: int = 25000
+    batch_size: int = 64
     learning_rate: float = 3e-4
-    learning_rate_schedule: str = "constant"
-    final_learning_rate_fraction: float = 1.0
+    learning_rate_schedule: str = "cosine"
+    final_learning_rate_fraction: float = 0.05
     weight_decay: float = 1e-5
     gradient_clip: float = 5.0
     validation_interval: int = 250
     checkpoint_interval: int = 250
-    max_validation_query_groups: int = 4096
-    seed: int = 20260822
+    seed: int = 20260824
     device: str | None = None
     deterministic: bool = True
-    selection_metric: str = "relative_l1.median"
     initialization_checkpoint: str | None = None
-    schema_name: str = "ncls.training-config"
-    schema_version: int = 5
+    schema_name: str = "training-config"
+    schema_version: int = 1
 
     def __post_init__(self) -> None:
-        if self.schema_name != "ncls.training-config" or self.schema_version not in (4, 5, 6):
-            raise ValueError("unsupported training config schema")
-        if self.schema_version == 4 and (
-            self.learning_rate_schedule != "constant"
-            or self.final_learning_rate_fraction != 1.0
-        ):
-            raise ValueError("training config v4 only supports a constant learning rate")
+        if self.schema_name != "training-config" or self.schema_version != 1:
+            raise ValueError("unsupported training config")
+        if not self.pipeline or not self.stage or self.capacity not in {"S", "M", "L"}:
+            raise ValueError("training config requires pipeline, stage and S/M/L capacity")
         if self.learning_rate_schedule not in {"constant", "cosine"}:
             raise ValueError("unsupported learning rate schedule")
-        if self.schema_version < 6 and self.initialization_checkpoint is not None:
-            raise ValueError("initialization_checkpoint requires training config v6")
-        if self.initialization_checkpoint is not None and (
-            not isinstance(self.initialization_checkpoint, str)
-            or not self.initialization_checkpoint.strip()
-        ):
-            raise ValueError("initialization_checkpoint must be a nonempty path or null")
         if not 0.0 <= self.final_learning_rate_fraction <= 1.0:
-            raise ValueError("final_learning_rate_fraction must lie in [0, 1]")
-        if "@" not in self.pipeline_id or not self.research_stage or self.selection_metric.count(".") != 1:
-            raise ValueError("training config requires a versioned pipeline, research stage and selection metric")
-        if not isinstance(self.model_parameters, Mapping):
-            raise ValueError("model_parameters must be an object")
-        if not isinstance(self.dataset_selection, Mapping):
-            raise ValueError("dataset_selection must be an object")
+            raise ValueError("final learning-rate fraction must lie in [0, 1]")
+        if not isinstance(self.model, Mapping) or not isinstance(self.dataset_selection, Mapping):
+            raise ValueError("model and dataset_selection must be objects")
         allowed_selection = {"state_ids", "asset_ids", "family_ids"}
-        unknown_selection = set(self.dataset_selection) - allowed_selection
-        if unknown_selection:
-            raise ValueError(f"unsupported dataset selection fields: {sorted(unknown_selection)}")
+        if set(self.dataset_selection) - allowed_selection:
+            raise ValueError("dataset_selection contains unsupported fields")
         for name, values in self.dataset_selection.items():
-            if (
-                not isinstance(values, (list, tuple))
-                or not values
-                or any(not isinstance(value, str) or not value for value in values)
+            if not isinstance(values, (list, tuple)) or not values or any(
+                not isinstance(value, str) or not value for value in values
             ):
                 raise ValueError(f"dataset_selection.{name} must be a nonempty string array")
         positive = (
@@ -75,19 +55,15 @@ class TrainingConfig:
             self.learning_rate,
             self.validation_interval,
             self.checkpoint_interval,
-            self.max_validation_query_groups,
         )
-        if min(positive) <= 0 or self.weight_decay < 0.0 or self.gradient_clip <= 0.0 or self.seed < 0:
+        if min(positive) <= 0 or self.weight_decay < 0.0 or self.gradient_clip <= 0.0:
             raise ValueError("training config contains invalid numeric values")
+        if self.seed < 0:
+            raise ValueError("seed must be nonnegative")
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
-        if self.schema_version == 4:
-            value.pop("learning_rate_schedule")
-            value.pop("final_learning_rate_fraction")
-        if self.schema_version < 6:
-            value.pop("initialization_checkpoint")
-        value["model_parameters"] = dict(self.model_parameters)
+        value["model"] = dict(self.model)
         value["dataset_selection"] = {
             name: list(values) for name, values in self.dataset_selection.items()
         }
@@ -99,21 +75,33 @@ class TrainingConfig:
     @property
     def resolved_sha256(self) -> str:
         payload = json.dumps(
-            self.to_dict(), ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")
+            self.to_dict(),
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> TrainingConfig:
-        return cls(**{name: value[name] for name in cls.__dataclass_fields__ if name in value})
+    def from_dict(cls, value: Mapping[str, Any]) -> "TrainingConfig":
+        fields = set(cls.__dataclass_fields__)
+        unknown = set(value) - fields
+        if unknown:
+            raise ValueError(f"training config contains unsupported fields: {sorted(unknown)}")
+        required = {"pipeline", "stage", "capacity", "model"}
+        missing = required - set(value)
+        if missing:
+            raise ValueError(f"training config is missing required fields: {sorted(missing)}")
+        return cls(**{name: value[name] for name in fields if name in value})
 
     @classmethod
-    def from_json(cls, text: str) -> TrainingConfig:
+    def from_json(cls, text: str) -> "TrainingConfig":
         value = json.loads(text)
         if not isinstance(value, dict):
             raise ValueError("training config root must be an object")
         return cls.from_dict(value)
 
     @classmethod
-    def load(cls, path: Path | str) -> TrainingConfig:
+    def load(cls, path: Path | str) -> "TrainingConfig":
         return cls.from_json(Path(path).read_text(encoding="utf-8"))

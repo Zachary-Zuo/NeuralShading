@@ -20,90 +20,68 @@ from ncls.data.contract import (
     make_state_id,
 )
 from ncls.data.directions import (
-    E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID,
-    E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID,
-    E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V2_ID,
+    equal_area_hemisphere,
     peak_grazing_mixture_query,
 )
 from ncls.data.priors import (
-    E0_LAYER_STACK_BOUNDARY_CASE_IDS,
-    E0_LAYER_STACK_BOUNDARY_PROFILE_ID,
-    E1_LAYER_STACK_MULTI_INTERFACE_PROFILE_ID,
-    E1_LAYER_STACK_NARROW_CONDUCTOR_PROFILE_ID,
-    E2_LAYER_STACK_SHARED_DECODER_FAMILY_COUNT,
-    E2_LAYER_STACK_SHARED_DECODER_LOCAL_STATE_COUNT,
-    E2_LAYER_STACK_SHARED_DECODER_PROFILE_ID,
-    LAYER_STACK_RESEARCH_PRIOR_ID,
-    LAYER_STACK_STATE_PROFILE_IDS,
-    e0_layer_stack_boundary_cases,
-    e1_layer_stack_multi_interface_cases,
-    e1_layer_stack_narrow_conductor_cases,
-    e2_layer_stack_shared_decoder_families,
-    sample_stack_families,
+    LAYER_STACK_PROFILE,
+    layer_stack_difficulty,
+    layer_stack_v1_families,
+    layer_stack_v1_splits,
 )
 from ncls.data.reference import FalcorReferenceEvaluator, evaluate_reference_adaptive, evaluate_reference_fixed
 
-from .base import BaseProvider, PROJECT_ROOT, assign_group_splits, implementation_hash
+from .base import BaseProvider, PROJECT_ROOT, implementation_hash
 
 
 @dataclass(frozen=True)
 class LayerStackProviderConfig:
-    family_count: int = 8
-    local_state_count: int = 4
-    samples_per_replica: int = 64
-    query_group_batch: int = 64
+    family_count: int = 28
+    states_per_family: int = 10
+    heldout_family_count: int = 4
+    fixed_samples_per_replica: int = 64
+    max_dispatch_queries: int = 4096
     max_depth: int = 64
     adaptive: bool = False
-    batch_samples: int = 256
-    min_samples: int = 512
-    max_samples: int = 16384
-    relative_standard_error: float = 0.03
-    adaptive_max_samples_by_split_group: tuple[tuple[str, int], ...] = ()
-    state_profile_id: str = LAYER_STACK_RESEARCH_PRIOR_ID
+    batch_samples_per_replica: int = 256
+    min_combined_samples: int = 1024
+    max_combined_samples: int = 262144
+    relative_standard_error: float = 0.04
+    maximum_group_relative_standard_error: float = 0.10
+    peak_calibration_directions: int = 4096
+    peak_calibration_samples_per_replica: int = 64
+    selected_state_ids: tuple[str, ...] = ()
+    state_profile: str = LAYER_STACK_PROFILE
 
     def __post_init__(self) -> None:
         values = (
-            self.family_count, self.local_state_count, self.samples_per_replica, self.query_group_batch,
-            self.max_depth, self.batch_samples, self.min_samples, self.max_samples,
+            self.family_count, self.states_per_family, self.fixed_samples_per_replica,
+            self.max_dispatch_queries, self.max_depth, self.batch_samples_per_replica,
+            self.min_combined_samples, self.max_combined_samples,
+            self.peak_calibration_directions, self.peak_calibration_samples_per_replica,
         )
-        if min(values) < 1 or self.max_samples < self.min_samples:
+        if min(values) < 1 or self.max_combined_samples < self.min_combined_samples:
             raise ValueError("LayerStack provider sizes must be positive and ordered")
-        if self.adaptive and (self.min_samples % self.batch_samples or self.max_samples % self.batch_samples):
-            raise ValueError("adaptive sample limits must be multiples of batch_samples")
+        if self.max_dispatch_queries > 4096:
+            raise ValueError("LayerStack reference dispatch may not exceed 4096 queries")
+        combined_batch = 2 * self.batch_samples_per_replica
+        if self.adaptive and (
+            self.min_combined_samples % combined_batch
+            or self.max_combined_samples % combined_batch
+        ):
+            raise ValueError("combined adaptive limits must be multiples of both replica batches")
         if not 0.0 < self.relative_standard_error < 1.0:
             raise ValueError("relative_standard_error must lie in (0, 1)")
-        override_groups = [group_id for group_id, _ in self.adaptive_max_samples_by_split_group]
-        if len(set(override_groups)) != len(override_groups) or any(not value for value in override_groups):
-            raise ValueError("adaptive split-group overrides require unique nonempty group IDs")
-        for _, sample_count in self.adaptive_max_samples_by_split_group:
-            if sample_count < self.max_samples or sample_count % self.batch_samples:
-                raise ValueError(
-                    "adaptive split-group override counts must be at least max_samples "
-                    "and multiples of batch_samples"
-                )
-        if self.state_profile_id not in LAYER_STACK_STATE_PROFILE_IDS:
-            raise ValueError(f"unknown LayerStack state profile {self.state_profile_id!r}")
-        fixed_profile_counts = {
-            E0_LAYER_STACK_BOUNDARY_PROFILE_ID: len(E0_LAYER_STACK_BOUNDARY_CASE_IDS),
-            E1_LAYER_STACK_NARROW_CONDUCTOR_PROFILE_ID: 1,
-            E1_LAYER_STACK_MULTI_INTERFACE_PROFILE_ID: 1,
-            E2_LAYER_STACK_SHARED_DECODER_PROFILE_ID: E2_LAYER_STACK_SHARED_DECODER_FAMILY_COUNT,
-        }
-        if self.state_profile_id in fixed_profile_counts:
-            expected = fixed_profile_counts[self.state_profile_id]
-            if self.family_count != expected:
-                raise ValueError(
-                    f"{self.state_profile_id} requires family_count={expected}"
-                )
-            expected_local_states = (
-                E2_LAYER_STACK_SHARED_DECODER_LOCAL_STATE_COUNT
-                if self.state_profile_id == E2_LAYER_STACK_SHARED_DECODER_PROFILE_ID
-                else 1
-            )
-            if self.local_state_count != expected_local_states:
-                raise ValueError(
-                    f"{self.state_profile_id} requires local_state_count={expected_local_states}"
-                )
+        if not self.relative_standard_error <= self.maximum_group_relative_standard_error < 1.0:
+            raise ValueError("maximum group relative SE must be at least the target and below one")
+        if not 1 <= self.heldout_family_count < self.family_count:
+            raise ValueError("heldout family count must leave fitted families")
+        if self.state_profile != LAYER_STACK_PROFILE:
+            raise ValueError(f"unsupported LayerStack state profile {self.state_profile!r}")
+        if len(set(self.selected_state_ids)) != len(self.selected_state_ids):
+            raise ValueError("selected_state_ids must be unique")
+        if self.peak_calibration_directions < 512:
+            raise ValueError("moving-peak calibration requires at least 512 directions")
 
 
 class LayerStackProvider(BaseProvider):
@@ -138,75 +116,65 @@ class LayerStackProvider(BaseProvider):
             capabilities=("evaluate", "monte-carlo-moments"),
             implementation_sha256=implementation_hash(source_paths),
         )
-        if config.state_profile_id == E0_LAYER_STACK_BOUNDARY_PROFILE_ID:
-            cases = e0_layer_stack_boundary_cases()
-        elif config.state_profile_id == E1_LAYER_STACK_NARROW_CONDUCTOR_PROFILE_ID:
-            cases = e1_layer_stack_narrow_conductor_cases()
-        elif config.state_profile_id == E1_LAYER_STACK_MULTI_INTERFACE_PROFILE_ID:
-            cases = e1_layer_stack_multi_interface_cases()
-        else:
-            cases = ()
-        if config.state_profile_id == E2_LAYER_STACK_SHARED_DECODER_PROFILE_ID:
-            families = e2_layer_stack_shared_decoder_families(collection.seed)
-            case_ids = [
-                f"shared-decoder-family-{index:04d}"
-                for index in range(E2_LAYER_STACK_SHARED_DECODER_FAMILY_COUNT)
-            ]
-            group_ids = [
-                f"layer-stack-e2-family-{index:04d}"
-                for index in range(E2_LAYER_STACK_SHARED_DECODER_FAMILY_COUNT)
-            ]
-        elif cases:
-            case_ids = [case_id for case_id, _ in cases]
-            families = [[stack] for _, stack in cases]
-            group_prefix = (
-                "layer-stack-boundary"
-                if config.state_profile_id == E0_LAYER_STACK_BOUNDARY_PROFILE_ID
-                else "layer-stack-e1"
-            )
-            group_ids = [f"{group_prefix}-{case_id}" for case_id in case_ids]
-        else:
-            families = sample_stack_families(config.family_count, config.local_state_count, collection.seed)
-            case_ids = [f"sampled-family-{index:06d}" for index in range(config.family_count)]
-            group_ids = [f"layer-stack-family-{index:06d}" for index in range(config.family_count)]
-        unknown_override_groups = sorted(
-            set(dict(config.adaptive_max_samples_by_split_group)) - set(group_ids)
+        families = layer_stack_v1_families(
+            config.family_count, config.states_per_family, collection.seed
         )
-        if unknown_override_groups:
-            raise ValueError(
-                f"adaptive sample overrides name unknown split groups: {unknown_override_groups}"
-            )
-        splits = assign_group_splits(group_ids, collection.seed)
+        splits = layer_stack_v1_splits(
+            config.family_count,
+            config.states_per_family,
+            config.heldout_family_count,
+            collection.seed,
+        )
         states = []
-        for family_index, family in enumerate(families):
-            group_id = group_ids[family_index]
+        for family_index, (structure_family_id, family) in enumerate(families):
             for local_index, stack in enumerate(family):
+                split, cohort = splits[(family_index, local_index)]
+                difficulty, tags = layer_stack_difficulty(stack)
+                group_id = f"{structure_family_id}/state-{local_index:04d}"
                 program = material_program_from_layer_stack(
                     stack,
                     metadata={
                         "family_index": family_index,
                         "local_state_index": local_index,
-                        "state_profile_id": config.state_profile_id,
-                        "state_profile_case_id": case_ids[family_index],
+                        "state_profile": config.state_profile,
+                        "structure_family_id": structure_family_id,
+                        "difficulty_class": difficulty,
+                        "difficulty_tags": list(tags),
+                        "evaluation_cohort": cohort,
                     },
                 )
                 payload = program.to_json().encode("utf-8")
                 source_hash = hashlib.sha256(payload).hexdigest()
                 states.append(
                     SourceState(
-                        make_state_id(self.descriptor.family_id, self.descriptor.native_schema_id, payload, source_hash),
-                        self.descriptor.family_id,
-                        self.descriptor.reference_id,
-                        f"{group_id}/state-{local_index:04d}",
-                        group_id,
-                        self.descriptor.native_schema_id,
-                        payload,
-                        "",
-                        source_hash,
-                        splits[group_id],
-                        stack,
+                        state_id=make_state_id(
+                            self.descriptor.family_id,
+                            self.descriptor.native_schema_id,
+                            payload,
+                            source_hash,
+                        ),
+                        family_id=self.descriptor.family_id,
+                        reference_id=self.descriptor.reference_id,
+                        asset_id=group_id,
+                        split_group_id=group_id,
+                        native_schema_id=self.descriptor.native_schema_id,
+                        native_payload=payload,
+                        source_uri="",
+                        source_sha256=source_hash,
+                        split=split,
+                        structure_family_id=structure_family_id,
+                        difficulty_class=difficulty,
+                        difficulty_tags=tags,
+                        evaluation_cohort=cohort,
+                        runtime_state=stack,
                     )
                 )
+        if config.selected_state_ids:
+            available = {state.state_id: state for state in states}
+            missing = sorted(set(config.selected_state_ids) - set(available))
+            if missing:
+                raise ValueError(f"selected LayerStack states are absent: {missing}")
+            states = [available[state_id] for state_id in config.selected_state_ids]
         self._states = tuple(states)
         self._evaluator = evaluator
 
@@ -217,8 +185,6 @@ class LayerStackProvider(BaseProvider):
     def _sheen_peak_centers(
         views: np.ndarray,
         roughness: float,
-        *,
-        legacy_v1_semantics: bool = False,
     ) -> np.ndarray:
         z = np.linspace(1e-3, 1.0, 4096, dtype=np.float64)
         inverse_alpha = 1.0 / max(roughness, 1e-3)
@@ -256,52 +222,63 @@ class LayerStackProvider(BaseProvider):
                 * np.power(sin2, 0.5 * inverse_alpha)
                 / (2.0 * np.pi)
             )
-            if legacy_v1_semantics:
-                softened = sheen_lambda(np.asarray([view[2]]))[0] ** (
-                    1.0 + 2.0 * (1.0 - view[2]) ** 8
-                )
-                masking = 1.0 / (1.0 + softened + sheen_lambda(z))
-            else:
-                # 单界面入口按 (viewDirection, lightDirection) 传入 shader 的
-                # (wi, wo)；softened 项属于候选 light cosine，顺序不可互换。
-                softened = np.power(
-                    sheen_lambda(z),
-                    1.0 + 2.0 * np.power(1.0 - z, 8),
-                )
-                masking = 1.0 / (
-                    1.0 + softened + sheen_lambda(np.asarray([view[2]]))[0]
-                )
+            # 单界面入口按 (viewDirection, lightDirection) 传入 shader 的
+            # (wi, wo)；softened 项属于候选 light cosine，顺序不可互换。
+            softened = np.power(
+                sheen_lambda(z),
+                1.0 + 2.0 * np.power(1.0 - z, 8),
+            )
+            masking = 1.0 / (
+                1.0 + softened + sheen_lambda(np.asarray([view[2]]))[0]
+            )
             response = distribution * masking / (4.0 * view[2])
-            if legacy_v1_semantics:
-                # @1 错把裸 BSDF 的峰当成 HDF5 response 峰；保留仅用于复现失败数据。
-                response /= z
             result[index] = wi[int(np.argmax(response))]
         return result.astype(np.float32)
 
-    @staticmethod
-    def _peak_patch_centers(centers: np.ndarray) -> np.ndarray:
-        radial_offsets = np.deg2rad(np.linspace(-12.6, 12.6, 15, dtype=np.float64))
-        azimuth_offsets = np.deg2rad(np.linspace(-3.6, 3.6, 5, dtype=np.float64))
-        result = np.empty((len(centers), len(radial_offsets) * len(azimuth_offsets), 3), dtype=np.float64)
-        for index, center in enumerate(np.asarray(centers, dtype=np.float64)):
-            azimuth_tangent = np.cross((0.0, 0.0, 1.0), center)
-            if np.linalg.norm(azimuth_tangent) < 1e-8:
-                azimuth_tangent = np.asarray((1.0, 0.0, 0.0))
-            else:
-                azimuth_tangent /= np.linalg.norm(azimuth_tangent)
-            radial_tangent = np.cross(azimuth_tangent, center)
-            rows = []
-            for radial in radial_offsets:
-                for azimuth in azimuth_offsets:
-                    value = (
-                        center
-                        + np.tan(radial) * radial_tangent
-                        + np.tan(azimuth) * azimuth_tangent
-                    )
-                    value[2] = abs(value[2])
-                    rows.append(value / np.linalg.norm(value))
-            result[index] = rows
-        return result.astype(np.float32)
+    def _calibrated_peak_centers(
+        self,
+        state: SourceState,
+        base: QueryPlan,
+    ) -> np.ndarray:
+        """用独立高分辨率 reference probe 测出每个 `wo` 的 response 峰位。"""
+
+        direction_rows = []
+        for view_index in range(len(base.view_directions)):
+            directions, _ = equal_area_hemisphere(
+                self.provider_config.peak_calibration_directions,
+                azimuth_offset=(view_index + 1) * 0.173 * np.pi,
+            )
+            direction_rows.append(directions)
+        lights = np.stack(direction_rows)
+        measure = 2.0 * np.pi
+        probe = QueryPlan(
+            base.view_directions,
+            lights,
+            np.full(
+                lights.shape[:2],
+                measure / self.provider_config.peak_calibration_directions,
+                dtype=np.float32,
+            ),
+            np.full(
+                lights.shape[:2],
+                1.0 / measure,
+                dtype=np.float32,
+            ),
+            "layer-stack-peak-calibration-v1",
+            base.seed ^ 0xC411B4A7,
+            base.query_roles,
+        )
+        evaluated = self._evaluate_queries(
+            state,
+            (SurfaceSample(),),
+            probe,
+            adaptive=False,
+            fixed_samples_per_replica=self.provider_config.peak_calibration_samples_per_replica,
+            allow_injected_evaluator=False,
+        )
+        magnitude = np.sum(np.abs(evaluated.mean[0]), axis=-1)
+        peak_index = np.argmax(magnitude, axis=1)
+        return lights[np.arange(len(lights)), peak_index]
 
     def query_plan(
         self,
@@ -310,36 +287,22 @@ class LayerStackProvider(BaseProvider):
     ) -> QueryPlan:
         base = super().query_plan(state, surfaces)
         stack = state.runtime_state
-        if (
-            self.config.query_profile_id not in {
-                E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID,
-                E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V2_ID,
-                E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID,
-            }
-        ):
-            return base
-        old_profile = self.config.query_profile_id in {
-            E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID,
-            E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V2_ID,
-        }
-        if old_profile and not (
-            len(stack.interfaces) == 1 and isinstance(stack.interfaces[0], SheenInterface)
-        ):
+        if self.config.proposal == "uniform":
             return base
         if len(stack.interfaces) == 1 and isinstance(stack.interfaces[0], SheenInterface):
             centers = self._sheen_peak_centers(
                 base.view_directions,
                 stack.interfaces[0].roughness,
-                legacy_v1_semantics=(
-                    self.config.query_profile_id == E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID
-                ),
             )
             proposal_tag = "layer-stack-sheen"
         else:
-            centers = base.view_directions.copy()
-            centers[:, :2] *= -1.0
-            proposal_tag = "layer-stack-response-patch"
-        patch_centers = None if old_profile else self._peak_patch_centers(centers)
+            if "M" in state.difficulty_tags:
+                centers = self._calibrated_peak_centers(state, base)
+                proposal_tag = "layer-stack-calibrated-response"
+            else:
+                centers = base.view_directions.copy()
+                centers[:, :2] *= -1.0
+                proposal_tag = "layer-stack-reflection"
         lights = base.light_directions.copy()
         weights = base.solid_angle_weights.copy()
         pdf = base.proposal_pdf.copy()
@@ -353,9 +316,11 @@ class LayerStackProvider(BaseProvider):
                 base.direction_count,
                 full_sphere=False,
                 seed=base.seed ^ ((int(role) + 1) * 0x9E3779B1),
-                reflection_centers=centers[selected] if old_profile else None,
-                reflection_patch_centers=(
-                    None if patch_centers is None else patch_centers[selected]
+                reflection_centers=centers[selected],
+                component_weights=self.config.mixture_weights,
+                critical_band_abs_cosine=(
+                    self.config.critical_wi_abs_cosine_min,
+                    self.config.critical_wi_abs_cosine_max,
                 ),
             )
             lights[selected] = role_lights
@@ -363,8 +328,8 @@ class LayerStackProvider(BaseProvider):
             pdf[selected] = role_pdf
             for index in np.flatnonzero(selected).tolist():
                 proposal_ids[index] = proposal_ids[index].replace(
-                    "-peak-grazing-", f"-{proposal_tag}-peak-grazing-"
-                ).replace("@2", "@1")
+                    "-peak-aware-", f"-{proposal_tag}-peak-aware-"
+                )
         return QueryPlan(
             base.view_directions,
             lights,
@@ -375,21 +340,128 @@ class LayerStackProvider(BaseProvider):
             base.query_roles,
         )
 
-    def _active_evaluator(self, plan: QueryPlan):
-        if self._evaluator is None:
-            self._evaluator = FalcorReferenceEvaluator(
-                plan.light_directions,
-                max_depth=self.provider_config.max_depth,
-                max_query_group_batch=self.provider_config.query_group_batch,
+    def _evaluate_queries(
+        self,
+        state: SourceState,
+        surfaces: Sequence[SurfaceSample],
+        plan: QueryPlan,
+        *,
+        adaptive: bool,
+        fixed_samples_per_replica: int,
+        allow_injected_evaluator: bool,
+    ) -> EvaluatedBlock:
+        if len(surfaces) != 1:
+            raise ValueError("constant LayerStack states require exactly one surface sample")
+        materials = [state.runtime_state] * len(plan.view_directions)
+        seeds = np.asarray(
+            [
+                (plan.seed ^ (index * 0x9E3779B1)) & 0xFFFFFFFF
+                for index in range(len(materials))
+            ],
+            dtype=np.uint32,
+        )
+        group_count = len(materials)
+        direction_count = plan.direction_count
+        rgb_shape = (group_count, direction_count, 3)
+        mean = np.empty(rgb_shape, dtype=np.float32)
+        variance = np.empty(rgb_shape, dtype=np.float32)
+        replica_a = np.empty(rgb_shape, dtype=np.float32)
+        replica_b = np.empty(rgb_shape, dtype=np.float32)
+        sample_count = np.empty((group_count, direction_count), dtype=np.uint32)
+        direction_tile = min(direction_count, self.provider_config.max_dispatch_queries)
+        for light_start in range(0, direction_count, direction_tile):
+            light_stop = min(light_start + direction_tile, direction_count)
+            tile_count = light_stop - light_start
+            query_group_batch = max(
+                1,
+                self.provider_config.max_dispatch_queries // tile_count,
             )
-        if int(self._evaluator.light_count) != plan.direction_count:
-            raise ValueError("LayerStack evaluator direction count disagrees with the persisted QueryPlan")
-        return self._evaluator
-
-    def _adaptive_max_samples(self, state: SourceState) -> int:
-        return dict(self.provider_config.adaptive_max_samples_by_split_group).get(
-            state.split_group_id,
-            self.provider_config.max_samples,
+            for group_start in range(0, group_count, query_group_batch):
+                group_stop = min(group_start + query_group_batch, group_count)
+                lights = plan.light_directions[
+                    group_start:group_stop, light_start:light_stop
+                ]
+                if (
+                    allow_injected_evaluator
+                    and
+                    self._evaluator is not None
+                    and light_start == 0
+                    and light_stop == direction_count
+                    and int(self._evaluator.light_count) == tile_count
+                ):
+                    evaluator = self._evaluator
+                else:
+                    evaluator = FalcorReferenceEvaluator(
+                        lights,
+                        max_depth=self.provider_config.max_depth,
+                        max_query_group_batch=group_stop - group_start,
+                        light_index_offset=light_start,
+                    )
+                if int(evaluator.light_count) != tile_count:
+                    raise ValueError("LayerStack evaluator light tile disagrees with QueryPlan")
+                arguments = dict(
+                    query_group_seeds=seeds[group_start:group_stop],
+                    light_directions=lights,
+                )
+                if adaptive:
+                    evaluated = evaluate_reference_adaptive(
+                        evaluator,
+                        materials[group_start:group_stop],
+                        plan.view_directions[group_start:group_stop],
+                        batch_samples=self.provider_config.batch_samples_per_replica,
+                        min_samples=self.provider_config.min_combined_samples // 2,
+                        max_samples=self.provider_config.max_combined_samples // 2,
+                        relative_standard_error=self.provider_config.relative_standard_error,
+                        **arguments,
+                    )
+                    peak = np.max(np.abs(evaluated.mean), axis=(1, 2), keepdims=True)
+                    denominator = np.maximum(
+                        np.abs(evaluated.mean),
+                        np.maximum(0.005 * peak, 1e-8),
+                    )
+                    standard_error = np.sqrt(
+                        np.maximum(evaluated.variance, 0.0)
+                        / np.maximum(evaluated.sample_count[:, None, None], 1)
+                    )
+                    group_p95 = np.quantile(
+                        standard_error / denominator,
+                        0.95,
+                        axis=(1, 2),
+                    )
+                    if np.any(
+                        group_p95
+                        > self.provider_config.maximum_group_relative_standard_error
+                    ):
+                        failed = float(np.max(group_p95))
+                        raise RuntimeError(
+                            "adaptive-v1 exhausted its budget above the maximum "
+                            f"query-group relative SE: {failed:.6g}"
+                        )
+                else:
+                    evaluated = evaluate_reference_fixed(
+                        evaluator,
+                        materials[group_start:group_stop],
+                        plan.view_directions[group_start:group_stop],
+                        samples_per_replica=fixed_samples_per_replica,
+                        **arguments,
+                    )
+                region = np.s_[group_start:group_stop, light_start:light_stop]
+                mean[region] = evaluated.mean
+                variance[region] = evaluated.variance
+                replica_a[region] = evaluated.replica_mean_a
+                replica_b[region] = evaluated.replica_mean_b
+                sample_count[region] = evaluated.sample_count[:, None]
+        shape = (1, len(plan.view_directions), plan.direction_count)
+        return EvaluatedBlock(
+            mean[None],
+            variance[None],
+            replica_a[None],
+            replica_b[None],
+            sample_count[None],
+            np.ones(shape, dtype=np.uint8),
+            np.ones(shape, dtype=np.uint32),
+            np.zeros(shape, dtype=np.float32),
+            np.broadcast_to(seeds[None, :, None], shape).copy().astype(np.uint64),
         )
 
     def evaluate(
@@ -398,61 +470,13 @@ class LayerStackProvider(BaseProvider):
         surfaces: Sequence[SurfaceSample],
         plan: QueryPlan,
     ) -> EvaluatedBlock:
-        if len(surfaces) != 1:
-            raise ValueError("constant LayerStack states require exactly one surface sample")
-        evaluator = self._active_evaluator(plan)
-        materials = [state.runtime_state] * len(plan.view_directions)
-        seeds = np.asarray(
-            [
-                (self.config.seed ^ int(state.state_id[:8], 16) ^ (index * 0x9E3779B1)) & 0xFFFFFFFF
-                for index in range(len(materials))
-            ],
-            dtype=np.uint32,
-        )
-        evaluated_parts = []
-        for start in range(0, len(materials), self.provider_config.query_group_batch):
-            stop = min(start + self.provider_config.query_group_batch, len(materials))
-            lights = (
-                plan.light_directions
-                if plan.light_directions.ndim == 2
-                else plan.light_directions[start:stop]
-            )
-            if self.provider_config.adaptive:
-                evaluated_parts.append(evaluate_reference_adaptive(
-                    evaluator,
-                    materials[start:stop],
-                    plan.view_directions[start:stop],
-                    query_group_seeds=seeds[start:stop],
-                    light_directions=lights,
-                    batch_samples=self.provider_config.batch_samples,
-                    min_samples=self.provider_config.min_samples,
-                    max_samples=self._adaptive_max_samples(state),
-                    relative_standard_error=self.provider_config.relative_standard_error,
-                ))
-            else:
-                evaluated_parts.append(evaluate_reference_fixed(
-                    evaluator,
-                    materials[start:stop],
-                    plan.view_directions[start:stop],
-                    query_group_seeds=seeds[start:stop],
-                    light_directions=lights,
-                    samples_per_replica=self.provider_config.samples_per_replica,
-                ))
-
-        def concatenate(name: str) -> np.ndarray:
-            return np.concatenate([getattr(part, name) for part in evaluated_parts], axis=0)
-
-        shape = (1, len(plan.view_directions), plan.direction_count)
-        return EvaluatedBlock(
-            concatenate("mean")[None].astype(np.float32),
-            concatenate("variance")[None].astype(np.float32),
-            concatenate("replica_mean_a")[None].astype(np.float32),
-            concatenate("replica_mean_b")[None].astype(np.float32),
-            np.broadcast_to(concatenate("sample_count")[None, :, None], shape).copy().astype(np.uint32),
-            np.ones(shape, dtype=np.uint8),
-            np.ones(shape, dtype=np.uint32),
-            np.zeros(shape, dtype=np.float32),
-            np.broadcast_to(seeds[None, :, None], shape).copy().astype(np.uint64),
+        return self._evaluate_queries(
+            state,
+            surfaces,
+            plan,
+            adaptive=self.provider_config.adaptive,
+            fixed_samples_per_replica=self.provider_config.fixed_samples_per_replica,
+            allow_injected_evaluator=True,
         )
 
     def metadata(self):

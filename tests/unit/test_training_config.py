@@ -5,33 +5,39 @@ import pytest
 from ncls.learning.training import TrainingConfig
 
 
-def test_v4_training_config_keeps_immutable_constant_schedule_payload() -> None:
-    config = TrainingConfig(schema_version=4)
-    payload = config.to_dict()
-    assert "learning_rate_schedule" not in payload
-    assert "final_learning_rate_fraction" not in payload
-    with pytest.raises(ValueError, match="v4 only supports"):
-        TrainingConfig(schema_version=4, learning_rate_schedule="cosine")
-
-
-def test_v5_training_config_versions_cosine_schedule() -> None:
+def test_training_config_v1_uses_readable_pipeline_and_capacity() -> None:
     config = TrainingConfig(
-        schema_version=5,
-        learning_rate_schedule="cosine",
-        final_learning_rate_fraction=0.05,
+        pipeline="film-evaluator-s-v1",
+        stage="P1",
+        capacity="S",
+        model={"width": 96, "latent_dimension": 24},
     )
-    assert config.to_dict()["learning_rate_schedule"] == "cosine"
-    assert config.to_dict()["final_learning_rate_fraction"] == 0.05
-    with pytest.raises(ValueError, match="lie in"):
-        TrainingConfig(schema_version=5, final_learning_rate_fraction=1.1)
+    restored = TrainingConfig.from_json(config.to_json())
+    assert restored == config
+    assert restored.schema_name == "training-config"
+    assert restored.schema_version == 1
+    assert restored.pipeline == "film-evaluator-s-v1"
+    assert len(restored.resolved_sha256) == 64
 
 
-def test_v6_training_config_versions_initialization_checkpoint() -> None:
+def test_training_config_has_fixed_checkpoint_selection_contract() -> None:
     config = TrainingConfig(
-        schema_version=6,
-        initialization_checkpoint="artifacts/research/source/checkpoints/best.pt",
+        pipeline="film-evaluator-m-v1",
+        stage="P1",
+        capacity="M",
+        model={},
     )
-    assert config.to_dict()["initialization_checkpoint"].endswith("best.pt")
-    assert "initialization_checkpoint" not in TrainingConfig(schema_version=5).to_dict()
-    with pytest.raises(ValueError, match="requires training config v6"):
-        TrainingConfig(schema_version=5, initialization_checkpoint="best.pt")
+    assert "selection_metric" not in config.to_dict()
+    with pytest.raises(ValueError, match="S/M/L"):
+        TrainingConfig(pipeline="film-v1", stage="P1", capacity="XL", model={})
+
+
+def test_training_config_rejects_removed_fields() -> None:
+    with pytest.raises(ValueError, match="unsupported fields"):
+        TrainingConfig.from_dict({
+            "pipeline": "film-evaluator-s-v1",
+            "stage": "P1",
+            "capacity": "S",
+            "model": {},
+            "selection_metric": "relative-l1",
+        })

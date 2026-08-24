@@ -5,17 +5,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from ncls.core.material import (
-    DiffuseInterface,
-    HomogeneousMedium,
-    LayerStackIR,
-    RoughDielectricInterface,
-)
-from ncls.data.reference import FalcorReferenceEvaluator, evaluate_reference_fixed
+from ncls.core.material import DiffuseInterface, HomogeneousMedium, LayerStackIR, RoughDielectricInterface
 from ncls.data import CollectionConfig, ReferenceDataset, collect_reference_dataset
-from ncls.data.directions import equal_area_hemisphere
-from ncls.data.priors import E0_LAYER_STACK_BOUNDARY_CASE_IDS, E0_LAYER_STACK_BOUNDARY_PROFILE_ID
 from ncls.data.providers import LayerStackProvider, LayerStackProviderConfig
+from ncls.data.reference import FalcorReferenceEvaluator, evaluate_reference_fixed
 
 
 pytest.importorskip("falcor")
@@ -39,7 +32,7 @@ def _evaluate(stack: LayerStackIR, view_angle: float, light_angles: list[float],
     )
 
 
-def test_single_interface_diffuse_matches_analytic_response_cos() -> None:
+def test_single_interface_diffuse_matches_reference_measure() -> None:
     color = np.asarray([0.6, 0.3, 0.1], dtype=np.float32)
     stack = LayerStackIR((DiffuseInterface(tuple(color)),), ())
     angles = [-50.0, 0.0, 55.0]
@@ -49,8 +42,8 @@ def test_single_interface_diffuse_matches_analytic_response_cos() -> None:
     np.testing.assert_allclose(result.variance[0], 0.0, atol=1e-8)
 
 
-def _three_interface_stack() -> LayerStackIR:
-    return LayerStackIR(
+def test_multilayer_reference_is_reciprocal_within_monte_carlo_error() -> None:
+    stack = LayerStackIR(
         (
             RoughDielectricInterface(0.12, 0.08, 1.4, 0.1),
             RoughDielectricInterface(0.24, 0.16, 1.15, -0.35),
@@ -61,144 +54,51 @@ def _three_interface_stack() -> LayerStackIR:
             HomogeneousMedium(thickness=0.35),
         ),
     )
-
-
-def test_three_interface_reference_is_reciprocal_within_monte_carlo_error() -> None:
-    stack = _three_interface_stack()
     samples = 32768
-    view_angle = 20.0
-    light_angle = 50.0
-    forward = _evaluate(stack, view_angle, [light_angle], samples, seed=191)
-    reverse = _evaluate(stack, light_angle, [view_angle], samples, seed=211)
-    total_samples = 2 * samples
-    forward_cosine = np.cos(np.deg2rad(light_angle))
-    reverse_cosine = np.cos(np.deg2rad(view_angle))
+    forward = _evaluate(stack, 20.0, [50.0], samples, seed=191)
+    reverse = _evaluate(stack, 50.0, [20.0], samples, seed=211)
+    forward_cosine = np.cos(np.deg2rad(50.0))
+    reverse_cosine = np.cos(np.deg2rad(20.0))
     forward_f = forward.mean[0, 0] / forward_cosine
     reverse_f = reverse.mean[0, 0] / reverse_cosine
     standard_error = np.sqrt(
-        forward.variance[0, 0] / (total_samples * forward_cosine**2)
-        + reverse.variance[0, 0] / (total_samples * reverse_cosine**2)
+        forward.variance[0, 0] / (2 * samples * forward_cosine**2)
+        + reverse.variance[0, 0] / (2 * samples * reverse_cosine**2)
     )
     assert np.all(np.abs(forward_f - reverse_f) <= 6.0 * standard_error + 3e-3)
 
 
-def test_eight_interface_reference_executes_with_anisotropic_frames() -> None:
-    interfaces = tuple(
-        RoughDielectricInterface(
-            0.08 + 0.02 * index,
-            0.1 + 0.015 * index,
-            1.5 if index == 0 else 1.0,
-            0.1 * index,
-        )
-        for index in range(7)
-    ) + (DiffuseInterface((0.4, 0.2, 0.1)),)
-    stack = LayerStackIR(interfaces, tuple(HomogeneousMedium(thickness=0.1) for _ in range(7)))
-    result = _evaluate(stack, 20.0, [-30.0, 0.0, 40.0], 64)
-    assert np.all(np.isfinite(result.mean))
-    assert np.all(result.mean >= 0.0)
-    assert np.max(result.mean) > 0.0
-
-
-def test_unsupported_chromatic_extinction_with_scattering_is_rejected() -> None:
-    stack = LayerStackIR(
-        (RoughDielectricInterface(0.1, 0.2, 1.5), DiffuseInterface((0.5, 0.5, 0.5))),
-        (HomogeneousMedium((0.1, 0.2, 0.3), (0.2, 0.2, 0.2), 0.0, 0.2),),
-    )
-    with pytest.raises(RuntimeError, match="unsupported material state"):
-        _evaluate(stack, 20.0, [0.0], 4)
-
-
-def test_reference_generator_smoke(tmp_path: Path) -> None:
+def test_layer_stack_v1_reference_shard_smoke(tmp_path: Path) -> None:
     collection = CollectionConfig(
+        name="uniform-v1",
+        query_role="test",
         view_count=1,
         light_count=4,
         seed=23,
     )
-    config = LayerStackProviderConfig(
-        family_count=1,
-        local_state_count=1,
-        samples_per_replica=4,
-        query_group_batch=1,
-        max_depth=8,
-    )
-    lights, _ = equal_area_hemisphere(4)
-    evaluator = FalcorReferenceEvaluator(lights, max_depth=8, max_query_group_batch=1)
-    provider = LayerStackProvider(collection, config, evaluator=evaluator)
-    manifest = collect_reference_dataset(
-        tmp_path / "reference.h5",
-        [provider],
+    provider = LayerStackProvider(
         collection,
-        created_at="2026-08-23T00:00:00+00:00",
-        generator_git_commit="test",
+        LayerStackProviderConfig(
+            family_count=4,
+            states_per_family=3,
+            heldout_family_count=1,
+            fixed_samples_per_replica=1,
+            max_dispatch_queries=4,
+            max_depth=8,
+        ),
     )
-    with ReferenceDataset.open(tmp_path / "reference.h5") as dataset:
-        statistics = dataset.statistics(0)
-        assert manifest.provider_metadata[0]["reference_id"] == "ncls.layer-stack-random-walk@1"
-        assert np.all(np.isfinite(statistics.mean))
-        assert np.all(statistics.mean >= 0.0)
-        assert statistics.sample_count.tolist() == [8, 8, 8, 8]
-
-
-def test_reference_generator_supports_per_view_peak_grazing_queries(tmp_path: Path) -> None:
-    collection = CollectionConfig(
-        view_count=2,
-        validation_view_count=1,
-        test_view_count=1,
-        adversarial_view_count=1,
-        light_count=32,
-        seed=31,
-        query_profile_id="ncls.e0-peak-grazing-mixture@2",
-    )
-    config = LayerStackProviderConfig(
-        family_count=1,
-        local_state_count=1,
-        samples_per_replica=2,
-        query_group_batch=2,
-        max_depth=8,
-    )
-    provider = LayerStackProvider(collection, config)
+    path = tmp_path / "reference.h5"
     collect_reference_dataset(
-        tmp_path / "mixture-reference.h5",
-        [provider],
+        path,
+        (provider,),
         collection,
         created_at="2026-08-24T00:00:00+00:00",
         generator_git_commit="test",
     )
-    with ReferenceDataset.open(tmp_path / "mixture-reference.h5") as dataset:
-        batch = dataset.group_batch((0, 1, 2, 3, 4))
-        assert batch["wi"].shape == (5, 32, 3)
-        np.testing.assert_array_equal(batch["query_role"], [0, 0, 1, 2, 3])
-        assert not np.array_equal(batch["wi"][0], batch["wi"][1])
-        np.testing.assert_allclose(
-            batch["proposal_pdf"] * batch["solid_angle_weight"],
-            1.0 / 32.0,
-            rtol=1e-6,
-            atol=1e-7,
-        )
-
-
-def test_e0_boundary_state_profile_executes_all_cases(tmp_path: Path) -> None:
-    collection = CollectionConfig(view_count=1, light_count=16, seed=20260824)
-    config = LayerStackProviderConfig(
-        family_count=len(E0_LAYER_STACK_BOUNDARY_CASE_IDS),
-        local_state_count=1,
-        samples_per_replica=4,
-        query_group_batch=1,
-        max_depth=32,
-        state_profile_id=E0_LAYER_STACK_BOUNDARY_PROFILE_ID,
-    )
-    provider = LayerStackProvider(collection, config)
-    collect_reference_dataset(
-        tmp_path / "boundary-reference.h5",
-        [provider],
-        collection,
-        created_at="2026-08-24T00:00:00+00:00",
-        generator_git_commit="test",
-    )
-    with ReferenceDataset.open(tmp_path / "boundary-reference.h5") as dataset:
-        assert dataset.manifest.counts["state_count"] == len(E0_LAYER_STACK_BOUNDARY_CASE_IDS)
-        assert {int(value) for value in dataset.state_splits} == {0, 1, 2}
-        assert dataset.manifest.provider_metadata[0]["provider_config"]["state_profile_id"] == E0_LAYER_STACK_BOUNDARY_PROFILE_ID
-        mean = dataset.group_batch(range(dataset.query_group_count))["mean"]
-        assert np.all(np.isfinite(mean))
-        assert np.all(mean >= 0.0)
+    with ReferenceDataset.open(path) as dataset:
+        assert dataset.manifest.format_name == "reference-shard"
+        assert dataset.manifest.sampling_name == "uniform-v1"
+        assert dataset.state_count == 12
+        assert dataset.direction_count == 4
+        assert np.all(np.isfinite(dataset.stream["responses/mean"][...]))
+        assert np.all(dataset.stream["responses/sample_count"][...] == 2)

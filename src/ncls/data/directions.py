@@ -5,16 +5,7 @@ import math
 import numpy as np
 
 
-HEMISPHERE_PARAMETERIZATION_ID = "equal-area-fibonacci-hemisphere@2"
-SPHERE_PARAMETERIZATION_ID = "equal-area-fibonacci-sphere@1"
-VIEW_PARAMETERIZATION_ID = "grazing-weighted-fibonacci-hemisphere@2"
-MIXTURE_QUERY_PROFILE_ID = "ncls.e0-peak-grazing-mixture@2"
-E1_MIXTURE_QUERY_PROFILE_ID = "ncls.e1-independent-peak-grazing-mixture@1"
-E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID = "ncls.e2-layer-stack-independent-peak-grazing-mixture@1"
-E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V2_ID = "ncls.e2-layer-stack-independent-peak-grazing-mixture@2"
-E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID = "ncls.e2-layer-stack-independent-peak-grazing-mixture@3"
 _PEAK_ANGULAR_SCALES = (0.0025, 0.0125, 0.06)
-_PEAK_PATCH_SIGMA = 0.003
 
 
 def equal_area_hemisphere(bin_count: int = 128, *, azimuth_offset: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
@@ -68,20 +59,63 @@ def stratified_view_directions(
 def grazing_anchored_view_directions(
     view_count: int,
     *,
+    min_theta_degrees: float = 75.0,
     max_theta_degrees: float = 89.0,
+    grazing_fraction: float = 0.2,
     azimuth_offset: float = 0.0,
 ) -> np.ndarray:
-    """生成分层 `wo`，并让每个非空 role 明确包含一个掠射 probe。"""
+    """按 cos(theta) 分层，并把至少指定比例的 `wo` 放入固定掠射带。"""
 
-    result = stratified_view_directions(
-        view_count,
-        max_theta_degrees=max_theta_degrees,
-        azimuth_offset=azimuth_offset,
-    )
-    phi = (view_count - 1) * (np.pi * (3.0 - np.sqrt(5.0))) + azimuth_offset
-    theta = np.deg2rad(max_theta_degrees)
-    result[-1] = (np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta))
-    return result
+    if view_count < 1 or not 0.0 <= grazing_fraction <= 1.0:
+        raise ValueError("view count and grazing fraction are invalid")
+    if not 0.0 < min_theta_degrees < max_theta_degrees < 90.0:
+        raise ValueError("grazing band must lie inside (0, 90) degrees")
+    grazing_count = min(view_count, max(1, int(np.ceil(view_count * grazing_fraction))))
+    regular_count = view_count - grazing_count
+    rows: list[np.ndarray] = []
+    if regular_count:
+        u = (np.arange(regular_count, dtype=np.float64) + 0.5) / regular_count
+        z_min = np.cos(np.deg2rad(min_theta_degrees))
+        z = z_min + (1.0 - z_min) * u
+        phi = np.arange(regular_count, dtype=np.float64) * (
+            np.pi * (3.0 - np.sqrt(5.0))
+        ) + azimuth_offset
+        radius = np.sqrt(np.maximum(0.0, 1.0 - z * z))
+        rows.append(np.stack((radius * np.cos(phi), radius * np.sin(phi), z), axis=1))
+    u = (np.arange(grazing_count, dtype=np.float64) + 0.5) / grazing_count
+    z_high = np.cos(np.deg2rad(min_theta_degrees))
+    z_low = np.cos(np.deg2rad(max_theta_degrees))
+    z = z_low + (z_high - z_low) * u
+    phi = (regular_count + np.arange(grazing_count, dtype=np.float64)) * (
+        np.pi * (3.0 - np.sqrt(5.0))
+    ) + azimuth_offset
+    radius = np.sqrt(np.maximum(0.0, 1.0 - z * z))
+    rows.append(np.stack((radius * np.cos(phi), radius * np.sin(phi), z), axis=1))
+    return np.concatenate(rows).astype(np.float32)
+
+
+def polar_band_view_directions(
+    view_count: int,
+    min_theta_degrees: float,
+    max_theta_degrees: float,
+    *,
+    azimuth_offset: float = 0.0,
+) -> np.ndarray:
+    """在给定极角带内按 cos(theta) 分层生成 canonical `wo.z > 0`。"""
+
+    if view_count < 1:
+        raise ValueError("polar band view count must be positive")
+    if not 0.0 < min_theta_degrees < max_theta_degrees < 90.0:
+        raise ValueError("polar band must lie inside (0, 90) degrees")
+    u = (np.arange(view_count, dtype=np.float64) + 0.5) / view_count
+    z_low = np.cos(np.deg2rad(max_theta_degrees))
+    z_high = np.cos(np.deg2rad(min_theta_degrees))
+    z = z_low + (z_high - z_low) * u
+    phi = np.arange(view_count, dtype=np.float64) * (
+        np.pi * (3.0 - np.sqrt(5.0))
+    ) + azimuth_offset
+    radius = np.sqrt(np.maximum(0.0, 1.0 - z * z))
+    return np.stack((radius * np.cos(phi), radius * np.sin(phi), z), axis=1).astype(np.float32)
 
 
 def stratified_uv(sample_count: int, seed: int) -> np.ndarray:
@@ -223,6 +257,43 @@ def _sample_grazing(count: int, full_sphere: bool, rng: np.random.Generator, exp
     return np.stack((radius * np.cos(phi), radius * np.sin(phi), z), axis=1)
 
 
+def _critical_band_pdf(
+    directions: np.ndarray,
+    band: tuple[float, float],
+) -> np.ndarray:
+    """返回透射半球临界角带上的归一化球面 PDF。"""
+
+    values = np.asarray(directions, dtype=np.float64)
+    low, high = band
+    selected = (
+        (values[..., 2] < 0.0)
+        & (-values[..., 2] >= low)
+        & (-values[..., 2] <= high)
+    )
+    return np.where(selected, 1.0 / (2.0 * math.pi * (high - low)), 0.0)
+
+
+def _sample_critical_band(
+    count: int,
+    rng: np.random.Generator,
+    band: tuple[float, float],
+) -> np.ndarray:
+    """在透射半球的固定临界角带内按立体角均匀采样。"""
+
+    if count < 1:
+        return np.empty((0, 3), dtype=np.float64)
+    low, high = band
+    u = (np.arange(count, dtype=np.float64) + rng.random(count)) / count
+    rng.shuffle(u)
+    z = -(low + (high - low) * u)
+    phi = 2.0 * math.pi * (
+        (np.arange(count, dtype=np.float64) + rng.random(count)) / count
+    )
+    rng.shuffle(phi)
+    radius = np.sqrt(np.maximum(0.0, 1.0 - z * z))
+    return np.stack((radius * np.cos(phi), radius * np.sin(phi), z), axis=1)
+
+
 def peak_grazing_mixture_pdf(
     directions: np.ndarray,
     view: np.ndarray,
@@ -230,43 +301,31 @@ def peak_grazing_mixture_pdf(
     full_sphere: bool,
     component_weights: tuple[float, ...] | None = None,
     reflection_center: np.ndarray | None = None,
-    reflection_patch_centers: np.ndarray | None = None,
+    critical_band_abs_cosine: tuple[float, float] = (0.65, 0.85),
 ) -> np.ndarray:
     values = np.asarray(directions, dtype=np.float64)
-    if reflection_center is not None and reflection_patch_centers is not None:
-        raise ValueError("reflection center and patch centers are mutually exclusive")
-    patch = None
-    if reflection_patch_centers is not None:
-        patch = np.asarray(reflection_patch_centers, dtype=np.float64)
-        if full_sphere or patch.ndim != 2 or patch.shape[1] != 3 or len(patch) < 1:
-            raise ValueError("reflection patch centers require a nonempty upper-hemisphere [count, 3] table")
-        if np.any(np.abs(np.linalg.norm(patch, axis=1) - 1.0) > 2e-4) or np.any(patch[:, 2] <= 0.0):
-            raise ValueError("reflection patch centers must be normalized and lie in the upper hemisphere")
+    if not 0.0 < critical_band_abs_cosine[0] < critical_band_abs_cosine[1] < 1.0:
+        raise ValueError("critical band cosine bounds must lie inside (0, 1)")
     exponent = 7.0
     if full_sphere:
-        weights = component_weights or (0.4, 0.25, 0.2, 0.15)
+        weights = component_weights or (0.3, 0.25, 0.2, 0.1, 0.15)
+        if len(weights) != 5 or any(weight < 0.0 for weight in weights) or not np.isclose(sum(weights), 1.0):
+            raise ValueError("full-sphere mixture requires five component weights")
         uniform = np.full(values.shape[:-1], 1.0 / (4.0 * math.pi))
         grazing = (exponent + 1.0) * np.power(1.0 - np.abs(values[..., 2]), exponent) / (4.0 * math.pi)
         return (
             weights[0] * uniform
             + weights[1] * _peak_component_pdf(values, view, 1.0, reflection_center)
             + weights[2] * _peak_component_pdf(values, view, -1.0)
-            + weights[3] * grazing
+            + weights[3] * _critical_band_pdf(values, critical_band_abs_cosine)
+            + weights[4] * grazing
         )
     weights = component_weights or (0.5, 0.35, 0.15)
+    if len(weights) != 3 or any(weight < 0.0 for weight in weights) or not np.isclose(sum(weights), 1.0):
+        raise ValueError("upper-hemisphere mixture requires three component weights")
     uniform = np.full(values.shape[:-1], 1.0 / (2.0 * math.pi))
     grazing = (exponent + 1.0) * np.power(1.0 - values[..., 2], exponent) / (2.0 * math.pi)
-    peak_pdf = (
-        np.mean(
-            np.stack([
-                _folded_vmf_pdf(values, center, 1.0 / (_PEAK_PATCH_SIGMA ** 2), 1.0)
-                for center in patch
-            ]),
-            axis=0,
-        )
-        if patch is not None
-        else _peak_component_pdf(values, view, 1.0, reflection_center)
-    )
+    peak_pdf = _peak_component_pdf(values, view, 1.0, reflection_center)
     return (
         weights[0] * uniform
         + weights[1] * peak_pdf
@@ -281,15 +340,14 @@ def peak_grazing_mixture_query(
     full_sphere: bool,
     seed: int,
     reflection_centers: np.ndarray | None = None,
-    reflection_patch_centers: np.ndarray | None = None,
+    component_weights: tuple[float, ...] | None = None,
+    critical_band_abs_cosine: tuple[float, float] = (0.65, 0.85),
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """生成按 wo 对齐、PDF 可计算的 uniform + peak + grazing 固定 query mixture。"""
 
     view_values = np.asarray(views, dtype=np.float64)
     if direction_count < 16 or seed < 0:
         raise ValueError("mixture query requires at least 16 directions and a nonnegative seed")
-    if reflection_centers is not None and reflection_patch_centers is not None:
-        raise ValueError("reflection centers and patch centers are mutually exclusive")
     if reflection_centers is None:
         center_values: np.ndarray | None = None
     else:
@@ -299,36 +357,20 @@ def peak_grazing_mixture_query(
         lengths = np.linalg.norm(center_values, axis=1)
         if np.any(np.abs(lengths - 1.0) > 2e-4):
             raise ValueError("reflection_centers must be normalized")
-    if reflection_patch_centers is None:
-        patch_values: np.ndarray | None = None
-    else:
-        patch_values = np.asarray(reflection_patch_centers, dtype=np.float64)
-        if (
-            full_sphere
-            or patch_values.ndim != 3
-            or patch_values.shape[0] != len(view_values)
-            or patch_values.shape[2] != 3
-            or patch_values.shape[1] < 1
-        ):
-            raise ValueError("reflection_patch_centers must have upper-hemisphere shape [view, patch, 3]")
-        if (
-            np.any(np.abs(np.linalg.norm(patch_values, axis=2) - 1.0) > 2e-4)
-            or np.any(patch_values[..., 2] <= 0.0)
-        ):
-            raise ValueError("reflection_patch_centers must be normalized and upper-hemisphere")
-    if patch_values is not None:
-        grazing_count = max(1, int(round(direction_count * 0.15)))
-        counts = [direction_count - patch_values.shape[1] - grazing_count, patch_values.shape[1], grazing_count]
-        if counts[0] < 1:
-            raise ValueError("reflection patch leaves no uniform query directions")
-    else:
-        base_weights = (0.4, 0.25, 0.2, 0.15) if full_sphere else (0.5, 0.35, 0.15)
-        counts = [max(1, int(round(direction_count * weight))) for weight in base_weights]
-        counts[-1] += direction_count - sum(counts)
-        if counts[-1] < 1:
-            deficit = 1 - counts[-1]
-            counts[-1] = 1
-            counts[0] -= deficit
+    base_weights = component_weights or (
+        (0.3, 0.25, 0.2, 0.1, 0.15) if full_sphere else (0.5, 0.35, 0.15)
+    )
+    expected_components = 5 if full_sphere else 3
+    if len(base_weights) != expected_components or any(weight < 0.0 for weight in base_weights):
+        raise ValueError(f"mixture requires {expected_components} nonnegative component weights")
+    if not np.isclose(sum(base_weights), 1.0):
+        raise ValueError("mixture component weights must sum to one")
+    if not 0.0 < critical_band_abs_cosine[0] < critical_band_abs_cosine[1] < 1.0:
+        raise ValueError("critical band cosine bounds must lie inside (0, 1)")
+    counts = [int(np.floor(direction_count * weight)) for weight in base_weights]
+    counts[0] += direction_count - sum(counts)
+    if any(weight > 0.0 and count < 1 for weight, count in zip(base_weights, counts, strict=True)):
+        raise ValueError("direction count is too small for the requested mixture")
     actual_weights = tuple(count / direction_count for count in counts)
     all_directions = np.empty((len(view_values), direction_count, 3), dtype=np.float32)
     all_pdf = np.empty((len(view_values), direction_count), dtype=np.float32)
@@ -336,22 +378,17 @@ def peak_grazing_mixture_query(
     for view_index, view in enumerate(view_values):
         rng = np.random.default_rng(seed ^ ((view_index + 1) * 0x9E3779B1))
         reflection_center = None if center_values is None else center_values[view_index]
-        patch_centers = None if patch_values is None else patch_values[view_index]
         if full_sphere:
             parts = (
                 _sample_uniform(counts[0], True, rng),
                 _sample_peak_component(view, counts[1], 1.0, rng, reflection_center),
                 _sample_peak_component(view, counts[2], -1.0, rng),
-                _sample_grazing(counts[3], True, rng),
+                _sample_critical_band(counts[3], rng, critical_band_abs_cosine),
+                _sample_grazing(counts[4], True, rng),
             )
         else:
-            peak_directions = (
-                _sample_peak_component(view, counts[1], 1.0, rng, reflection_center)
-                if patch_centers is None
-                else np.stack([
-                    _sample_vmf(center, 1.0 / (_PEAK_PATCH_SIGMA ** 2), 1, rng)[0]
-                    for center in patch_centers
-                ])
+            peak_directions = _sample_peak_component(
+                view, counts[1], 1.0, rng, reflection_center
             )
             peak_directions[:, 2] = np.abs(peak_directions[:, 2])
             parts = (
@@ -368,7 +405,7 @@ def peak_grazing_mixture_query(
             full_sphere=full_sphere,
             component_weights=actual_weights,
             reflection_center=reflection_center,
-            reflection_patch_centers=patch_centers,
+            critical_band_abs_cosine=critical_band_abs_cosine,
         )
         if not np.all(np.isfinite(pdf)) or np.any(pdf <= 0.0):
             raise RuntimeError("mixture query produced an invalid PDF")

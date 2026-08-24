@@ -71,17 +71,15 @@ def _checkpoint_payload(
     return {
         "format_name": CHECKPOINT_FORMAT,
         "format_version": CHECKPOINT_VERSION,
-        "pipeline_id": pipeline.descriptor.pipeline_id,
-        "pipeline_contract": pipeline.descriptor.to_dict(),
-        "pipeline_contract_sha256": pipeline.descriptor.sha256,
-        "architecture_id": pipeline.descriptor.architecture_id,
-        "representation_id": pipeline.descriptor.representation_id,
-        "feature_contract_id": pipeline.descriptor.feature_transform_id,
-        "dataset_id": store.dataset.manifest.dataset_id,
+        "pipeline": pipeline.descriptor.name,
+        "pipeline_descriptor": pipeline.descriptor.to_dict(),
+        "pipeline_sha256": pipeline.descriptor.sha256,
+        "data_id": store.data_id,
         "training_config": config.to_dict(),
         "training_config_sha256": config.resolved_sha256,
         "fitted_training_state": fitted_training_state,
         "fitted_training_state_sha256": _sha256_json(fitted_training_state),
+        "fitted_state_train_only": True,
         "initialization": initialization,
         "step": step,
         "model_state": model.state_dict(),
@@ -94,7 +92,7 @@ def _checkpoint_payload(
 
 
 def train(
-    dataset_path: Path | str,
+    data_path: Path | str,
     run_dir: Path | str,
     config: TrainingConfig,
 ) -> dict[str, Any]:
@@ -115,10 +113,10 @@ def train(
     if config.deterministic:
         torch.use_deterministic_algorithms(True)
     device = torch.device(config.device or ("cuda" if torch.cuda.is_available() else "cpu"))
-    pipeline = create_pipeline(config.pipeline_id)
-    if config.research_stage != pipeline.descriptor.research_role:
-        raise ValueError("training config research_stage does not match the registered pipeline role")
-    store = pipeline.open_store(str(dataset_path))
+    pipeline = create_pipeline(config.pipeline)
+    if config.stage != pipeline.descriptor.stage:
+        raise ValueError("training config stage does not match the registered pipeline")
+    store = pipeline.open_store(str(data_path))
     lifecycle_indices = {
         role: store.select_indices(
             pipeline.lifecycle_indices(store, role),
@@ -130,7 +128,7 @@ def train(
         raise ValueError("training requires nonempty train and validation lifecycle partitions")
     fitted_training_state = dict(pipeline.fit_training_state(store, lifecycle_indices["train"]))
     pipeline.load_training_state(fitted_training_state)
-    model = pipeline.create_model(config.model_parameters).to(device)
+    model = pipeline.create_model(config.model).to(device)
     initialization: dict[str, Any] | None = None
     if config.initialization_checkpoint is not None:
         initialization_path = Path(config.initialization_checkpoint)
@@ -138,13 +136,13 @@ def train(
             initialization_path = PROJECT_ROOT / initialization_path
         initialization_path = initialization_path.resolve()
         source_checkpoint = load_checkpoint(initialization_path, map_location=device)
-        if source_checkpoint.get("dataset_id") != store.dataset.manifest.dataset_id:
-            raise ValueError("initialization checkpoint dataset_id does not match training data")
+        if source_checkpoint.get("data_id") != store.data_id:
+            raise ValueError("initialization checkpoint data_id does not match training data")
         details = dict(pipeline.initialize_model_from_checkpoint(model, source_checkpoint))
         initialization = {
             "uri": config.initialization_checkpoint,
             "sha256": sha256_file(initialization_path),
-            "source_pipeline_id": source_checkpoint.get("pipeline_id"),
+            "source_pipeline": source_checkpoint.get("pipeline"),
             "source_run_step": source_checkpoint.get("step"),
             **details,
         }
@@ -169,25 +167,21 @@ def train(
     )
     created_at = datetime.now(timezone.utc).isoformat()
     run_id = hashlib.sha256(
-        f"{store.dataset.manifest.dataset_id}\0{config.resolved_sha256}\0{created_at}".encode("utf-8")
+        f"{store.data_id}\0{config.resolved_sha256}\0{created_at}".encode("utf-8")
     ).hexdigest()
     manifest: dict[str, Any] = {
-        "format_name": "ncls.training-run",
-        "format_version": 3,
+        "format_name": "training-run",
+        "format_version": 1,
         "run_id": run_id,
         "status": "running",
         "created_at": created_at,
         "completed_at": None,
         "source_git_commit": _git_commit(),
-        "dataset_id": store.dataset.manifest.dataset_id,
-        "pipeline_id": pipeline.descriptor.pipeline_id,
-        "candidate_id": pipeline.descriptor.candidate_id,
-        "research_role": pipeline.descriptor.research_role,
-        "pipeline_contract": pipeline.descriptor.to_dict(),
-        "pipeline_contract_sha256": pipeline.descriptor.sha256,
-        "architecture_id": pipeline.descriptor.architecture_id,
-        "representation_id": pipeline.descriptor.representation_id,
-        "feature_contract": dict(pipeline.feature_contract),
+        "data_id": store.data_id,
+        "pipeline": pipeline.descriptor.name,
+        "pipeline_descriptor": pipeline.descriptor.to_dict(),
+        "pipeline_sha256": pipeline.descriptor.sha256,
+        "capacity": config.capacity,
         "dataset_selection": {
             name: list(values) for name, values in config.dataset_selection.items()
         },
@@ -207,9 +201,7 @@ def train(
             role: int(len(indices)) for role, indices in lifecycle_indices.items()
         },
         "lifecycle_source_state_counts": {
-            role: int(len(np.unique(np.asarray(
-                store.dataset.stream["queries/state_index"][indices], dtype=np.int64
-            ))))
+            role: int(len(np.unique(store.query_state_indices(indices))))
             for role, indices in lifecycle_indices.items()
         },
         "held_out_test_accessed": False,
@@ -218,7 +210,7 @@ def train(
     _write_json_atomic(output / "run_manifest.json", manifest)
     writer = SummaryWriter(log_dir=str(output / "tensorboard"))
     validation_history: list[dict[str, Any]] = []
-    best_score = float("inf")
+    best_score = (float("inf"), float("inf"))
     best_hash: str | None = None
     last_hash: str | None = None
     start_time = time.perf_counter()
@@ -229,7 +221,7 @@ def train(
             indices = store.sample_batch_indices(lifecycle_indices["train"], config.batch_size, np_rng)
             batch = tensor_batch(store.batch(indices), device)
             optimizer.zero_grad(set_to_none=True)
-            prediction = pipeline.predict(model, batch, store, device)
+            prediction = pipeline.predict_f(model, batch, store, device)
             loss = pipeline.training_loss(prediction, batch)
             loss.backward()
             gradient_norm = torch.nn.utils.clip_grad_norm_(
@@ -251,11 +243,17 @@ def train(
                     lifecycle_indices["validation"],
                     device,
                     batch_size=config.batch_size,
-                    max_query_groups=config.max_validation_query_groups,
+                    evaluation_role="validation",
                 )
+                if not latest_validation["valid"]:
+                    raise RuntimeError("validation quality-v1 sanity failed")
                 record = {"step": step, **latest_validation}
                 validation_history.append(record)
-                writer.add_scalar("validation/loss", latest_validation["loss"], step)
+                writer.add_scalar(
+                    "validation/loss",
+                    latest_validation["training_loss_diagnostic"],
+                    step,
+                )
                 for metric_name, summary in latest_validation.items():
                     if not isinstance(summary, dict):
                         continue
@@ -264,8 +262,8 @@ def train(
                             writer.add_scalar(
                                 f"validation/{metric_name}_{summary_name}", value, step
                             )
-                metric_name, summary_name = config.selection_metric.split(".", 1)
-                score = float(latest_validation[metric_name][summary_name])
+                direction = latest_validation["primary"]["directional_l1_by_state"]
+                score = (float(direction["median"]), float(direction["p95"]))
                 if score < best_score:
                     best_score = score
                     best_hash = save_checkpoint_atomic(
@@ -309,8 +307,8 @@ def train(
         manifest["completed_at"] = datetime.now(timezone.utc).isoformat()
         manifest["seconds"] = time.perf_counter() - start_time
         manifest["best_validation"] = {
-            "selection_metric": config.selection_metric,
-            "value": best_score,
+            "selection": "directional_l1_by_state.median_then_p95",
+            "value": list(best_score),
         }
         manifest["checkpoints"] = {
             "best": {"uri": "checkpoints/best.pt", "sha256": best_hash},
