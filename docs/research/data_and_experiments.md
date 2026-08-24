@@ -188,6 +188,8 @@ E2 的共享表示监督入口已经通过冻结 gate。`ncls.e2-layer-stack-sha
 
 structured latent 已通过同一 lifecycle smoke。`16×16` dictionary/top-4 的随机初始化 hard top-k 只有 `60 bytes/state`，但 test median/p95 `0.12905/0.27149`，并失败 energy、recall、source reciprocity 和 SE，因此淘汰这套纯梯度初始化，不据此否定 train-only K-means/target encoder 初始化。rank-4 factorized latent 为 `52 bytes/state`，test `0.09797/0.22869`，energy、peak 与 recall 通过，接近 matched dense16 3k 的 `0.09172/0.22330`；它保留作低 `B_asset` 对照，但尚未通过 aggregate/source reciprocity/SE gate。下一步按既定依赖先验证 target response tensor encoder，再决定是否对 factorized latent 投入更长训练。
 
+train-only target tensor encoder 已完成首个同预算 smoke。DeepSets encoder 对每 state 的 `[2048,10]` response-residual points 做 permutation-invariant pooling；输入内容 hash `7534b2c6...` 随 checkpoint 持久化，验证重建只读取 train query。encoder-only 的 test median `0.08586` 优于 matched dense16 3k 的 `0.09172`，但 p95 `0.23174`、recall p5 `0.82634`、model/reference-SE `29.79` 仍失败；它保留为 target initialization。下一实验固定 encoder/decoder，只允许有限步 per-state refinement，以区分初始化质量与 optimized latent 上界。
+
 三组 LayerStack 的相同 state/query 在四档自适应预算下测得以下 noise 曲线；`sample_count` 是合并两个 replica 后的总样本数上限：
 
 | 最大总样本数 | relative SE p95 | replica normalized L1 p95 | gate |
