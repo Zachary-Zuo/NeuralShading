@@ -19,6 +19,7 @@ from .plane_factorized import (
 from .shared_evaluator import (
     AnalyticResidualSharedEvaluatorE2Pipeline,
     DenseLatentSharedEvaluatorE2Pipeline,
+    PerStateAnalyticResidualSharedEvaluatorE2Pipeline,
 )
 
 
@@ -55,3 +56,4 @@ register_pipeline(PlaneFactorizedEnergyShapeE1Pipeline)
 register_pipeline(PlaneFactorizedAnalyticResidualE1Pipeline)
 register_pipeline(DenseLatentSharedEvaluatorE2Pipeline)
 register_pipeline(AnalyticResidualSharedEvaluatorE2Pipeline)
+register_pipeline(PerStateAnalyticResidualSharedEvaluatorE2Pipeline)

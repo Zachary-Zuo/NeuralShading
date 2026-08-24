@@ -539,6 +539,48 @@ def test_shared_analytic_residual_uses_explicit_layer_stack_adapter(tmp_path: Pa
         }
 
 
+def test_per_state_shared_analytic_residual_accounts_transform_per_asset(
+    tmp_path: Path,
+) -> None:
+    dataset_path = tmp_path / "per-state-shared-analytic-e2-dataset.h5"
+    _e1_dataset(dataset_path)
+    pipeline = create_pipeline("analytic-core-shared-neural-residual-energy-shape-e2@2")
+    assert pipeline.descriptor.target_transform_id == (
+        "ncls.train-only-per-state-standardized-asinh-analytic-residual@1"
+    )
+    with pipeline.open_store(str(dataset_path)) as store:
+        indices = pipeline.lifecycle_indices(store, "train")
+        state = pipeline.fit_training_state(store, indices)
+        state_count = len(state["state_ids"])
+        assert state["format_version"] == 4
+        assert state["target_channel_scale"] is None
+        assert np.asarray(state["target_channel_scale_by_state"]).shape == (state_count, 3)
+        assert np.all(np.asarray(state["target_channel_scale_by_state"]) > 0.0)
+        pipeline.load_training_state(state)
+        model = pipeline.create_model({
+            "latent_dimension": 4,
+            "width": 8,
+            "prepare_layer_count": 1,
+            "evaluate_layer_count": 1,
+            "activation": "gelu",
+            "direction_encoding_id": "ncls.half-difference-directions@1",
+            "fourier_band_count": 1,
+            "output_bias": 0.0,
+        })
+        batch = {
+            name: torch.as_tensor(value)
+            for name, value in store.batch(indices[[0, 2, 4]]).items()
+        }
+        prediction = pipeline.predict(model, batch, store, torch.device("cpu"))
+        loss = pipeline.training_loss(prediction, batch)
+        assert torch.isfinite(loss)
+        loss.backward()
+        costs = pipeline.parameter_costs(model)
+        assert costs["B_asset_target_transform_fp32"] == 36
+        assert costs["B_asset_fp32"] == 52
+        assert costs["B_asset_fp32_total"] == state_count * 52
+
+
 def test_plane_factorized_pipeline_uses_the_common_e1_lifecycle(tmp_path: Path) -> None:
     dataset_path = tmp_path / "plane-factorized-dataset.h5"
     _e1_dataset(dataset_path)

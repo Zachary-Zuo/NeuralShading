@@ -16,6 +16,8 @@ E2 的第一条公共路径是 `dense-latent-shared-small-mlp-energy-shape-e2@1`
 
 LayerStack 的 E2 对照 `analytic-core-shared-neural-residual-energy-shape-e2@1` 使用同一个 latent table、shared decoder、partition、checkpoint 和 metric 生命周期，只把 source adapter 与 target transform 换成显式版本化的 direct-top core + signed standardized `asinh` residual。direct-top adapter 位于 `ncls.learning.source_adapters`，E1/E2 共用，不再从某个 pipeline 私有实现互相调用。它只解释 LayerStack native payload；公共 runner、response reader 与其他 source family 不需要提供层参数。
 
+共享 residual 的首个容量实验暴露了跨 state 共用 transform 的具体缺陷：单界面 sheen 的 analytic core 已在 reference SE 内，而全局 residual scale 仍迫使 decoder 同时表达约 `1e-8` 与 `1e-1` 的残差。`analytic-core-shared-neural-residual-energy-shape-e2@2` 因而只用每个 state 的 train query 拟合各通道 `asinh` scale/mean/std，并把 9 个 float（36 bytes）显式计入每材质 `B_asset`；validation/test 不参与这些统计。旧 `@1` 保留用于复现已有 run。`@2` 同时提高已由 p95 长尾证明过弱的互易性 loss 权重，但不修改冻结 acceptance gate，也不把 target-visible 统计解释成 source compiler 输出。
+
 ## 三条路径的边界
 
 Python 侧的工具生命周期仍分成三条路径，但必须记录拟合对象和结论范围：
