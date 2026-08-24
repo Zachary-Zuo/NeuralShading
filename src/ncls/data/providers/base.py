@@ -20,6 +20,7 @@ from ncls.data.contract import (
 from ncls.data.directions import (
     E1_MIXTURE_QUERY_PROFILE_ID,
     E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID,
+    E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID,
     MIXTURE_QUERY_PROFILE_ID,
     equal_area_hemisphere,
     equal_area_sphere,
@@ -101,7 +102,10 @@ class BaseProvider:
                 else 0
             )
             role_offset = np.mod(partition_index * 0.2718281828459045, 2.0) * np.pi
-            if self.config.query_profile_id == E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID:
+            if self.config.query_profile_id in {
+                E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID,
+                E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID,
+            }:
                 views = grazing_anchored_view_directions(
                     count,
                     max_theta_degrees=89.0,
@@ -118,6 +122,7 @@ class BaseProvider:
             role_seed = query_seed ^ ((role + 1) * 0x9E3779B1)
             use_mixture = self.config.query_profile_id in {
                 E1_MIXTURE_QUERY_PROFILE_ID,
+                E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID,
                 E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID,
             } or (
                 self.config.query_profile_id == MIXTURE_QUERY_PROFILE_ID

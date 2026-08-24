@@ -204,7 +204,7 @@ def test_e2_query_profile_anchors_wo_and_tracks_single_sheen_peak() -> None:
             adversarial_view_count=4,
             light_count=128,
             seed=20260824,
-            query_profile_id="ncls.e2-layer-stack-independent-peak-grazing-mixture@1",
+            query_profile_id="ncls.e2-layer-stack-independent-peak-grazing-mixture@2",
         ),
         LayerStackProviderConfig(
             family_count=12,
@@ -225,6 +225,15 @@ def test_e2_query_profile_anchors_wo_and_tracks_single_sheen_peak() -> None:
         plan.view_directions,
         sheen_state.runtime_state.interfaces[0].roughness,
     )
+    legacy_centers = provider._sheen_peak_centers(
+        plan.view_directions,
+        sheen_state.runtime_state.interfaces[0].roughness,
+        legacy_v1_semantics=True,
+    )
+    non_grazing = plan.view_directions[:, 2] > 0.1
+    assert np.min(centers[non_grazing, 2]) > 0.1
+    assert np.max(centers[:, 2]) < 0.5
+    assert np.max(legacy_centers[:, 2]) < 0.02
     nearest = np.degrees(np.arccos(np.clip(
         np.max(np.sum(plan.light_directions * centers[:, None, :], axis=-1), axis=1),
         -1.0,

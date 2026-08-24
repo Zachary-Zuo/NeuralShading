@@ -13,6 +13,7 @@ from .dataset import ReferenceDatasetManifest, ReferenceDatasetWriter
 from .directions import (
     E1_MIXTURE_QUERY_PROFILE_ID,
     E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID,
+    E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID,
     MIXTURE_QUERY_PROFILE_ID,
 )
 from .surfaces import CONSTANT_FOOTPRINT_PROFILE_ID, E0_FOOTPRINT_MINIMUM_SAMPLE_COUNT, E0_FOOTPRINT_PROFILE_ID, SURFACE_PROFILE_IDS
@@ -57,6 +58,7 @@ class CollectionConfig:
             MIXTURE_QUERY_PROFILE_ID,
             E1_MIXTURE_QUERY_PROFILE_ID,
             E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID,
+            E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID,
         }:
             raise ValueError("unsupported query profile")
 

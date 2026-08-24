@@ -335,6 +335,7 @@ def build_parser() -> argparse.ArgumentParser:
             "ncls.e0-peak-grazing-mixture@2",
             "ncls.e1-independent-peak-grazing-mixture@1",
             "ncls.e2-layer-stack-independent-peak-grazing-mixture@1",
+            "ncls.e2-layer-stack-independent-peak-grazing-mixture@2",
         ),
         default="ncls.uniform-split-independent@1",
     )

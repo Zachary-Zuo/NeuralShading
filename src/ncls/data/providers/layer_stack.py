@@ -19,7 +19,11 @@ from ncls.data.contract import (
     SurfaceSample,
     make_state_id,
 )
-from ncls.data.directions import E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID, peak_grazing_mixture_query
+from ncls.data.directions import (
+    E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID,
+    E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID,
+    peak_grazing_mixture_query,
+)
 from ncls.data.priors import (
     E0_LAYER_STACK_BOUNDARY_CASE_IDS,
     E0_LAYER_STACK_BOUNDARY_PROFILE_ID,
@@ -209,7 +213,12 @@ class LayerStackProvider(BaseProvider):
         return self._states
 
     @staticmethod
-    def _sheen_peak_centers(views: np.ndarray, roughness: float) -> np.ndarray:
+    def _sheen_peak_centers(
+        views: np.ndarray,
+        roughness: float,
+        *,
+        legacy_v1_semantics: bool = False,
+    ) -> np.ndarray:
         z = np.linspace(1e-3, 1.0, 4096, dtype=np.float64)
         inverse_alpha = 1.0 / max(roughness, 1e-3)
         r = (1.0 - roughness) ** 2
@@ -246,11 +255,25 @@ class LayerStackProvider(BaseProvider):
                 * np.power(sin2, 0.5 * inverse_alpha)
                 / (2.0 * np.pi)
             )
-            softened = sheen_lambda(np.asarray([view[2]]))[0] ** (
-                1.0 + 2.0 * (1.0 - view[2]) ** 8
-            )
-            masking = 1.0 / (1.0 + softened + sheen_lambda(z))
-            response = distribution * masking / (4.0 * z * view[2])
+            if legacy_v1_semantics:
+                softened = sheen_lambda(np.asarray([view[2]]))[0] ** (
+                    1.0 + 2.0 * (1.0 - view[2]) ** 8
+                )
+                masking = 1.0 / (1.0 + softened + sheen_lambda(z))
+            else:
+                # 单界面入口按 (viewDirection, lightDirection) 传入 shader 的
+                # (wi, wo)；softened 项属于候选 light cosine，顺序不可互换。
+                softened = np.power(
+                    sheen_lambda(z),
+                    1.0 + 2.0 * np.power(1.0 - z, 8),
+                )
+                masking = 1.0 / (
+                    1.0 + softened + sheen_lambda(np.asarray([view[2]]))[0]
+                )
+            response = distribution * masking / (4.0 * view[2])
+            if legacy_v1_semantics:
+                # @1 错把裸 BSDF 的峰当成 HDF5 response 峰；保留仅用于复现失败数据。
+                response /= z
             result[index] = wi[int(np.argmax(response))]
         return result.astype(np.float32)
 
@@ -262,12 +285,21 @@ class LayerStackProvider(BaseProvider):
         base = super().query_plan(state, surfaces)
         stack = state.runtime_state
         if (
-            self.config.query_profile_id != E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID
+            self.config.query_profile_id not in {
+                E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID,
+                E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID,
+            }
             or len(stack.interfaces) != 1
             or not isinstance(stack.interfaces[0], SheenInterface)
         ):
             return base
-        centers = self._sheen_peak_centers(base.view_directions, stack.interfaces[0].roughness)
+        centers = self._sheen_peak_centers(
+            base.view_directions,
+            stack.interfaces[0].roughness,
+            legacy_v1_semantics=(
+                self.config.query_profile_id == E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID
+            ),
+        )
         lights = base.light_directions.copy()
         weights = base.solid_angle_weights.copy()
         pdf = base.proposal_pdf.copy()
