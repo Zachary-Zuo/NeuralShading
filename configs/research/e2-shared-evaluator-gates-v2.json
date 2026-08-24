@@ -1,0 +1,39 @@
+{
+  "format_name": "ncls.evaluator-acceptance-gate",
+  "format_version": 1,
+  "gate_id": "ncls.e2-shared-evaluator-acceptance@2",
+  "status": "frozen",
+  "required_research_role": "e2-shared-representation-capacity",
+  "rationale": "门槛在 source reciprocity probe 后冻结。数值、峰值和成本阈值与 @1 完全相同；只把绝对 reciprocity 换成 evaluator 相对 source 预期非互易项的偏差。Falcor 交换方向 probe 证明 ncls.interface.sheen@1 的 terminator softening 本身非互易，reference/core test p95 分别约 1.15/1.55 且二者一致；忠实 evaluator 不能因复现该 source 语义而失败。绝对 reciprocity 仍必须报告。该 gate 仍只验收 target-visible E2 容量，不代表 compiler、Slang 或 viewer 通过。",
+  "metric_requirements": {
+    "test": {
+      "solid_angle_normalized_l1.median": {"maximum": 0.08},
+      "solid_angle_normalized_l1.p95": {"maximum": 0.20},
+      "log_l1.p95": {"maximum": 0.15},
+      "energy_relative_error.p95": {"maximum": 0.15},
+      "peak_ratio_log_error.p95": {"maximum": 0.2231435513},
+      "peak_angle_degrees.p95": {"maximum": 2.0},
+      "top_5_percent_energy_recall.p5": {"minimum": 0.85},
+      "model_error_over_reference_standard_error.p95": {"maximum": 6.0},
+      "source_reciprocity_deviation_relative_l1.p95": {"maximum": 0.05},
+      "finite_rate.minimum": {"minimum": 1.0},
+      "nonnegative_rate.minimum": {"minimum": 1.0}
+    },
+    "adversarial_probe": {
+      "solid_angle_normalized_l1.median": {"maximum": 0.10},
+      "solid_angle_normalized_l1.p95": {"maximum": 0.25},
+      "energy_relative_error.p95": {"maximum": 0.20},
+      "peak_ratio_log_error.p95": {"maximum": 0.2876820725},
+      "peak_angle_degrees.p95": {"maximum": 2.0},
+      "top_5_percent_energy_recall.p5": {"minimum": 0.80},
+      "finite_rate.minimum": {"minimum": 1.0},
+      "nonnegative_rate.minimum": {"minimum": 1.0}
+    }
+  },
+  "cost_requirements": {
+    "B_asset_fp32": {"maximum": 512},
+    "B_shared_fp32": {"maximum": 524288},
+    "C_prepare_macs": {"maximum": 65536},
+    "C_eval_macs": {"maximum": 65536}
+  }
+}

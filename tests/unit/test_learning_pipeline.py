@@ -581,6 +581,41 @@ def test_per_state_shared_analytic_residual_accounts_transform_per_asset(
         assert costs["B_asset_fp32_total"] == state_count * 52
 
 
+def test_source_aware_shared_residual_reports_deviation_from_source_asymmetry(
+    tmp_path: Path,
+) -> None:
+    dataset_path = tmp_path / "source-aware-shared-analytic-e2-dataset.h5"
+    _e1_dataset(dataset_path)
+    pipeline = create_pipeline("analytic-core-shared-neural-residual-energy-shape-e2@3")
+    with pipeline.open_store(str(dataset_path)) as store:
+        indices = pipeline.lifecycle_indices(store, "train")
+        pipeline.load_training_state(pipeline.fit_training_state(store, indices))
+        model = pipeline.create_model({
+            "latent_dimension": 4,
+            "width": 8,
+            "prepare_layer_count": 1,
+            "evaluate_layer_count": 1,
+            "activation": "gelu",
+            "direction_encoding_id": "ncls.half-difference-directions@1",
+            "fourier_band_count": 1,
+            "output_bias": 0.0,
+        }).eval()
+        batch = {
+            name: torch.as_tensor(value)
+            for name, value in store.batch(indices[[0, 2, 4]]).items()
+        }
+        metrics = pipeline.additional_metric_distributions(
+            model, batch, store, torch.device("cpu")
+        )
+        assert set(metrics) == {
+            "reciprocity_relative_l1",
+            "source_reciprocity_deviation_relative_l1",
+            "analytic_core_solid_angle_normalized_l1",
+        }
+        assert metrics["source_reciprocity_deviation_relative_l1"].shape == (3,)
+        assert np.all(np.isfinite(metrics["source_reciprocity_deviation_relative_l1"]))
+
+
 def test_plane_factorized_pipeline_uses_the_common_e1_lifecycle(tmp_path: Path) -> None:
     dataset_path = tmp_path / "plane-factorized-dataset.h5"
     _e1_dataset(dataset_path)

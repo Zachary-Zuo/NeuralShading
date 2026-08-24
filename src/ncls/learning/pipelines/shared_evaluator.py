@@ -25,6 +25,9 @@ ANALYTIC_RESIDUAL_PIPELINE_ID = "analytic-core-shared-neural-residual-energy-sha
 PER_STATE_ANALYTIC_RESIDUAL_PIPELINE_ID = (
     "analytic-core-shared-neural-residual-energy-shape-e2@2"
 )
+SOURCE_AWARE_ANALYTIC_RESIDUAL_PIPELINE_ID = (
+    "analytic-core-shared-neural-residual-energy-shape-e2@3"
+)
 _TARGET_TRANSFORM_ID = "ncls.train-only-standardized-channel-log1p@1"
 _RESIDUAL_TARGET_TRANSFORM_ID = "ncls.train-only-standardized-asinh-analytic-residual@1"
 _FAMILIES = (
@@ -480,6 +483,15 @@ class AnalyticResidualSharedEvaluatorE2Pipeline(DenseLatentSharedEvaluatorE2Pipe
         batch: Mapping[str, torch.Tensor],
         store: ReferenceQueryStore,
     ) -> torch.Tensor:
+        reverse_core, reverse_residual = self._reverse_components(model, batch, store)
+        return torch.clamp(reverse_core + reverse_residual, min=0.0)
+
+    def _reverse_components(
+        self,
+        model: SharedMaterialNeuralEvaluator,
+        batch: Mapping[str, torch.Tensor],
+        store: ReferenceQueryStore,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         wo = batch["view"].float()
         wi = batch["lights"].float()
         slots = self._material_slots(batch, store)
@@ -495,8 +507,9 @@ class AnalyticResidualSharedEvaluatorE2Pipeline(DenseLatentSharedEvaluatorE2Pipe
         reverse_residual = self._decode_for_slots(
             model(reverse_view, reverse_light, repeated_slots), repeated_slots
         )
-        return torch.clamp(reverse_core + reverse_residual, min=0.0).reshape(
-            group_count, direction_count, 3
+        return (
+            reverse_core.reshape(group_count, direction_count, 3),
+            reverse_residual.reshape(group_count, direction_count, 3),
         )
 
     def predict(
@@ -783,3 +796,117 @@ class PerStateAnalyticResidualSharedEvaluatorE2Pipeline(
             "residual transform"
         )
         return costs
+
+
+class SourceAwarePerStateAnalyticResidualSharedEvaluatorE2Pipeline(
+    PerStateAnalyticResidualSharedEvaluatorE2Pipeline
+):
+    """保留 source 固有非互易项，并度量 evaluator 对该项的额外偏差。"""
+
+    descriptor = LearningPipelineDescriptor(
+        pipeline_id=SOURCE_AWARE_ANALYTIC_RESIDUAL_PIPELINE_ID,
+        candidate_id="ncls.analytic-core-neural-residual@1",
+        research_role="e2-shared-representation-capacity",
+        response_reader_id="ncls.reference-query-store@1",
+        partition_policy_id="ncls.query-role-within-state@1",
+        source_adapter_id="ncls.layer-stack-direct-top-adapter@1",
+        feature_transform_id="ncls.local-frame-wo-wi-material-slot@1",
+        target_transform_id=(
+            "ncls.train-only-per-state-standardized-asinh-analytic-residual@1"
+        ),
+        representation_id=(
+            "ncls.analytic-direct-top-shared-neural-residual-per-state-normalization@1"
+        ),
+        architecture_id=SHARED_ARCHITECTURE_ID,
+        latent_inference_id="ncls.optimized-target-visible-dense-material-latent-table@1",
+        compiler_id="ncls.none-target-visible-capacity-study@1",
+        loss_id=(
+            "ncls.per-state-standardized-asinh-residual-energy-shape-reciprocity@1"
+        ),
+        metric_suite_id=(
+            "ncls.evaluator-quality-suite-by-state-with-source-reciprocity@1"
+        ),
+        exporter_id="ncls.neural-evaluator-method-bundle-planned@1",
+        supported_family_ids=("ncls.layer-stack@1",),
+        scope=(
+            "multi-material-target-visible-source-aware-per-state-normalized-"
+            "analytic-residual-autodecoder-capacity"
+        ),
+    )
+
+    @staticmethod
+    def _source_reciprocity_deviation(
+        forward: torch.Tensor,
+        reverse: torch.Tensor,
+        core_forward: torch.Tensor,
+        core_reverse: torch.Tensor,
+        wo: torch.Tensor,
+        wi: torch.Tensor,
+        source_asymmetry_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        wi_cosine = torch.abs(wi[..., 2:3])
+        wo_cosine = torch.abs(wo[:, None, 2:3])
+        valid = (wi_cosine > 0.05) & (wo_cosine > 0.05)
+        forward_bsdf = forward / torch.clamp(wi_cosine, min=0.05)
+        reverse_bsdf = reverse / torch.clamp(wo_cosine, min=0.05)
+        predicted_asymmetry = forward_bsdf - reverse_bsdf
+        core_asymmetry = (
+            core_forward / torch.clamp(wi_cosine, min=0.05)
+            - core_reverse / torch.clamp(wo_cosine, min=0.05)
+        )
+        expected_asymmetry = torch.where(
+            source_asymmetry_mask[:, None, None],
+            core_asymmetry,
+            torch.zeros_like(core_asymmetry),
+        )
+        delta = torch.where(
+            valid,
+            torch.abs(predicted_asymmetry - expected_asymmetry),
+            torch.zeros_like(predicted_asymmetry),
+        )
+        magnitude = torch.where(
+            valid, torch.abs(forward_bsdf), torch.zeros_like(forward_bsdf)
+        )
+        return torch.sum(delta, dim=(1, 2)) / torch.clamp(
+            torch.sum(magnitude, dim=(1, 2)), min=1e-8
+        )
+
+    def additional_metric_distributions(
+        self,
+        model: nn.Module,
+        batch: Mapping[str, torch.Tensor],
+        store: ReferenceQueryStore,
+        device: torch.device,
+    ) -> Mapping[str, np.ndarray]:
+        metrics = dict(super().additional_metric_distributions(
+            model, batch, store, device
+        ))
+        if not isinstance(model, SharedMaterialNeuralEvaluator):
+            raise TypeError("source-aware shared residual requires SharedMaterialNeuralEvaluator")
+        core_forward = self._core(
+            batch, batch["view"].float(), batch["lights"].float()
+        )
+        slots = self._material_slots(batch, store)
+        residual = self._decode_for_slots(
+            self._raw_prediction(model, batch, store), slots
+        )
+        forward = torch.clamp(core_forward + residual, min=0.0)
+        core_reverse, reverse_residual = self._reverse_components(model, batch, store)
+        reverse = torch.clamp(core_reverse + reverse_residual, min=0.0)
+        single_sheen = (
+            (batch["interface_counts"].long() == 1)
+            & (batch["top_kind"].long() == 3)
+        )
+        deviation = self._source_reciprocity_deviation(
+            forward,
+            reverse,
+            core_forward,
+            core_reverse,
+            batch["view"].float(),
+            batch["lights"].float(),
+            single_sheen,
+        )
+        metrics["source_reciprocity_deviation_relative_l1"] = (
+            deviation.detach().cpu().numpy()
+        )
+        return metrics

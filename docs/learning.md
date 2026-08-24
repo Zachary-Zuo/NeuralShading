@@ -18,6 +18,8 @@ LayerStack 的 E2 对照 `analytic-core-shared-neural-residual-energy-shape-e2@1
 
 共享 residual 的首个容量实验暴露了跨 state 共用 transform 的具体缺陷：单界面 sheen 的 analytic core 已在 reference SE 内，而全局 residual scale 仍迫使 decoder 同时表达约 `1e-8` 与 `1e-1` 的残差。`analytic-core-shared-neural-residual-energy-shape-e2@2` 因而只用每个 state 的 train query 拟合各通道 `asinh` scale/mean/std，并把 9 个 float（36 bytes）显式计入每材质 `B_asset`；validation/test 不参与这些统计。旧 `@1` 保留用于复现已有 run。`@2` 同时提高已由 p95 长尾证明过弱的互易性 loss 权重，但不修改冻结 acceptance gate，也不把 target-visible 统计解释成 source compiler 输出。
 
+`ncls.interface.sheen@1` 延续锁定 reference 的 terminator softening，源函数本身不满足严格交换互易。Falcor 固定交换方向 probe 显示两个 E2 sheen state 的 reference reciprocity p95 约为 `1.15/1.55`，而 direct-top core 复现同一数值，不能把忠实 evaluator 的绝对 reciprocity 当成额外模型误差。`analytic-core-shared-neural-residual-energy-shape-e2@3` 因而继续报告绝对 `reciprocity_relative_l1`，同时新增 `source_reciprocity_deviation_relative_l1`：对该单界面 sheen 扣除 reference/core 固有的有符号非互易项，对其余当前 LayerStack 状态仍以零为物理期望。`ncls.e2-shared-evaluator-acceptance@2` 只用后者替换旧 gate 的绝对互易性检查，阈值仍为 `0.05`，其他门槛不变。这是 source 语义适用范围修正，不是把非互易 reference 宣称为互易。
+
 ## 三条路径的边界
 
 Python 侧的工具生命周期仍分成三条路径，但必须记录拟合对象和结论范围：

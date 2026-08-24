@@ -20,6 +20,7 @@ from .shared_evaluator import (
     AnalyticResidualSharedEvaluatorE2Pipeline,
     DenseLatentSharedEvaluatorE2Pipeline,
     PerStateAnalyticResidualSharedEvaluatorE2Pipeline,
+    SourceAwarePerStateAnalyticResidualSharedEvaluatorE2Pipeline,
 )
 
 
@@ -57,3 +58,4 @@ register_pipeline(PlaneFactorizedAnalyticResidualE1Pipeline)
 register_pipeline(DenseLatentSharedEvaluatorE2Pipeline)
 register_pipeline(AnalyticResidualSharedEvaluatorE2Pipeline)
 register_pipeline(PerStateAnalyticResidualSharedEvaluatorE2Pipeline)
+register_pipeline(SourceAwarePerStateAnalyticResidualSharedEvaluatorE2Pipeline)
