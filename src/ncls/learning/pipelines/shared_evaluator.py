@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Mapping
 
 import numpy as np
@@ -14,9 +15,11 @@ from ncls.learning.models.neural_evaluator import (
     NeuralEvaluatorModelConfig,
     SHARED_ARCHITECTURE_ID,
     SPARSE_DICTIONARY_ARCHITECTURE_ID,
+    TARGET_TENSOR_ENCODER_ARCHITECTURE_ID,
     FactorizedMaterialNeuralEvaluator,
     SharedMaterialNeuralEvaluator,
     SparseDictionaryMaterialNeuralEvaluator,
+    TargetTensorEncoderMaterialNeuralEvaluator,
     positive_response,
 )
 from ncls.learning.source_adapters import evaluate_layer_stack_direct_top
@@ -43,6 +46,9 @@ SPARSE_DICTIONARY_ANALYTIC_RESIDUAL_PIPELINE_ID = (
 )
 FACTORIZED_LATENT_ANALYTIC_RESIDUAL_PIPELINE_ID = (
     "factorized-latent-analytic-residual-e2@1"
+)
+TARGET_TENSOR_ENCODER_ANALYTIC_RESIDUAL_PIPELINE_ID = (
+    "target-tensor-encoder-analytic-residual-e2@1"
 )
 _TARGET_TRANSFORM_ID = "ncls.train-only-standardized-channel-log1p@1"
 _RESIDUAL_TARGET_TRANSFORM_ID = "ncls.train-only-standardized-asinh-analytic-residual@1"
@@ -80,6 +86,21 @@ _FACTORIZED_LATENT_FEATURE_CONTRACT = {
         "evaluate": ["prepared_view_code", "wi"],
     },
     "material_addressing": "fitted-target-visible-low-rank-material-code",
+}
+_TARGET_TENSOR_ENCODER_FEATURE_CONTRACT = {
+    **_FEATURE_CONTRACT,
+    "feature_contract_id": "ncls.train-response-tensor-to-local-frame-evaluator@1",
+    "inputs": {
+        "latent_inference": [
+            "train-query-wo",
+            "train-query-wi",
+            "train-query-analytic-residual",
+            "train-query-solid-angle-weight",
+        ],
+        "prepare": ["target-encoded-material-latent", "wo"],
+        "evaluate": ["prepared_view_code", "wi"],
+    },
+    "material_addressing": "target-encoded-selected-state-slot",
 }
 
 
@@ -1222,5 +1243,224 @@ class FactorizedLatentAnalyticResidualSharedEvaluatorE2Pipeline(
         costs["cost_scope"] = (
             "shared latent basis/decoder plus per-material low-rank coefficients "
             "and train-only residual transform"
+        )
+        return costs
+
+
+class TargetTensorEncoderAnalyticResidualSharedEvaluatorE2Pipeline(
+    BoundaryCapacityPerStateAnalyticResidualSharedEvaluatorE2Pipeline
+):
+    """只读取 train query tensor 的 permutation-invariant target encoder 上界。"""
+
+    feature_contract = _TARGET_TENSOR_ENCODER_FEATURE_CONTRACT
+    target_encoder_input_id = (
+        "ncls.train-only-permutation-invariant-response-residual-points@1"
+    )
+    descriptor = LearningPipelineDescriptor(
+        pipeline_id=TARGET_TENSOR_ENCODER_ANALYTIC_RESIDUAL_PIPELINE_ID,
+        candidate_id="ncls.target-tensor-encoder-shared-decoder@1",
+        research_role="e2-shared-representation-capacity",
+        response_reader_id="ncls.reference-query-store@1",
+        partition_policy_id="ncls.query-role-within-state@1",
+        source_adapter_id="ncls.layer-stack-direct-top-adapter@1",
+        feature_transform_id=(
+            "ncls.train-response-tensor-to-local-frame-evaluator@1"
+        ),
+        target_transform_id=(
+            "ncls.train-only-per-state-standardized-asinh-analytic-residual@1"
+        ),
+        representation_id=(
+            "ncls.analytic-direct-top-target-encoded-shared-neural-residual@1"
+        ),
+        architecture_id=TARGET_TENSOR_ENCODER_ARCHITECTURE_ID,
+        latent_inference_id="ncls.train-only-target-response-tensor-encoder@1",
+        compiler_id="ncls.none-target-visible-response-compression@1",
+        loss_id=(
+            "ncls.per-state-standardized-asinh-residual-energy-shape-reciprocity@1"
+        ),
+        metric_suite_id=(
+            "ncls.evaluator-quality-by-state-source-reciprocity-peak-support@1"
+        ),
+        exporter_id="ncls.neural-evaluator-method-bundle-planned@1",
+        supported_family_ids=("ncls.layer-stack@1",),
+        scope=(
+            "multi-material-train-response-tensor-encoded-analytic-residual-capacity"
+        ),
+    )
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._encoder_store: ReferenceQueryStore | None = None
+        self._target_encoder_input: np.ndarray | None = None
+
+    def open_store(self, dataset_path: str) -> ReferenceQueryStore:
+        store = super().open_store(dataset_path)
+        self._encoder_store = store
+        return store
+
+    @staticmethod
+    def _target_encoder_input_sha256(value: np.ndarray) -> str:
+        array = np.asarray(value, dtype="<f4", order="C")
+        digest = hashlib.sha256()
+        digest.update(
+            TargetTensorEncoderAnalyticResidualSharedEvaluatorE2Pipeline
+            .target_encoder_input_id.encode("utf-8")
+        )
+        digest.update(np.asarray(array.shape, dtype="<i8").tobytes())
+        digest.update(array.tobytes())
+        return digest.hexdigest()
+
+    def _build_target_encoder_input(
+        self,
+        store: ReferenceQueryStore,
+        state: Mapping[str, Any],
+        train_indices: np.ndarray,
+    ) -> np.ndarray:
+        if not isinstance(store, LayerStackReferenceStore):
+            raise TypeError("target tensor encoder requires LayerStackReferenceStore")
+        query_states = np.asarray(
+            store.dataset.stream["queries/state_index"][train_indices], dtype=np.int64
+        )
+        dataset_state_ids = store.dataset.state_strings("state_id")
+        dataset_index_by_id = {
+            str(state_id): index for index, state_id in enumerate(dataset_state_ids)
+        }
+        scales = np.asarray(state["target_channel_scale_by_state"], dtype=np.float64)
+        means = np.asarray(state["target_channel_mean_by_state"], dtype=np.float64)
+        standard_deviations = np.asarray(
+            state["target_channel_standard_deviation_by_state"], dtype=np.float64
+        )
+        expected_counts = np.asarray(
+            state["train_query_group_count_by_state"], dtype=np.int64
+        )
+        material_inputs = []
+        for slot, state_id in enumerate(state["state_ids"]):
+            state_index = dataset_index_by_id[str(state_id)]
+            selected = train_indices[query_states == state_index]
+            if len(selected) != int(expected_counts[slot]):
+                raise ValueError("target encoder train query count does not match fitted state")
+            raw = store.batch(selected)
+            tensor = {name: torch.as_tensor(value) for name, value in raw.items()}
+            core = self._core(
+                tensor, tensor["view"].float(), tensor["lights"].float()
+            ).detach().cpu().numpy().astype(np.float64)
+            residual = raw["mean"].astype(np.float64) - core
+            transformed_residual = (
+                np.arcsinh(residual / scales[slot][None, None, :])
+                - means[slot][None, None, :]
+            ) / standard_deviations[slot][None, None, :]
+            direction_count = raw["lights"].shape[1]
+            view = np.broadcast_to(
+                raw["view"][:, None, :],
+                (len(selected), direction_count, 3),
+            )
+            weight = np.abs(raw["solid_angle_weight"].astype(np.float64))
+            weight_scale = max(float(np.median(weight[weight > 0.0])), 1e-12)
+            log_weight = np.log1p(weight / weight_scale)[..., None]
+            features = np.concatenate(
+                (
+                    view.astype(np.float64),
+                    raw["lights"].astype(np.float64),
+                    transformed_residual,
+                    log_weight,
+                ),
+                axis=-1,
+            )
+            material_inputs.append(features.reshape(-1, features.shape[-1]))
+        point_counts = {len(value) for value in material_inputs}
+        if len(point_counts) != 1:
+            raise ValueError("target encoder requires a fixed train tensor shape per state")
+        result = np.asarray(material_inputs, dtype=np.float32)
+        if result.ndim != 3 or result.shape[2] != 10 or not np.all(np.isfinite(result)):
+            raise ValueError("target encoder input tensor is invalid")
+        return result
+
+    def fit_training_state(
+        self,
+        store: ReferenceQueryStore,
+        train_indices: np.ndarray,
+    ) -> Mapping[str, Any]:
+        base = dict(super().fit_training_state(store, train_indices))
+        target_encoder_input = self._build_target_encoder_input(
+            store, base, train_indices
+        )
+        return {
+            **base,
+            "format_version": 5,
+            "target_encoder_input_id": self.target_encoder_input_id,
+            "target_encoder_input_query_role": "train",
+            "target_encoder_input_shape": list(target_encoder_input.shape),
+            "target_encoder_input_sha256": self._target_encoder_input_sha256(
+                target_encoder_input
+            ),
+        }
+
+    def load_training_state(self, state: Mapping[str, Any]) -> None:
+        extra_fields = {
+            "target_encoder_input_id",
+            "target_encoder_input_query_role",
+            "target_encoder_input_shape",
+            "target_encoder_input_sha256",
+        }
+        if not extra_fields.issubset(state) or state.get("format_version") != 5:
+            raise ValueError("target encoder fitted training state fields are unsupported")
+        if (
+            state["target_encoder_input_id"] != self.target_encoder_input_id
+            or state["target_encoder_input_query_role"] != "train"
+        ):
+            raise ValueError("target encoder input contract is unsupported")
+        base = {name: value for name, value in state.items() if name not in extra_fields}
+        base["format_version"] = 4
+        super().load_training_state(base)
+        if self._encoder_store is None:
+            raise RuntimeError("target encoder store must be opened before fitted state load")
+        all_train_indices = self.lifecycle_indices(self._encoder_store, "train")
+        dataset_state_ids = self._encoder_store.dataset.state_strings("state_id")
+        selected_state_ids = set(map(str, state["state_ids"]))
+        query_states = np.asarray(
+            self._encoder_store.dataset.stream["queries/state_index"][all_train_indices],
+            dtype=np.int64,
+        )
+        selected = all_train_indices[np.asarray([
+            str(dataset_state_ids[state_index]) in selected_state_ids
+            for state_index in query_states
+        ])]
+        target_encoder_input = self._build_target_encoder_input(
+            self._encoder_store, state, selected
+        )
+        if (
+            list(target_encoder_input.shape) != list(state["target_encoder_input_shape"])
+            or self._target_encoder_input_sha256(target_encoder_input)
+            != state["target_encoder_input_sha256"]
+        ):
+            raise ValueError("target encoder input hash does not match the train-only H5 tensor")
+        self._training_state = dict(state)
+        self._target_encoder_input = target_encoder_input
+
+    def create_model(self, model_parameters: Mapping[str, Any]) -> nn.Module:
+        if self._training_state is None or self._target_encoder_input is None:
+            raise RuntimeError("target encoder fitted training state has not been loaded")
+        parameters = dict(model_parameters)
+        try:
+            encoder_width = int(parameters.pop("encoder_width"))
+            encoder_layer_count = int(parameters.pop("encoder_layer_count"))
+        except KeyError as error:
+            raise ValueError(
+                "target tensor encoder requires encoder_width and encoder_layer_count"
+            ) from error
+        config = NeuralEvaluatorModelConfig.from_mapping(parameters)
+        return TargetTensorEncoderMaterialNeuralEvaluator(
+            config,
+            torch.from_numpy(self._target_encoder_input),
+            encoder_width=encoder_width,
+            encoder_layer_count=encoder_layer_count,
+        )
+
+    def parameter_costs(self, model: nn.Module) -> Mapping[str, Any]:
+        costs = dict(super().parameter_costs(model))
+        costs["cost_scope"] = (
+            "runtime shared decoder plus baked per-material target-encoded latent and "
+            "train-only residual transform; target encoder/input are reported separately "
+            "as compression cost"
         )
         return costs

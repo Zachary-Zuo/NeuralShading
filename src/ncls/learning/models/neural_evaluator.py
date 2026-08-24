@@ -16,6 +16,9 @@ SPARSE_DICTIONARY_ARCHITECTURE_ID = (
 FACTORIZED_LATENT_ARCHITECTURE_ID = (
     "ncls.shared-small-view-conditioned-mlp-factorized-material-latent@1"
 )
+TARGET_TENSOR_ENCODER_ARCHITECTURE_ID = (
+    "ncls.target-tensor-encoder-shared-small-view-conditioned-mlp@1"
+)
 DIRECTION_ENCODING_IDS = (
     "ncls.local-cartesian-directions@1",
     "ncls.fourier-cartesian-directions@1",
@@ -407,6 +410,129 @@ class FactorizedMaterialNeuralEvaluator(SharedMaterialNeuralEvaluator):
                 _linear_macs(self.prepare_network)
                 + self.factor_rank * self.config.latent_dimension
             ),
+            "C_eval_macs": _linear_macs(self.evaluate_network),
+        }
+
+
+class TargetTensorEncoderMaterialNeuralEvaluator(SharedMaterialNeuralEvaluator):
+    """压缩期 DeepSets encoder 读取 train-only response tensor，runtime 烘焙其 latent。"""
+
+    architecture_id = TARGET_TENSOR_ENCODER_ARCHITECTURE_ID
+
+    def __init__(
+        self,
+        config: NeuralEvaluatorModelConfig,
+        target_encoder_input: torch.Tensor,
+        *,
+        encoder_width: int,
+        encoder_layer_count: int,
+    ) -> None:
+        if target_encoder_input.ndim != 3 or min(target_encoder_input.shape) < 1:
+            raise ValueError("target tensor encoder input must be [material,point,feature]")
+        if encoder_width < 1 or encoder_layer_count < 1:
+            raise ValueError("target tensor encoder dimensions must be positive")
+        material_count, point_count, feature_count = target_encoder_input.shape
+        super().__init__(config, material_count)
+        del self.material_latents
+        self.encoder_width = encoder_width
+        self.encoder_layer_count = encoder_layer_count
+        self.encoder_point_count = point_count
+        self.encoder_feature_count = feature_count
+        self.register_buffer(
+            "target_encoder_input",
+            target_encoder_input.detach().to(dtype=torch.float32).contiguous(),
+            persistent=False,
+        )
+        self.point_encoder = _mlp(
+            feature_count,
+            encoder_width,
+            encoder_width,
+            encoder_layer_count,
+            config.activation,
+        )
+        self.latent_head = _mlp(
+            2 * encoder_width,
+            config.latent_dimension,
+            encoder_width,
+            1,
+            config.activation,
+        )
+        self._cached_eval_latents: torch.Tensor | None = None
+        for module in (self.point_encoder, self.latent_head):
+            for child in module.modules():
+                if isinstance(child, nn.Linear):
+                    nn.init.xavier_uniform_(child.weight)
+                    nn.init.zeros_(child.bias)
+
+    def train(self, mode: bool = True) -> TargetTensorEncoderMaterialNeuralEvaluator:
+        if mode:
+            self._cached_eval_latents = None
+        return super().train(mode)
+
+    def _encode_inputs(self, inputs: torch.Tensor) -> torch.Tensor:
+        material_count, point_count, feature_count = inputs.shape
+        encoded = self.point_encoder(inputs.reshape(material_count * point_count, feature_count))
+        encoded = encoded.reshape(material_count, point_count, self.encoder_width)
+        pooled = torch.cat((torch.mean(encoded, dim=1), torch.amax(encoded, dim=1)), dim=-1)
+        return self.latent_head(pooled)
+
+    def _material_latent_for_slots(self, material_slots: torch.Tensor) -> torch.Tensor:
+        if not self.training and not torch.is_grad_enabled():
+            if self._cached_eval_latents is None:
+                self._cached_eval_latents = self._encode_inputs(self.target_encoder_input)
+            return self._cached_eval_latents[material_slots.long()]
+        unique_slots, inverse = torch.unique(
+            material_slots.long(), sorted=True, return_inverse=True
+        )
+        encoded = self._encode_inputs(self.target_encoder_input[unique_slots])
+        return encoded[inverse]
+
+    def prepare(self, wo: torch.Tensor, material_slots: torch.Tensor) -> torch.Tensor:
+        if material_slots.ndim != 1 or len(material_slots) != len(wo):
+            raise ValueError("target tensor encoder material slots must match wo groups")
+        latent = self._material_latent_for_slots(material_slots)
+        return self.prepare_network(torch.cat((latent, self._view_features(wo)), dim=-1))
+
+    def cost_summary(self) -> dict[str, int]:
+        encoder_count = sum(
+            parameter.numel()
+            for module in (self.point_encoder, self.latent_head)
+            for parameter in module.parameters()
+        )
+        encoder_parameter_ids = {
+            id(parameter)
+            for module in (self.point_encoder, self.latent_head)
+            for parameter in module.parameters()
+        }
+        decoder_count = sum(
+            parameter.numel()
+            for parameter in self.parameters()
+            if id(parameter) not in encoder_parameter_ids
+        )
+        per_material_count = self.config.latent_dimension
+        compiler_macs = (
+            self.encoder_point_count * _linear_macs(self.point_encoder)
+            + _linear_macs(self.latent_head)
+        )
+        return {
+            "parameter_count": encoder_count + decoder_count,
+            "compiler_parameter_count": encoder_count,
+            "material_count": self.material_count,
+            "B_asset_fp32": 4 * per_material_count,
+            "B_asset_fp32_total": 4 * per_material_count * self.material_count,
+            "B_shared_fp32": 4 * decoder_count,
+            "B_compiler_shared_fp32": 4 * encoder_count,
+            "B_compiler_input_fp32": (
+                4 * self.encoder_point_count * self.encoder_feature_count
+            ),
+            "B_compiler_input_fp32_total": (
+                4
+                * self.encoder_point_count
+                * self.encoder_feature_count
+                * self.material_count
+            ),
+            "C_compile_encoder_macs": compiler_macs,
+            "C_prepare_macs": _linear_macs(self.prepare_network),
             "C_eval_macs": _linear_macs(self.evaluate_network),
         }
 

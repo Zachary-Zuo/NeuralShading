@@ -25,6 +25,7 @@ from .shared_evaluator import (
     BoundaryCapacityPerStateAnalyticResidualSharedEvaluatorE2Pipeline,
     FactorizedLatentAnalyticResidualSharedEvaluatorE2Pipeline,
     SparseDictionaryAnalyticResidualSharedEvaluatorE2Pipeline,
+    TargetTensorEncoderAnalyticResidualSharedEvaluatorE2Pipeline,
 )
 
 
@@ -67,3 +68,4 @@ register_pipeline(NoiseAwarePerStateAnalyticResidualSharedEvaluatorE2Pipeline)
 register_pipeline(BoundaryCapacityPerStateAnalyticResidualSharedEvaluatorE2Pipeline)
 register_pipeline(SparseDictionaryAnalyticResidualSharedEvaluatorE2Pipeline)
 register_pipeline(FactorizedLatentAnalyticResidualSharedEvaluatorE2Pipeline)
+register_pipeline(TargetTensorEncoderAnalyticResidualSharedEvaluatorE2Pipeline)

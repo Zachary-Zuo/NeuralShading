@@ -30,6 +30,8 @@ E2 structured-latent smoke 注册为 `sparse-latent-dictionary-analytic-residual
 
 3k smoke 中，随机初始化、纯梯度 hard top-k 的 test median/p95 为 `0.1291/0.2715`，同时失败 energy、recall、source reciprocity 与 SE，已在该范围淘汰；这个结论不排除只用 train response 做 K-means 或 target-encoder 初始化。rank-4 factorized latent 以 `B_asset=52 bytes` 得到 `0.0980/0.2287`，接近 matched dense16 3k 的 `0.0917/0.2233`，且 energy、peak 与 recall 通过；它保留为低 asset-bytes 对照，但 aggregate、source reciprocity 和 SE 尚未过 gate，当前不先做 rank sweep。两项 manifest 均证明 test 是训练结束后才独立读取。
 
+`target-tensor-encoder-analytic-residual-e2@1` 把 target encoder 明确放在离线压缩期：它只从每 state 的 train query 取 `wo`、`wi`、按该 state train-only transform 标准化的 analytic residual 和积分权重，组成顺序无关的 point tensor；共享 DeepSets encoder 以 mean/max pooling 输出 16-D latent。fitted state 只记录输入合同、形状和内容 hash，checkpoint 回读时从同 dataset ID 的 train partition 重建并校验，不把 validation/test response 持久化进 encoder input。runtime 只保留烘焙后的 latent、per-state transform 与 decoder；encoder 参数、完整输入 bytes 和 `C_compile` 单独报告，不能藏入 `B_shared/C_prepare`，也不能把这种读取 reference tensor 的路径写成 source compiler。
+
 ## 三条路径的边界
 
 Python 侧的工具生命周期仍分成三条路径，但必须记录拟合对象和结论范围：

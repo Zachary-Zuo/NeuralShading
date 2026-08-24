@@ -4,6 +4,7 @@ from .neural_evaluator import (
     NeuralEvaluatorModelConfig,
     SingleMaterialNeuralEvaluator,
     SparseDictionaryMaterialNeuralEvaluator,
+    TargetTensorEncoderMaterialNeuralEvaluator,
 )
 from .registry import create_model
 
@@ -14,5 +15,6 @@ __all__ = [
     "SingleMaterialNeuralEvaluator",
     "SparseDictionaryMaterialNeuralEvaluator",
     "FactorizedMaterialNeuralEvaluator",
+    "TargetTensorEncoderMaterialNeuralEvaluator",
     "create_model",
 ]

@@ -661,12 +661,16 @@ def test_noise_aware_shared_residual_uses_peak_support_and_finite_loss(
 
 
 @pytest.mark.parametrize(
-    ("pipeline_id", "extra_parameters", "candidate_id", "asset_bytes", "total_bytes"),
+    (
+        "pipeline_id", "extra_parameters", "candidate_id", "compiler_id",
+        "asset_bytes", "total_bytes",
+    ),
     (
         (
             "sparse-latent-dictionary-analytic-residual-e2@1",
             {"dictionary_size": 8, "top_k": 2},
             "ncls.sparse-latent-dictionary-top-k-mixture@1",
+            "ncls.none-target-visible-capacity-study@1",
             48,
             144,
         ),
@@ -674,8 +678,17 @@ def test_noise_aware_shared_residual_uses_peak_support_and_finite_loss(
             "factorized-latent-analytic-residual-e2@1",
             {"factor_rank": 2},
             "ncls.plane-tensor-factorization@1",
+            "ncls.none-target-visible-capacity-study@1",
             44,
             132,
+        ),
+        (
+            "target-tensor-encoder-analytic-residual-e2@1",
+            {"encoder_width": 8, "encoder_layer_count": 1},
+            "ncls.target-tensor-encoder-shared-decoder@1",
+            "ncls.none-target-visible-response-compression@1",
+            52,
+            156,
         ),
     ),
 )
@@ -684,6 +697,7 @@ def test_structured_e2_latents_use_common_source_aware_lifecycle(
     pipeline_id: str,
     extra_parameters: dict[str, int],
     candidate_id: str,
+    compiler_id: str,
     asset_bytes: int,
     total_bytes: int,
 ) -> None:
@@ -691,7 +705,7 @@ def test_structured_e2_latents_use_common_source_aware_lifecycle(
     _e1_dataset(dataset_path)
     pipeline = create_pipeline(pipeline_id)
     assert pipeline.descriptor.candidate_id == candidate_id
-    assert pipeline.descriptor.compiler_id == "ncls.none-target-visible-capacity-study@1"
+    assert pipeline.descriptor.compiler_id == compiler_id
     assert pipeline.descriptor.source_adapter_id == "ncls.layer-stack-direct-top-adapter@1"
     with pipeline.open_store(str(dataset_path)) as store:
         indices = pipeline.lifecycle_indices(store, "train")
@@ -777,6 +791,10 @@ def test_structured_e2_latent_parameters_are_strictly_validated(tmp_path: Path) 
             "factorized-latent-analytic-residual-e2@1",
             {"factor_rank": 0},
         ),
+        (
+            "target-tensor-encoder-analytic-residual-e2@1",
+            {"encoder_width": 0, "encoder_layer_count": 1},
+        ),
     )
     for pipeline_id, extra_parameters in cases:
         pipeline = create_pipeline(pipeline_id)
@@ -795,6 +813,41 @@ def test_structured_e2_latent_parameters_are_strictly_validated(tmp_path: Path) 
                     "output_bias": 0.0,
                     **extra_parameters,
                 })
+
+
+def test_target_tensor_encoder_fitted_state_records_only_train_response_points(
+    tmp_path: Path,
+) -> None:
+    dataset_path = tmp_path / "target-tensor-encoder-input.h5"
+    _e1_dataset(dataset_path)
+    pipeline = create_pipeline("target-tensor-encoder-analytic-residual-e2@1")
+    with pipeline.open_store(str(dataset_path)) as store:
+        train_indices = pipeline.lifecycle_indices(store, "train")
+        state = pipeline.fit_training_state(store, train_indices)
+        assert state["format_version"] == 5
+        assert state["target_encoder_input_query_role"] == "train"
+        assert state["target_encoder_input_shape"] == [3, 16, 10]
+        assert len(state["target_encoder_input_sha256"]) == 64
+        assert state["train_query_group_count"] == len(train_indices)
+        pipeline.load_training_state(state)
+        assert pipeline._target_encoder_input is not None
+        assert pipeline._target_encoder_input.shape == (3, 16, 10)
+        model = pipeline.create_model({
+            "latent_dimension": 4,
+            "encoder_width": 8,
+            "encoder_layer_count": 1,
+            "width": 8,
+            "prepare_layer_count": 1,
+            "evaluate_layer_count": 1,
+            "activation": "gelu",
+            "direction_encoding_id": "ncls.half-difference-directions@1",
+            "fourier_band_count": 1,
+            "output_bias": 0.0,
+        })
+        assert "target_encoder_input" not in model.state_dict()
+        costs = pipeline.parameter_costs(model)
+        assert costs["B_compiler_input_fp32"] == 16 * 10 * 4
+        assert costs["B_compiler_input_fp32_total"] == 3 * 16 * 10 * 4
 
 
 def test_plane_factorized_pipeline_uses_the_common_e1_lifecycle(tmp_path: Path) -> None:
