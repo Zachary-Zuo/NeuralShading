@@ -20,6 +20,8 @@ LayerStack 的 E2 对照 `analytic-core-shared-neural-residual-energy-shape-e2@1
 
 `ncls.interface.sheen@1` 延续锁定 reference 的 terminator softening，源函数本身不满足严格交换互易。Falcor 固定交换方向 probe 显示两个 E2 sheen state 的 reference reciprocity p95 约为 `1.15/1.55`，而 direct-top core 复现同一数值，不能把忠实 evaluator 的绝对 reciprocity 当成额外模型误差。`analytic-core-shared-neural-residual-energy-shape-e2@3` 因而继续报告绝对 `reciprocity_relative_l1`，同时新增 `source_reciprocity_deviation_relative_l1`：对该单界面 sheen 扣除 reference/core 固有的有符号非互易项，对其余当前 LayerStack 状态仍以零为物理期望。`ncls.e2-shared-evaluator-acceptance@2` 只用后者替换旧 gate 的绝对互易性检查，阈值仍为 `0.05`，其他门槛不变。这是 source 语义适用范围修正，不是把非互易 reference 宣称为互易。
 
+E2 多峰/平顶 response 还要求把 raw argmax 峰位与“峰支持集”分开。正式 reference 的两个独立 replica 在 test/adversarial 上已有约 `2.15°/2.55°` 的 raw peak angle p95；对 95% 峰高平台内两个近等值方向强行要求同一 argmax，会把 Monte Carlo 排序抖动写成模型峰位漂移。`analytic-core-shared-neural-residual-energy-shape-e2@4` 保留 raw peak angle，同时报告模型峰到 target 95% 峰值支持集的最近角距；`ncls.e2-shared-evaluator-acceptance@3` 对后者保持 `2°` 上限，并继续检查 peak ratio 与 top-energy recall。该 pipeline 另在既有 loss 上增加只读 train batch 的 reference-SE floor 项，直接压缩 `model_error_over_reference_standard_error` 长尾；floor 和权重属于版本化 loss，不从 validation/test 拟合。
+
 ## 三条路径的边界
 
 Python 侧的工具生命周期仍分成三条路径，但必须记录拟合对象和结论范围：

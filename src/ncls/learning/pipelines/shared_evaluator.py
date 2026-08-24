@@ -28,6 +28,9 @@ PER_STATE_ANALYTIC_RESIDUAL_PIPELINE_ID = (
 SOURCE_AWARE_ANALYTIC_RESIDUAL_PIPELINE_ID = (
     "analytic-core-shared-neural-residual-energy-shape-e2@3"
 )
+NOISE_AWARE_ANALYTIC_RESIDUAL_PIPELINE_ID = (
+    "analytic-core-shared-neural-residual-energy-shape-e2@4"
+)
 _TARGET_TRANSFORM_ID = "ncls.train-only-standardized-channel-log1p@1"
 _RESIDUAL_TARGET_TRANSFORM_ID = "ncls.train-only-standardized-asinh-analytic-residual@1"
 _FAMILIES = (
@@ -908,5 +911,106 @@ class SourceAwarePerStateAnalyticResidualSharedEvaluatorE2Pipeline(
         )
         metrics["source_reciprocity_deviation_relative_l1"] = (
             deviation.detach().cpu().numpy()
+        )
+        return metrics
+
+
+class NoiseAwarePerStateAnalyticResidualSharedEvaluatorE2Pipeline(
+    SourceAwarePerStateAnalyticResidualSharedEvaluatorE2Pipeline
+):
+    """用 reference SE floor 约束长尾，并以峰支持集区分平台内 argmax 抖动。"""
+
+    descriptor = LearningPipelineDescriptor(
+        pipeline_id=NOISE_AWARE_ANALYTIC_RESIDUAL_PIPELINE_ID,
+        candidate_id="ncls.analytic-core-neural-residual@1",
+        research_role="e2-shared-representation-capacity",
+        response_reader_id="ncls.reference-query-store@1",
+        partition_policy_id="ncls.query-role-within-state@1",
+        source_adapter_id="ncls.layer-stack-direct-top-adapter@1",
+        feature_transform_id="ncls.local-frame-wo-wi-material-slot@1",
+        target_transform_id=(
+            "ncls.train-only-per-state-standardized-asinh-analytic-residual@1"
+        ),
+        representation_id=(
+            "ncls.analytic-direct-top-shared-neural-residual-per-state-normalization@1"
+        ),
+        architecture_id=SHARED_ARCHITECTURE_ID,
+        latent_inference_id="ncls.optimized-target-visible-dense-material-latent-table@1",
+        compiler_id="ncls.none-target-visible-capacity-study@1",
+        loss_id=(
+            "ncls.per-state-asinh-energy-shape-source-reciprocity-noise-floor@1"
+        ),
+        metric_suite_id=(
+            "ncls.evaluator-quality-by-state-source-reciprocity-peak-support@1"
+        ),
+        exporter_id="ncls.neural-evaluator-method-bundle-planned@1",
+        supported_family_ids=("ncls.layer-stack@1",),
+        scope=(
+            "multi-material-target-visible-noise-aware-per-state-normalized-"
+            "analytic-residual-autodecoder-capacity"
+        ),
+    )
+
+    def training_loss(
+        self,
+        prediction: torch.Tensor,
+        batch: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor:
+        base_loss = super().training_loss(prediction, batch)
+        target = batch["mean"].float()
+        standard_error = batch["standard_error"].float()
+        peak = torch.amax(torch.abs(target), dim=(1, 2), keepdim=True)
+        noise_floor = standard_error + 0.002 * peak + 1e-6
+        error_over_floor = torch.abs(prediction - target) / noise_floor
+        return base_loss + 0.02 * torch.mean(torch.log1p(error_over_floor))
+
+    @staticmethod
+    def _peak_support_angle(
+        prediction: torch.Tensor,
+        target: torch.Tensor,
+        light_directions: torch.Tensor,
+    ) -> torch.Tensor:
+        target_magnitude = torch.sum(torch.abs(target), dim=-1)
+        prediction_magnitude = torch.sum(torch.abs(prediction), dim=-1)
+        prediction_peak = torch.argmax(prediction_magnitude, dim=1)
+        rows = torch.arange(len(target), device=target.device)
+        prediction_peak_direction = light_directions[rows, prediction_peak]
+        target_peak = torch.amax(target_magnitude, dim=1, keepdim=True)
+        support = target_magnitude >= 0.95 * target_peak
+        angles = torch.rad2deg(torch.acos(torch.clamp(
+            torch.sum(
+                light_directions * prediction_peak_direction[:, None, :], dim=-1
+            ),
+            -1.0,
+            1.0,
+        )))
+        return torch.amin(
+            torch.where(support, angles, torch.full_like(angles, float("inf"))),
+            dim=1,
+        )
+
+    def additional_metric_distributions(
+        self,
+        model: nn.Module,
+        batch: Mapping[str, torch.Tensor],
+        store: ReferenceQueryStore,
+        device: torch.device,
+    ) -> Mapping[str, np.ndarray]:
+        metrics = dict(super().additional_metric_distributions(
+            model, batch, store, device
+        ))
+        if not isinstance(model, SharedMaterialNeuralEvaluator):
+            raise TypeError("noise-aware shared residual requires SharedMaterialNeuralEvaluator")
+        core = self._core(batch, batch["view"].float(), batch["lights"].float())
+        slots = self._material_slots(batch, store)
+        residual = self._decode_for_slots(
+            self._raw_prediction(model, batch, store), slots
+        )
+        prediction = torch.clamp(core + residual, min=0.0)
+        peak_support_angle = self._peak_support_angle(
+            prediction, batch["mean"].float(), batch["lights"].float()
+        )
+        metrics["peak_support_angle_degrees"] = (
+            peak_support_angle.detach().cpu().numpy()
         )
         return metrics

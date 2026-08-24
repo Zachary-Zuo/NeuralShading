@@ -1,0 +1,39 @@
+{
+  "format_name": "ncls.evaluator-acceptance-gate",
+  "format_version": 1,
+  "gate_id": "ncls.e2-shared-evaluator-acceptance@3",
+  "status": "frozen",
+  "required_research_role": "e2-shared-representation-capacity",
+  "rationale": "门槛在 E2 reference replica peak audit 后冻结。除 peak angle 外与 @2 完全相同；raw argmax peak angle 继续报告，但 reference replica 自身的 test/adversarial p95 已为约 2.15/2.55 度，不能用 2 度绝对线误判同一平顶或多峰支持集内的排序抖动。验收改用模型峰到 target 95% 峰值支持集的最近角距，仍要求 p95 不超过 2 度，并继续约束 peak ratio、top-energy recall、normalized L1、model/reference-SE、source reciprocity deviation 与成本。该 gate 仍只验收 target-visible E2 容量。",
+  "metric_requirements": {
+    "test": {
+      "solid_angle_normalized_l1.median": {"maximum": 0.08},
+      "solid_angle_normalized_l1.p95": {"maximum": 0.20},
+      "log_l1.p95": {"maximum": 0.15},
+      "energy_relative_error.p95": {"maximum": 0.15},
+      "peak_ratio_log_error.p95": {"maximum": 0.2231435513},
+      "peak_support_angle_degrees.p95": {"maximum": 2.0},
+      "top_5_percent_energy_recall.p5": {"minimum": 0.85},
+      "model_error_over_reference_standard_error.p95": {"maximum": 6.0},
+      "source_reciprocity_deviation_relative_l1.p95": {"maximum": 0.05},
+      "finite_rate.minimum": {"minimum": 1.0},
+      "nonnegative_rate.minimum": {"minimum": 1.0}
+    },
+    "adversarial_probe": {
+      "solid_angle_normalized_l1.median": {"maximum": 0.10},
+      "solid_angle_normalized_l1.p95": {"maximum": 0.25},
+      "energy_relative_error.p95": {"maximum": 0.20},
+      "peak_ratio_log_error.p95": {"maximum": 0.2876820725},
+      "peak_support_angle_degrees.p95": {"maximum": 2.0},
+      "top_5_percent_energy_recall.p5": {"minimum": 0.80},
+      "finite_rate.minimum": {"minimum": 1.0},
+      "nonnegative_rate.minimum": {"minimum": 1.0}
+    }
+  },
+  "cost_requirements": {
+    "B_asset_fp32": {"maximum": 512},
+    "B_shared_fp32": {"maximum": 524288},
+    "C_prepare_macs": {"maximum": 65536},
+    "C_eval_macs": {"maximum": 65536}
+  }
+}

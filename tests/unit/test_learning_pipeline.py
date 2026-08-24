@@ -616,6 +616,45 @@ def test_source_aware_shared_residual_reports_deviation_from_source_asymmetry(
         assert np.all(np.isfinite(metrics["source_reciprocity_deviation_relative_l1"]))
 
 
+def test_noise_aware_shared_residual_uses_peak_support_and_finite_loss(
+    tmp_path: Path,
+) -> None:
+    dataset_path = tmp_path / "noise-aware-shared-analytic-e2-dataset.h5"
+    _e1_dataset(dataset_path)
+    pipeline = create_pipeline("analytic-core-shared-neural-residual-energy-shape-e2@4")
+    target = torch.tensor([[[1.0, 0.0, 0.0], [0.96, 0.0, 0.0]]])
+    prediction = torch.tensor([[[0.9, 0.0, 0.0], [1.0, 0.0, 0.0]]])
+    lights = torch.tensor([[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]])
+    support_angle = pipeline._peak_support_angle(prediction, target, lights)
+    torch.testing.assert_close(support_angle, torch.zeros_like(support_angle))
+    with pipeline.open_store(str(dataset_path)) as store:
+        indices = pipeline.lifecycle_indices(store, "train")
+        pipeline.load_training_state(pipeline.fit_training_state(store, indices))
+        model = pipeline.create_model({
+            "latent_dimension": 4,
+            "width": 8,
+            "prepare_layer_count": 1,
+            "evaluate_layer_count": 1,
+            "activation": "gelu",
+            "direction_encoding_id": "ncls.half-difference-directions@1",
+            "fourier_band_count": 1,
+            "output_bias": 0.0,
+        })
+        batch = {
+            name: torch.as_tensor(value)
+            for name, value in store.batch(indices[[0, 2, 4]]).items()
+        }
+        predicted = pipeline.predict(model, batch, store, torch.device("cpu"))
+        loss = pipeline.training_loss(predicted, batch)
+        assert torch.isfinite(loss)
+        loss.backward()
+        metrics = pipeline.additional_metric_distributions(
+            model.eval(), batch, store, torch.device("cpu")
+        )
+        assert "peak_support_angle_degrees" in metrics
+        assert metrics["peak_support_angle_degrees"].shape == (3,)
+
+
 def test_plane_factorized_pipeline_uses_the_common_e1_lifecycle(tmp_path: Path) -> None:
     dataset_path = tmp_path / "plane-factorized-dataset.h5"
     _e1_dataset(dataset_path)
