@@ -9,6 +9,7 @@
 - [问题本质、表示假设与边界](problem_definition.md)：把任务说成一个受运行时约束的条件函数压缩问题，分析 `uv/footprint/wo/wi/material state` 各维的相关性，区分 target-tensor encoder、autodecoder 与 source compiler，整理长尾目标变换，以及用户提供的时序 lightmap 字典压缩经验如何迁移。
 - [相关工作与可迁移机制](prior_art.md)：按“解决什么问题—怎么解决—本项目具体参考什么—哪些假设不能照搬”整理学术界和工业界的一手资料。
 - [目标材质数据、监督审计与实验路线](data_and_experiments.md)：说明统一 HDF5 采集合同、监督域边界、采样审计，以及从单材质容量到共享 decoder、compiler 和空间 LOD 的实验顺序。
+- [Fidelity-first neural evaluator 与 compiler 设计](fidelity_first_model_design.md)：重新限定现有 E1–E3 最小模型的证据范围，详细定义高保真 directional oracle、canonical-lobe hyperdecoder、物理 warp tensor field、response encoder、source graph compiler 和先保真后压缩的 gate/实验顺序。
 
 ## 文档维护规则
 

@@ -6,7 +6,7 @@
 
 这解决的是“统一监督查询与持久化”，不是“把所有源材质变成同一参数表示”。各材质族仍保留自己的原生参数、图、纹理或测量表及权威 reference。source compiler 若要读取原生输入，仍需 family-specific encoder；它的输出才进入共享 evaluator/latent 合同。
 
-当前应做的事情是：先审计状态和方向采样是否覆盖目标查询域，再生成正式 HDF5，然后按单材质容量、共享 decoder、source compiler 和 Slang 部署的顺序建模。不能因为接口统一，就假设当前均匀方向网格已经具有足够密度。
+当前应做的事情是：先审计状态和方向采样是否覆盖目标查询域，再生成正式 HDF5，然后按单材质高保真可达性、共享 decoder、source compiler 和 Slang 部署的顺序建模。第一轮不再用小型部署预算替代 fidelity 结论；详细模型、gate 分层和压缩顺序见 [`fidelity_first_model_design.md`](fidelity_first_model_design.md)。不能因为接口统一，就假设当前均匀方向网格已经具有足够密度。
 
 ## 2. 三种数据层
 
@@ -100,15 +100,15 @@ target transform 的统计量只能由 source train × query train 生成并带 
 
 ### E1：单材质完整 evaluator 容量
 
-每个候选覆盖同一 state 的完整 `wo×wi`，比较局部 Cartesian 与 half/difference 编码、小型 MLP 宽深/激活、direct response 与 analytic residual、target transform 和 latent 预算。optimized 单材质仍失败时不进入 compiler。
+每个候选覆盖同一 state 的完整 `wo×wi`。先用不受部署成本 kill threshold 限制的 directional oracle 比较 Rusinkiewicz/物理 chart、learned shading frame、direct response、reflection/transmission 分头和 analytic residual，证明监督与连续表示能接近 reference noise；随后才把已有小型 MLP、latent 预算和 prepare/evaluate envelope 作为压缩目标。高保真单材质仍失败时不进入 shared decoder 或 compiler。
 
 ### E2：共享 decoder + 材质 latent
 
-在多个 state/asset 间共享 decoder，比较 autodecoder、target encoder、target encoder + 固定预算 refinement、dense latent 和 codebook/factorized latent。target encoder 能读取完整 HDF5 response，因此只代表压缩上界，不代表从原生材质自动编译。
+在多个 state/asset 间共享 decoder。先让高容量 canonical-lobe hyperdecoder 以 optimized code 达到 fidelity gate，再比较 target encoder、target encoder + 固定预算 refinement、dense latent 压缩和 train-only 初始化的 codebook/factorized latent。target encoder 能读取完整 HDF5 response，因此只代表特定 decoder 下的 target-visible compression control，不代表从原生材质自动编译。
 
 ### E3：source compiler
 
-为每个 source family 使用明确 adapter，从原生参数、图或资源生成同一 shared decoder 的 latent。比较 pure feed-forward、compiler initialization + refinement 和 optimized latent 上界；报告未见参数状态、未见资产/图拓扑和跨 family 三种不同泛化。
+为每个 source family 使用明确 adapter，从原生参数、图或资源生成已经通过 fidelity gate 的 shared decoder code。比较 pure feed-forward、compiler initialization + refinement 和相同 decoder 下的 optimized/target-encoded control；报告未见参数状态、未见资产/图拓扑和跨 family 三种不同泛化。compiler 不再同时外推依赖 target response 的逐状态 normalization statistics。
 
 ### E4：Slang 最小部署
 
@@ -178,17 +178,17 @@ plane/tensor factorization 的 E1 smoke 已通过同一 lifecycle 完成。`ncls
 
 E2 的共享表示监督入口已经通过冻结 gate。`ncls.e2-layer-stack-shared-decoder@1` 固定 12 个 family × 2 个同拓扑局部状态，以 family 为 split group 得到 20/2/2 个 train/validation/test state；每个 state 有 `16/4/4/4` 个独立 query role 和每组 128 个 `wi`。`ncls.e2-layer-stack-independent-peak-grazing-mixture@3` 对单界面 sheen 使用原生 roughness 条件峰中心，对其余 LayerStack 状态使用围绕几何镜面方向的 75 点窄 vMF patch，以覆盖随机游走 response 相对镜面方向移动约 4–11° 的多界面峰；它仍保留 34 个 uniform 与 19 个 grazing query，并持久化连续 mixture PDF 和积分权重。正式 v5 dataset `bbcd51e7451e7e2b8df705abc4eeb1382684c37bce1152284d9c4900dc5fd515` 的四 role peak spacing p95 为 `1.771/1.771/1.776/1.808°`，relative SE / replica L1 p95 为 `0.0398/0.0317`，最坏 query 为 `0.0813/0.0887`，split/source/direction leak 为 0，通过 `ncls.e2-shared-decoder-supervision-entry@4` 全部 61 项检查。只有 `family-0002`、`family-0003` 使用有 provenance 的 262,144 samples/replica 定向上限；没有扩大其他 family。
 
-这个通过只允许公共 learning lifecycle 读取 v5，不是 shared decoder 已经成立。E2 必须按顺序报告 optimized/autodecoder latent 上界、target response encoder、encoder initialization + bounded refinement，以及 dictionary/factorized latent；target-visible 方法能读取 reference response，仍不得解释为 E3 source compiler。历史 v1–v4 H5 保留为掠射、response measure、moving peak 与 noise cap 的失败证据，不形成第二套 reader 或 runner。
+这个通过只允许公共 learning lifecycle 读取 v5，不是 shared decoder 已经成立。E2 旧路径按顺序报告 optimized/autodecoder latent control、target response encoder、encoder initialization + bounded refinement，以及 dictionary/factorized latent；这些结果只比较同一个小型 decoder。target-visible 方法能读取 reference response，仍不得解释为 E3 source compiler。历史 v1–v4 H5 保留为掠射、response measure、moving peak 与 noise cap 的失败证据，不形成第二套 reader 或 runner。
 
-第一条 E2 pipeline 已冻结为 `dense-latent-shared-small-mlp-energy-shape-e2@1`。它通过 state-ID slot 表联合优化每 state dense latent 与共享小 MLP，使用 query-role train/validation/test 分离，因此度量的是 24 个 target-visible state 的共享压缩容量，而不是 source-held-out 编译。公共 evaluator 新增按 state/source split 的分布报告；模型将单 state latent bytes 与共享 decoder bytes 分开。正式训练前的 `ncls.e2-shared-evaluator-acceptance@1` 要求 test normalized L1 median/p95 不超过 `0.08/0.20`、peak angle p95 不超过 `2°`、top-energy recall p5 至少 `0.85`，并限制 `B_asset≤512 bytes`、`B_shared≤512 KiB` 和 prepare/evaluate 各 `65,536 MAC`。smoke 先验证这条上界；失败后仍需根据 by-state 证据决定 analytic residual 或容量调整，不能直接进入 compiler。
+第一条 E2 pipeline 已冻结为 `dense-latent-shared-small-mlp-energy-shape-e2@1`。它通过 state-ID slot 表联合优化每 state dense latent 与共享小 MLP，使用 query-role train/validation/test 分离，因此度量的是 24 个 target-visible state 在该小型 concat-decoder 下的共享压缩容量，而不是 source-held-out 编译。公共 evaluator 新增按 state/source split 的分布报告；模型将单 state latent bytes 与共享 decoder bytes 分开。正式训练前的 `ncls.e2-shared-evaluator-acceptance@1` 要求 test normalized L1 median/p95 不超过 `0.08/0.20`、peak angle p95 不超过 `2°`、top-energy recall p5 至少 `0.85`，并限制 `B_asset≤512 bytes`、`B_shared≤512 KiB` 和 prepare/evaluate 各 `65,536 MAC`。smoke 验证这条历史 capacity/efficiency path；失败后仍需根据 by-state 证据决定 analytic residual 或容量调整，不能直接进入 compiler。
 
 首轮 500-step、64-wide direct shared smoke 的 train/test median 为 `0.777/0.816`，单界面 sheen 出现数量级能量错误，说明该短训练设置尚未形成 direct evaluator。换成同成本 shared analytic residual 后，2,000-step train/test median 降为 `0.222/0.235`，而 direct-top core-only test median 为 `0.688`，证明 neural residual 有非零贡献；但 test p95 `0.506`、energy p95 `0.389`、peak angle p95 `3.92°`、recall p5 `0.732`，仍未通过 gate。validation 到 step 1,800 才达到最佳，因此下一项只复用 E1 已通过的 108-wide、8,000-step envelope 做 shared-capacity 因果对照；当前不淘汰 dense latent 或 analytic residual，也不进入 target encoder/compiler。
 
-后续 E2 证据把残差 transform 改为每 state 的 train-only 统计，并用 source-aware reciprocity 与 95% 峰高支持集修正 source 语义和 reference argmax noise；冻结 gate 已演进到 `ncls.e2-shared-evaluator-acceptance@3`，没有放宽 aggregate、energy、recall、SE 或成本阈值。width108/latent16 的 8k target-visible 上界 test median/p95 为 `0.05346/0.16889`，除 model/reference-SE p95 `19.06 > 6` 外通过全部正式项；width123 被支配，latent32 的 3k 对照虽改善 median 却恶化 p95/SE，均不再扩张。
+后续 E2 证据把残差 transform 改为每 state 的 train-only 统计，并用 source-aware reciprocity 与 95% 峰高支持集修正 source 语义和 reference argmax noise；冻结 gate 已演进到 `ncls.e2-shared-evaluator-acceptance@3`，没有放宽 aggregate、energy、recall、SE 或成本阈值。width108/latent16 的 8k target-visible baseline test median/p95 为 `0.05346/0.16889`，除 model/reference-SE p95 `19.06 > 6` 外通过全部正式项；width123 被支配，latent32 的 3k 对照虽改善 median 却恶化 p95/SE，因此只停止扩张同一种小型 concat-decoder，不外推到 layer-wise modulation、learned frame 或 multi-lobe representation。
 
 structured latent 已通过同一 lifecycle smoke。`16×16` dictionary/top-4 的随机初始化 hard top-k 只有 `60 bytes/state`，但 test median/p95 `0.12905/0.27149`，并失败 energy、recall、source reciprocity 和 SE，因此淘汰这套纯梯度初始化，不据此否定 train-only K-means/target encoder 初始化。rank-4 factorized latent 为 `52 bytes/state`，test `0.09797/0.22869`，energy、peak 与 recall 通过，接近 matched dense16 3k 的 `0.09172/0.22330`；它保留作低 `B_asset` 对照，但尚未通过 aggregate/source reciprocity/SE gate。下一步按既定依赖先验证 target response tensor encoder，再决定是否对 factorized latent 投入更长训练。
 
-train-only target tensor encoder 已完成首个同预算 smoke。DeepSets encoder 对每 state 的 `[2048,10]` response-residual points 做 permutation-invariant pooling；输入内容 hash `7534b2c6...` 随 checkpoint 持久化，验证重建只读取 train query。encoder-only 的 test median `0.08586` 优于 matched dense16 3k 的 `0.09172`，但 p95 `0.23174`、recall p5 `0.82634`、model/reference-SE `29.79` 仍失败；它保留为 target initialization。下一实验固定 encoder/decoder，只允许有限步 per-state refinement，以区分初始化质量与 optimized latent 上界。
+train-only target tensor encoder 已完成首个同预算 smoke。DeepSets encoder 对每 state 的 `[2048,10]` response-residual points 做 permutation-invariant pooling；输入内容 hash `7534b2c6...` 随 checkpoint 持久化，验证重建只读取 train query。encoder-only 的 test median `0.08586` 优于 matched dense16 3k 的 `0.09172`，但 p95 `0.23174`、recall p5 `0.82634`、model/reference-SE `29.79` 仍失败；它保留为该 decoder 下的 target initialization。下一实验固定 encoder/decoder，只允许有限步 per-state refinement，以区分初始化质量与 matched optimized-latent control。
 
 500-step bounded refinement 只训练 384 个 per-state delta，validation 在 step 200 选 best；test median `0.07668` 与 recall p5 `0.86242` 已通过，adversarial 全项通过，但 test p95 `0.22779`、model/reference-SE `27.91` 和 source reciprocity `0.05114` 仍失败。delta absolute p95/maximum 仅 `0.0773/0.1133`，没有撞到 `0.25` bound，且更晚 step 没有改善 validation；因此不通过增加 refinement budget 或放宽 bound 追指标。encoder-only validation 在 3k 附近仍有下降趋势，下一实验使用相同结构的 8k capacity envelope，之后最多复用一次同样的固定 refinement。
 
@@ -196,7 +196,7 @@ train-only target tensor encoder 已完成首个同预算 smoke。DeepSets encod
 
 按冻结计划完成的 500-step refinement 只训练 384 个 latent delta，validation 在 step 300 选 best；test median/p95 改为 `0.05995/0.17698`，model/reference-SE 仅降至 `26.82`，其他质量、adversarial 和成本项保持通过。delta absolute p95/max 为 `0.0612/0.1229`，没有接近 `0.25` bound；validation SE 在 step 200/300 已约为 `17.72/17.75`。结论是停止增加 encoder/refinement cook 或放宽 bound。
 
-最后的 train-only group reference-SE CVaR25 loss 直接复用正式 metric 的 `sum|error|/sum(SE)`，并由 validation SE p95 选 best。它把 train SE p95 从 `15.79` 小幅降到 `15.60`，但独立 test 从 `26.82` 退到 `28.42`；test normalized L1 median/p95 仍为通过的 `0.06067/0.17806`，其他 aggregate、shape、source reciprocity、adversarial 与成本项也全部通过。最坏 state 与原 refinement 相同，而 dense optimized latent 对这些 state 的 SE p95 仍为 `37.10/26.02/17.15`，证明当前主要限制在 shared representation/decoder 上界。固定 `weight=0.02/CVaR25` 淘汰，不做 weight、tail fraction、step 或 bound sweep；E2 当前 cook 分支冻结。下一步只为 source-state compiler 与 source compiler + bounded refinement 建立 E3 公共 smoke，分别量化 pure feed-forward 和 bounded cook 到 optimized/target-encoded 上界的 gap，不把它们预期更差的结果写成 shared evaluator 已通过。
+最后的 train-only group reference-SE CVaR25 loss 直接复用正式 metric 的 `sum|error|/sum(SE)`，并由 validation SE p95 选 best。它把 train SE p95 从 `15.79` 小幅降到 `15.60`，但独立 test 从 `26.82` 退到 `28.42`；test normalized L1 median/p95 仍为通过的 `0.06067/0.17806`，其他 aggregate、shape、source reciprocity、adversarial 与成本项也全部通过。最坏 state 与原 refinement 相同，而 dense optimized latent 对这些 state 的 SE p95 仍有 `37.10/26.02/17.15`，证明在当前小型 concat-decoder 内，问题不是继续调整该 tail loss 就能解决。固定 `weight=0.02/CVaR25` 因而淘汰，不做 weight、tail fraction、step 或 bound sweep；冻结的是当前 E2 cook 分支，不是 shared representation 路线。旧 E3 smoke 只量化 pure feed-forward/bounded lifecycle 与 matched optimized/target-encoded controls 的差距；新的质量结论必须在 fidelity-first decoder 上重建。
 
 三组 LayerStack 的相同 state/query 在四档自适应预算下测得以下 noise 曲线；`sample_count` 是合并两个 replica 后的总样本数上限：
 
@@ -214,7 +214,7 @@ train-only target tensor encoder 已完成首个同预算 smoke。DeepSets encod
 3. ~~把默认均匀 proposal 扩展成带显式 mixture component 的训练 proposal，并保持固定 validation/test proposal；~~ 已完成球面 vMF `@2` 与 MaterialX local-normal adapter；
 4. ~~针对 LayerStack reference noise 调整自适应采样后，只重生成最小必要 H5，并重新执行合同、hash、split 与 gate；~~ 六状态 boundary adaptive H5 已通过 v6；
 5. ~~完成 E1 的方向编码、target transform、容量和 factorization 比较；~~ 已保留一个通过数值/静态成本 gate 的多界面 analytic residual 候选，并淘汰极窄 direct MLP 与 raw-direction pairwise-plane v1 的限定范围；
-6. ~~在同一公共 reader 上进入 E2 shared decoder，依次比较 optimized dense latent、target encoder、encoder initialization + bounded refinement、dictionary 和 factorized latent；~~ 已完成公共 smoke/容量比较并冻结当前 cook 分支：aggregate/shape/runtime 已成形，但所有共享上界仍失败 model/reference-SE gate；
+6. ~~在同一公共 reader 上进入 E2 shared decoder，依次比较 optimized dense latent、target encoder、encoder initialization + bounded refinement、dictionary 和 factorized latent；~~ 已完成旧小型 decoder 的公共 smoke/容量比较并冻结该 cook 分支：aggregate/shape/runtime 已成形，但所有当前实现仍失败 model/reference-SE gate；下一轮按 fidelity-first 设计重新建立 shared representation；
 7. evaluator 成形后再进入 MaterialX spatial latent、sampler 和 integration。
 
 单次数据、audit、训练和报告都位于 `data/reference-responses/` 或 `artifacts/`，不进入根 Git。本文只维护稳定结论、实验依赖和验收逻辑。
