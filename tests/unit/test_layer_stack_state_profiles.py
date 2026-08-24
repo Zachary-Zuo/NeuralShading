@@ -204,7 +204,7 @@ def test_e2_query_profile_anchors_wo_and_tracks_single_sheen_peak() -> None:
             adversarial_view_count=4,
             light_count=128,
             seed=20260824,
-            query_profile_id="ncls.e2-layer-stack-independent-peak-grazing-mixture@2",
+            query_profile_id="ncls.e2-layer-stack-independent-peak-grazing-mixture@3",
         ),
         LayerStackProviderConfig(
             family_count=12,
@@ -240,6 +240,51 @@ def test_e2_query_profile_anchors_wo_and_tracks_single_sheen_peak() -> None:
         1.0,
     )))
     assert np.max(nearest) < 0.5
+
+
+def test_e2_query_profile_covers_multilayer_moving_peak_patch() -> None:
+    provider = LayerStackProvider(
+        CollectionConfig(
+            view_count=4,
+            validation_view_count=4,
+            test_view_count=4,
+            adversarial_view_count=4,
+            light_count=128,
+            seed=20260824,
+            query_profile_id="ncls.e2-layer-stack-independent-peak-grazing-mixture@3",
+        ),
+        LayerStackProviderConfig(
+            family_count=12,
+            local_state_count=2,
+            state_profile_id=E2_LAYER_STACK_SHARED_DECODER_PROFILE_ID,
+        ),
+        evaluator=object(),
+    )
+    state = provider.source_states()[10]
+    assert len(state.runtime_state.interfaces) == 6
+    plan = provider.query_plan(state)
+    assert all("layer-stack-response-patch-peak" in value for value in plan.proposal_id)
+    mirror = plan.view_directions.copy()
+    mirror[:, :2] *= -1.0
+    patch = provider._peak_patch_centers(mirror)
+    assert patch.shape == (16, 75, 3)
+    np.testing.assert_allclose(np.linalg.norm(patch, axis=2), 1.0, atol=1e-6)
+    assert np.all(patch[..., 2] > 0.0)
+    nearest = np.degrees(np.arccos(np.clip(
+        np.max(
+            np.sum(plan.light_directions[:, :, None, :] * patch[:, None, :, :], axis=-1),
+            axis=1,
+        ),
+        -1.0,
+        1.0,
+    )))
+    assert np.max(nearest) < 1.0
+    np.testing.assert_allclose(
+        plan.solid_angle_weights * plan.proposal_pdf,
+        1.0 / 128.0,
+        rtol=1e-6,
+        atol=1e-7,
+    )
 
 
 def test_e2_adaptive_override_is_split_group_scoped_and_traceable() -> None:

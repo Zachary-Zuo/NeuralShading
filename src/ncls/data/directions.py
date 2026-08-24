@@ -11,8 +11,10 @@ VIEW_PARAMETERIZATION_ID = "grazing-weighted-fibonacci-hemisphere@2"
 MIXTURE_QUERY_PROFILE_ID = "ncls.e0-peak-grazing-mixture@2"
 E1_MIXTURE_QUERY_PROFILE_ID = "ncls.e1-independent-peak-grazing-mixture@1"
 E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID = "ncls.e2-layer-stack-independent-peak-grazing-mixture@1"
-E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID = "ncls.e2-layer-stack-independent-peak-grazing-mixture@2"
+E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V2_ID = "ncls.e2-layer-stack-independent-peak-grazing-mixture@2"
+E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID = "ncls.e2-layer-stack-independent-peak-grazing-mixture@3"
 _PEAK_ANGULAR_SCALES = (0.0025, 0.0125, 0.06)
+_PEAK_PATCH_SIGMA = 0.003
 
 
 def equal_area_hemisphere(bin_count: int = 128, *, azimuth_offset: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
@@ -228,8 +230,18 @@ def peak_grazing_mixture_pdf(
     full_sphere: bool,
     component_weights: tuple[float, ...] | None = None,
     reflection_center: np.ndarray | None = None,
+    reflection_patch_centers: np.ndarray | None = None,
 ) -> np.ndarray:
     values = np.asarray(directions, dtype=np.float64)
+    if reflection_center is not None and reflection_patch_centers is not None:
+        raise ValueError("reflection center and patch centers are mutually exclusive")
+    patch = None
+    if reflection_patch_centers is not None:
+        patch = np.asarray(reflection_patch_centers, dtype=np.float64)
+        if full_sphere or patch.ndim != 2 or patch.shape[1] != 3 or len(patch) < 1:
+            raise ValueError("reflection patch centers require a nonempty upper-hemisphere [count, 3] table")
+        if np.any(np.abs(np.linalg.norm(patch, axis=1) - 1.0) > 2e-4) or np.any(patch[:, 2] <= 0.0):
+            raise ValueError("reflection patch centers must be normalized and lie in the upper hemisphere")
     exponent = 7.0
     if full_sphere:
         weights = component_weights or (0.4, 0.25, 0.2, 0.15)
@@ -244,9 +256,20 @@ def peak_grazing_mixture_pdf(
     weights = component_weights or (0.5, 0.35, 0.15)
     uniform = np.full(values.shape[:-1], 1.0 / (2.0 * math.pi))
     grazing = (exponent + 1.0) * np.power(1.0 - values[..., 2], exponent) / (2.0 * math.pi)
+    peak_pdf = (
+        np.mean(
+            np.stack([
+                _folded_vmf_pdf(values, center, 1.0 / (_PEAK_PATCH_SIGMA ** 2), 1.0)
+                for center in patch
+            ]),
+            axis=0,
+        )
+        if patch is not None
+        else _peak_component_pdf(values, view, 1.0, reflection_center)
+    )
     return (
         weights[0] * uniform
-        + weights[1] * _peak_component_pdf(values, view, 1.0, reflection_center)
+        + weights[1] * peak_pdf
         + weights[2] * grazing
     )
 
@@ -258,12 +281,15 @@ def peak_grazing_mixture_query(
     full_sphere: bool,
     seed: int,
     reflection_centers: np.ndarray | None = None,
+    reflection_patch_centers: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """生成按 wo 对齐、PDF 可计算的 uniform + peak + grazing 固定 query mixture。"""
 
     view_values = np.asarray(views, dtype=np.float64)
     if direction_count < 16 or seed < 0:
         raise ValueError("mixture query requires at least 16 directions and a nonnegative seed")
+    if reflection_centers is not None and reflection_patch_centers is not None:
+        raise ValueError("reflection centers and patch centers are mutually exclusive")
     if reflection_centers is None:
         center_values: np.ndarray | None = None
     else:
@@ -273,13 +299,36 @@ def peak_grazing_mixture_query(
         lengths = np.linalg.norm(center_values, axis=1)
         if np.any(np.abs(lengths - 1.0) > 2e-4):
             raise ValueError("reflection_centers must be normalized")
-    base_weights = (0.4, 0.25, 0.2, 0.15) if full_sphere else (0.5, 0.35, 0.15)
-    counts = [max(1, int(round(direction_count * weight))) for weight in base_weights]
-    counts[-1] += direction_count - sum(counts)
-    if counts[-1] < 1:
-        deficit = 1 - counts[-1]
-        counts[-1] = 1
-        counts[0] -= deficit
+    if reflection_patch_centers is None:
+        patch_values: np.ndarray | None = None
+    else:
+        patch_values = np.asarray(reflection_patch_centers, dtype=np.float64)
+        if (
+            full_sphere
+            or patch_values.ndim != 3
+            or patch_values.shape[0] != len(view_values)
+            or patch_values.shape[2] != 3
+            or patch_values.shape[1] < 1
+        ):
+            raise ValueError("reflection_patch_centers must have upper-hemisphere shape [view, patch, 3]")
+        if (
+            np.any(np.abs(np.linalg.norm(patch_values, axis=2) - 1.0) > 2e-4)
+            or np.any(patch_values[..., 2] <= 0.0)
+        ):
+            raise ValueError("reflection_patch_centers must be normalized and upper-hemisphere")
+    if patch_values is not None:
+        grazing_count = max(1, int(round(direction_count * 0.15)))
+        counts = [direction_count - patch_values.shape[1] - grazing_count, patch_values.shape[1], grazing_count]
+        if counts[0] < 1:
+            raise ValueError("reflection patch leaves no uniform query directions")
+    else:
+        base_weights = (0.4, 0.25, 0.2, 0.15) if full_sphere else (0.5, 0.35, 0.15)
+        counts = [max(1, int(round(direction_count * weight))) for weight in base_weights]
+        counts[-1] += direction_count - sum(counts)
+        if counts[-1] < 1:
+            deficit = 1 - counts[-1]
+            counts[-1] = 1
+            counts[0] -= deficit
     actual_weights = tuple(count / direction_count for count in counts)
     all_directions = np.empty((len(view_values), direction_count, 3), dtype=np.float32)
     all_pdf = np.empty((len(view_values), direction_count), dtype=np.float32)
@@ -287,6 +336,7 @@ def peak_grazing_mixture_query(
     for view_index, view in enumerate(view_values):
         rng = np.random.default_rng(seed ^ ((view_index + 1) * 0x9E3779B1))
         reflection_center = None if center_values is None else center_values[view_index]
+        patch_centers = None if patch_values is None else patch_values[view_index]
         if full_sphere:
             parts = (
                 _sample_uniform(counts[0], True, rng),
@@ -295,9 +345,18 @@ def peak_grazing_mixture_query(
                 _sample_grazing(counts[3], True, rng),
             )
         else:
+            peak_directions = (
+                _sample_peak_component(view, counts[1], 1.0, rng, reflection_center)
+                if patch_centers is None
+                else np.stack([
+                    _sample_vmf(center, 1.0 / (_PEAK_PATCH_SIGMA ** 2), 1, rng)[0]
+                    for center in patch_centers
+                ])
+            )
+            peak_directions[:, 2] = np.abs(peak_directions[:, 2])
             parts = (
                 _sample_uniform(counts[0], False, rng),
-                _sample_peak_component(view, counts[1], 1.0, rng, reflection_center),
+                peak_directions,
                 _sample_grazing(counts[2], False, rng),
             )
         directions = np.concatenate(parts)
@@ -309,6 +368,7 @@ def peak_grazing_mixture_query(
             full_sphere=full_sphere,
             component_weights=actual_weights,
             reflection_center=reflection_center,
+            reflection_patch_centers=patch_centers,
         )
         if not np.all(np.isfinite(pdf)) or np.any(pdf <= 0.0):
             raise RuntimeError("mixture query produced an invalid PDF")

@@ -22,6 +22,7 @@ from ncls.data.contract import (
 from ncls.data.directions import (
     E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID,
     E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID,
+    E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V2_ID,
     peak_grazing_mixture_query,
 )
 from ncls.data.priors import (
@@ -277,6 +278,31 @@ class LayerStackProvider(BaseProvider):
             result[index] = wi[int(np.argmax(response))]
         return result.astype(np.float32)
 
+    @staticmethod
+    def _peak_patch_centers(centers: np.ndarray) -> np.ndarray:
+        radial_offsets = np.deg2rad(np.linspace(-12.6, 12.6, 15, dtype=np.float64))
+        azimuth_offsets = np.deg2rad(np.linspace(-3.6, 3.6, 5, dtype=np.float64))
+        result = np.empty((len(centers), len(radial_offsets) * len(azimuth_offsets), 3), dtype=np.float64)
+        for index, center in enumerate(np.asarray(centers, dtype=np.float64)):
+            azimuth_tangent = np.cross((0.0, 0.0, 1.0), center)
+            if np.linalg.norm(azimuth_tangent) < 1e-8:
+                azimuth_tangent = np.asarray((1.0, 0.0, 0.0))
+            else:
+                azimuth_tangent /= np.linalg.norm(azimuth_tangent)
+            radial_tangent = np.cross(azimuth_tangent, center)
+            rows = []
+            for radial in radial_offsets:
+                for azimuth in azimuth_offsets:
+                    value = (
+                        center
+                        + np.tan(radial) * radial_tangent
+                        + np.tan(azimuth) * azimuth_tangent
+                    )
+                    value[2] = abs(value[2])
+                    rows.append(value / np.linalg.norm(value))
+            result[index] = rows
+        return result.astype(np.float32)
+
     def query_plan(
         self,
         state: SourceState,
@@ -287,19 +313,33 @@ class LayerStackProvider(BaseProvider):
         if (
             self.config.query_profile_id not in {
                 E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID,
+                E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V2_ID,
                 E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_ID,
             }
-            or len(stack.interfaces) != 1
-            or not isinstance(stack.interfaces[0], SheenInterface)
         ):
             return base
-        centers = self._sheen_peak_centers(
-            base.view_directions,
-            stack.interfaces[0].roughness,
-            legacy_v1_semantics=(
-                self.config.query_profile_id == E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID
-            ),
-        )
+        old_profile = self.config.query_profile_id in {
+            E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID,
+            E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V2_ID,
+        }
+        if old_profile and not (
+            len(stack.interfaces) == 1 and isinstance(stack.interfaces[0], SheenInterface)
+        ):
+            return base
+        if len(stack.interfaces) == 1 and isinstance(stack.interfaces[0], SheenInterface):
+            centers = self._sheen_peak_centers(
+                base.view_directions,
+                stack.interfaces[0].roughness,
+                legacy_v1_semantics=(
+                    self.config.query_profile_id == E2_LAYER_STACK_MIXTURE_QUERY_PROFILE_V1_ID
+                ),
+            )
+            proposal_tag = "layer-stack-sheen"
+        else:
+            centers = base.view_directions.copy()
+            centers[:, :2] *= -1.0
+            proposal_tag = "layer-stack-response-patch"
+        patch_centers = None if old_profile else self._peak_patch_centers(centers)
         lights = base.light_directions.copy()
         weights = base.solid_angle_weights.copy()
         pdf = base.proposal_pdf.copy()
@@ -313,14 +353,17 @@ class LayerStackProvider(BaseProvider):
                 base.direction_count,
                 full_sphere=False,
                 seed=base.seed ^ ((int(role) + 1) * 0x9E3779B1),
-                reflection_centers=centers[selected],
+                reflection_centers=centers[selected] if old_profile else None,
+                reflection_patch_centers=(
+                    None if patch_centers is None else patch_centers[selected]
+                ),
             )
             lights[selected] = role_lights
             weights[selected] = role_weights
             pdf[selected] = role_pdf
             for index in np.flatnonzero(selected).tolist():
                 proposal_ids[index] = proposal_ids[index].replace(
-                    "-peak-grazing-", "-layer-stack-sheen-peak-grazing-"
+                    "-peak-grazing-", f"-{proposal_tag}-peak-grazing-"
                 ).replace("@2", "@1")
         return QueryPlan(
             base.view_directions,

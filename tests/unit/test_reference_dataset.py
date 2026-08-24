@@ -207,6 +207,45 @@ def test_peak_mixture_accepts_explicit_surface_conditioned_reflection_centers() 
     np.testing.assert_allclose(weights * pdf, 1.0 / 1024.0, rtol=1e-6, atol=1e-7)
 
 
+def test_peak_mixture_accepts_stratified_reflection_patch_with_valid_pdf() -> None:
+    views = stratified_view_directions(2)
+    mirror = views.copy()
+    mirror[:, :2] *= -1.0
+    offsets = np.asarray((-0.03, 0.0, 0.03), dtype=np.float64)
+    patches = []
+    for center in mirror:
+        tangent = np.cross((0.0, 0.0, 1.0), center)
+        tangent /= np.linalg.norm(tangent)
+        values = center[None, :] + offsets[:, None] * tangent[None, :]
+        values /= np.linalg.norm(values, axis=1, keepdims=True)
+        patches.append(values)
+    patches = np.asarray(patches)
+    directions, weights, pdf = peak_grazing_mixture_query(
+        views,
+        128,
+        full_sphere=False,
+        seed=83,
+        reflection_patch_centers=patches,
+    )
+    assert directions.shape == (2, 128, 3)
+    np.testing.assert_allclose(weights * pdf, 1.0 / 128.0, rtol=1e-6, atol=1e-7)
+    nearest = np.degrees(np.arccos(np.clip(
+        np.max(np.sum(directions[:, :, None, :] * patches[:, None, :, :], axis=-1), axis=1),
+        -1.0,
+        1.0,
+    )))
+    assert np.max(nearest) < 1.0
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        peak_grazing_mixture_query(
+            views,
+            128,
+            full_sphere=False,
+            seed=83,
+            reflection_centers=mirror,
+            reflection_patch_centers=patches,
+        )
+
+
 def test_query_plan_accepts_surface_dependent_direction_tables() -> None:
     views = stratified_view_directions(2)
     lights, weights = equal_area_hemisphere(4)

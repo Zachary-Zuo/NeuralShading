@@ -127,6 +127,8 @@ RGB f(wo, wi) × |dot(Ns, wi)|
 
 版本化 E0 mixture `ncls.e0-peak-grazing-mixture@2` 是按 `wo` 构造的 uniform + 多尺度球面 vMF 反射 peak + grazing 混合分布；完整球面时另含透射 peak。vMF peak 以真实镜面方向为球面中心，并把完整球分布折叠到目标半球，PDF 等于原方向与镜像方向的 PDF 之和。它使用可计算的归一化 PDF 和 `1/(N p)` 权重，目标是诊断 peak、掠射与透射覆盖，不预先宣告为最终训练分布。train/adversarial 使用 mixture，validation/test 使用独立 uniform probe；文件仍须由 supervision audit 检查实际 query role 与方向哈希，不能只相信 profile 名称。旧 `@1` 在近法线与旋转各向异性窄峰上方差过高，历史文件只能由其锁定生成提交复现。
 
+E2 LayerStack 的 `ncls.e2-layer-stack-independent-peak-grazing-mixture@3` 在同一合同上把反射 peak 分量换成可计算 PDF 的 source-family proposal adapter。单界面 sheen 使用由其原生 roughness 和权威 response measure 得到的中心；其余状态在几何镜面方向周围布置固定的 75 点窄 vMF patch，以覆盖多界面随机游走 response 的移动峰。公共 writer 只接收最终方向、连续 mixture PDF 与积分权重，不接收层参数或解析 closure；其他 source family 不需要实现这一 adapter。`@1`、`@2` 仍仅用于复现各自已记录的监督失败，不能借新 proposal 重写历史 H5。
+
 对带 normal map 的 MaterialX，几何镜面中心不足以覆盖局部移动峰。`ncls.materialx-local-normal-peak@1` 先按每个真实 UV/footprint 用 reference 相同的 filtering 求出 shading normal，再把 `@2` 的反射 peak 中心替换为该法线对应的镜面方向；uniform、grazing、解析 PDF 和 validation/test 独立 uniform 语义保持不变。这是 MaterialX provider 的 proposal adapter，不改变 GT，也不把 normal map 烘成公共材质参数。
 
 `rng_seed` 由 provider 返回，必须是 reference 实际执行该 query 使用的随机流 seed，writer 不得根据 query 行号再合成。确定性 reference 写 0；LayerStack 当前按 `(state, wo)` 使用一个 query-group seed，再在 shader 内结合 `wi` 索引派生随机流，因此同组各方向记录相同的 seed。
