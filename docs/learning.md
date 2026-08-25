@@ -30,9 +30,11 @@ P1 v1 已完成正式单-seed 比较。M1-M 是通过全部主参考线的 best 
 3. scorecard：log-domain error、95% 峰高支持集角距、峰高比、top-5% energy recall、source-aware reciprocity deviation，以及 difficulty/tag/family/structure/cohort/state breakdown。它们解释长尾，不单独否决候选。
 4. diagnostics：绝对误差、reference SE 与两者比值。`model error / reference SE` 不再是 kill gate。
 
+`ncls learn audit-p1` 对冻结 checkpoint 另行计算逐 state / 通道 / role 的 signed 能量比、M2 的 clamp 死区比例与 `E_core/E_ref` core coverage、achieved reference SE（group p95 与 integrated ratio）以及 30-state p95 的 bootstrap CI / leave-one-state-out 范围，输出 `p1-audit-report`；它不改动 `quality-v1` 的主排名。
+
 reciprocity 使用语料中落盘的 reciprocal paired response，比较“模型互易偏差与 source 自身互易偏差之差”；因此非严格互易的 source 不会被错误地强制为零。
 
-每份 checkpoint report 另记录 `B_asset`、`B_shared`、`C_prepare`、`C_eval` 和参数数目。成本用于 Pareto，不在研究期提前淘汰。
+每份 checkpoint report 另记录 `B_asset`、`B_shared`、`C_prepare`、`C_eval`、state bytes 和参数数目。成本用于 Pareto，并按 `docs/research/experiment_framework.md` §0.1 的部署软线在注册表标注是否为部署候选；超线 run 不淘汰，但不能成为默认配置。
 
 PyTorch 研究端另提供一致的 query benchmark：`single_query` 测一个 `(state, wo, wi)` 的串行延迟，`coherent_packet` 在同一 `(state, wo)` 下批量求多个 `wi`，把一次 `prepare` 的成本摊薄后报告每方向时间。它用于 P1 的相对成本曲线；阶段收尾仍需用 Slang backend 重测，不能把 PyTorch kernel 时间冒充最终 viewer 时间。
 

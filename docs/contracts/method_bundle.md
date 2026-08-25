@@ -146,6 +146,20 @@ manifest 中的 `cost_claims` 是静态声明，至少包含：
 - 环境光、面光等专用积分器的固定 query 预算；
 - 是否使用可变循环或数据相关分支。
 
+`runtime_class=realtime` 的 bundle 还必须满足以下硬线；loader 依据 `cost_claims` 与 descriptor 校验，超线的 bundle 拒绝进入实时方法列表（仍可作为 `diagnostic` 加载）：
+
+| 项 | 硬线 |
+|---|---|
+| 单次 `evaluate` | ≤ 2,000 MAC（标量 ALU）；声明 cooperative vector 执行且运行时确认支持时 ≤ 10,000 MAC |
+| 单次 `prepare` | ≤ 10,000 MAC |
+| `state_stride` | ≤ 64 B，或 `inline` |
+| compiled material bytes | 均匀材质 ≤ 512 B；spatial latent ≤ 32 B/texel；包含全部烘焙的 material-static 参数 |
+| 共享权重 | `evaluate` 权重 ≤ 32 KB；bundle 共享权重总量 ≤ 512 KiB |
+| 环境光 / 面光 | 声明 `PrefilteredEnvironmentIntegration` / `AnalyticPolygonIntegration`，或固定 query 预算 ≤ 4 次 `evaluate`/像素 |
+| 执行 | `bounded_execution=true`；`prepare/evaluate` 无数据相关循环、无 > 64 元素的函数级数组 |
+
+依据工况（RTX 4090 级、1080p、材质着色 2 ms/帧、每像素 1 次 `prepare` + ≤ 4 次 `evaluate`）见 `docs/research/experiment_framework.md` §0.1。当前 viewer（`apps/viewer/MethodBundle.cpp`）只接受 `diagnostic` bundle，尚未实现这组校验；`film-m1-direct-neural@1` 的 1 KB state、19.5 KB compiled material 与 5.3 MB 共享权重按此表属于 `diagnostic`。
+
 viewer benchmark 记录实测 prepare、1/8/32 等灯数下的 lighting scaling、环境/面光积分、总帧时间和显存。实测数据不回写 bundle 本体，而以 `(method_id, benchmark_scene_id, device_id)` 保存到运行报告。
 
 ## 当前 neural evaluator 部署记录

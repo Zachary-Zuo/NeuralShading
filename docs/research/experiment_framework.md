@@ -12,10 +12,26 @@
 ## 0. 框架定位
 
 - **基准优先**：先冻结「数据 + 评测协议」的 v1 基准，方法迭代只在 Python 评测框架内进行。MethodBundle/Slang/viewer 是独立的部署轨道，每个研究阶段收尾时对当期最优候选执行一次，不阻塞日常实验。`evaluate()` 返回线性 `f`、`prepare/evaluate` 划分、单 query 随机访问这些运行时合同保留为设计期静态约束，每个候选注册时检查。
-- **容量分档**：每个候选按 S/M/L 三档容量测「容量–质量曲线」。`C_eval`、`B_shared`、`B_asset` 和实测时间完整记录，用于 Pareto；部署压缩是后置的独立阶段。
+- **容量分档 + 部署预算**：每个候选按 S/M/L 三档容量测「容量–质量曲线」，`C_eval`、`C_prepare`、`B_shared`、`B_asset`、state bytes 和实测时间完整记录。每个候选同时按 §0.1 的部署预算判定：超软线的候选可以跑、可以进注册表，但必须标注「非部署候选」，不得成为默认配置或进入 D 轨道；硬线由 MethodBundle 合同承担。表达力探索不被预算提前扼杀，预算也不是后置到部署阶段才想起的东西。
 - **足量语料**：正式语料按第 2 节密度表生成，覆盖未见方向、未见参数状态和未见结构 family；长尾分位数只从满足 state 数量要求的冻结 test 集计算。
 
 术语规范：禁止用「上界/下界/ceiling/floor」描述有限实验的容量结论。统一句式为「配置 C 在数据 D、预算 B 下达到 X」。「运行成本静态有界」这一工程含义（固定循环数、固定访存数）不受影响。
+
+### 0.1 部署预算（2026-08-25 恢复）
+
+基准工况：RTX 4090 级 GPU（fp32 ≈ 41 TMAC/s）、1080p（2.07M 像素）、材质着色分得 2 ms/帧、每像素 1 次 `prepare` + ≤ 4 次 `evaluate`（灯数 + 环境/面光 query）。按标量 MLP 实际利用率约 25% 计，全帧可用约 20 GMAC，即每像素含 `prepare` 约 `1e4` MAC。硬线数值与 loader 校验由 [`../contracts/method_bundle.md`](../contracts/method_bundle.md) 「成本信息」节承担；本节定义研究期软线，两者数值一致。
+
+| 量 | 软线 | 依据 |
+|---|---|---|
+| `C_eval`（每 `wi`） | ≤ `2e3` MAC（标量 ALU；当前 Falcor 8.0 / Slang 2024.1.34 工具链没有 cooperative vector）。工具链升级并在远程机验证后放宽到 ≤ `1e4` MAC（64 宽 × 2–3 层） | 20 GMAC/帧 ÷ 2.07M 像素 ÷ 4 次 |
+| `C_prepare`（每像素） | ≤ `1e4` MAC | 同上；inline prepare（`state_stride=0`）时按灯数折算 |
+| state bytes/像素 | ≤ 64 B（16 float 或 32 half），或 inline | 1080p 下 1 KB state = 2.1 GB 缓冲；`prepare` 按值返回 `State`，超出寄存器量级即落 local memory |
+| `B_asset` | 均匀材质 ≤ 512 B；空间变化材质 ≤ 32 B/texel；含所有烘焙的 material-static 参数（如 condition 向量），不只计 latent | 1K² latent texture 下 256 B/texel 已是 268 MB |
+| `B_shared` | `evaluate` 权重 ≤ 32 KB（fp16）；bundle 共享权重总量 ≤ 512 KiB | D3D12 groupshared 上限 32 KB；512 KiB 为 L2 驻留线 |
+| 环境光 / 面光 | 提供解析或预滤波积分 capability；否则固定 query 预算 ≤ 4 次 `evaluate`/像素 | 16 次 × `1e4` MAC 在 1080p 已是 8 ms 峰值 |
+| 实现 | `prepare/evaluate` 内无 > 64 元素的函数级数组、无数据相关循环 | local memory 溢出；`bounded_execution` |
+
+对照当前形态：M1 与 M2 的 S/M/L 三档全部超 `C_eval`、`C_prepare`、state、`B_asset`、`B_shared` 五条线；legacy-ltc-k2 满足 `C_eval`、`B_shared`，state 176 B 超线但可压缩。[`p1_audit.md`](p1_audit.md) §5.1 的 lobe 参数形态（`prepare` 输出 K 个 lobe 参数、`evaluate` 解析、LTC/GGX 解析积分、精确 `sample/pdf`）是唯一在标量路径上全部满足的候选，因此是 P1 重跑主线；§5.2 的 direct neural evaluator 只在 cooperative vector 线验证后作为同预算对照。
 
 ## 1. 材质难度分级
 
@@ -150,7 +166,7 @@ source compiler（[`model_candidates.md`](model_candidates.md) 的 M6）只对�
 | **标准档** | 正式主搜索 | 全量阶段数据；最大步数按数据规模折算（目标约 30–50 个 query-group epoch），达到最小步数后允许用冻结的 validation patience 早停 | 先用 1 个共同 deterministic seed；差距接近或轨迹不稳时自适应追加 |
 | 冲刺档 | 里程碑候选 | 标准档 ×5–10 预算 | 只对晋级候选按证据决定追加 seed |
 
-随意缩减 step 或数据的运行只属于快速档；版本化的阶段子语料（例如 P1 selection）属于该阶段的标准数据，不算临时缩减。checkpoint 选择：validation 上的 solid-angle normalized L1 state-median（决胜看 p95）；test 只在配置冻结后读取一次。paired state bootstrap 描述冻结 state 集上的外观差异，不替代 optimization seed 方差；只有差异接近或训练轨迹异常时才追加 seed，避免把所有候选的成本无条件乘倍。
+随意缩减 step 或数据的运行只属于快速档；版本化的阶段子语料（例如 P1 selection）属于该阶段的标准数据，不算临时缩减。checkpoint 选择：先在 validation 上筛掉 state-p95 超过该 run 至今最小 p95 1.25 倍的 checkpoint，再在其余中取 state-median 最小者（tail guard；P1 v1 的「median 优先、p95 决胜」把 M2-S p95 0.586 的 step 4500 选成 best，而 step 7500 为 0.340）；test 只在配置冻结后读取一次。paired state bootstrap 描述冻结 state 集上的外观差异，不替代 optimization seed 方差；只有差异接近或训练轨迹异常时才追加 seed，避免把所有候选的成本无条件乘倍。
 
 ### 4.3 监督量与输出（沿用既定结论）
 
@@ -185,9 +201,9 @@ log-domain error、峰位角（到 95% 峰高支持集的最近角距）、峰�
 
 viewer 固定 light/view/state sweep 的 HDR 误差与 display-referred FLIP、sweep 时序连续性（峰位跳变/闪烁）、Python/Slang parity、真实 GPU 时间与显存。
 
-### 5.6 成本记录（每 run 必录，研究期不淘汰）
+### 5.6 成本记录（每 run 必录）
 
-`B_asset`、`B_shared`、`C_prepare`、`C_eval`（MAC 与实测）、拟合/编译 wall-clock。用于最终画质量–成本 Pareto，不用于研究期 kill。
+`B_asset`（含烘焙的 material-static 参数）、`B_shared`、`C_prepare`、`C_eval`（MAC 与实测）、state bytes/像素、拟合/编译 wall-clock。注册表每行标注是否满足 §0.1 软线；超线的 run 保留为容量诊断或 teacher，不能登记为默认配置或 Pareto 端点。
 
 ## 6. 阶段路线
 
@@ -201,7 +217,7 @@ viewer 固定 light/view/state sweep 的 HDR 误差与 display-referred FLIP、s
 | **P3 编译（G2/G2s）** | pure feed-forward compiler 与 target-visible 路径的差距；refinement cook 能收窄多少 | 同 P2 | M6 + M5 对照 |
 | **P4 资产式工作流（W）** | 同一 pipeline 不调参能否吃下 MERL 100 表 + OpenPBR 全资产？质量分布如何 | MERL/OpenPBR 语料 | P2 胜出配置 |
 | **P5 及以后** | spatial latent/LOD、matched sampler、integration | MaterialX 扩容 | P2/P3 胜出 evaluator |
-| **D 部署轨道** | 每阶段收尾：当期最优 S 档候选 → MethodBundle → Slang parity → 成本实测 → viewer capture | — | — |
+| **D 部署轨道** | 每阶段收尾：当期满足 §0.1 软线的最优候选 → MethodBundle → Slang parity → 成本实测 → viewer capture | — | — |
 
 P1 与 P2 的语料同批生成；P1 的结论决定 P2 的 decoder 起点。P4 可与 P3 并行。
 
@@ -209,7 +225,7 @@ P1 与 P2 的语料同批生成；P1 的结论决定 P2 的 decoder 起点。P4 
 
 - **实验注册表** `docs/research/experiment_log.md`：每个正式 run 一行——日期、候选+档位、数据版本、预算档、seed 数、两个主指标、一句话结论、artifacts 路径。这是回答「现在做到哪了」的唯一入口；详细数值留在 `artifacts/`。
 - **可比性**：只有数据版本、预算档、split 全部相同的 run 才能同表比较。
-- **结论强度**：任何「X 优于 Y」写入注册表前，用 test state 上的 paired difference + bootstrap 置信区间（≥1,000 次重采样）确认区间不跨零；跨零则记为「无显著差异」。
+- **结论强度**：任何「X 优于 Y」写入注册表前，用 test state 上的 paired difference + bootstrap 置信区间（≥1,000 次重采样）确认区间不跨零；跨零则记为「无显著差异」。30 个 state 的 p95 bootstrap CI 很宽（P1 v1 M1-M 为 `[0.074, 0.243]`），只作 selection 诊断；正式长尾结论用 ≥ 50 个 test state，并附 p90/p95、最差 state 清单、bootstrap CI 与 leave-one-state-out 范围。
 - **对照要求**：每个结论必须有 matched 对照（同数据、同预算、只差声明的机制组）。允许一次实验同时改变一组相关机制（例如「chart + FiLM」作为一个 bundle），但 bundle 内要保留能识别主要贡献的消融。
 - **test 治理（简化）**：test 日常不读；阶段结论读取。若某次 test 结果驱动了后续设计，下一阶段对该考核轴更换新 test split 版本。不再维护更复杂的 sealed/development 双层机制。
 - **回归**：已解决的失败（峰位、能量、范围、parity）固化为固定 probe，新 run 自动跑；回归项退化需要在注册表中显式说明权衡。
@@ -221,6 +237,9 @@ P1 与 P2 的语料同批生成；P1 的结论决定 P2 的 decoder 起点。P4 
 1. `evaluate()` 语义输出线性 `f`，不含几何余弦；
 2. 单次 `(state, wo, wi)` 查询的读取量固定：有限个 latent/codeword/权重块，与分辨率和历史查询无关；
 3. `prepare()` 结果可被同一着色点的多个 `wi` 复用；material-static 的调制参数要么计入 `C_prepare`，要么烘焙后计入 `B_asset`——二选一，注册时声明；
-4. 不把完整方向表藏进 `prepare()`。
+4. 不把完整方向表藏进 `prepare()`；
+5. state bytes/像素、`B_asset`（含烘焙参数）、`B_shared`、`C_prepare`、`C_eval` 按 §0.1 软线判定并在注册表标注；
+6. 面向 deferred 的候选声明环境光/面光的积分方式（解析、预滤波或固定 query 预算）；
+7. `evaluate` 的实现路径（标量 ALU 或 cooperative vector）与所依赖的工具链版本。
 
-满足静态约束的候选才有资格进入 D 轨道；D 轨道的实测数据反过来只影响部署阶段的压缩设计，不回头否决研究期结论。
+满足静态约束与 §0.1 软线的候选才有资格进入 D 轨道；D 轨道实测若与 §0.1 的估算量级不符，修订的是 §0.1 的依据列，不是单个 run 的结论。

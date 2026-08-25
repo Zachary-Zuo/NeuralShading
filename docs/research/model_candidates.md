@@ -64,7 +64,7 @@ h_t = -normalize(η_o·wo + η_i·wi)          # η 来自族的原生参数
 ### 1.3 输出参数化与 target transform
 
 - **direct head**：预测 `f_hat`。非负色域用版本化非负映射（如 softplus/exp 族）；合法负通道（如 ACEScg→sRGB 的 out-of-gamut）用 unconstrained head，按族颜色合同评测，禁止统一 clamp。
-- **residual head**（M2）：预测带符号 `Δf`，`f_hat = f_core + Δf`。
+- **residual head**（M2）：`f_hat = f_core·exp(Δ_log) + Σ_k lobe_k`，`Δ_log` 为有界乘性修正、`lobe_k` 为非负解析 lobe（能量、带宽、frame 由 `prepare` 给出）。禁止 `clamp(f_core + signed Δ, 0)`：P1 v1 审计证实该参数化在 4 个低 core 覆盖 state 上截断 44–98% 的残差并制造梯度死区（[`p1_audit.md`](p1_audit.md) §4.2）。
 - transform 只存在于 loss/metric 内部：
 
 ```text
@@ -97,7 +97,7 @@ per-state 统计（E2 已证明跨态共用 scale 会把 1e-8 与 1e-1 的残差
 | M | 结构完整的研究主力 | 256 | 3 / 6 | 64 | ~1.3M 参数，`C_eval` ~1e6 MAC |
 | L | 容量诊断 / distillation teacher | 512 | 3 / 8 | 128 | ~6M 参数 |
 
-block = pre-norm residual block（linear→GELU→linear + skip；LayerNorm 只作用于 hidden，不跨 query/材质统计）。旧 65k MAC 预算在此体系内约等于 S 档以下，不再作为淘汰条件。
+block = pre-norm residual block（linear→GELU→linear + skip；LayerNorm 只作用于 hidden，不跨 query/材质统计）。按 [`experiment_framework.md`](experiment_framework.md) §0.1 的部署软线，S/M/L 三档的 `C_eval`（约 1e5 / 1e6 / 4e6 MAC）、state（512 B / 1 KB / 2 KB）与烘焙资产全部超线，只用于容量–质量曲线与 teacher 诊断；部署候选须另按软线定义（例如 ≤ 64 宽 × 2–3 层的 direct evaluator，或 `prepare` 输出 lobe 参数、`evaluate` 解析的形态），并在注册表标注。
 
 ---
 
@@ -163,7 +163,7 @@ f_hat = f_core(m, wo, wi) + Δf(z_m, wo, wi)
 ```
 
 - `f_core`：族 adapter 提供。LayerStack 用 direct-top 界面散射（已实现）；无层语义的族可用拟合的 GGX proxy core（参数由直接拟合得到，计入 `B_asset`）或不用 core。
-- `Δf`：宿主为 M1 的任意配置，输出 signed，transform 用 per-state `asinh`。
+- 残差：非负 residual lobe + 有界乘性 log 修正（§1.3），参数由 ≤ 64 宽的 `prepare` 网络给出，`evaluate` 解析求和；不再是 signed direct MLP 输出。每 state 报告 `E_core/E_ref`（core coverage）与残差承担的能量。
 - core-only 指标每 run 报告，量化网络的净贡献（E1 实测：core-only 0.866 → +residual 0.046）。
 
 ### 3.3 风险与判定
@@ -171,7 +171,7 @@ f_hat = f_core(m, wo, wi) + Δf(z_m, wo, wi)
 - 风险：core 掩盖网络容量问题，跨族结论被 core 依赖污染（→ 始终与 M1 direct 配对报告）；无 core 的族退化为 M1，形成不对称比较（→ 跨族汇总时分层报告）。
 - 判定：P1/P2 中始终作为 M1 的 paired variant 跑。若 direct M1-M 达标且差距 < 显著区间 → core 变为可选优化；若 residual 显著更好 → core 进入部署形态，需在 D 轨道验证 core 的 Slang 成本。
 
-P1 v1 结论：M2-S 的 median 相对 M1-S 显著改善，但 p95 显著恶化到 `0.5862`，当前 Torch core 路径也更慢；M2-M/L 没有显著容量收益。core 不进入当前稳健 evaluator 默认，只保留为 optimized-code control 与后续 proposal 研究输入。
+P1 v1 结论：M2-S 的 median 相对 M1-S 显著改善；p95 `0.5862` 经冻结推理审计定位为 4 个 core 覆盖 0.17–0.54 的多层 state 上 `clamp(core + signed Δ, 0)` 的死区（[`p1_audit.md`](p1_audit.md) §4.2），core 精确的 15 个单层 state 上 M2 L1 ≤ 0.013。该 signed-residual 实现淘汰；core 路线按上述非负 residual lobe 形态成为 P1 重跑主线（同时满足 [`experiment_framework.md`](experiment_framework.md) §0.1 部署软线）。当前 Torch core 路径 `4.777 ms/query` 只是研究端实现，不代表 Slang 成本。
 
 ## 4. M3：sparse dictionary / top-k mixture
 

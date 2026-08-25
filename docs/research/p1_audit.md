@@ -4,7 +4,7 @@
 
 ## 1. 一句话结论
 
-P1 v1 把 E2 的 concat 小 MLP 放大为 256 宽、9 个 residual block 的共享 trunk，并解除了研究期成本预算。它换来的是 test median `0.053 → 0.045`、p95 `0.169 → 0.118` 的边际改善（E2 与 P1 数据不同，只作量级对照），代价是单次 `evaluate` 约 `8.6e5` MAC，比 [Real-Time Neural Appearance Models 2024] 的 decoder 高约两个数量级；部署实现又比同 MAC 数的算力上限慢约两个数量级。同时 M2（解析 core + 残差）median `0.018` 这一明显更强的信号被 p95 爆炸掩盖，而该爆炸有很大可能来自一个梯度死区，不是 core 路线本身的问题。
+P1 v1 把 E2 的 concat 小 MLP 放大为 256 宽、9 个 residual block 的共享 trunk，并解除了研究期成本预算。它换来的是 test median `0.053 → 0.045`、p95 `0.169 → 0.118` 的边际改善（E2 与 P1 数据不同，只作量级对照），代价是单次 `evaluate` 约 `8.6e5` MAC，比 [Real-Time Neural Appearance Models 2024] 的 decoder 高约两个数量级；部署实现又比同 MAC 数的算力上限慢约两个数量级。同时 M2（解析 core + 残差）median `0.018` 这一明显更强的信号被 p95 爆炸掩盖；远程机冻结推理审计（`artifacts/audits/p1-v1/`）证实该爆炸集中在 4 个 core 覆盖不足、残差被 `clamp` 大面积截断的多层 state 上，而 core 精确的 15 个单层 state 上 M2 的 L1 ≤ `0.013`、M1-S 为 `0.006–0.126`。问题在残差参数化，不在 core 路线。
 
 ## 2. P1 v1 实际放宽了什么
 
@@ -39,7 +39,7 @@ P1 v1 把 E2 的 concat 小 MLP 放大为 256 宽、9 个 residual block 的共�
 
 M1-M 在 RTX 4090、320×240 输出（方法半屏 160×240）、单方向光下 prepare `82.52 ms`、lighting `112.72 ms`，即每个 pixel-light 查询约 2.9 µs。按 38k 像素 × `8.6e5` MAC ≈ 33 GMAC，4090 fp32 算力下计算时间不到 1 ms。差出的约两个数量级来自 `film_m1.slang` 的实现方式：
 
-- 标量 fp32，每个 MAC 单独从 `StructuredBuffer<float>` 读权重，3.4 MB 权重在 lane 间没有任何共享；
+- 标量 fp32，每个 MAC 单独从 `StructuredBuffer<float>` 读权重，5.3 MB 共享权重（1,333,251 个 float32）在 lane 间没有任何共享；
 - `float input[294]`、四个 `float[256]` 局部数组必然溢出到 local memory；
 - 每个 block 两次全向量 LayerNorm 归约；GELU 使用 erf 近似（每神经元十余条指令）；
 - 环境光路径对每像素执行 `gEnvironmentQueryBudget` 次完整 evaluate（`apps/viewer/shaders/Approximation.cs.slang`）。
@@ -60,15 +60,34 @@ residual = (1.0 + 0.1 * torch.tanh(gamma)) * residual + 0.1 * beta
 
 γ 只能把残差缩放到 `[0.9, 1.1]`，β 缩 0.1。[`model_candidates.md`](model_candidates.md) §2.2 批评 E2 concat「只在第一层线性注入 latent」，而 M1 的实际条件化路径是：context 拼进 prepare 输入（concat）、`prepared` 拼进 evaluate 输入（concat），外加一层几乎不动的 ±10% 调制。30 个异质 state（diffuse 栈、窄各向异性导体、sheen、多界面）共用一条近乎相同的 trunk，只能靠撑大 trunk 来「装下」全部材质。这与 M→L 反而变差、S→M 置信区间跨零的形态一致：E2「该条件化机制到头」的结论被原样复现了一遍。
 
-### 4.2 M2 的 p95 爆炸疑似梯度死区 [假设，可验证]
+### 4.2 M2 的 p95 爆炸：clamp 死区 × core 覆盖不足 [实测，2026-08-25]
 
-`P1EvaluatorPipeline.predict_f` 对 M2 返回 `torch.clamp(core + prediction, min=0.0)`，`training_loss` 再次 `torch.clamp(prediction_f, min=0.0)`。`core + Δ < 0` 的 query 梯度恒为 0：某个 state 的残差一旦被推负就永远回不来。三档 M2 全部在 5.5k–7.5k 步早停、median 极好而 p95 极差，与「多数 query 拟合很好、少数 state 整块死掉」一致。core 只取 `direct_top`（顶层界面），对顶层为 dielectric coat 的多层栈，core 反射很小、残差要承担整个 base；signed 输出加死区最容易在这些 state 上失效。
+`P1EvaluatorPipeline.predict_f` 对 M2 返回 `torch.clamp(core + prediction, min=0.0)`，`training_loss` 再次 `clamp`；`core + Δ < 0` 的 query 梯度恒为 0。远程机对冻结 checkpoint 的推理审计（`artifacts/audits/p1-v1/mechanism-audit.json`，report `c78f8951…`；`supplemental-test-audit.json`，`3a7d4332…`；远程结论 `conclusions.md`）给出：
 
-`experiment_log.md` 据此把 core 路线降为「机制对照」，本文认为该结论不成立。验证方法：加载 M2-S early-stop checkpoint，统计 train/test query 中 `core + Δ < 0` 的比例，并按 state 与 directional L1 做散点；若失败 state 集中在高死区比例上，则 p95 结论作废。
+| test state 分组（M2-S best，step 4500） | state 数 | 残差被 clamp 的 RGB 比例 | directional L1 | 能量比 Σpred/Σref |
+|---|---:|---|---|---|
+| 单层（direct-top core 精确，`E_core/E_ref = 1`） | 15 | 0–0.97（无害：core 已正确，残差被推负后截掉） | ≤ `0.013` | ≈ 1 |
+| 多层、死区比例 = 0 | 11 | 0 | `0.023–0.33`，中位 `0.038` | ≈ 1 |
+| 多层、死区比例 > 0 | 4 | `0.44 / 0.88 / 0.97 / 0.98` | `0.65 / 0.67 / 0.43 / 0.51` | `0.35 / 0.33 / 0.58 / 0.49` |
 
-### 4.3 log 域 loss 与带噪 reference 的系统性偏暗 [假设，可验证]
+- 四个死区 state 就是 M2-S 最差四个 state，`E_core/E_ref` 为 `0.17–0.54`；在 15 个多层 state 内「死区比例 > 0」与「最差 4 名」完全重合（精确秩检验 `p = 1/C(15,4) ≈ 7e-4`）。M2-M/L best 上是同样 4 个 state、同样完全分离。
+- 远程结论 §3 按全部 30 个 state 算 Spearman（`ρ = 0.15`，CI 跨零）判死区「不是全局主因」；该检验被 15 个单层 state 混杂——那里死区比例很高但无害。按 core 覆盖分层后，死区就是 p95 尾部的机制。远程结论中 `E_core/E_ref` 与 L1 的 `ρ = −0.77`（CI `[−0.88, −0.51]`）与此一致：core 覆盖越低，signed 残差要承担的能量越多，被 clamp 截断的后果越重。
+- 同一 run 继续训练到早停（step 7500）后四个 state 的死区比例降到 `0.04–0.93`、L1 降到 `0.28–0.37`，p95 从 `0.586` 降到 `0.340`——梯度只能从尚未被截断的方向缓慢回流，与死区机制一致；「validation median 优先、p95 仅决胜」的 checkpoint 规则把更早、尾部更差的 step 4500 登记为 best。
+- 同样 4 个 state，M1-S 的 L1 为 `0.06 / 0.06 / 0.09 / 0.26`：多层 base 能量并非小网络表示不了，是 `clamp(core + signed Δ, 0)` 这一参数化让它表示不出来。
 
-主损失 `smooth_l1(log(pred/s + 1e-4), log(target/s + 1e-4))`，train reference 每 group 相对 SE 允许到 0.25。对右偏的 Monte Carlo 估计，log 域或中位型损失的最优解低于均值（Jensen 不等式），偏置约 `−σ²/2`，6%–25% 噪声下即 −0.2% ~ −3%。`capture-display.png`（左 reference、右 M1-M，四层 diffuse stack）右侧整体偏暗、饱和度略低而没有局部结构错误，正是全局偏置的样子；一个响应近乎常数的 state 用 `8.6e5` MAC 仍留 2.9% L1，最合理的解释是偏置而非容量。`quality.py` 的能量误差取绝对值，看不出符号。验证方法：在 quality 报告中增加 signed `Σ pred / Σ target` 按 state 汇总；若系统性 < 1，改用 linear 域主损失或 debias 的 log 损失。
+结论：`experiment_log.md` 原「解析 core 只改善多数 state、显著损害困难尾部」不成立；成立的是「direct-top core 精确处 M2 几乎零误差，core 覆盖不足处 signed 残差 + clamp 死区失效」。冻结的 p95 观测保留为该实现的事实，不能被引用为 core 路线的证据。修正见 §5.3。
+
+### 4.3 系统性偏暗：M1-M 确认约 0.8%，loss 因果未确认 [实测，2026-08-25]
+
+主损失 `smooth_l1(log(pred/s + 1e-4), log(target/s + 1e-4))`，train reference 相对 SE 上限 0.25（两个 promotion state 为 0.75）。对右偏的 Monte Carlo 估计，log 域最优解低于均值（偏置约 `−σ²/2`）。远程审计的 signed 能量比 `R = Σ(pred·|cos|·w) / Σ(ref·w)`：
+
+| checkpoint（test） | state-median `R` | `R < 1` 的 state 比例 | median log `R` 95% CI | 全局 Σ/Σ |
+|---|---:|---:|---|---:|
+| M1-S best | `1.0001` | 0.50 | `[−0.0024, 0.0012]` | `1.0033` |
+| M1-M best | `0.9921` | 0.80 | `[−0.0123, −0.0045]` | `0.9939` |
+| M1-M last | `0.9937` | — | — | `0.9972` |
+
+M1-M 五个 role 全部系统性偏暗 0.6–1.1%，且与 reference SE 无关（`ρ = 0.05`，CI 跨零）；viewer 所用四层 diffuse state `6324e3…` 的 `R = 0.9935`。但 M1-S 用同一 loss、同一数据没有偏置，所以现有证据不能把原因归给 log loss 或 Jensen 偏差，也不能把 `capture-display.png` 的整体偏暗归结为全局偏置（0.65% 能量差解释不了该 state 2.9% 的 L1）。本轮不换主损失；新候选从第一轮起报告逐 state / 逐通道 / 逐 role 的 signed 能量比，loss 保留显式 linear 能量项，log 是否 debias 由新模型自己的 matched 对照决定。
 
 ### 4.4 direct 路线重蹈 E1 的失败 [代码事实 + 实测]
 
@@ -146,7 +165,7 @@ SlangPy autodiff 逐线程执行。对 ≤64 宽的小网络吞吐充足（RTXNS
 
 ## 7. 下一步与验证项
 
-1. 远程机验证 §4.2 与 §4.3：M2-S early-stop checkpoint 的 `core + Δ < 0` 比例按 state 统计；quality 报告增加 signed 能量比。两项结果决定 M2 结论是否推翻、主损失是否改域。
-2. 恢复研究期成本线：至少「`evaluate ≤ 1e4` MAC 量级才能进注册表」；§5.1 形态（精确顶层界面 + 无死区残差 + 匹配 sampler）作为 P1 重跑主候选，§5.2 只作同预算对照。`B_asset` 记账改为部署实际 bytes。
+1. §4.2 与 §4.3 已由远程机冻结推理审计落定（`artifacts/audits/p1-v1/`，工具 `ncls learn audit-p1`）：M2 尾部由 clamp 死区 × core 覆盖不足解释，core 路线保留；M1-M 偏暗确认但 loss 因果未证，主损失暂不改域。由此固定的诊断与规则：signed 能量比、`E_core/E_ref` core 覆盖、achieved reference SE（group p95 与 integrated ratio）进入每份评测报告；checkpoint 选择加 tail guard（[`experiment_framework.md`](experiment_framework.md) §4.2）；30-state p95 只作 selection 诊断，正式 tail 结论用 ≥ 50 个 test state 并附 bootstrap CI 与 leave-one-state-out 范围。当前 P1 v1 不再重训。
+2. 研究期成本线已按 [`experiment_framework.md`](experiment_framework.md) §0.1 恢复（标量路径 `C_eval ≤ 2e3` MAC、`C_prepare ≤ 1e4`、state ≤ 64 B、`B_asset` 含烘焙参数、`evaluate` 权重 ≤ 32 KB），硬线写入 [`../contracts/method_bundle.md`](../contracts/method_bundle.md)。§5.1 形态（精确顶层界面 + 无死区残差 + 匹配 sampler）作为 P1 重跑主候选；§5.2 只在 cooperative vector 工具链于远程机验证后作同预算对照。`parameter_costs()` 与 bundle `cost_claims` 的 `B_asset` 记账改为部署实际 bytes。
 3. 单一 Slang 后端骨架：先把 legacy-ltc-k2（已实现 `sample/pdf` 与合同）迁到 SlangPy 训练路径打通闭环，再接新模型；viewer 增加「PT + neural material」comparison mode。
 4. 把 §2 中的放宽项回写进 [`experiment_framework.md`](experiment_framework.md)：成本线、signed 能量诊断、p95 所需 state 数与 P1 子集规模的一致性。
