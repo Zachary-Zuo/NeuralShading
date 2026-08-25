@@ -246,12 +246,12 @@ def _sheen_lambda(cosine: torch.Tensor, roughness: torch.Tensor) -> torch.Tensor
     )
 
 
-def eval_direct_top(
+def eval_direct_top_bsdf(
     state: LegacyLtcK2Tensors,
     view_directions: torch.Tensor,
     light_directions: torch.Tensor,
 ) -> torch.Tensor:
-    """Evaluate the exact top-interface reflection as f*cos(theta_l)."""
+    """Evaluate the exact top-interface reflection as linear RGB BSDF `f`."""
     tile_count = len(view_directions)
     view = _to_layer_frame(view_directions, state.tangent_rotation)
     if light_directions.ndim == 2:
@@ -313,6 +313,21 @@ def eval_direct_top(
         torch.where(layer_type == 1, conductor, torch.where(layer_type == 2, diffuse, sheen)),
     )
     result = torch.where(positive[..., None], result, torch.zeros_like(result))
+    return result
+
+
+def eval_direct_top(
+    state: LegacyLtcK2Tensors,
+    view_directions: torch.Tensor,
+    light_directions: torch.Tensor,
+) -> torch.Tensor:
+    """Evaluate the exact top-interface reflection as `f*cos(theta_l)`."""
+
+    result = eval_direct_top_bsdf(state, view_directions, light_directions)
+    lights = (
+        light_directions[None, :, :].expand(len(view_directions), -1, -1)
+        if light_directions.ndim == 2 else light_directions
+    )
     return result * torch.clamp(lights[..., 2:3], min=0.0)
 
 

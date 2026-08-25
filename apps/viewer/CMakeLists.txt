@@ -24,8 +24,7 @@ target_sources(NclsViewer PRIVATE
     shaders/Prepare.cs.slang
     shaders/ReferencePathTracer.cs.slang
     shaders/ViewerCommon.slang
-    "${NCLS_PROJECT_ROOT}/shaders/ncls/backends/legacy_ltc_k2/legacy_ltc_k2.slang"
-    "${NCLS_PROJECT_ROOT}/shaders/ncls/backends/legacy_ltc_k2/p1_compiler.slang"
+    "${NCLS_PROJECT_ROOT}/shaders/ncls/backends/film_m1/film_m1.slang"
     "${NCLS_PROJECT_ROOT}/shaders/ncls/contracts/layer_stack_ir.slang"
     "${NCLS_PROJECT_ROOT}/shaders/ncls/contracts/response_measure.slang"
     "${NCLS_PROJECT_ROOT}/shaders/ncls/contracts/scattering_backend.slang"

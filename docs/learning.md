@@ -1,6 +1,8 @@
 # Learning pipeline 与评测
 
-当前 P0 先冻结语料和评测协议，候选 registry 保持为空。P1 开始实现 M1–M6 时，每个候选再显式注册；仓库不为迁移前候选保留 registry 别名。
+P1 已注册第一批外观建模候选：M1 conditioned shared evaluator 的 S/M/L 三档、matched M2 analytic residual 的 S/M/L 三档，以及无共享 latent 瓶颈的 per-state teacher。M3 response-space oracle 使用独立的直接拟合入口，只做 canonical probe 上的字典可压缩性诊断，不伪装成可连续查询的 runtime 候选，也不进入 quality-v1 排名。仓库不为迁移前候选保留 registry 别名。
+
+P1 v1 已完成正式单-seed 比较。M1-M 是通过全部主参考线的 best observed quality 候选，M1-S 是实际查询更快的 Pareto 端点；P2 以 M1-M 做质量起点，同时保留 S 做效率对照。M1-L、M2-M/L 和当前 per-state teacher 配置停止扩张；M2-S 只保留“中位强、困难尾部弱”的机制对照；简单 M3 top-2 字典不进入主路径。完整 run、置信区间和成本见 [`experiment_log.md`](research/experiment_log.md)。
 
 ## Pipeline 身份
 
@@ -32,6 +34,8 @@ reciprocity 使用语料中落盘的 reciprocal paired response，比较“模�
 
 每份 checkpoint report 另记录 `B_asset`、`B_shared`、`C_prepare`、`C_eval` 和参数数目。成本用于 Pareto，不在研究期提前淘汰。
 
+PyTorch 研究端另提供一致的 query benchmark：`single_query` 测一个 `(state, wo, wi)` 的串行延迟，`coherent_packet` 在同一 `(state, wo)` 下批量求多个 `wi`，把一次 `prepare` 的成本摊薄后报告每方向时间。它用于 P1 的相对成本曲线；阶段收尾仍需用 Slang backend 重测，不能把 PyTorch kernel 时间冒充最终 viewer 时间。
+
 ## 命令
 
 注册候选后，训练只接受完整 `training-config-v1`：
@@ -41,6 +45,17 @@ conda run -n neural-shading python -m ncls.cli learn train `
   --data artifacts/corpus/layer-stack-v1.json `
   --config configs/learning/film-evaluator-s-v1.json `
   --run artifacts/runs/film-evaluator-s-v1-seed-1
+```
+
+P1 主搜索以效率和准确外观优先：全部候选先使用同一 deterministic seed、同一子语料和同一最大 step 预算；训练配置从 4,000 step 后启用 validation patience，曲线停止改善时允许提前结束。只有 matched 候选差距接近、训练轨迹异常或结论准备升级时才自适应追加 seed，不对每个候选机械重复三次。state-block paired bootstrap 仍用于量化同一 run 在冻结 state 集上的外观差异；它不冒充 seed 方差估计。
+
+M3 直接拟合在 dense slice 的冻结 `wo×wi` probe 上分别构造 per-state 全响应和 per-`(state, wo)` 方向轨迹，运行 K-means++ top-2 闭式凸混合，并按相同总 bytes 配一条 PCA 对照。每个 K 对 matched unit 的 linear relative L1 做 1,000 次 paired bootstrap；报告还给出由 HDF5 standard error 推出的 one-SE 参考噪声地板。逐 unit relative L1 的分母使用“非零 unit L1 中位数的 1%”作为下限并记录实际 floor，避免零能量 view 把均值放大到无意义量级。置信区间跨零或差异低于噪声量级时不作结构胜负结论。P1 只有 30 个 state，因此只执行小于实际 unit 数的 K；更大的 256/1024 codebook 留到 P2 全语料，不用重复原型制造虚假低误差：
+
+```powershell
+conda run -n neural-shading python -m ncls.cli learn oracle-m3 `
+  --data artifacts/corpus/layer-stack-p1-v1.json `
+  --output artifacts/oracles/layer-stack-p1-v1-m3.json `
+  --codebook-sizes 8 16 32 64
 ```
 
 显式读取 validation、test、adversarial probe 或 dense slice：
@@ -53,13 +68,25 @@ conda run -n neural-shading python -m ncls.cli learn evaluate `
   --output artifacts/runs/film-evaluator-s-v1-seed-1/quality-test.json
 ```
 
-matched 对照必须使用同一 `data_id` 和完全相同的 test state；比较入口以 state 为 block 重采样每个 state 的完整方向主指标和 `(state, wo)` 能量行，做至少 1,000 次、95% 置信度的配对 bootstrap：
+matched 对照必须使用同一 `data_id` 和完全相同的 test state；比较入口以 state 为 block 重采样每个 state 的完整方向主指标和 `(state, wo)` 能量行，要求至少 20 个 matched state，并做至少 1,000 次、95% 置信度的配对 bootstrap。P1 冻结子集含 30 个 state，置信区间宽度会如实反映这个规模，不再被面向全语料的 50-state 旧门槛阻断：
 
 ```powershell
 conda run -n neural-shading python -m ncls.cli learn compare `
   --baseline artifacts/runs/baseline/quality-test.json `
   --candidate artifacts/runs/candidate/quality-test.json `
   --output artifacts/comparisons/baseline-vs-candidate.json
+```
+
+容量曲线比较必须显式加 `--vary capacity`。比较器只允许这一项变化，并把 baseline/candidate 的容量值写入报告；未声明的训练字段差异仍直接拒绝。
+
+冻结 checkpoint 后测实际 query 成本：
+
+```powershell
+conda run -n neural-shading python -m ncls.cli learn benchmark `
+  --data artifacts/corpus/layer-stack-p1-v1.json `
+  --checkpoint artifacts/runs/film-evaluator-s-v1-seed-20260824/checkpoints/best.pt `
+  --packet-size 256 `
+  --output artifacts/runs/film-evaluator-s-v1-seed-20260824/query-benchmark.json
 ```
 
 历史 profile、训练 schema、gate 和 pipeline 不设 reader、converter 或 registry 别名。历史证据只从对应 Git 提交读取；正式新 run 必须使用当前 corpus 与 quality-v1。

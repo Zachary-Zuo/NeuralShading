@@ -123,17 +123,68 @@ class CorpusPlan:
             "minimum_test_state_count": 50,
         }:
             raise ValueError("LayerStack v1 split configuration is frozen")
-        if self.reference_budget != {
+        base_reference_budget = dict(self.reference_budget)
+        sample_promotions = base_reference_budget.pop("state_sample_promotions", None)
+        if base_reference_budget != {
             "name": "adaptive-v1",
             "double_replica": True,
             "target_relative_se_p95": 0.04,
             "maximum_query_group_relative_se_p95": 0.10,
             "minimum_combined_samples": 1024,
             "maximum_combined_samples": 262144,
+            "reciprocal_target_relative_se_p95": 0.20,
+            "reciprocal_maximum_query_group_relative_se_p95": 0.999,
+            "reciprocal_maximum_combined_samples": 65536,
+            "diagnostic_query_roles": ["adversarial_probe", "dense_slice"],
+            "diagnostic_target_relative_se_p95": 0.08,
+            "diagnostic_maximum_query_group_relative_se_p95": 0.50,
+            "diagnostic_maximum_combined_samples": 262144,
+            "training_target_relative_se_p95": 0.06,
+            "training_maximum_query_group_relative_se_p95": 0.25,
+            "training_maximum_combined_samples": 262144,
+            "training_reciprocal_target_relative_se_p95": 0.50,
+            "training_reciprocal_maximum_query_group_relative_se_p95": 0.999,
+            "training_reciprocal_maximum_combined_samples": 4096,
+            "diagnostic_reciprocal_target_relative_se_p95": 0.20,
+            "diagnostic_reciprocal_maximum_query_group_relative_se_p95": 0.999,
+            "diagnostic_reciprocal_maximum_combined_samples": 65536,
             "batch_samples_per_replica": 256,
             "maximum_dispatch_queries": 4096,
         }:
             raise ValueError("CorpusPlan v1 reference budget is frozen")
+        if not isinstance(sample_promotions, list):
+            raise ValueError("state_sample_promotions must be an array")
+        promotion_role_keys = []
+        for promotion in sample_promotions:
+            if not isinstance(promotion, Mapping) or set(promotion) != {
+                "state_id", "maximum_combined_samples",
+                "maximum_query_group_relative_se_p95", "query_roles",
+            }:
+                raise ValueError("state_sample_promotions entries are invalid")
+            state_id = promotion["state_id"]
+            maximum = promotion["maximum_combined_samples"]
+            maximum_group = promotion["maximum_query_group_relative_se_p95"]
+            query_roles = promotion["query_roles"]
+            if (
+                not isinstance(state_id, str)
+                or re.fullmatch(r"[0-9a-f]{64}", state_id) is None
+                or not isinstance(maximum, int)
+                or not 262144 <= maximum <= 4194304
+                or maximum % 512
+                or isinstance(maximum_group, bool)
+                or not isinstance(maximum_group, (int, float))
+                or not 0.10 <= float(maximum_group) < 1.0
+                or not isinstance(query_roles, list)
+                or not query_roles
+                or len(query_roles) != len(set(query_roles))
+                or any(role not in {"train", "validation", "test"} for role in query_roles)
+            ):
+                raise ValueError("state_sample_promotions values are invalid")
+            promotion_role_keys.extend((state_id, role) for role in query_roles)
+        if len(promotion_role_keys) != len(set(promotion_role_keys)):
+            raise ValueError(
+                "state_sample_promotions may not repeat a state ID for the same query role"
+            )
         if self.shard_policy != {
             "name": "family-role-v1",
             "resume": "verified-file",
@@ -282,6 +333,12 @@ class CorpusPlan:
         missing = [name for name in resolved.components if name not in ordered]
         if missing:
             raise ValueError(f"unsupported mixture components: {missing}")
+        if role == "train":
+            reciprocal_budget_prefix = "training_reciprocal"
+        elif role in set(self.reference_budget["diagnostic_query_roles"]):
+            reciprocal_budget_prefix = "diagnostic_reciprocal"
+        else:
+            reciprocal_budget_prefix = "reciprocal"
         return CollectionConfig(
             name=self.sampling_name,
             query_role=role,
@@ -302,5 +359,16 @@ class CorpusPlan:
             critical_view_max_degrees=float(transmission["critical_view_band_degrees"][1]),
             critical_wi_abs_cosine_min=float(transmission["critical_wi_abs_cosine_band"][0]),
             critical_wi_abs_cosine_max=float(transmission["critical_wi_abs_cosine_band"][1]),
+            reciprocal_target_relative_se_p95=float(
+                self.reference_budget[f"{reciprocal_budget_prefix}_target_relative_se_p95"]
+            ),
+            reciprocal_maximum_query_group_relative_se_p95=float(
+                self.reference_budget[
+                    f"{reciprocal_budget_prefix}_maximum_query_group_relative_se_p95"
+                ]
+            ),
+            reciprocal_maximum_combined_samples=int(
+                self.reference_budget[f"{reciprocal_budget_prefix}_maximum_combined_samples"]
+            ),
             seed=self.seed,
         )

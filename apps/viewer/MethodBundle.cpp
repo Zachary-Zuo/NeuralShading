@@ -69,22 +69,29 @@ ViewerMethod loadBundle(
     const json manifest = readJson(root / "manifest.json");
     require(manifest.value("format_name", "") == "ncls.method-bundle", "unsupported MethodBundle format_name");
     require(manifest.value("format_version", 0u) == 1u, "unsupported MethodBundle format_version");
-    require(manifest.value("runtime_class", "") == "realtime", "only realtime bundles enter the main viewer");
+    require(manifest.value("runtime_class", "") == "diagnostic",
+        "current viewer neural path accepts diagnostic evaluator bundles only");
     require(manifest.value("scattering_contract_version", 0u) == 1u, "unsupported scattering contract");
     require(supportsIr(manifest.at("supported_ir_ids"), "ncls.layer-stack-ir@1"), "bundle does not support LayerStackIR v1");
-    require(manifest.value("backend_id", "") == "legacy-ltc-k2", "current viewer build does not contain this backend variant");
+    require(manifest.value("backend_id", "") == "film-m1-direct-neural",
+        "current viewer build does not contain this backend variant");
 
     const auto& descriptor = manifest.at("backend_descriptor");
-    require(descriptor.value("bounded_execution", false), "realtime backend must have bounded execution");
+    require(descriptor.value("bounded_execution", false), "diagnostic evaluator backend must have bounded execution");
     constexpr uint32_t kRequiredCapabilities = 1u | 2u | 16u;
     require((descriptor.value("capabilities", 0u) & kRequiredCapabilities) == kRequiredCapabilities,
         "backend is missing prepare/evaluate/anisotropic-frame capabilities required by the viewer");
-    require(descriptor.at("shader_entry_points").value("prepare", "") == "LegacyLtcK2P1Backend.prepare",
-        "bundle prepare entry does not match the compiled P1 runtime");
+    require(descriptor.at("shader_entry_points").value("prepare", "") == "nclsFilmM1Prepare",
+        "bundle prepare entry does not match the compiled Film M1 runtime");
+    require(descriptor.at("shader_entry_points").value("evaluate", "") == "nclsFilmM1EvaluateF",
+        "bundle evaluate entry does not match the compiled Film M1 runtime");
     const auto& compiler = manifest.at("compiler");
-    require(compiler.value("kind", "") == "parameter-network", "unsupported compiler kind");
+    require(compiler.value("kind", "") == "direct-neural", "unsupported compiler kind");
     require(compiler.value("runtime_implementation", "") == "slang", "viewer does not load Python inference");
-    require(compiler.value("architecture_id", "") == "legacy-ltc-k2-p1@2", "unsupported P1 architecture version");
+    require(compiler.value("architecture_id", "") == "film-prepare-evaluate-calibrated-softplus-v2@m1-m",
+        "unsupported Film M1 architecture version");
+    require(compiler.value("compile_mode", "") == "frozen-corpus-autodecoder-state",
+        "viewer requires an exact frozen-state M1 bundle");
     const auto& runtime = manifest.at("runtime");
     require(runtime.value("platform", "") == "windows-x86_64", "bundle targets another platform");
     require(runtime.value("graphics_api", "") == "d3d12", "bundle targets another graphics API");
@@ -109,25 +116,26 @@ ViewerMethod loadBundle(
         require(files.contains(name), std::string("bundle is missing logical file: ") + name);
         return safeBundlePath(root, files.at(name).get<std::string>());
     };
-    const auto compilerShader = logicalPath("compiler_shader");
     const auto backendShader = logicalPath("backend_shader");
-    const auto runtimeCompiler = runtimeShaderDirectory / "ncls/backends/legacy_ltc_k2/p1_compiler.slang";
-    const auto runtimeBackend = runtimeShaderDirectory / "ncls/backends/legacy_ltc_k2/legacy_ltc_k2.slang";
-    require(std::filesystem::is_regular_file(runtimeCompiler) && std::filesystem::is_regular_file(runtimeBackend),
-        "viewer runtime shader copy is incomplete");
-    require(sha256FileHex(compilerShader) == sha256FileHex(runtimeCompiler),
-        "bundle P1 compiler differs from this viewer build; rebuild viewer for that shader variant");
+    const auto runtimeBackend = runtimeShaderDirectory / "ncls/backends/film_m1/film_m1.slang";
+    require(std::filesystem::is_regular_file(runtimeBackend), "viewer Film M1 runtime shader copy is incomplete");
     require(sha256FileHex(backendShader) == sha256FileHex(runtimeBackend),
         "bundle backend differs from this viewer build; rebuild viewer for that shader variant");
 
     const json layout = readJson(logicalPath("weight_layout"));
-    require(layout.value("format_name", "") == "ncls.legacy-ltc-k2-p1-weights", "unsupported weight layout");
+    require(layout.value("format_name", "") == "ncls.film-m1-weights", "unsupported weight layout");
     require(layout.value("format_version", 0u) == 1u, "unsupported weight layout version");
     require(layout.value("dtype", "") == "float32-little-endian", "unsupported inference precision/layout");
     const uint32_t width = layout.at("width").get<uint32_t>();
     const uint32_t parameterCount = layout.at("total_floats").get<uint32_t>();
-    require(width >= 8 && width <= 64 && width % 2 == 0 && layout.value("type_width", 0u) == 8u,
-        "P1 width/type_width is outside the Slang runtime bounds");
+    require(width == 256u && layout.value("prepare_blocks", 0u) == 3u
+            && layout.value("evaluate_blocks", 0u) == 6u
+            && layout.value("fourier_bands", 0u) == 5u
+            && layout.value("direction_feature_count", 0u) == 38u
+            && layout.value("condition_count", 0u) == 4864u
+            && layout.value("state_float_count", 0u) == 256u
+            && parameterCount == 1338118u,
+        "Film M1 layout differs from the compiled M1-M runtime");
     const auto weightBytes = readBytes(logicalPath("weights"));
     require(weightBytes.size() == static_cast<size_t>(parameterCount) * sizeof(float), "weight binary length disagrees with layout");
     std::vector<float> weights(parameterCount);
@@ -136,11 +144,10 @@ ViewerMethod loadBundle(
     const json parity = readJson(logicalPath("parity"));
     require(parity.value("format_name", "") == "ncls.backend-parity-probe", "unsupported parity probe");
     require(parity.value("architecture_id", "") == compiler.value("architecture_id", ""), "parity architecture mismatch");
-    require(parity.value("weight_width", 0u) == width, "parity weight width mismatch");
-    const auto parityBytes = readBytes(logicalPath("parity_material"));
-    require(parityBytes.size() == 752, "parity material does not contain one LayerStackIR v1 record");
+    require(parity.value("weight_total_floats", 0u) == parameterCount, "parity weight layout mismatch");
+    require(parity.value("compiled_state_id", "") == compiler.value("compiled_state_id", ""),
+        "parity compiled state mismatch");
     ParityProbe probe{};
-    std::memcpy(probe.material.data(), parityBytes.data(), parityBytes.size());
     const auto& view = parity.at("view_direction_local");
     require(view.is_array() && view.size() == 3, "parity view direction must be float3");
     for (size_t index = 0; index < 3; ++index) probe.view[index] = view[index].get<float>();
@@ -164,16 +171,29 @@ ViewerMethod loadBundle(
     method.sourceGitCommit = manifest.at("source_git_commit").get<std::string>();
     method.backendId = manifest.at("backend_id").get<std::string>();
     method.backendVersion = manifest.at("backend_version").get<uint32_t>();
+    method.runtimeClass = manifest.at("runtime_class").get<std::string>();
     method.architectureId = compiler.at("architecture_id").get<std::string>();
+    method.compiledStateId = compiler.at("compiled_state_id").get<std::string>();
+    method.compiledMaterialIrSha256 = compiler.at("compiled_material_ir_sha256").get<std::string>();
+    method.previewMaterial = logicalPath("preview_material");
     for (const auto& value : manifest.at("supported_ir_ids"))
         method.supportedIrIds.push_back(value.get<std::string>());
     method.width = width;
     method.parameterCount = parameterCount;
     method.stateBytesPerPixel = descriptor.at("state_stride").get<uint32_t>();
     method.compiledMaterialBytes = descriptor.at("cost_model").at("compiled_material_bytes").get<uint32_t>();
+    method.environmentQueryBudget = runtime.value("environment_query_budget", 1u);
+    method.rectangleQueryBudget = runtime.value("rectangle_query_budget", 1u);
     method.weights = std::move(weights);
     method.parity = std::move(probe);
     require(method.methodId.size() == 64, "method_id is not SHA-256 sized");
+    require(method.compiledStateId.size() == 64, "compiled state id is not SHA-256 sized");
+    require(method.compiledMaterialIrSha256.size() == 64, "compiled material IR hash is not SHA-256 sized");
+    require(method.stateBytesPerPixel == 1024u, "Film M1 state stride must be 1024 bytes");
+    require(method.environmentQueryBudget >= 1u && method.environmentQueryBudget <= 8u,
+        "environment query budget is outside viewer bounds");
+    require(method.rectangleQueryBudget >= 1u && method.rectangleQueryBudget <= 8u,
+        "rectangle query budget is outside viewer bounds");
     return method;
 }
 } // namespace

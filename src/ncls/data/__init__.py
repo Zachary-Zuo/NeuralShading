@@ -33,6 +33,7 @@ from .corpus import (
     validate_reference_corpus,
 )
 from .profiles import CorpusPlan, QueryDensity
+from .selection import CorpusSelection
 from .dataset import (
     COLOR_MODEL,
     FORMAT_NAME,
@@ -61,6 +62,7 @@ __all__ = [
     "CollectionConfig",
     "CONSTANT_FOOTPRINT_PROFILE",
     "CorpusPlan",
+    "CorpusSelection",
     "CorpusShard",
     "DIFFICULTY_CLASSES",
     "DIFFICULTY_TAGS",

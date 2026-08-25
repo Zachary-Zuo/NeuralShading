@@ -48,6 +48,7 @@ class LayerStackProviderConfig:
     max_combined_samples: int = 262144
     relative_standard_error: float = 0.04
     maximum_group_relative_standard_error: float = 0.10
+    enforce_maximum_group_relative_standard_error: bool = True
     peak_calibration_directions: int = 4096
     peak_calibration_samples_per_replica: int = 64
     selected_state_ids: tuple[str, ...] = ()
@@ -74,6 +75,8 @@ class LayerStackProviderConfig:
             raise ValueError("relative_standard_error must lie in (0, 1)")
         if not self.relative_standard_error <= self.maximum_group_relative_standard_error < 1.0:
             raise ValueError("maximum group relative SE must be at least the target and below one")
+        if not isinstance(self.enforce_maximum_group_relative_standard_error, bool):
+            raise ValueError("maximum group relative SE enforcement flag must be boolean")
         if not 1 <= self.heldout_family_count < self.family_count:
             raise ValueError("heldout family count must leave fitted families")
         if self.state_profile != LAYER_STACK_PROFILE:
@@ -433,7 +436,7 @@ class LayerStackProvider(BaseProvider):
                         0.95,
                         axis=(1, 2),
                     )
-                    if np.any(
+                    if self.provider_config.enforce_maximum_group_relative_standard_error and np.any(
                         group_p95
                         > self.provider_config.maximum_group_relative_standard_error
                     ):

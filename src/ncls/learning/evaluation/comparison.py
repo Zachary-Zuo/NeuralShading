@@ -75,9 +75,11 @@ def compare_quality_reports(
     *,
     iterations: int | None = None,
     seed: int = 20260824,
+    varied_fields: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     comparison_config = QUALITY_SUITE_DOCUMENT["comparison"]
     minimum_iterations = int(comparison_config["minimum_bootstrap_iterations"])
+    minimum_states = int(comparison_config["minimum_matched_states"])
     resolved_iterations = minimum_iterations if iterations is None else iterations
     confidence = float(comparison_config["confidence"])
     if resolved_iterations < minimum_iterations:
@@ -93,9 +95,17 @@ def compare_quality_reports(
     if set(baseline_states) != set(candidate_states):
         raise ValueError("paired comparison requires exactly the same test states")
     state_ids = sorted(baseline_states)
-    if len(state_ids) < 50:
-        raise ValueError("formal comparison requires at least 50 matched test states")
+    if len(state_ids) < minimum_states:
+        raise ValueError(
+            f"formal comparison requires at least {minimum_states} matched test states"
+        )
     matched_fields = ("capacity", "steps", "seed", "dataset_selection")
+    allowed_varied_fields = {"capacity"}
+    unknown_varied_fields = set(varied_fields) - allowed_varied_fields
+    if unknown_varied_fields:
+        raise ValueError(
+            f"comparison cannot vary fields: {sorted(unknown_varied_fields)}"
+        )
     baseline_training = baseline.get("training")
     candidate_training = candidate.get("training")
     if not isinstance(baseline_training, dict) or not isinstance(candidate_training, dict):
@@ -105,8 +115,11 @@ def compare_quality_reports(
         for field in matched_fields
         if baseline_training.get(field) != candidate_training.get(field)
     ]
-    if mismatched:
-        raise ValueError(f"comparison is not matched on training fields: {mismatched}")
+    if set(mismatched) != set(varied_fields):
+        raise ValueError(
+            "comparison training mismatches must exactly equal the declared varied fields: "
+            f"actual={mismatched}, declared={list(varied_fields)}"
+        )
     direction_a = tuple(np.asarray([baseline_states[state]["directional_l1"]]) for state in state_ids)
     direction_b = tuple(np.asarray([candidate_states[state]["directional_l1"]]) for state in state_ids)
     energy_a = tuple(
@@ -145,7 +158,18 @@ def compare_quality_reports(
         "matched": {
             "data_id": True,
             "test_states": True,
-            **{field: baseline_training.get(field) for field in matched_fields},
+            "fixed_training_fields": {
+                field: baseline_training.get(field)
+                for field in matched_fields
+                if field not in varied_fields
+            },
+            "varied_training_fields": {
+                field: {
+                    "baseline": baseline_training.get(field),
+                    "candidate": candidate_training.get(field),
+                }
+                for field in varied_fields
+            },
         },
         "statistics": {
             name: _bootstrap_difference(

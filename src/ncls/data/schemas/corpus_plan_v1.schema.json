@@ -105,15 +105,78 @@
       }
     },
     "reference_budget": {
-      "const": {
-        "name": "adaptive-v1",
-        "double_replica": true,
-        "target_relative_se_p95": 0.04,
-        "maximum_query_group_relative_se_p95": 0.1,
-        "minimum_combined_samples": 1024,
-        "maximum_combined_samples": 262144,
-        "batch_samples_per_replica": 256,
-        "maximum_dispatch_queries": 4096
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name", "double_replica", "target_relative_se_p95",
+        "maximum_query_group_relative_se_p95", "minimum_combined_samples",
+        "maximum_combined_samples", "reciprocal_target_relative_se_p95",
+        "reciprocal_maximum_query_group_relative_se_p95",
+        "reciprocal_maximum_combined_samples", "diagnostic_query_roles",
+        "diagnostic_target_relative_se_p95",
+        "diagnostic_maximum_query_group_relative_se_p95",
+        "diagnostic_maximum_combined_samples", "training_target_relative_se_p95",
+        "training_maximum_query_group_relative_se_p95",
+        "training_maximum_combined_samples",
+        "training_reciprocal_target_relative_se_p95",
+        "training_reciprocal_maximum_query_group_relative_se_p95",
+        "training_reciprocal_maximum_combined_samples",
+        "diagnostic_reciprocal_target_relative_se_p95",
+        "diagnostic_reciprocal_maximum_query_group_relative_se_p95",
+        "diagnostic_reciprocal_maximum_combined_samples",
+        "state_sample_promotions",
+        "batch_samples_per_replica", "maximum_dispatch_queries"
+      ],
+      "properties": {
+        "name": {"const": "adaptive-v1"},
+        "double_replica": {"const": true},
+        "target_relative_se_p95": {"const": 0.04},
+        "maximum_query_group_relative_se_p95": {"const": 0.1},
+        "minimum_combined_samples": {"const": 1024},
+        "maximum_combined_samples": {"const": 262144},
+        "reciprocal_target_relative_se_p95": {"const": 0.2},
+        "reciprocal_maximum_query_group_relative_se_p95": {"const": 0.999},
+        "reciprocal_maximum_combined_samples": {"const": 65536},
+        "diagnostic_query_roles": {"const": ["adversarial_probe", "dense_slice"]},
+        "diagnostic_target_relative_se_p95": {"const": 0.08},
+        "diagnostic_maximum_query_group_relative_se_p95": {"const": 0.5},
+        "diagnostic_maximum_combined_samples": {"const": 262144},
+        "training_target_relative_se_p95": {"const": 0.06},
+        "training_maximum_query_group_relative_se_p95": {"const": 0.25},
+        "training_maximum_combined_samples": {"const": 262144},
+        "training_reciprocal_target_relative_se_p95": {"const": 0.5},
+        "training_reciprocal_maximum_query_group_relative_se_p95": {"const": 0.999},
+        "training_reciprocal_maximum_combined_samples": {"const": 4096},
+        "diagnostic_reciprocal_target_relative_se_p95": {"const": 0.2},
+        "diagnostic_reciprocal_maximum_query_group_relative_se_p95": {"const": 0.999},
+        "diagnostic_reciprocal_maximum_combined_samples": {"const": 65536},
+        "state_sample_promotions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "state_id", "maximum_combined_samples",
+              "maximum_query_group_relative_se_p95", "query_roles"
+            ],
+            "properties": {
+              "state_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "maximum_combined_samples": {
+                "type": "integer", "minimum": 262144, "maximum": 4194304,
+                "multipleOf": 512
+              },
+              "maximum_query_group_relative_se_p95": {
+                "type": "number", "minimum": 0.1, "exclusiveMaximum": 1.0
+              },
+              "query_roles": {
+                "type": "array", "minItems": 1, "uniqueItems": true,
+                "items": {"enum": ["train", "validation", "test"]}
+              }
+            }
+          }
+        },
+        "batch_samples_per_replica": {"const": 256},
+        "maximum_dispatch_queries": {"const": 4096}
       }
     },
     "shards": {

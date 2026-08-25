@@ -18,6 +18,7 @@ from .contract import SourceState
 from .dataset import ReferenceDataset, ReferenceDatasetManifest
 from .profiles import CorpusPlan
 from .providers.layer_stack import LayerStackProvider, LayerStackProviderConfig
+from .selection import CorpusSelection
 
 
 def _canonical_json(value: Any) -> str:
@@ -65,11 +66,28 @@ class ReferenceCorpusManifest:
     created_at: str
     shards: tuple[CorpusShard, ...]
     corpus_id: str | None = None
+    selection: Mapping[str, Any] | None = None
+    selection_sha256: str | None = None
     format_name: str = "reference-corpus"
     format_version: int = 1
 
+    def __post_init__(self) -> None:
+        if self.format_name != "reference-corpus" or self.format_version not in {1, 2}:
+            raise ValueError("unsupported reference corpus manifest")
+        if self.format_version == 1 and (
+            self.selection is not None or self.selection_sha256 is not None
+        ):
+            raise ValueError("reference-corpus v1 cannot contain a selection")
+        if self.format_version == 2 and (
+            self.selection is None or self.selection_sha256 is None
+        ):
+            raise ValueError("reference-corpus v2 requires an embedded selection")
+
     def payload(self, *, include_identity: bool = True) -> dict[str, Any]:
         value = asdict(self)
+        if self.format_version == 1:
+            value.pop("selection")
+            value.pop("selection_sha256")
         value["totals"] = {
             "seconds": float(sum(shard.seconds or 0.0 for shard in self.shards)),
             "combined_reference_samples": int(sum(
@@ -111,13 +129,16 @@ class ReferenceCorpusManifest:
     @classmethod
     def load(cls, path: Path | str) -> "ReferenceCorpusManifest":
         value = json.loads(Path(path).read_text(encoding="utf-8"))
+        format_version = value.get("format_version")
         expected_fields = {
             "name", "plan", "plan_sha256", "created_at", "shards", "corpus_id",
             "format_name", "format_version", "totals",
         }
+        if format_version == 2:
+            expected_fields |= {"selection", "selection_sha256"}
         if set(value) != expected_fields:
-            raise ValueError("reference corpus manifest fields do not match v1")
-        if value.get("format_name") != "reference-corpus" or value.get("format_version") != 1:
+            raise ValueError("reference corpus manifest fields do not match its version")
+        if value.get("format_name") != "reference-corpus" or format_version not in {1, 2}:
             raise ValueError("unsupported reference corpus manifest")
         shards = tuple(CorpusShard(
             **{
@@ -133,6 +154,15 @@ class ReferenceCorpusManifest:
             created_at=value["created_at"],
             shards=shards,
             corpus_id=value.get("corpus_id"),
+            selection=(
+                dict(value["selection"])
+                if format_version == 2 else None
+            ),
+            selection_sha256=(
+                str(value["selection_sha256"])
+                if format_version == 2 else None
+            ),
+            format_version=int(format_version),
         )
         if manifest.resolved().corpus_id != manifest.corpus_id:
             raise ValueError("reference corpus identity mismatch")
@@ -140,6 +170,10 @@ class ReferenceCorpusManifest:
             _canonical_json(manifest.plan).encode("utf-8")
         ).hexdigest() != manifest.plan_sha256:
             raise ValueError("reference corpus plan hash mismatch")
+        if manifest.format_version == 2 and hashlib.sha256(
+            _canonical_json(manifest.selection).encode("utf-8")
+        ).hexdigest() != manifest.selection_sha256:
+            raise ValueError("reference corpus selection hash mismatch")
         if value["totals"] != manifest.payload()["totals"]:
             raise ValueError("reference corpus totals disagree with shard records")
         return manifest
@@ -170,7 +204,53 @@ def _layer_stack_provider_config(
     *,
     adaptive: bool,
     selected_state_ids: tuple[str, ...] = (),
+    query_role: str | None = None,
 ) -> LayerStackProviderConfig:
+    relative_standard_error = float(plan.reference_budget["target_relative_se_p95"])
+    maximum_group_relative_standard_error = float(
+        plan.reference_budget["maximum_query_group_relative_se_p95"]
+    )
+    maximum_combined_samples = int(plan.reference_budget["maximum_combined_samples"])
+    enforce_maximum_group_relative_standard_error = True
+    if query_role == "train":
+        relative_standard_error = float(
+            plan.reference_budget["training_target_relative_se_p95"]
+        )
+        maximum_group_relative_standard_error = float(
+            plan.reference_budget["training_maximum_query_group_relative_se_p95"]
+        )
+        maximum_combined_samples = int(
+            plan.reference_budget["training_maximum_combined_samples"]
+        )
+    elif query_role in set(plan.reference_budget["diagnostic_query_roles"]):
+        relative_standard_error = float(
+            plan.reference_budget["diagnostic_target_relative_se_p95"]
+        )
+        maximum_group_relative_standard_error = float(
+            plan.reference_budget["diagnostic_maximum_query_group_relative_se_p95"]
+        )
+        maximum_combined_samples = int(
+            plan.reference_budget["diagnostic_maximum_combined_samples"]
+        )
+        enforce_maximum_group_relative_standard_error = False
+    if selected_state_ids and query_role is not None:
+        promotions = {
+            str(item["state_id"]): item
+            for item in plan.reference_budget["state_sample_promotions"]
+            if query_role in item["query_roles"]
+        }
+        for state_id in selected_state_ids:
+            promotion = promotions.get(state_id)
+            if promotion is None:
+                continue
+            maximum_combined_samples = max(
+                maximum_combined_samples,
+                int(promotion["maximum_combined_samples"]),
+            )
+            maximum_group_relative_standard_error = max(
+                maximum_group_relative_standard_error,
+                float(promotion["maximum_query_group_relative_se_p95"]),
+            )
     return LayerStackProviderConfig(
         family_count=int(plan.provider["family_count"]),
         states_per_family=int(plan.provider["states_per_family"]),
@@ -180,10 +260,11 @@ def _layer_stack_provider_config(
         adaptive=adaptive,
         batch_samples_per_replica=int(plan.reference_budget["batch_samples_per_replica"]),
         min_combined_samples=int(plan.reference_budget["minimum_combined_samples"]),
-        max_combined_samples=int(plan.reference_budget["maximum_combined_samples"]),
-        relative_standard_error=float(plan.reference_budget["target_relative_se_p95"]),
-        maximum_group_relative_standard_error=float(
-            plan.reference_budget["maximum_query_group_relative_se_p95"]
+        max_combined_samples=maximum_combined_samples,
+        relative_standard_error=relative_standard_error,
+        maximum_group_relative_standard_error=maximum_group_relative_standard_error,
+        enforce_maximum_group_relative_standard_error=(
+            enforce_maximum_group_relative_standard_error
         ),
         max_dispatch_queries=int(plan.reference_budget["maximum_dispatch_queries"]),
         peak_calibration_directions=int(
@@ -246,6 +327,7 @@ def collect_layer_stack_state(
             plan,
             adaptive=True,
             selected_state_ids=(state.state_id,),
+            query_role=role,
         ),
     )
     manifest = collect_reference_dataset(output, (provider,), collection)
@@ -255,6 +337,7 @@ def collect_layer_stack_state(
 def plan_layer_stack_corpus(
     plan: CorpusPlan,
     shard_root: Path | str,
+    selection: CorpusSelection | None = None,
 ) -> ReferenceCorpusManifest:
     if plan.provider.get("name") != "layer-stack":
         raise ValueError("the first v1 corpus planner supports LayerStack only")
@@ -263,8 +346,8 @@ def plan_layer_stack_corpus(
         plan.collection_config("W", (), "test"),
         provider_config,
     )
-    states = tuple(discovery.source_states())
-    known_state_ids = {state.state_id for state in states}
+    all_states = tuple(discovery.source_states())
+    known_state_ids = {state.state_id for state in all_states}
     unknown_promotions = sorted(
         set(plan.document["sampling"]["dense_promotions"]) - known_state_ids
     )
@@ -273,7 +356,25 @@ def plan_layer_stack_corpus(
             "dense_promotions contains state IDs outside this CorpusPlan: "
             f"{unknown_promotions[:4]}"
         )
-    if sum(state.split == 2 for state in states) < int(plan.split["minimum_test_state_count"]):
+    unknown_sample_promotions = sorted(
+        {
+            str(item["state_id"])
+            for item in plan.reference_budget["state_sample_promotions"]
+        }
+        - known_state_ids
+    )
+    if unknown_sample_promotions:
+        raise ValueError(
+            "state_sample_promotions contains state IDs outside this CorpusPlan: "
+            f"{unknown_sample_promotions[:4]}"
+        )
+    if selection is not None and selection.base_corpus != plan.name:
+        raise ValueError("corpus selection targets a different base CorpusPlan")
+    states = (
+        selection.select_states(all_states)
+        if selection is not None else all_states
+    )
+    if selection is None and sum(state.split == 2 for state in states) < int(plan.split["minimum_test_state_count"]):
         raise ValueError("CorpusPlan does not provide the required number of test states")
     grouped: dict[tuple[str, str, str, tuple[str, ...]], list[Any]] = {}
     for state in states:
@@ -296,6 +397,7 @@ def plan_layer_stack_corpus(
                 tuple(state.difficulty_tags) if role == "train" else (),
             )
             grouped.setdefault(key, []).append(state)
+    corpus_name = selection.name if selection is not None else plan.name
     root = Path(shard_root)
     shards = []
     for (family, role, density_key, tags), selected in sorted(grouped.items()):
@@ -305,7 +407,7 @@ def plan_layer_stack_corpus(
         shard_id = f"{family}-{role}-{density_key.lower()}{tag_suffix}"
         shards.append(CorpusShard(
             shard_id=shard_id,
-            uri=_project_uri(root / plan.name / f"{shard_id}.h5"),
+            uri=_project_uri(root / corpus_name / f"{shard_id}.h5"),
             role=role,
             structure_family_id=family,
             difficulty_class=density_key,
@@ -315,11 +417,14 @@ def plan_layer_stack_corpus(
             direction_count=resolved.directions,
         ))
     return ReferenceCorpusManifest(
-        name=plan.name,
+        name=corpus_name,
         plan=plan.document,
         plan_sha256=plan.sha256,
         created_at=datetime.now(timezone.utc).isoformat(),
         shards=tuple(shards),
+        selection=selection.document if selection is not None else None,
+        selection_sha256=selection.sha256 if selection is not None else None,
+        format_version=2 if selection is not None else 1,
     ).resolved()
 
 
@@ -327,14 +432,17 @@ def collect_layer_stack_corpus(
     plan: CorpusPlan,
     shard_root: Path | str,
     manifest_path: Path | str,
+    selection: CorpusSelection | None = None,
 ) -> ReferenceCorpusManifest:
-    manifest = plan_layer_stack_corpus(plan, shard_root)
+    manifest = plan_layer_stack_corpus(plan, shard_root, selection)
     previous_shards: dict[str, CorpusShard] = {}
     previous_path = Path(manifest_path)
     if previous_path.is_file():
         previous = ReferenceCorpusManifest.load(previous_path)
         if previous.plan_sha256 != plan.sha256:
             raise ValueError("existing corpus manifest belongs to a different CorpusPlan")
+        if previous.selection_sha256 != manifest.selection_sha256:
+            raise ValueError("existing corpus manifest belongs to a different selection")
         previous_shards = {shard.shard_id: shard for shard in previous.shards}
         manifest = replace(manifest, created_at=previous.created_at)
     completed: list[CorpusShard] = []
@@ -387,7 +495,12 @@ def collect_layer_stack_corpus(
         )
         provider = LayerStackProvider(
             collection,
-            replace(base_provider, selected_state_ids=shard.state_ids),
+            _layer_stack_provider_config(
+                plan,
+                adaptive=True,
+                selected_state_ids=shard.state_ids,
+                query_role=shard.role,
+            ),
         )
         started = time.perf_counter()
         dataset_manifest = collect_reference_dataset(output, (provider,), collection)
@@ -408,6 +521,9 @@ def collect_layer_stack_corpus(
             plan_sha256=manifest.plan_sha256,
             created_at=manifest.created_at,
             shards=tuple(completed) + manifest.shards[len(completed):],
+            selection=manifest.selection,
+            selection_sha256=manifest.selection_sha256,
+            format_version=manifest.format_version,
         ).write(manifest_path)
     result = ReferenceCorpusManifest(
         name=manifest.name,
@@ -415,6 +531,9 @@ def collect_layer_stack_corpus(
         plan_sha256=manifest.plan_sha256,
         created_at=manifest.created_at,
         shards=tuple(completed),
+        selection=manifest.selection,
+        selection_sha256=manifest.selection_sha256,
+        format_version=manifest.format_version,
     ).resolved()
     result.write(manifest_path)
     return validate_reference_corpus(manifest_path)
@@ -423,13 +542,21 @@ def collect_layer_stack_corpus(
 def validate_reference_corpus(path: Path | str) -> ReferenceCorpusManifest:
     manifest = ReferenceCorpusManifest.load(path)
     plan = CorpusPlan.from_dict(manifest.plan)
+    selection = (
+        CorpusSelection.from_dict(manifest.selection)
+        if manifest.selection is not None else None
+    )
     if not manifest.shards or any(shard.status != "complete" for shard in manifest.shards):
         raise ValueError("reference corpus is incomplete")
     if len({shard.shard_id for shard in manifest.shards}) != len(manifest.shards):
         raise ValueError("reference corpus contains duplicate shard IDs")
     if len({shard.uri for shard in manifest.shards}) != len(manifest.shards):
         raise ValueError("reference corpus contains duplicate shard URIs")
-    expected_manifest = plan_layer_stack_corpus(plan, PROJECT_ROOT / ".corpus-layout-check")
+    expected_manifest = plan_layer_stack_corpus(
+        plan,
+        PROJECT_ROOT / ".corpus-layout-check",
+        selection,
+    )
     expected_shards = {shard.shard_id: shard for shard in expected_manifest.shards}
     if set(expected_shards) != {shard.shard_id for shard in manifest.shards}:
         raise ValueError("reference corpus shard set disagrees with CorpusPlan")
@@ -533,7 +660,7 @@ def validate_reference_corpus(path: Path | str) -> ReferenceCorpusManifest:
                     raise ValueError(f"query directions collide across roles for state {state_id}")
                 role_hashes.add(value)
     test_state_count = sum(record[0] == 2 for record in state_records.values())
-    if test_state_count < int(plan.split["minimum_test_state_count"]):
+    if selection is None and test_state_count < int(plan.split["minimum_test_state_count"]):
         raise ValueError("reference corpus has too few test states")
     if any(len(splits) != 1 for splits in split_group_splits.values()):
         raise ValueError("reference corpus leaks a split_group_id across source splits")

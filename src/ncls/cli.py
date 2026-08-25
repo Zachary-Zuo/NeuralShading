@@ -68,20 +68,27 @@ def _validate_dataset(path: Path, *, skip_hashes: bool) -> int:
 
 
 def _plan_corpus(args: argparse.Namespace) -> int:
-    from .data import CorpusPlan, plan_layer_stack_corpus
+    from .data import CorpusPlan, CorpusSelection, plan_layer_stack_corpus
 
     plan = CorpusPlan.load(args.config)
-    manifest = plan_layer_stack_corpus(plan, args.shard_root)
+    selection = CorpusSelection.load(args.selection) if args.selection is not None else None
+    manifest = plan_layer_stack_corpus(plan, args.shard_root, selection)
     manifest.write(args.output)
     print(f"Planned {len(manifest.shards)} shards for {manifest.name}: {manifest.corpus_id}")
     return 0
 
 
 def _collect_corpus(args: argparse.Namespace) -> int:
-    from .data import CorpusPlan, collect_layer_stack_corpus
+    from .data import CorpusPlan, CorpusSelection, collect_layer_stack_corpus
 
     plan = CorpusPlan.load(args.config)
-    manifest = collect_layer_stack_corpus(plan, args.shard_root, args.output)
+    selection = CorpusSelection.load(args.selection) if args.selection is not None else None
+    manifest = collect_layer_stack_corpus(
+        plan,
+        args.shard_root,
+        args.output,
+        selection,
+    )
     print(f"Collected ReferenceCorpus {manifest.corpus_id} to {args.output}")
     return 0
 
@@ -176,11 +183,53 @@ def _compare_learning(args: argparse.Namespace) -> int:
         args.candidate,
         iterations=args.iterations,
         seed=args.seed,
+        varied_fields=tuple(args.vary),
     )
     write_comparison_report(args.output, result)
     print(
         f"Compared {result['state_count']} matched states with "
         f"{result['iterations']} bootstrap samples: {result['report_sha256']}"
+    )
+    return 0
+
+
+def _oracle_m3(args: argparse.Namespace) -> int:
+    from .learning.direct_fit import run_response_dictionary_oracle
+
+    result = run_response_dictionary_oracle(
+        args.data,
+        args.output,
+        codebook_sizes=tuple(args.codebook_sizes),
+        seed=args.seed,
+        maximum_iterations=args.maximum_iterations,
+    )
+    units = result["units"]
+    print(
+        f"M3 response-space oracle {result['report_sha256']}: "
+        f"{units['per_state']['unit_count']} state units, "
+        f"{units['per_state_view']['unit_count']} state-view units"
+    )
+    return 0
+
+
+def _benchmark_learning(args: argparse.Namespace) -> int:
+    from .learning.evaluation import benchmark_checkpoint
+
+    result = benchmark_checkpoint(
+        args.data,
+        args.checkpoint,
+        args.output,
+        device_name=args.device,
+        packet_size=args.packet_size,
+        warmup=args.warmup,
+        iterations=args.iterations,
+    )
+    single = result["single_query"].get(
+        "device_execution_ms", result["single_query"]["synchronized_wall_ms"]
+    )
+    print(
+        f"{result['pipeline']}: single-query median={single['median']:.6f} ms; "
+        f"packet={result['coherent_packet']['median_microseconds_per_direction']:.3f} us/direction"
     )
     return 0
 
@@ -193,6 +242,20 @@ def _validate_bundle(path: Path) -> int:
         f"MethodBundle OK: {bundle.manifest.method_id} "
         f"({bundle.manifest.backend_id}, {bundle.manifest.runtime_class})"
     )
+    return 0
+
+
+def _export_film_m1_bundle(args: argparse.Namespace) -> int:
+    from .bundle import export_film_m1_bundle
+
+    manifest = export_film_m1_bundle(
+        args.data,
+        args.checkpoint,
+        args.output,
+        state_id=args.state_id,
+        quality_report_path=args.quality_report,
+    )
+    print(f"Exported Film M1 MethodBundle {manifest.method_id} to {args.output}")
     return 0
 
 
@@ -222,10 +285,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     plan_corpus = data_commands.add_parser("plan-corpus", help="从 CorpusPlan 解析 state、密度与 shard 清单")
     plan_corpus.add_argument("--config", type=Path, required=True)
+    plan_corpus.add_argument("--selection", type=Path)
     plan_corpus.add_argument("--shard-root", type=Path, required=True)
     plan_corpus.add_argument("--output", type=Path, required=True)
     collect_corpus = data_commands.add_parser("collect-corpus", help="按 CorpusPlan 采集或续采经过校验的 shard")
     collect_corpus.add_argument("--config", type=Path, required=True)
+    collect_corpus.add_argument("--selection", type=Path)
     collect_corpus.add_argument("--shard-root", type=Path, required=True)
     collect_corpus.add_argument("--output", type=Path, required=True, help="写入 artifacts 的 corpus manifest")
     collect_state = data_commands.add_parser(
@@ -277,11 +342,53 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--output", type=Path, required=True)
     compare.add_argument("--iterations", type=int, default=1000)
     compare.add_argument("--seed", type=int, default=20260824)
+    compare.add_argument(
+        "--vary",
+        action="append",
+        choices=("capacity",),
+        default=[],
+        help="显式声明 matched 对照唯一允许变化的训练字段",
+    )
 
-    bundle = commands.add_parser("bundle", help="MethodBundle 验证")
+    oracle_m3 = learn_commands.add_parser(
+        "oracle-m3",
+        help="在 canonical dense probes 上运行 M3 top-2 字典与 matched PCA 诊断",
+    )
+    oracle_m3.add_argument("--data", type=Path, required=True)
+    oracle_m3.add_argument("--output", type=Path, required=True)
+    oracle_m3.add_argument(
+        "--codebook-sizes", type=int, nargs="+", default=(8, 16, 32, 64)
+    )
+    oracle_m3.add_argument("--seed", type=int, default=20260824)
+    oracle_m3.add_argument("--maximum-iterations", type=int, default=30)
+
+    benchmark = learn_commands.add_parser(
+        "benchmark", help="测量 checkpoint 的单 query 延迟与 prepare 复用后的 coherent packet 成本"
+    )
+    benchmark.add_argument("--data", type=Path, required=True)
+    benchmark.add_argument("--checkpoint", type=Path, required=True)
+    benchmark.add_argument("--output", type=Path, required=True)
+    benchmark.add_argument("--device", type=str)
+    benchmark.add_argument("--packet-size", type=int, default=256)
+    benchmark.add_argument("--warmup", type=int, default=10)
+    benchmark.add_argument("--iterations", type=int, default=50)
+
+    bundle = commands.add_parser("bundle", help="MethodBundle 导出与验证")
     bundle_commands = bundle.add_subparsers(dest="bundle_command", required=True)
     validate_bundle = bundle_commands.add_parser("validate", help="验证 manifest 与全部内容哈希")
     validate_bundle.add_argument("path", type=Path)
+    export_film = bundle_commands.add_parser(
+        "export-film-m1",
+        help="从 P1 M1-M checkpoint 导出一个 frozen-state neural evaluator bundle",
+    )
+    export_film.add_argument("--data", type=Path, required=True)
+    export_film.add_argument("--checkpoint", type=Path, required=True)
+    export_film.add_argument("--output", type=Path, required=True)
+    export_film.add_argument(
+        "--state-id",
+        default="6324e3b293866fb9ac02d9b373ce260cf988b3af31babf3cd9d6ff87e9579df1",
+    )
+    export_film.add_argument("--quality-report", type=Path)
     return parser
 
 
@@ -313,8 +420,14 @@ def main(argv: list[str] | None = None) -> int:
         return _evaluate_learning(args)
     if args.command == "learn" and args.learn_command == "compare":
         return _compare_learning(args)
+    if args.command == "learn" and args.learn_command == "oracle-m3":
+        return _oracle_m3(args)
+    if args.command == "learn" and args.learn_command == "benchmark":
+        return _benchmark_learning(args)
     if args.command == "bundle" and args.bundle_command == "validate":
         return _validate_bundle(args.path)
+    if args.command == "bundle" and args.bundle_command == "export-film-m1":
+        return _export_film_m1_bundle(args)
     raise AssertionError("unreachable command")
 
 

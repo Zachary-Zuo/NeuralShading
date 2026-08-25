@@ -25,7 +25,6 @@ FALCOR_EXPORT_D3D12_AGILITY_SDK
 
 namespace
 {
-constexpr uint32_t kLegacyStateBytes = 176;
 constexpr uint32_t kMaximumSceneMaterials = 64;
 const Gui::DropdownList kComparisonModes = {
     {0, "Reference / method split"},
@@ -183,6 +182,7 @@ ViewerOptions parseOptions(int argc, char** argv)
         const std::string argument = argv[index];
         if (argument == "--bundle-root") options.bundleRoot = value(index, "--bundle-root");
         else if (argument == "--material") options.materialPath = value(index, "--material");
+        else if (argument == "--method") options.requestedMethodId = value(index, "--method");
         else if (argument == "--environment") options.environmentPath = value(index, "--environment");
         else if (argument == "--reference-geometry") options.referenceGeometryPath = value(index, "--reference-geometry");
         else if (argument == "--replay") { options.replayPath = value(index, "--replay"); }
@@ -192,6 +192,7 @@ ViewerOptions parseOptions(int argc, char** argv)
         else if (argument == "--width") options.width = static_cast<uint32_t>(std::stoul(value(index, "--width")));
         else if (argument == "--height") options.height = static_cast<uint32_t>(std::stoul(value(index, "--height")));
         else if (argument == "--headless") options.headless = true;
+        else if (argument == "--evaluator-preview-lighting") options.evaluatorPreviewLighting = true;
         else if (argument == "--verbose-console") options.verboseConsole = true;
         else if (argument == "--help")
         {
@@ -199,6 +200,7 @@ ViewerOptions parseOptions(int argc, char** argv)
                 << "NclsViewer [--bundle-root DIR] [--material FILE] [--replay CAPTURE.json] [--viewer-scene FILE] "
                    "[--reference-geometry SCENE] [--environment HDRI] "
                    "[--headless --frames N --capture FILE] "
+                   "[--method SHA256] [--evaluator-preview-lighting] "
                    "[--width W --height H] [--verbose-console]\n";
             std::exit(0);
         }
@@ -284,6 +286,17 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
         if (!mOptions.environmentPath.empty())
             loadEnvironment(mOptions.environmentPath, mOptions.environmentSha256);
     }
+    if (mOptions.evaluatorPreviewLighting)
+    {
+        // M1-M 直接 evaluator 每个方向都执行完整 MLP。首屏只保留一个方向光，
+        // 让视觉比较隔离局部 evaluator，同时避免把环境积分 query 数隐藏在启动延迟里。
+        mLighting.useEnvironment = false;
+        mLighting.usePoint = false;
+        mLighting.useRectangle = false;
+        mLighting.useSun = true;
+        mLighting.sunDirection = float3(0.35f, 0.55f, 0.76f);
+        mMaxSceneBounces = 0u;
+    }
     if (!mpScene || !mpReferencePathPass)
         throw std::runtime_error("the viewer requires a loaded scene and the unified scene reference path");
     resizeResources(getTargetFbo()->getWidth(), getTargetFbo()->getHeight());
@@ -299,8 +312,8 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
         selectMethod(requested);
     }
     mStatus = mMethods.empty()
-        ? "No compatible realtime bundle was found; showing a full-width reference."
-        : "GPU-parity-validated MethodBundles found; the method selection starts empty.";
+        ? "No compatible neural evaluator bundle was found; showing a full-width reference."
+        : "GPU-parity-validated neural evaluator bundles found; the method selection starts empty.";
 }
 
 void NclsViewer::createPasses()
@@ -521,8 +534,11 @@ void NclsViewer::resizeResources(uint32_t width, uint32_t height)
         mOutputWidth, mOutputHeight, ResourceFormat::RGBA32Float, 1, 1, nullptr, shaderUav);
     const uint64_t stateCount64 = uint64_t(mViewWidth) * uint64_t(mOutputHeight);
     if (stateCount64 > std::numeric_limits<uint32_t>::max()) throw std::runtime_error("viewer state buffer is too large");
+    const uint32_t stateStride = hasActiveMethod()
+        ? mMethods[mSelectedMethod].stateBytesPerPixel
+        : sizeof(float);
     mpStates = getDevice()->createStructuredBuffer(
-        kLegacyStateBytes,
+        stateStride,
         static_cast<uint32_t>(stateCount64),
         ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess);
     rebuildSceneFbo();
@@ -737,8 +753,11 @@ bool NclsViewer::allMaterialsSupportedBy(const ncls::ViewerMethod& method) const
 {
     const auto supports = [&](const ncls::ReferenceSource& source) {
         if (source.family != ncls::ReferenceFamily::LayerStack) return false;
-        return std::find(method.supportedIrIds.begin(), method.supportedIrIds.end(), "ncls.layer-stack-ir@1")
-            != method.supportedIrIds.end();
+        const bool supportsLayerStack = std::find(
+            method.supportedIrIds.begin(),
+            method.supportedIrIds.end(),
+            "ncls.layer-stack-ir@1") != method.supportedIrIds.end();
+        return supportsLayerStack && ncls::layerStackHash(source.layerStack) == method.compiledMaterialIrSha256;
     };
     if (!supports(mReferenceSource)) return false;
     for (const auto& [materialId, binding] : mInactiveSceneMaterials)
@@ -825,7 +844,6 @@ bool NclsViewer::runParityProbe(const ncls::ViewerMethod& method, std::string& e
     try
     {
         const auto flags = ResourceBindFlags::ShaderResource;
-        auto material = getDevice()->createStructuredBuffer(752, 1, flags, MemoryType::DeviceLocal, method.parity.material.data());
         auto weights = getDevice()->createStructuredBuffer(
             sizeof(float), static_cast<uint32_t>(method.weights.size()), flags, MemoryType::DeviceLocal, method.weights.data());
         const float4 view(method.parity.view[0], method.parity.view[1], method.parity.view[2], 0.f);
@@ -839,12 +857,10 @@ bool NclsViewer::runParityProbe(const ncls::ViewerMethod& method, std::string& e
             static_cast<uint32_t>(lights.size()),
             ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess);
         auto root = mpParityPass->getRootVar();
-        root["gMaterials"] = material;
         root["gWeights"] = weights;
         root["gViews"] = viewBuffer;
         root["gLights"] = lightBuffer;
         root["gOutput"] = output;
-        root["gWidth"] = method.width;
         root["gLightCount"] = static_cast<uint32_t>(lights.size());
         mpParityPass->execute(getRenderContext(), static_cast<uint32_t>(lights.size()), 1, 1);
         std::vector<float4> actual(lights.size());
@@ -1074,21 +1090,21 @@ void NclsViewer::renderPrepare(RenderContext* pRenderContext)
     root["gStates"] = mpStates;
     auto constants = root["PrepareCB"];
     constants["gFrameDim"] = uint2(mViewWidth, mOutputHeight);
-    constants["gMethodMode"] = mSelectedMethod >= 0 ? 1u : 0u;
-    constants["gWidth"] = mSelectedMethod >= 0 ? mMethods[mSelectedMethod].width : 8u;
     constants["gUseScene"] = uint32_t(mpScene != nullptr);
-    auto executeMaterial = [&](const SourceGpuResources& gpu, uint32_t materialId) {
-        root["gMaterials"] = gpu.pMaterial;
+    auto executeMaterial = [&](uint32_t materialId) {
         constants["gTargetMaterialId"] = materialId;
         mpPreparePass->execute(pRenderContext, mViewWidth, mOutputHeight);
     };
     beginTiming(mPrepareTiming);
-    if (!mpScene) executeMaterial(mSourceGpu, 0u);
+    if (!mpScene) executeMaterial(0u);
     else
     {
-        executeMaterial(mSourceGpu, mActiveSceneMaterial);
+        executeMaterial(mActiveSceneMaterial);
         for (const auto& [materialId, binding] : mInactiveSceneMaterials)
-            executeMaterial(binding.gpu, materialId);
+        {
+            (void)binding;
+            executeMaterial(materialId);
+        }
     }
     endTiming(mPrepareTiming);
     mPrepareDirty = false;
@@ -1098,6 +1114,7 @@ void NclsViewer::renderApproximation(RenderContext* pRenderContext)
 {
     auto root = mpApproximationPass->getRootVar();
     root["gStates"] = mpStates;
+    root["gWeights"] = mpWeights;
     root["gPositionDepth"] = mpPositionDepth;
     root["gNormal"] = mpNormal;
     root["gTangent"] = mpTangent;
@@ -1106,6 +1123,8 @@ void NclsViewer::renderApproximation(RenderContext* pRenderContext)
     root["gLinearSampler"] = mpLinearSampler;
     root["gApproximation"] = mpApproximation;
     root["ApproximationCB"]["gFrameDim"] = uint2(mViewWidth, mOutputHeight);
+    root["ApproximationCB"]["gEnvironmentQueryBudget"] = mMethods[mSelectedMethod].environmentQueryBudget;
+    root["ApproximationCB"]["gRectangleQueryBudget"] = mMethods[mSelectedMethod].rectangleQueryBudget;
     bindLighting(root, "ApproximationCB");
     beginTiming(mLightingTiming);
     mpApproximationPass->execute(pRenderContext, mViewWidth, mOutputHeight);
@@ -1711,7 +1730,7 @@ void NclsViewer::onGuiRender(Gui* pGui)
     }
 
     {
-        Gui::Group group = window.group("Realtime method", false);
+        Gui::Group group = window.group("Neural evaluator method", false);
         if (group)
         {
             Gui::DropdownList methodList = {{0, "None (reference only)"}};
@@ -1726,15 +1745,17 @@ void NclsViewer::onGuiRender(Gui* pGui)
                 if (group.dropdown("Right-side method", methodList, mMethodUiValue))
                     selectMethod(int32_t(mMethodUiValue) - 1);
             }
-            else group.text("One or more material slots have no compatible compiler; showing reference only.");
+            else group.text("当前材质不是 bundle 的 frozen corpus state；请加载 bundle 内 preview material。");
             if (group.button("Rescan MethodBundles")) scanBundles();
             if (mSelectedMethod >= 0)
             {
                 const auto& method = mMethods[mSelectedMethod];
                 group.text("method: " + shortId(method.methodId)
-                    + " / backend v" + std::to_string(method.backendVersion));
+                    + " / diagnostic backend v" + std::to_string(method.backendVersion));
                 group.text("Parameters: " + std::to_string(method.parameterCount)
                     + ", state: " + std::to_string(method.stateBytesPerPixel) + " B/pixel");
+                group.text("Frozen corpus state: " + shortId(method.compiledStateId));
+                group.text("Evaluator-only：无 matched sample/pdf，不进入 realtime 排名。");
                 group.text("Difference includes material approximation and transport differences.");
             }
             if (!mBundleFailures.empty())
@@ -2247,8 +2268,12 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         }},
         {"estimated_mean_relative_standard_error", mEstimatedRelativeStandardError},
         {"comparison_semantics", approximationAvailable
-            ? "visual_system_difference_full_path_reference_vs_realtime_deferred_method"
+            ? (mMethods[mSelectedMethod].runtimeClass == "diagnostic"
+                ? "local_appearance_difference_finite_reference_vs_diagnostic_neural_evaluator"
+                : "visual_system_difference_full_path_reference_vs_realtime_deferred_method")
             : "reference_only"},
+        {"method_runtime_class", approximationAvailable
+            ? mMethods[mSelectedMethod].runtimeClass : "none"},
         {"camera", {
             {"target", {mCamera.target.x, mCamera.target.y, mCamera.target.z}},
             {"yaw", mCamera.yaw}, {"pitch", mCamera.pitch}, {"distance", mCamera.distance},

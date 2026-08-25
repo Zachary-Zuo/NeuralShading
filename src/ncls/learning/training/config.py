@@ -23,6 +23,8 @@ class TrainingConfig:
     gradient_clip: float = 5.0
     validation_interval: int = 250
     checkpoint_interval: int = 250
+    minimum_steps: int = 0
+    early_stopping_patience: int | None = None
     seed: int = 20260824
     device: str | None = None
     deterministic: bool = True
@@ -58,6 +60,10 @@ class TrainingConfig:
         )
         if min(positive) <= 0 or self.weight_decay < 0.0 or self.gradient_clip <= 0.0:
             raise ValueError("training config contains invalid numeric values")
+        if self.minimum_steps < 0 or self.minimum_steps > self.steps:
+            raise ValueError("minimum_steps must lie in [0, steps]")
+        if self.early_stopping_patience is not None and self.early_stopping_patience < 1:
+            raise ValueError("early_stopping_patience must be positive when enabled")
         if self.seed < 0:
             raise ValueError("seed must be nonnegative")
 

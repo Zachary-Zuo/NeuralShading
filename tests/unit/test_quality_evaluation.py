@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 
 import numpy as np
+import pytest
+import torch
 
 from ncls.learning.evaluation import (
     QUALITY_SUITE,
@@ -12,6 +14,7 @@ from ncls.learning.evaluation import (
     quality_metric_rows,
     write_quality_report,
 )
+from ncls.learning.evaluation.benchmark import _measure
 
 
 def _batch() -> dict[str, np.ndarray]:
@@ -118,7 +121,7 @@ def test_state_block_paired_bootstrap_uses_matched_test_states(tmp_path) -> None
         originals = list(report["states"].values())
         report["states"] = {
             f"state-{index:03d}": dict(originals[index % len(originals)])
-            for index in range(50)
+            for index in range(30)
         }
         report["training"] = {
             "stage": "P1",
@@ -139,7 +142,7 @@ def test_state_block_paired_bootstrap_uses_matched_test_states(tmp_path) -> None
         iterations=1000,
         seed=17,
     )
-    assert comparison["state_count"] == 50
+    assert comparison["state_count"] == 30
     assert comparison["iterations"] == 1000
     assert all(
         value["difference"] < 0.0 for value in comparison["statistics"].values()
@@ -147,3 +150,37 @@ def test_state_block_paired_bootstrap_uses_matched_test_states(tmp_path) -> None
     assert json.loads(baseline_path.read_text(encoding="utf-8"))["suite"] == QUALITY_SUITE
     assert comparison["suite"] == QUALITY_SUITE
     assert "energy_relative_error.state_wo_p95" in comparison["statistics"]
+
+    candidate_with_capacity_change = dict(candidate)
+    candidate_with_capacity_change["training"] = {
+        **candidate["training"],
+        "capacity": "M",
+    }
+    candidate_with_capacity_change = finalize_quality_report(
+        candidate_with_capacity_change
+    )
+    write_quality_report(candidate_path, candidate_with_capacity_change)
+    with pytest.raises(ValueError, match="declared varied fields"):
+        compare_quality_reports(baseline_path, candidate_path, iterations=1000, seed=17)
+    capacity_comparison = compare_quality_reports(
+        baseline_path,
+        candidate_path,
+        iterations=1000,
+        seed=17,
+        varied_fields=("capacity",),
+    )
+    assert capacity_comparison["matched"]["varied_training_fields"] == {
+        "capacity": {"baseline": "S", "candidate": "M"}
+    }
+
+
+def test_cpu_query_benchmark_reports_finite_latency() -> None:
+    value = torch.ones((1, 3), dtype=torch.float32)
+    timing, prediction = _measure(
+        lambda: value * 2.0,
+        torch.device("cpu"),
+        warmup=1,
+        iterations=3,
+    )
+    assert timing["synchronized_wall_ms"]["median"] >= 0.0
+    assert torch.equal(prediction, value * 2.0)

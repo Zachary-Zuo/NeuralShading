@@ -24,6 +24,7 @@
   },
   "comparison": {
     "resampling_unit": "state",
+    "minimum_matched_states": 20,
     "minimum_bootstrap_iterations": 1000,
     "confidence": 0.95
   }

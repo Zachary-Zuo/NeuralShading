@@ -368,6 +368,7 @@ bool addDielectricCoat(LayerStackIR& stack)
     coat.alphaX = 0.18f; coat.alphaY = 0.18f; coat.relativeIor = 1.45f;
     stack.interfaces[base] = coat;
     stack.media[stack.mediumCount] = HomogeneousMedium{};
+    stack.media[stack.mediumCount].thickness = 1.f;
     ++stack.interfaceCount;
     ++stack.mediumCount;
     return true;

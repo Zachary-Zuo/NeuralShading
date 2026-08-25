@@ -13,7 +13,11 @@ import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from ncls.learning.evaluation.evaluator import evaluate_model, tensor_batch
+from ncls.learning.evaluation.evaluator import (
+    MODEL_BATCH_FIELDS,
+    evaluate_model,
+    tensor_batch,
+)
 from ncls.learning.pipelines import LearningPipeline, create_pipeline
 
 from .checkpoint import (
@@ -215,11 +219,18 @@ def train(
     last_hash: str | None = None
     start_time = time.perf_counter()
     latest_validation: dict[str, Any] | None = None
+    validations_without_improvement = 0
+    completed_step = 0
+    early_stopped = False
     try:
         for step in range(1, config.steps + 1):
+            completed_step = step
+            stop_requested = False
             model.train()
             indices = store.sample_batch_indices(lifecycle_indices["train"], config.batch_size, np_rng)
-            batch = tensor_batch(store.batch(indices), device)
+            batch = tensor_batch(
+                store.batch(indices, fields=MODEL_BATCH_FIELDS), device
+            )
             optimizer.zero_grad(set_to_none=True)
             prediction = pipeline.predict_f(model, batch, store, device)
             loss = pipeline.training_loss(prediction, batch)
@@ -281,8 +292,16 @@ def train(
                             initialization=initialization,
                         ),
                     )
+                    validations_without_improvement = 0
+                else:
+                    validations_without_improvement += 1
+                stop_requested = bool(
+                    config.early_stopping_patience is not None
+                    and step >= config.minimum_steps
+                    and validations_without_improvement >= config.early_stopping_patience
+                )
 
-            if step % config.checkpoint_interval == 0 or step == config.steps:
+            if step % config.checkpoint_interval == 0 or step == config.steps or stop_requested:
                 last_hash = save_checkpoint_atomic(
                     output / "checkpoints" / "last.pt",
                     _checkpoint_payload(
@@ -298,6 +317,9 @@ def train(
                         initialization=initialization,
                     ),
                 )
+            if stop_requested:
+                early_stopped = True
+                break
         writer.flush()
         (output / "validation_history.json").write_text(
             json.dumps(validation_history, ensure_ascii=False, indent=2) + "\n",
@@ -306,6 +328,8 @@ def train(
         manifest["status"] = "complete"
         manifest["completed_at"] = datetime.now(timezone.utc).isoformat()
         manifest["seconds"] = time.perf_counter() - start_time
+        manifest["completed_steps"] = completed_step
+        manifest["early_stopped"] = early_stopped
         manifest["best_validation"] = {
             "selection": "directional_l1_by_state.median_then_p95",
             "value": list(best_score),

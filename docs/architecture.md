@@ -2,7 +2,7 @@
 
 ## 状态
 
-本文同时记录已经实现的生命周期边界和下一阶段目标方法。MaterialProgram、CorpusPlan/reference-corpus、MethodBundle、viewer 与散射语义已经形成基础闭环；以小型 MLP 直接实现 `evaluate(wo, wi)` 的 neural material program 尚处于建模阶段。架构不冻结 latent 布局、网络规模、sampler family 或 backend 的物理状态。
+本文同时记录已经实现的生命周期边界和下一阶段目标方法。MaterialProgram、CorpusPlan/reference-corpus、MethodBundle、viewer 与散射语义已经形成基础闭环；P1 最佳 M1-M 已能以 Slang MLP 直接执行 `evaluate(wo, wi)`，并用 frozen corpus state MethodBundle 完成 GPU parity 和 viewer 外观验证。它仍是 evaluator-only diagnostic：尚无任意材质 compiler、matched `sample/pdf`，实测成本也未进入实时范围。架构不冻结 latent 布局、网络规模、sampler family 或 backend 的物理状态。
 
 详细合同见：
 

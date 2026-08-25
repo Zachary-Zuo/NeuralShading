@@ -121,6 +121,12 @@ def test_generated_slang_abi_is_current() -> None:
     assert shader.read_text(encoding="utf-8") == render_slang_header()
 
 
+def test_viewer_cpp_layer_stack_abi_identity_is_current() -> None:
+    header = (PROJECT_ROOT / "apps" / "viewer" / "MaterialProgram.h").read_text(encoding="utf-8")
+    assert f"constexpr uint32_t kLayerStackMagic = 0x{ABI_MAGIC:08X}u;" in header
+    assert "float thickness = 0.f;" in header
+
+
 def test_material_cli_validates_and_packs(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     program_path = tmp_path / "material.json"
     binary_path = tmp_path / "material.bin"

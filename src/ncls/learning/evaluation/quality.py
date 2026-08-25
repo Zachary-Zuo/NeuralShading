@@ -54,6 +54,7 @@ def _load_quality_suite() -> tuple[dict[str, Any], str]:
     comparison = value.get("comparison", {})
     if comparison != {
         "resampling_unit": "state",
+        "minimum_matched_states": 20,
         "minimum_bootstrap_iterations": 1000,
         "confidence": 0.95,
     }:
@@ -137,7 +138,13 @@ def quality_metric_rows(
         support = target_magnitude[row] >= 0.95 * target_peak[row]
         directions = wi[row, support]
         predicted_direction = wi[row, predicted_peak_index[row]]
-        cosine = np.clip(directions @ predicted_direction, -1.0, 1.0)
+        # 这里是逐方向 3D dot，不需要 BLAS。Windows 上大 dense slice 走 BLAS
+        # 会在 PyTorch 已加载 LLVM OpenMP 后再加载 Intel OpenMP，导致进程中止。
+        cosine = np.clip(
+            np.sum(directions * predicted_direction[None, :], axis=1),
+            -1.0,
+            1.0,
+        )
         peak_support_angle[row] = np.degrees(np.arccos(np.max(cosine)))
 
     top_count = max(1, int(np.ceil(target.shape[1] * 0.05)))

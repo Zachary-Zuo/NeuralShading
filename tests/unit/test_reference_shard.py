@@ -25,6 +25,7 @@ from ncls.data import (
     peak_grazing_mixture_pdf,
     peak_grazing_mixture_query,
 )
+from ncls.data.collector import _reciprocal_block
 
 
 @dataclass
@@ -92,6 +93,47 @@ class _Provider:
         pass
 
 
+@dataclass(frozen=True)
+class _DiagnosticBudget:
+    relative_standard_error: float
+    maximum_group_relative_standard_error: float
+    max_combined_samples: int
+    enforce_maximum_group_relative_standard_error: bool = True
+
+
+def test_reciprocal_block_uses_and_restores_diagnostic_budget() -> None:
+    config = CollectionConfig(
+        query_role="test",
+        view_count=2,
+        light_count=4,
+        reciprocal_target_relative_se_p95=0.10,
+        reciprocal_maximum_query_group_relative_se_p95=0.50,
+        reciprocal_maximum_combined_samples=262144,
+    )
+    provider = _Provider(config)
+    original_budget = _DiagnosticBudget(0.04, 0.10, 524288)
+    provider.provider_config = original_budget
+    original_evaluate = provider.evaluate
+    observed = []
+
+    def evaluate(state, surfaces, plan):
+        observed.append(provider.provider_config)
+        return original_evaluate(state, surfaces, plan)
+
+    provider.evaluate = evaluate
+    plan = provider.query_plan(provider.state, (SurfaceSample(),))
+    block = _reciprocal_block(
+        provider,
+        provider.state,
+        (SurfaceSample(),),
+        plan,
+        config,
+    )
+    assert block.mean.shape == (1, 2, 4, 3)
+    assert observed == [_DiagnosticBudget(0.10, 0.50, 262144, False)]
+    assert provider.provider_config == original_budget
+
+
 def test_reference_shard_v5_round_trip(tmp_path) -> None:
     config = CollectionConfig(
         name="uniform-v1",
@@ -118,6 +160,13 @@ def test_reference_shard_v5_round_trip(tmp_path) -> None:
         assert dataset.state_strings("evaluation_cohort").tolist() == ["g2"]
         assert dataset.query_roles.tolist() == [int(QueryRole.TEST), int(QueryRole.TEST)]
         assert dataset.group_batch((0, 1))["mean"].shape == (2, 4, 3)
+        minimal = dataset.group_batch(
+            (0,),
+            fields=("state_index", "wo", "wi", "mean", "solid_angle_weight"),
+        )
+        assert set(minimal) == {
+            "state_index", "wo", "wi", "mean", "solid_angle_weight"
+        }
 
 
 def test_reference_identity_excludes_capture_time_and_container_bytes(tmp_path) -> None:

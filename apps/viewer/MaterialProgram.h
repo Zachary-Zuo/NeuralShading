@@ -9,7 +9,8 @@
 
 namespace ncls
 {
-constexpr uint32_t kLayerStackMagic = 0x31534C4Eu;
+// 与 src/ncls/core/material/abi/layer_stack_ir_v1.json 和生成的 Slang ABI 一致。
+constexpr uint32_t kLayerStackMagic = 0x52494C4Eu;
 constexpr uint32_t kLayerStackVersion = 1u;
 constexpr uint32_t kMaximumInterfaces = 8u;
 constexpr uint32_t kMaximumMedia = 7u;
@@ -51,7 +52,9 @@ struct HomogeneousMedium
     float sigmaSG = 0.f;
     float sigmaSB = 0.f;
     float g = 0.f;
-    float thickness = 1.f;
+    // ABI padding record must remain all-zero. Call sites creating a real medium
+    // set the physical default thickness explicitly.
+    float thickness = 0.f;
 };
 
 struct LayerStackIR

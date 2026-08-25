@@ -55,6 +55,9 @@ class ReferenceQueryStore:
     def state_splits(self) -> np.ndarray:
         return self.dataset.state_splits
 
+    def state_payload(self, index: int) -> bytes:
+        return self.dataset.state_payload(index)
+
     def sanity_checks(self) -> dict[str, bool]:
         split_groups = self.state_strings("split_group_id")
         source_hashes = self.state_strings("source_sha256")
@@ -127,22 +130,32 @@ class ReferenceQueryStore:
             raise ValueError("dataset lifecycle partition is empty")
         return np.asarray(rng.choice(candidates, size=batch_size, replace=True), dtype=np.int64)
 
-    def batch(self, query_group_indices: np.ndarray) -> dict[str, np.ndarray]:
+    def batch(
+        self,
+        query_group_indices: np.ndarray,
+        *,
+        fields: tuple[str, ...] | None = None,
+    ) -> dict[str, np.ndarray]:
         requested = np.asarray(query_group_indices, dtype=np.int64)
         if requested.ndim != 1:
             raise ValueError("query_group_indices must be one-dimensional")
-        result = self.dataset.group_batch(requested)
-        result["view"] = result["wo"]
-        result["lights"] = result["wi"]
+        result = self.dataset.group_batch(requested, fields=fields)
+        if fields is None:
+            result["view"] = result["wo"]
+            result["lights"] = result["wi"]
         return result
 
     def iter_batches(
         self,
         query_group_indices: np.ndarray,
         batch_size: int,
+        *,
+        fields: tuple[str, ...] | None = None,
     ) -> Iterator[dict[str, np.ndarray]]:
         for start in range(0, len(query_group_indices), batch_size):
-            yield self.batch(query_group_indices[start : start + batch_size])
+            yield self.batch(
+                query_group_indices[start : start + batch_size], fields=fields
+            )
 
     def query_state_indices(self, query_group_indices: np.ndarray) -> np.ndarray:
         return np.asarray(
@@ -189,6 +202,10 @@ class ReferenceCorpusStore:
         self._state_index = {
             str(state_id): index for index, state_id in enumerate(self._state_ids)
         }
+        self._payload_sources: dict[str, tuple[int, int]] = {}
+        for shard_index, store in enumerate(self.shards):
+            for local_index, state_id in enumerate(store.state_strings("state_id")):
+                self._payload_sources.setdefault(str(state_id), (shard_index, local_index))
         self._state_fields = {
             field: np.asarray([metadata[str(state_id)][field] for state_id in self._state_ids], dtype=object)
             for field in (
@@ -219,6 +236,13 @@ class ReferenceCorpusStore:
     @property
     def state_splits(self) -> np.ndarray:
         return self._state_splits
+
+    def state_payload(self, index: int) -> bytes:
+        if index < 0 or index >= self.state_count:
+            raise IndexError("corpus state index is out of range")
+        state_id = str(self._state_ids[index])
+        shard_index, local_index = self._payload_sources[state_id]
+        return self.shards[shard_index].dataset.state_payload(local_index)
 
     def sanity_checks(self) -> dict[str, bool]:
         return {
@@ -300,33 +324,45 @@ class ReferenceCorpusStore:
         selected = rng.choice(len(local), size=batch_size, replace=True)
         return local[selected]
 
-    def batch(self, query_references: np.ndarray) -> dict[str, np.ndarray]:
+    def batch(
+        self,
+        query_references: np.ndarray,
+        *,
+        fields: tuple[str, ...] | None = None,
+    ) -> dict[str, np.ndarray]:
         requested = np.asarray(query_references, dtype=np.int64)
         if requested.ndim != 2 or requested.shape[1] != 2 or not len(requested):
             raise ValueError("corpus batch requires nonempty [shard, group] references")
         if len(np.unique(requested[:, 0])) != 1:
             raise ValueError("one rectangular batch may only read one shard")
         shard_index = int(requested[0, 0])
-        raw = self.shards[shard_index].batch(requested[:, 1])
-        raw["shard_state_index"] = raw["state_index"].copy()
+        raw = self.shards[shard_index].batch(requested[:, 1], fields=fields)
+        local_state_index = raw["state_index"].copy()
+        if fields is None:
+            raw["shard_state_index"] = local_state_index
         state_ids = self.shards[shard_index].state_strings("state_id")
         raw["state_index"] = np.asarray(
-            [self._state_index[str(state_ids[index])] for index in raw["shard_state_index"]],
+            [self._state_index[str(state_ids[index])] for index in local_state_index],
             dtype=np.int64,
         )
-        raw["shard_index"] = np.full(len(requested), shard_index, dtype=np.int64)
+        if fields is None:
+            raw["shard_index"] = np.full(len(requested), shard_index, dtype=np.int64)
         return raw
 
     def iter_batches(
         self,
         query_references: np.ndarray,
         batch_size: int,
+        *,
+        fields: tuple[str, ...] | None = None,
     ) -> Iterator[dict[str, np.ndarray]]:
         values = np.asarray(query_references, dtype=np.int64)
         for shard_index in sorted(set(map(int, values[:, 0].tolist()))):
             selected = values[values[:, 0] == shard_index]
             for start in range(0, len(selected), batch_size):
-                yield self.batch(selected[start : start + batch_size])
+                yield self.batch(
+                    selected[start : start + batch_size], fields=fields
+                )
 
     def query_state_indices(self, query_references: np.ndarray) -> np.ndarray:
         values = np.asarray(query_references, dtype=np.int64)

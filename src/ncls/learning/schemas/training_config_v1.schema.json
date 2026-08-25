@@ -18,6 +18,8 @@
     "gradient_clip": {"type": "number", "exclusiveMinimum": 0},
     "validation_interval": {"type": "integer", "minimum": 1},
     "checkpoint_interval": {"type": "integer", "minimum": 1},
+    "minimum_steps": {"type": "integer", "minimum": 0},
+    "early_stopping_patience": {"type": ["integer", "null"], "minimum": 1},
     "seed": {"type": "integer", "minimum": 0},
     "device": {"type": ["string", "null"]},
     "deterministic": {"type": "boolean"},

@@ -23,6 +23,7 @@ from .quality import (
 
 
 EVALUATION_ROLE_NAMES = (*SPLIT_NAMES, *QUERY_ROLE_NAMES[3:])
+MODEL_BATCH_FIELDS = ("state_index", "wo", "wi", "mean", "solid_angle_weight")
 
 
 def _sha256_json(value: Any) -> str:
@@ -36,8 +37,14 @@ def _sha256_json(value: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def tensor_batch(raw: Mapping[str, np.ndarray], device: torch.device) -> dict[str, torch.Tensor]:
-    return {name: torch.as_tensor(values, device=device) for name, values in raw.items()}
+def tensor_batch(
+    raw: Mapping[str, np.ndarray],
+    device: torch.device,
+    *,
+    fields: tuple[str, ...] | None = None,
+) -> dict[str, torch.Tensor]:
+    selected = raw if fields is None else {name: raw[name] for name in fields}
+    return {name: torch.as_tensor(values, device=device) for name, values in selected.items()}
 
 
 def _append_rows(target: dict[str, list[np.ndarray]], rows: Mapping[str, np.ndarray]) -> None:
@@ -108,14 +115,16 @@ def evaluate_model(
     parts: dict[str, list[np.ndarray]] = {}
     weighted_loss = 0.0
     for raw in store.iter_batches(selected, batch_size):
-        batch = tensor_batch(raw, device)
+        batch = tensor_batch(raw, device, fields=MODEL_BATCH_FIELDS)
         prediction_f = pipeline.predict_f(model, batch, store, device)
         if tuple(prediction_f.shape) != tuple(batch["mean"].shape):
             raise ValueError("pipeline predict_f must match the reference [group,direction,RGB] shape")
         count = len(raw["mean"])
         weighted_loss += float(pipeline.training_loss(prediction_f, batch)) * count
         reciprocal_raw = _reciprocal_raw_batch(raw)
-        reciprocal_batch = tensor_batch(reciprocal_raw, device)
+        reciprocal_batch = tensor_batch(
+            reciprocal_raw, device, fields=MODEL_BATCH_FIELDS
+        )
         reciprocal_prediction = pipeline.predict_f(
             model, reciprocal_batch, store, device
         ).reshape(*raw["mean"].shape)

@@ -1,0 +1,21 @@
+{
+  "pipeline": "per-state-teacher-l-v1",
+  "stage": "P1",
+  "capacity": "L",
+  "model": {
+    "state_count": 30,
+    "width": 256,
+    "block_count": 6,
+    "fourier_bands": 6
+  },
+  "steps": 25000,
+  "batch_size": 2,
+  "learning_rate": 0.0002,
+  "validation_interval": 500,
+  "checkpoint_interval": 500,
+  "minimum_steps": 4000,
+  "early_stopping_patience": 6,
+  "seed": 20260824,
+  "device": "cuda",
+  "deterministic": true
+}

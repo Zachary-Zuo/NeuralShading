@@ -447,27 +447,49 @@ class ReferenceDataset:
         result[order] = sorted_values
         return result
 
-    def group_batch(self, indices: Iterable[int]) -> dict[str, np.ndarray]:
+    def group_batch(
+        self,
+        indices: Iterable[int],
+        *,
+        fields: tuple[str, ...] | None = None,
+    ) -> dict[str, np.ndarray]:
         requested = np.asarray(tuple(indices), dtype=np.int64)
+        if fields is None:
+            query_fields = _QUERY_DATASETS
+            response_fields = _RESPONSE_DATASETS
+        else:
+            if len(fields) != len(set(fields)):
+                raise ValueError("group batch fields must be unique")
+            unknown = set(fields) - set(_QUERY_DATASETS) - set(_RESPONSE_DATASETS)
+            if unknown:
+                raise ValueError(f"unsupported raw group batch fields: {sorted(unknown)}")
+            query_fields = tuple(name for name in fields if name in _QUERY_DATASETS)
+            response_fields = tuple(name for name in fields if name in _RESPONSE_DATASETS)
         result = {
             name: self._read_rows(self.stream[f"queries/{name}"], requested)
-            for name in _QUERY_DATASETS
+            for name in query_fields
         }
         result.update({
             name: self._read_rows(self.stream[f"responses/{name}"], requested)
-            for name in _RESPONSE_DATASETS
+            for name in response_fields
         })
-        state_indices = result["state_index"].astype(np.int64)
-        result["source_split"] = self.state_splits[state_indices]
-        result["query_group_id"] = requested
-        denominator = np.maximum(result["sample_count"].astype(np.float32), 1.0)[..., None]
-        result["standard_error"] = np.sqrt(np.maximum(result["variance"], 0.0) / denominator).astype(np.float32)
-        reciprocal_denominator = np.maximum(
-            result["reciprocal_sample_count"].astype(np.float32), 1.0
-        )[..., None]
-        result["reciprocal_standard_error"] = np.sqrt(
-            np.maximum(result["reciprocal_variance"], 0.0) / reciprocal_denominator
-        ).astype(np.float32)
+        if fields is None:
+            state_indices = result["state_index"].astype(np.int64)
+            result["source_split"] = self.state_splits[state_indices]
+            result["query_group_id"] = requested
+            denominator = np.maximum(
+                result["sample_count"].astype(np.float32), 1.0
+            )[..., None]
+            result["standard_error"] = np.sqrt(
+                np.maximum(result["variance"], 0.0) / denominator
+            ).astype(np.float32)
+            reciprocal_denominator = np.maximum(
+                result["reciprocal_sample_count"].astype(np.float32), 1.0
+            )[..., None]
+            result["reciprocal_standard_error"] = np.sqrt(
+                np.maximum(result["reciprocal_variance"], 0.0)
+                / reciprocal_denominator
+            ).astype(np.float32)
         return result
 
     def statistics(self, group_index: int) -> ReferenceStatistics:

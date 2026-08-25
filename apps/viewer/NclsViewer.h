@@ -32,6 +32,7 @@ struct ViewerOptions
     std::string requestedMethodId;
     bool headless = false;
     bool verboseConsole = false;
+    bool evaluatorPreviewLighting = false;
     uint32_t frameCount = 256;
     uint32_t width = 1280;
     uint32_t height = 720;

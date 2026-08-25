@@ -63,9 +63,12 @@
 
 ### 2.3 reference 噪声预算（沿用已校准机制）
 
-`adaptive-v1` 与 `peak-aware-v1` 固定以下合同：
+`adaptive-v1` 与 `peak-aware-v1` 固定以下合同。预算按用途分层，避免诊断量反过来支配 GT 采集成本：
 
-- 逐 query-group 双 replica 自适应采样：目标 relative SE 全局 p95 ≤ 0.04、最坏 query group ≤ 0.10，cap 为 262,144 个合并样本/query group。达到 cap 仍不合格时该 shard 失败，不写入语料。
+- validation/test 主 response：目标 relative SE p95 0.04、最终 group 上限 0.10、基础 cap 262,144；有实测失败证据的 state 可在 CorpusPlan 中按 role 显式晋升样本 cap 与最终 group 门，其他 state 不受影响。达到对应 state-specific cap 仍不合格时 shard 失败，不写入语料。
+- train 主 response：目标 0.06、最终 group 上限 0.25、cap 262,144；训练含大量 peak-aware 方向，噪声无偏且 SE 逐 query 保存，不把每个训练 group 强压到排名 GT 的上限。
+- adversarial/dense 主 response：目标 0.08、报告参考线 0.50、cap 262,144；达到 cap 后无条件落盘 SE，不作为 shard 拒绝门。它们只做冻结后的结构诊断，不参与训练、checkpoint 选择或 test 主排名。
+- reciprocal 只进入 source-aware scorecard，不进入训练或主排名：train 为目标 0.50、报告参考线 0.999、cap 4,096，只保留低成本诊断；validation/test/adversarial/dense 均为目标 0.20、报告参考线 0.999、cap 65,536。reciprocal 达到 cap 后无条件落盘 variance/sample count，不作为 shard 拒绝门；validation/test 仍提供阶段 scorecard，但报告必须同时读取 reciprocal SE，高噪声项不得支撑模型质量结论。
 - 单 dispatch query 数 ≤ 4,096；方向更多时由 provider 自动切 tile，限制随生成配置记录。
 - 峰覆盖审计从实际方向、PDF 和 response 重算。集中 query（top-1% 积分能量占比 ≥ 0.1）的 peak spacing p95 必须 ≤ 2°；不满足的 state 从 8,192 晋升到 16,384 方向并独立成 shard。
 - 原始与 reciprocal response 都保存样本数和方差；replica 差异与 SE 保留为诊断证据。
@@ -144,10 +147,10 @@ source compiler（[`model_candidates.md`](model_candidates.md) 的 M6）只对�
 | 档位 | 用途 | 预算 | seed |
 |---|---|---|---|
 | 快速档 | 实现正确性 smoke，不进注册表比较 | ≤ 30 min GPU、缩减数据允许 | 1 |
-| **标准档** | 一切正式比较 | 全量数据；步数按数据规模折算（目标约 30–50 个 query-group epoch；v1 LayerStack 语料约对应 20k–30k step，随语料定稿冻结具体值） | 3，报告 mean 与极差 |
-| 冲刺档 | 里程碑候选 | 标准档 ×5–10 预算 | ≥ 3 |
+| **标准档** | 正式主搜索 | 全量阶段数据；最大步数按数据规模折算（目标约 30–50 个 query-group epoch），达到最小步数后允许用冻结的 validation patience 早停 | 先用 1 个共同 deterministic seed；差距接近或轨迹不稳时自适应追加 |
+| 冲刺档 | 里程碑候选 | 标准档 ×5–10 预算 | 只对晋级候选按证据决定追加 seed |
 
-缩减 step 或缩减数据的运行只属于快速档。checkpoint 选择：validation 上的 solid-angle normalized L1 state-median（决胜看 p95）；test 只在配置冻结后读取一次。
+随意缩减 step 或数据的运行只属于快速档；版本化的阶段子语料（例如 P1 selection）属于该阶段的标准数据，不算临时缩减。checkpoint 选择：validation 上的 solid-angle normalized L1 state-median（决胜看 p95）；test 只在配置冻结后读取一次。paired state bootstrap 描述冻结 state 集上的外观差异，不替代 optimization seed 方差；只有差异接近或训练轨迹异常时才追加 seed，避免把所有候选的成本无条件乘倍。
 
 ### 4.3 监督量与输出（沿用既定结论）
 

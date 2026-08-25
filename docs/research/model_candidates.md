@@ -148,6 +148,8 @@ h_{l+1} = act( γ_l(z) ⊙ ((W_l + U_l·diag(a_l(z))·V_l)·h_l) + β_l(z) )
 - 风险：FiLM 仍不足以覆盖跨态长尾（→ 升低秩调制）；lobe 路由在 view sweep 上抖动（→ 时序连续性指标把关）；latent 维数在语料扩大后成为新瓶颈（→ D 是档位轴，随曲线报告）。
 - 判定实验：P1 用 M1-S/M/L 对最难分级 state 画容量–质量曲线。若 M 档在 G1 上达标 → P2 起点；若 L 档仍不达标而 T 诊断（无 latent 瓶颈）达标 → 瓶颈在条件化/latent，升级调制方式；若 T 也不达标 → 瓶颈在方向表示或监督，转 M4/数据侧。
 
+P1 v1 已完成：M1-M test `0.0452/0.1180`，通过 directional median/p95 与 energy median 三条主参考线，作为 P2 质量起点；M1-S test `0.0506/0.1196`，实测查询快约 36%，保留为效率 Pareto 端点。S→M 质量差异的 paired CI 跨零，因此不宣称 M 显著优于 S。M1-L `0.0766/0.2119` 且成本更高，被 M 显著支配。
+
 ## 3. M2：analytic core + neural residual
 
 ### 3.1 动机
@@ -169,6 +171,8 @@ f_hat = f_core(m, wo, wi) + Δf(z_m, wo, wi)
 - 风险：core 掩盖网络容量问题，跨族结论被 core 依赖污染（→ 始终与 M1 direct 配对报告）；无 core 的族退化为 M1，形成不对称比较（→ 跨族汇总时分层报告）。
 - 判定：P1/P2 中始终作为 M1 的 paired variant 跑。若 direct M1-M 达标且差距 < 显著区间 → core 变为可选优化；若 residual 显著更好 → core 进入部署形态，需在 D 轨道验证 core 的 Slang 成本。
 
+P1 v1 结论：M2-S 的 median 相对 M1-S 显著改善，但 p95 显著恶化到 `0.5862`，当前 Torch core 路径也更慢；M2-M/L 没有显著容量收益。core 不进入当前稳健 evaluator 默认，只保留为 optimized-code control 与后续 proposal 研究输入。
+
 ## 4. M3：sparse dictionary / top-k mixture
 
 ### 4.1 动机
@@ -182,7 +186,7 @@ f_hat = f_core(m, wo, wi) + Δf(z_m, wo, wi)
 ```text
 1. 每个 state 在冻结的 canonical probe 网格上求变换后响应，展平为 x_m ∈ R^P
    （两种向量化单元都测：per-state 全响应；per-(state, wo) 方向轨迹）
-2. 对全部 train 单元 K-means++（K = 64 / 256 / 1024）得 codebook
+2. 对全部直接拟合单元 K-means++ 得 codebook；完整语料测 `K = 64 / 256 / 1024`，P1 小子集只运行严格小于 unit 数的 `K = 8 / 16 / 32 / 64` 可行项，禁止靠重复原型凑大 K
 3. 每单元取最近 5 个候选原型；固定最近为 c1，枚举 c2 ∈ 第 2–5 近：
       w* = clamp( <x−c1, c2−c1> / ‖c2−c1‖², 0, 1 )     # 闭式最小二乘
    取重建误差最小的 (c1, c2, w)
@@ -202,6 +206,8 @@ z_m = Σ_{j∈top-k} w_j · c_j        # codebook C 共享计入 B_shared
 
 - 风险：凸混合偏向条件均值，压峰值（→ 峰指标把关；residual 变体兜底）；top-k 线段表达界（→ k 与 residual 是档位轴）；codebook 随语料增长的规模律未知（→ K 是档位轴）。
 - 判定：oracle 的 rate-distortion 明显优于同 bytes PCA → 字典假设成立，进入 (b)；(b) 在同 bytes 下逼近 dense `z` 且拟合更快 → 成为资产表示默认；否则保留为低 bytes 端点或放弃。
+
+P1 v1 结论：简单 K-means++ top-2 字典在 K8/K16 和 per-view K64 上均落后 matched PCA；K16 state response 的 paired 字典减 PCA CI 为 `[0.071,0.200]`。该结构不进入 P2 主路径。
 
 ## 5. M4：warped tensor field
 
@@ -299,6 +305,8 @@ M1-L 的 per-state 变体：去掉 latent 瓶颈，直接拟合单个 state 的�
 - T 的 direct vs residual 差距 → core 的真实贡献量。
 
 T 参数量可能超过有效 train query 数，必须用稠密切片排除离散表记忆后才能引用其结论。
+
+P1 v1 中 T 的 test/dense 为 `0.0775/0.3749` 与 `0.0818/0.4392`，在当前 25k、batch=2 的每态更新预算下没有成为有效 high-capacity teacher。因此只记录“该 teacher 配置未形成参考”，不把结果解释为共享 latent 已经不是瓶颈。
 
 ## 9. 已有实验证据边界
 

@@ -76,6 +76,54 @@
     "maximum_query_group_relative_se_p95": 0.1,
     "minimum_combined_samples": 1024,
     "maximum_combined_samples": 262144,
+    "reciprocal_target_relative_se_p95": 0.20,
+    "reciprocal_maximum_query_group_relative_se_p95": 0.999,
+    "reciprocal_maximum_combined_samples": 65536,
+    "diagnostic_query_roles": ["adversarial_probe", "dense_slice"],
+    "diagnostic_target_relative_se_p95": 0.08,
+    "diagnostic_maximum_query_group_relative_se_p95": 0.50,
+    "diagnostic_maximum_combined_samples": 262144,
+    "training_target_relative_se_p95": 0.06,
+    "training_maximum_query_group_relative_se_p95": 0.25,
+    "training_maximum_combined_samples": 262144,
+    "training_reciprocal_target_relative_se_p95": 0.50,
+    "training_reciprocal_maximum_query_group_relative_se_p95": 0.999,
+    "training_reciprocal_maximum_combined_samples": 4096,
+    "diagnostic_reciprocal_target_relative_se_p95": 0.20,
+    "diagnostic_reciprocal_maximum_query_group_relative_se_p95": 0.999,
+    "diagnostic_reciprocal_maximum_combined_samples": 65536,
+    "state_sample_promotions": [
+      {
+        "state_id": "bd6de2e9d0cf5b32e6259d90af99b718983783cbfff1a0a9c3025a54ff3672db",
+        "maximum_combined_samples": 1048576,
+        "maximum_query_group_relative_se_p95": 0.10,
+        "query_roles": ["validation", "test"]
+      },
+      {
+        "state_id": "1796065779d0932fe7ded3cc2c40b84a8a19190dd7e68732f06bc518ae7fe54a",
+        "maximum_combined_samples": 1048576,
+        "maximum_query_group_relative_se_p95": 0.60,
+        "query_roles": ["validation", "test"]
+      },
+      {
+        "state_id": "1796065779d0932fe7ded3cc2c40b84a8a19190dd7e68732f06bc518ae7fe54a",
+        "maximum_combined_samples": 262144,
+        "maximum_query_group_relative_se_p95": 0.75,
+        "query_roles": ["train"]
+      },
+      {
+        "state_id": "4ebd9258461716ed23d523a0b221d015feb190270471e2a55b63c3a219fcb1e7",
+        "maximum_combined_samples": 262144,
+        "maximum_query_group_relative_se_p95": 0.65,
+        "query_roles": ["validation", "test"]
+      },
+      {
+        "state_id": "4ebd9258461716ed23d523a0b221d015feb190270471e2a55b63c3a219fcb1e7",
+        "maximum_combined_samples": 262144,
+        "maximum_query_group_relative_se_p95": 0.75,
+        "query_roles": ["train"]
+      }
+    ],
     "batch_samples_per_replica": 256,
     "maximum_dispatch_queries": 4096
   },

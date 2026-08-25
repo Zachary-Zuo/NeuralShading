@@ -148,18 +148,16 @@ manifest 中的 `cost_claims` 是静态声明，至少包含：
 
 viewer benchmark 记录实测 prepare、1/8/32 等灯数下的 lighting scaling、环境/面光积分、总帧时间和显存。实测数据不回写 bundle 本体，而以 `(method_id, benchmark_scene_id, device_id)` 保存到运行报告。
 
-## 当前可部署基线的兼容记录
+## 当前 neural evaluator 部署记录
 
-当前端到端实现导出为一个解析 closure MethodBundle，用于验证完整生命周期：
+当前 viewer 部署路径只接受 `film-m1-direct-neural@1`。它从 P1 最佳 M1-M checkpoint 导出共享 evaluator 权重，并把一个真实 corpus state 的 condition 与 output scale 作为 frozen compiled material：
 
-- 它实现相同散射合同；
-- 其 lobe 字段只存在于该 backend 内；
-- viewer 和 deferred pass 不直接访问 lobe；
-- 它不能决定其他 bundle 的状态大小、decoder 或 lighting 实现。
+- bundle 同时保存精确源 `MaterialProgram`、state ID 与 LayerStackIR hash；viewer 只有在 reference 材质 hash 完全一致时才允许选择；
+- `prepare` 保存 256-float view-conditioned state，`evaluate` 在 Slang 中直接执行方向特征、六个 FiLM residual block 与线性 RGB `f` head；
+- bundle 加载时必须通过 Python float32 与 Slang float32 的固定方向 GPU parity；
+- 旧 `legacy-ltc-k2` 已从 viewer loader、shader pass 和构建依赖中移除，不再是可选部署方法。
 
-该后端的私有 ABI、权重布局、compiler shader、backend shader 和 parity probe 继续用于兼容、回归和 smoke。它证明了 bundle、Slang compiler、backend 与 viewer 的部署链路，不证明目标 neural evaluator 已经建模完成。新的 neural material bundle 复用生命周期，但自行声明 latent、evaluator、state、capability 和 cost model。
-
-这里的 `realtime` 表示运行时完整且有界。方法质量由独立 validation 和 Pareto 报告给出，不由 backend 名称或 ABI 决定。
+该 bundle 没有任意材质 compiler，也没有与 evaluator 匹配的 `sample/pdf`，所以 `runtime_class=diagnostic`。它用于确认“训练 checkpoint → MethodBundle → Slang evaluator → viewer”的外观与成本，不得写入 realtime Pareto。这里的 `realtime` 仍只表示运行时完整、有界并满足所声明的完整能力；方法质量由独立 validation 和 Pareto 报告决定。
 
 ## 训练 run 与 bundle 的边界
 

@@ -11,7 +11,6 @@ namespace ncls
 {
 struct ParityProbe
 {
-    std::array<std::byte, 752> material{};
     std::array<float, 3> view{};
     std::vector<std::array<float, 3>> lights;
     std::vector<std::array<float, 3>> expectedResponseCos;
@@ -27,12 +26,18 @@ struct ViewerMethod
     std::string sourceGitCommit;
     std::string backendId;
     uint32_t backendVersion = 0;
+    std::string runtimeClass;
     std::string architectureId;
+    std::string compiledStateId;
+    std::string compiledMaterialIrSha256;
+    std::filesystem::path previewMaterial;
     std::vector<std::string> supportedIrIds;
     uint32_t width = 0;
     uint32_t parameterCount = 0;
     uint32_t stateBytesPerPixel = 0;
     uint32_t compiledMaterialBytes = 0;
+    uint32_t environmentQueryBudget = 1;
+    uint32_t rectangleQueryBudget = 1;
     std::vector<float> weights;
     ParityProbe parity;
 };

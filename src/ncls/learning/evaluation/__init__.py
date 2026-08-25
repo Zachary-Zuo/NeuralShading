@@ -23,12 +23,19 @@ def evaluate_model(*args, **kwargs):
     return run(*args, **kwargs)
 
 
+def benchmark_checkpoint(*args, **kwargs):
+    from .benchmark import benchmark_checkpoint as run
+
+    return run(*args, **kwargs)
+
+
 __all__ = [
     "QUALITY_SUITE",
     "QUALITY_SUITE_DOCUMENT",
     "QUALITY_SUITE_NAME",
     "QUALITY_SUITE_SHA256",
     "build_quality_report",
+    "benchmark_checkpoint",
     "compare_quality_reports",
     "evaluate_checkpoint",
     "evaluate_model",

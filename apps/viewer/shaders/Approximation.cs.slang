@@ -1,8 +1,8 @@
 #include "ViewerCommon.slang"
-#include "../../../shaders/ncls/backends/legacy_ltc_k2/legacy_ltc_k2.slang"
-#include "../../../shaders/ncls/contracts/response_measure.slang"
+#include "../../../shaders/ncls/backends/film_m1/film_m1.slang"
 
-StructuredBuffer<NclsLegacyLtcK2PackedState> gStates;
+StructuredBuffer<NclsFilmM1State> gStates;
+StructuredBuffer<float> gWeights;
 Texture2D<float4> gPositionDepth;
 Texture2D<float4> gNormal;
 Texture2D<float4> gTangent;
@@ -34,42 +34,19 @@ cbuffer ApproximationCB
     float gRectangleIntensity;
     float3 gRectangleColor;
     float _padding2;
-};
-
-struct NclsViewerSampleGenerator : ISampleGenerator
-{
-    uint state;
-
-    [mutating]
-    uint next()
-    {
-        state = nclsViewerHash(state);
-        return state;
-    }
+    uint gEnvironmentQueryBudget;
+    uint gRectangleQueryBudget;
 };
 
 float3 nclsApproximationDirection(
-    NclsLegacyLtcK2PackedState state,
+    NclsFilmM1State state,
     float3 woLocal,
     float3 wiWorld,
     float3 normal,
     float3 tangent)
 {
-    NclsScatteringContext context = {};
-    context.surface.geometricNormal = normal;
-    context.surface.shadingFrame.normal = normal;
-    context.surface.shadingFrame.tangent = tangent;
-    context.surface.shadingFrame.bitangent = cross(normal, tangent);
-    context.surface.frontFacing = 1u;
-    context.woWorld = nclsViewerToWorld(woLocal, normal, tangent);
-    context.transportMode = (uint)NclsTransportMode::Radiance;
-    context.componentMask = (uint)NclsScatteringEvent::Reflection;
-    LegacyLtcK2Backend backend;
-    LegacyLtcK2State prepared = backend.prepare(context, state);
-    NclsViewerSampleGenerator sampleGenerator = {nclsViewerHash(asuint(woLocal.x) ^ asuint(woLocal.y))};
-    const float3 direction = normalize(wiWorld);
-    const NclsScatteringEval evaluation = prepared.evaluate(direction, sampleGenerator);
-    return nclsScatteringEvalToResponseCos(evaluation, context.surface.shadingFrame, direction);
+    const float3 wiLocal = nclsViewerToLocal(normalize(wiWorld), normal, tangent);
+    return nclsFilmM1ResponseCos(state, woLocal, wiLocal, gWeights);
 }
 
 float3 nclsEnvironment(float3 direction)
@@ -92,7 +69,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
     const uint index = pixel.y * gFrameDim.x + pixel.x;
-    const NclsLegacyLtcK2PackedState state = gStates[index];
+    const NclsFilmM1State state = gStates[index];
     const float3 position = positionDepth.xyz;
     const float3 normal = normalize(gNormal[pixel].xyz);
     const float3 tangent = normalize(gTangent[pixel].xyz);
@@ -110,13 +87,12 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
     if (gUseRectangle != 0u)
     {
-        static const uint kRectangleSamples = 8u;
         const float3 lightNormal = normalize(cross(gRectangleAxisU, gRectangleAxisV));
         const float area = 4.0f * length(cross(gRectangleAxisU, gRectangleAxisV));
-        [unroll]
-        for (uint sampleIndex = 0u; sampleIndex < kRectangleSamples; ++sampleIndex)
+        [loop]
+        for (uint sampleIndex = 0u; sampleIndex < gRectangleQueryBudget; ++sampleIndex)
         {
-            const float2 u = nclsViewerHammersley(sampleIndex, kRectangleSamples);
+            const float2 u = nclsViewerHammersley(sampleIndex, gRectangleQueryBudget);
             const float3 lightPoint = gRectangleCenter
                 + (2.0f * u.x - 1.0f) * gRectangleAxisU
                 + (2.0f * u.y - 1.0f) * gRectangleAxisV;
@@ -126,24 +102,23 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
             const float lightCosine = max(dot(lightNormal, -wiWorld), 0.0f);
             radiance += nclsApproximationDirection(state, woLocal, wiWorld, normal, tangent)
                 * gRectangleColor * gRectangleIntensity
-                * (area * lightCosine / (distanceSquared * float(kRectangleSamples)));
+                * (area * lightCosine / (distanceSquared * float(gRectangleQueryBudget)));
         }
     }
     if (gUseEnvironment != 0u)
     {
         // A shared deterministic quadrature avoids pixel-scrambled salt-and-pepper noise
         // on the realtime side. This is bounded lighting work, not temporal accumulation.
-        static const uint kEnvironmentSamples = 64u;
         float3 environmentIntegral = float3(0.0f);
-        [unroll]
-        for (uint sampleIndex = 0u; sampleIndex < kEnvironmentSamples; ++sampleIndex)
+        [loop]
+        for (uint sampleIndex = 0u; sampleIndex < gEnvironmentQueryBudget; ++sampleIndex)
         {
-            const float2 u = nclsViewerHammersley(sampleIndex, kEnvironmentSamples);
+            const float2 u = nclsViewerHammersley(sampleIndex, gEnvironmentQueryBudget);
             const float3 wiWorld = nclsViewerToWorld(nclsViewerUniformHemisphere(u), normal, tangent);
             environmentIntegral += nclsApproximationDirection(state, woLocal, wiWorld, normal, tangent)
                 * nclsEnvironment(wiWorld);
         }
-        radiance += environmentIntegral * (2.0f * NCLS_VIEWER_PI / float(kEnvironmentSamples));
+        radiance += environmentIntegral * (2.0f * NCLS_VIEWER_PI / float(gEnvironmentQueryBudget));
     }
     gApproximation[pixel] = float4(max(radiance, 0.0f), 1.0f);
 }

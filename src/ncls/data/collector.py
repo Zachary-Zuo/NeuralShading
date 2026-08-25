@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, is_dataclass, replace
 from datetime import datetime, timezone
 import subprocess
 from pathlib import Path
@@ -43,6 +43,9 @@ class CollectionConfig:
     surface_profile: str = CONSTANT_FOOTPRINT_PROFILE
     seed: int = 20260824
     split_direction_scramble: bool = True
+    reciprocal_target_relative_se_p95: float = 0.10
+    reciprocal_maximum_query_group_relative_se_p95: float = 0.50
+    reciprocal_maximum_combined_samples: int = 262144
 
     def __post_init__(self) -> None:
         if min(self.view_count, self.light_count, self.spatial_sample_count) < 1:
@@ -77,6 +80,17 @@ class CollectionConfig:
                 f"{FOOTPRINT_SWEEP_PROFILE} requires at least "
                 f"{FOOTPRINT_SWEEP_MINIMUM_SAMPLE_COUNT} spatial samples and a positive footprint width"
             )
+        if not (
+            0.0 < self.reciprocal_target_relative_se_p95
+            <= self.reciprocal_maximum_query_group_relative_se_p95
+            < 1.0
+        ):
+            raise ValueError("reciprocal diagnostic SE thresholds are invalid")
+        if (
+            self.reciprocal_maximum_combined_samples < 512
+            or self.reciprocal_maximum_combined_samples % 512
+        ):
+            raise ValueError("reciprocal diagnostic sample budget must be a positive multiple of 512")
 
 
 def _git_commit() -> str:
@@ -96,6 +110,7 @@ def _reciprocal_block(
     state,
     surfaces,
     plan: QueryPlan,
+    config: CollectionConfig,
 ) -> EvaluatedBlock:
     """对每条 `(wo, wi)` 采集 canonical reciprocal pair，供 source-aware 指标使用。"""
 
@@ -123,7 +138,42 @@ def _reciprocal_block(
             plan.seed ^ ((surface_index + 1) * 0xA24BAED5),
             np.repeat(plan.query_roles, direction_count),
         )
-        evaluated = provider.evaluate(state, (surface,), reciprocal_plan)
+        provider_config = getattr(provider, "provider_config", None)
+        supports_diagnostic_budget = bool(
+            is_dataclass(provider_config)
+            and all(
+                hasattr(provider_config, name)
+                for name in (
+                    "relative_standard_error",
+                    "maximum_group_relative_standard_error",
+                    "max_combined_samples",
+                )
+            )
+        )
+        if supports_diagnostic_budget:
+            diagnostic_overrides = {
+                "relative_standard_error": config.reciprocal_target_relative_se_p95,
+                "maximum_group_relative_standard_error": (
+                    config.reciprocal_maximum_query_group_relative_se_p95
+                ),
+                "max_combined_samples": min(
+                    int(provider_config.max_combined_samples),
+                    config.reciprocal_maximum_combined_samples,
+                ),
+            }
+            if hasattr(
+                provider_config, "enforce_maximum_group_relative_standard_error"
+            ):
+                diagnostic_overrides[
+                    "enforce_maximum_group_relative_standard_error"
+                ] = False
+            diagnostic_config = replace(provider_config, **diagnostic_overrides)
+            provider.provider_config = diagnostic_config
+        try:
+            evaluated = provider.evaluate(state, (surface,), reciprocal_plan)
+        finally:
+            if supports_diagnostic_budget:
+                provider.provider_config = provider_config
         fields = {}
         for name in (
             "mean", "variance", "replica_mean_a", "replica_mean_b",
@@ -183,8 +233,20 @@ def collect_reference_dataset(
                 raise ValueError("surface reference view directions must lie above the local surface")
             if provider.descriptor.incident_domain == "upper-hemisphere" and np.any(plan.light_directions[..., 2] <= 0.0):
                 raise ValueError("upper-hemisphere provider emitted an incident direction below the surface")
-            evaluated = provider.evaluate(state, surfaces, plan)
-            reciprocal = _reciprocal_block(provider, state, surfaces, plan)
+            try:
+                evaluated = provider.evaluate(state, surfaces, plan)
+            except RuntimeError as error:
+                raise RuntimeError(
+                    f"primary reference failed for state={state.state_id} "
+                    f"role={config.query_role}: {error}"
+                ) from error
+            try:
+                reciprocal = _reciprocal_block(provider, state, surfaces, plan, config)
+            except RuntimeError as error:
+                raise RuntimeError(
+                    f"reciprocal diagnostic failed for state={state.state_id} "
+                    f"role={config.query_role}: {error}"
+                ) from error
             writer.append(state_index, surfaces, plan, evaluated, reciprocal)
             if state_index + 1 == len(state_provider) or state_provider[state_index + 1] is not provider:
                 provider.close()

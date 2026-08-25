@@ -1,6 +1,6 @@
 # Reference shard v5 合同
 
-`reference-shard` v5 是 CorpusPlan 生成的矩形 HDF5 单元。一个 shard 固定一个结构 family、一个 query role 和一个 `direction_count`；完整语料由 `reference-corpus` v1 manifest 组合。布局机读定义见 [`reference_dataset_v5.layout.json`](../../src/ncls/data/schemas/reference_dataset_v5.layout.json) 和 [`reference_corpus_v1.schema.json`](../../src/ncls/data/schemas/reference_corpus_v1.schema.json)。
+`reference-shard` v5 是 CorpusPlan 生成的矩形 HDF5 单元。一个 shard 固定一个结构 family、一个 query role 和一个 `direction_count`；完整语料由 `reference-corpus` manifest 组合。v1 表示完整 CorpusPlan，v2 在同一计划上额外冻结版本化 state selection。布局机读定义见 [`reference_dataset_v5.layout.json`](../../src/ncls/data/schemas/reference_dataset_v5.layout.json)、[`reference_corpus_v1.schema.json`](../../src/ncls/data/schemas/reference_corpus_v1.schema.json) 和 [`reference_corpus_v2.schema.json`](../../src/ncls/data/schemas/reference_corpus_v2.schema.json)。
 
 ## 顶层属性
 
@@ -48,10 +48,10 @@ P0 新增四个评测字段：
 - `sample_count`（两 replica 合并样本数）；
 - `valid/event_flags/reference_pdf`。
 
-reciprocal paired 查询保存 `reciprocal_mean`、`reciprocal_variance` 和 `reciprocal_sample_count`。它使用 canonical 交换：反射直接交换方向；透射交换后同时翻转两方向。quality-v1 用交叉乘 cosine 的形式计算 source-aware reciprocity deviation，不在 grazing 方向除以接近零的 cosine。
+reciprocal paired 查询保存 `reciprocal_mean`、`reciprocal_variance` 和 `reciprocal_sample_count`。它使用 canonical 交换：反射直接交换方向；透射交换后同时翻转两方向。quality-v1 用交叉乘 cosine 的形式计算 source-aware reciprocity deviation，不在 grazing 方向除以接近零的 cosine。reciprocal 只是带不确定度的 scorecard 诊断，可使用 CorpusPlan 中单独记录的诊断 target、上限和样本预算；train/validation/test 主 response 的硬性 reference 噪声门不得因此放宽。`adversarial_probe/dense_slice` 的主 response 同样属于诊断，可以使用单独版本化的噪声预算，但 variance/sample count 仍必须完整落盘。
 
 ## Corpus manifest
 
-`reference-corpus` 内嵌完整 CorpusPlan 和 `plan_sha256`，逐 shard 保存 URI、role、结构 family、难度、state 集合、矩形尺寸、dataset ID、文件 SHA-256、采集状态、耗时及原始/reciprocal reference 样本支出。顶层 `totals` 汇总 wall-clock 与样本支出。
+`reference-corpus` 内嵌完整 CorpusPlan 和 `plan_sha256`，逐 shard 保存 URI、role、结构 family、难度、state 集合、矩形尺寸、dataset ID、文件 SHA-256、采集状态、耗时及原始/reciprocal reference 样本支出。顶层 `totals` 汇总 wall-clock 与样本支出。v2 还内嵌 `corpus-selection` v1 与 `selection_sha256`；验证器会从基础 CorpusPlan 重新枚举并确认精确 state 集合和 shard 布局，而不是信任 manifest 自报 selection。
 
 验证要求：全部 shard complete；URI、shard ID 唯一；文件与语义 hash 一致；实际 state/role/尺寸与计划一致；每个 state 同时具备五个 query role；source-test state 数满足计划；state metadata 不跨 shard 漂移。

@@ -142,6 +142,12 @@ class FalcorReferenceEvaluator:
             .copy()
             for output in self.outputs
         ]
+        # Buffer.to_numpy() routes through Falcor's readback heap. Those pages are
+        # released against the frame fence, so an offline compute loop that never
+        # advances a frame otherwise retains one readback allocation per Monte
+        # Carlo batch. The arrays above own their copied CPU storage; advance the
+        # fence now so subsequent batches can reuse the readback pages.
+        self.device.end_frame()
         return result[0], result[1], result[2], result[3]
 
 

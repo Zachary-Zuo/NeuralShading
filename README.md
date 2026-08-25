@@ -41,7 +41,7 @@ conda run -n neural-shading python -m ncls.cli data validate-corpus `
   artifacts\corpus\layer-stack-v1.json
 ```
 
-P0 的 learning registry 刻意为空；P1 候选实现并注册后，统一使用 `ncls learn train/evaluate/compare` 和 [`quality-v1`](docs/learning.md)，不启用迁移前 pipeline 或 config。
+P1 已完成 M1 S/M/L、matched M2 S/M/L、per-state teacher 与 M3 response-space oracle 的正式比较；统一使用 `ncls learn train/evaluate/compare/benchmark`、`ncls learn oracle-m3` 和 [`quality-v1`](docs/learning.md)，不启用迁移前 pipeline 或 config。M1-M 是通过全部主参考线的质量起点，M1-S 是更快的 Pareto 端点；详细结论见 [`experiment_log.md`](docs/research/experiment_log.md)。P1 的 30-state selection 与完整 LayerStack v1 共用同一单-state 方向密度，只缩减当前阶段研究的 state 范围；reference 样本预算按排名、训练和诊断用途分别冻结。
 
 ## 文档入口
 
