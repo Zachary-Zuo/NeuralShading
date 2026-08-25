@@ -15,6 +15,18 @@ from ncls.learning.evaluation import (
     write_quality_report,
 )
 from ncls.learning.evaluation.benchmark import _measure
+from ncls.learning.evaluation.quality import load_quality_suite
+
+
+def test_quality_v2_only_changes_the_checkpoint_selection_block() -> None:
+    v1, v1_hash = load_quality_suite("quality-v1")
+    v2, v2_hash = load_quality_suite("quality-v2")
+    assert v1_hash == QUALITY_SUITE["sha256"] and v2_hash != v1_hash
+    assert v2["checkpoint_selection"]["strategy"] == "tail_guard"
+    ignored = {"name", "checkpoint_selection"}
+    assert {k: v1[k] for k in v1 if k not in ignored} == {k: v2[k] for k in v2 if k not in ignored}
+    with pytest.raises(ValueError, match="unsupported quality suite"):
+        load_quality_suite("quality-v3")
 
 
 def _batch() -> dict[str, np.ndarray]:

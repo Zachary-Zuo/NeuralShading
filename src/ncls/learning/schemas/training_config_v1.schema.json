@@ -24,6 +24,7 @@
     "device": {"type": ["string", "null"]},
     "deterministic": {"type": "boolean"},
     "initialization_checkpoint": {"type": ["string", "null"]},
+    "checkpoint_selection": {"enum": ["median_then_p95", "tail_guard"]},
     "schema_name": {"const": "training-config"},
     "schema_version": {"const": 1}
   },

@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from .selection import CHECKPOINT_SELECTIONS
+
 
 @dataclass(frozen=True)
 class TrainingConfig:
@@ -29,6 +31,7 @@ class TrainingConfig:
     device: str | None = None
     deterministic: bool = True
     initialization_checkpoint: str | None = None
+    checkpoint_selection: str = "median_then_p95"
     schema_name: str = "training-config"
     schema_version: int = 1
 
@@ -66,6 +69,8 @@ class TrainingConfig:
             raise ValueError("early_stopping_patience must be positive when enabled")
         if self.seed < 0:
             raise ValueError("seed must be nonnegative")
+        if self.checkpoint_selection not in CHECKPOINT_SELECTIONS:
+            raise ValueError("unsupported checkpoint_selection strategy")
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -80,8 +85,13 @@ class TrainingConfig:
 
     @property
     def resolved_sha256(self) -> str:
+        """旧默认 `median_then_p95` 不进哈希，P1 v1 checkpoint 的 `training_config_sha256` 保持可复核。"""
+
+        value = self.to_dict()
+        if value["checkpoint_selection"] == "median_then_p95":
+            del value["checkpoint_selection"]
         payload = json.dumps(
-            self.to_dict(),
+            value,
             ensure_ascii=False,
             allow_nan=False,
             sort_keys=True,

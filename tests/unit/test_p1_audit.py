@@ -5,9 +5,21 @@ import numpy as np
 from ncls.learning.evaluation.p1_audit import (
     _deadzone_row_metrics,
     _noise_row_metrics,
+    _pipeline_core_probe,
     _state_signed_metrics,
     _tail_stability,
 )
+from ncls.learning.pipelines import create_pipeline
+
+
+def test_audit_probes_optional_core_and_signed_residual_members() -> None:
+    m1_core, m1_signed = _pipeline_core_probe(create_pipeline("film-evaluator-s-v1"))
+    assert m1_core is None and not m1_signed
+    m2_core, m2_signed = _pipeline_core_probe(create_pipeline("analytic-residual-s-v1"))
+    assert callable(m2_core) and m2_signed
+    lobe_core, lobe_signed = _pipeline_core_probe(create_pipeline("lobe-residual-k2-v1"))
+    assert lobe_core is None and not lobe_signed
+    assert _pipeline_core_probe(object()) == (None, False)
 
 
 def test_deadzone_metrics_distinguish_rgb_any_and_all_direction_counts() -> None:

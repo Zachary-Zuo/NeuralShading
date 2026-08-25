@@ -10,6 +10,66 @@ conda run -n neural-shading python -m pytest tests\unit -q
 
 覆盖 `MaterialProgram`/`LayerStackIR`、CorpusPlan 密度与 G2/G2s split、`reference-shard` v5、corpus reader 的矩形 batch、整球 T mixture、散射合同、`quality-v1` 四层报告、source-aware reciprocal 指标、state-block 配对 bootstrap、training/pipeline v1 schema，以及当前部署回归 fixture 的私有状态。
 
+### P1 v2 框架接入（`p1_v2_plan.md` P2.8，本地只做静态检查）
+
+```powershell
+conda run -n neural-shading python -m pytest `
+  tests\unit\test_deployment_budget.py `
+  tests\unit\test_pipeline_contract.py `
+  tests\unit\test_training_config.py `
+  tests\unit\test_p1_audit.py `
+  tests\unit\test_quality_evaluation.py `
+  tests\unit\test_reference_shard.py -q
+```
+
+期望：全部通过，无 skip。重点断言：
+
+- `test_deployment_budget.py`：注册表 10 个 pipeline 都带 `runtime.deployment_candidate`；只有 `lobe-residual-k2-v1` 为 `True`，其 `parameter_costs(None)` 满足 `C_eval_macs ≤ 2000`、`C_prepare_macs ≤ 1e4`、`state_bytes_per_pixel ≤ 64`（实际 48）、`B_asset ≤ 512`（128）、`B_evaluate_weights ≤ 32 KB`（0）。
+- `test_training_config.py`：14 个 `configs/learning` 配置全部解析；`checkpoint_selection` 默认 `median_then_p95` 且旧 hash 不变；tail guard 回放 P1 v1 M2-S history 选 step 7500 而非 4500。
+- `test_p1_audit.py`：`_pipeline_core_probe` 对 M1 返回 `(None, False)`，对 M2 返回 `(callable, True)`。
+- `test_quality_evaluation.py`：`quality-v2` 与 `quality-v1` 只差 `checkpoint_selection` 块。
+
+兼容性复核（远程有 P1 v1 checkpoint 时）：`learn evaluate`/`audit-p1` 加载 `artifacts/runs/p1-*-seed-20260824/checkpoints/best.pt` 仍须通过 `pipeline_sha256` 与 `training_config_sha256` 校验（`deployment_candidate` 与默认 `checkpoint_selection` 均不进哈希）；M2-S 的 audit 报告仍含 `analytic_core_energy_ratio`、`deadzone`、`deadzone_correlations`，M1 不含。
+
+运行时边界（静态检查覆盖不到）：`training/runner.py` 在 `tail_guard` 下的 best.pt 替换发生在「当前 validation 把至今最小 p95 压低到使已保存 best 被剔除」时，用 `configs/learning/smoke/lobe-residual-k2-p1-smoke.json` 之外的任一 M2 smoke 配置加 `"checkpoint_selection": "tail_guard"` 跑 8 步确认 `run_manifest.json["best_validation"]` 含 `selection`、`step`、`value` 三个键。`lobe-residual-*` 配置本次只能解析，`create_model/predict_f` 抛 `NotImplementedError`（等 P2.5）。
+
+## P1.0 SlangPy autodiff spike（仅远程，`p1_v2_plan.md` Phase 1）
+
+```powershell
+conda env update -n neural-shading -f environment.yml   # 新增 slangpy==0.43.1
+conda run -n neural-shading python scripts\spike_slangpy_autodiff.py `
+  --device-type cuda --groups 16 --directions 256 --iterations 50 `
+  --output artifacts\spikes\slangpy-autodiff.json
+```
+
+`--device-type` 取 `spy.DeviceType` 成员名（`cuda` 失败时脚本自动回退默认设备并记录 `device_fallback`）。通过判据（脚本同时写入 JSON 的 `pass` 字段）：
+
+| 项 | 判据 |
+|---|---|
+| `lobe_gradients` | 对 amplitude/inverse_scale/shear/angle 的梯度与 `torch_eval.eval_ltc_residual` 的 float64 autograd 最大相对误差 ≤ `1e-3`（前向同） |
+| `mlp_gradients` | 64 宽 MLP 的权重梯度与 float64 有限差分（24 个随机权重、步长 1e-3）最大相对误差 ≤ `1e-3`；前向与 Torch 镜像 ≤ `1e-3` |
+| `throughput` | batch 16 × 256 前向+反向：`torch_m1s_forward_backward_ms / slang_forward_backward_ms ≥ 0.5`（M1-S 在同一脚本内用随机权重的 `ConditionedSharedEvaluator` S 档现场计时） |
+
+需要回填到 `docs/research/p1_v2_plan.md` P1.0 行 / §5 的字段（都在输出 JSON 里）：
+
+- `versions.slangpy`、`versions.slangc`（wheel 内 `slangc -v` 的输出）与 `versions.version_attributes`：即「slangpy 版本」与「slangpy 携带的 slang 版本」。
+- `module.weight_tensor` / `module.weight_read`：哪一种可微权重张量写法（`GradOutTensor` / `GradInOutTensor` / `DiffTensor`，`.get({i})` 或 `[{i}]`）被接受；`module.attempts` 里失败候选的编译错误就是「与 Falcor Slang 2024.1.34 的语法差异清单」的第一批条目，回填后同步改 `shaders/ncls/backends/lobe_residual/lobe_residual_mlp.slang` 的 `NCLS_LOBE_RESIDUAL_WEIGHTS_T` / `NCLS_LOBE_RESIDUAL_WEIGHT_READ` 默认注释。
+- `torch_interop`：`Tensor.from_torch/to_torch/from_dlpack` 与 `TorchModule` 是否存在，决定 P2.5 `session.py` 是零拷贝还是经 numpy。
+- `throughput.*`：写入 `experiment_log.md` 的 Slang 实测行。
+
+失败时：`module` 全部候选编译失败 → 脚本以 `RuntimeError` 退出并打印每个候选的诊断；任一 `pass=false` → 按 P1.1 备选登记到 `experiment_log.md`。
+
+## S2.1 Slang core（本次只写不编译）
+
+`shaders/ncls/backends/lobe_residual/{lobe_residual_mlp,lobe_residual_core,lobe_residual_pack}.slang` 只依赖 `contracts/layer_stack_ir.slang`、`reference/{interfaces,sampling}.slang`。编译验证属于 P2.7 双编译探针；在此之前可用 Falcor 自带 slangc 做冒烟：
+
+```powershell
+external\Falcor\build\windows-vs2022\bin\Release\slangc.exe `
+  shaders\ncls\backends\lobe_residual\lobe_residual_pack.slang -target dxil -profile cs_6_5 -entry none 2>&1 | Select-Object -First 40
+```
+
+需要确认的写法：`struct : IDifferentiable` 自动合成 Differential、`[MaxIters]`、`no_diff` 前缀于 `StructuredBuffer` 下标、`f32tof16/f16tof32`、`out float[64]` 作为可微参数。`Pdf/Sample` 目前是 S2.3 之前的桩（返回 0/false）。
+
 ## Slang/GPU 与随机游走参考
 
 ```powershell

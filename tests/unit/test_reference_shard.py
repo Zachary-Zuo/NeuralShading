@@ -332,7 +332,7 @@ def test_quality_harness_evaluates_linear_f_and_reciprocal_pairs(tmp_path) -> No
                 "latent": "none",
             },
             fitting={"path": "gradient", "loss": "zero"},
-            runtime={"compiler": "none", "exporter": "none"},
+            runtime={"compiler": "none", "exporter": "none", "deployment_candidate": False},
             supported_families=("test-family",),
             scope="unit test",
         )

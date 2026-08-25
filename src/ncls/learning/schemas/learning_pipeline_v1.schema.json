@@ -42,10 +42,11 @@
     "runtime": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["compiler", "exporter"],
+      "required": ["compiler", "exporter", "deployment_candidate"],
       "properties": {
         "compiler": {"type": "string", "minLength": 1},
-        "exporter": {"type": "string", "minLength": 1}
+        "exporter": {"type": "string", "minLength": 1},
+        "deployment_candidate": {"type": "boolean"}
       }
     },
     "supported_families": {

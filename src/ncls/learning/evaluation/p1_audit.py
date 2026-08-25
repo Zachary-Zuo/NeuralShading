@@ -12,7 +12,6 @@ import torch
 
 from ncls.learning.data import open_reference_store
 from ncls.learning.pipelines import create_pipeline
-from ncls.learning.source_adapters import direct_top_bsdf
 from ncls.learning.training.checkpoint import load_checkpoint, sha256_file
 from ncls.learning.training.config import TrainingConfig
 
@@ -513,6 +512,14 @@ def _finalize_deadzone(value: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _pipeline_core_probe(pipeline: Any) -> tuple[Callable[..., torch.Tensor] | None, bool]:
+    """探测 pipeline 的可选成员：`core_f(model, batch, store, device)` 给出解析 core（报告
+    `E_core/E_ref`）；`has_signed_residual` 为真时才做 `clamp(core + Δ, 0)` 死区诊断。"""
+
+    core_f = getattr(pipeline, "core_f", None)
+    return (core_f if callable(core_f) else None), bool(getattr(pipeline, "has_signed_residual", False))
+
+
 @torch.no_grad()
 def _audit_checkpoint_role(
     model: torch.nn.Module,
@@ -537,8 +544,7 @@ def _audit_checkpoint_role(
     difficulties = list(map(str, store.state_strings("difficulty_class").tolist()))
     tags = [json.loads(value) for value in store.state_strings("difficulty_tags_json")]
     accumulators = [_empty_state_accumulator() for _ in state_ids]
-    family = getattr(getattr(pipeline, "spec", None), "family", None)
-    is_m2 = family == "m2"
+    core_f, has_signed_residual = _pipeline_core_probe(pipeline)
     output_scale = np.asarray(fitted_state["output_scale"], dtype=np.float64)
     model.eval()
     for raw in store.iter_batches(indices, config.batch_size, fields=_MODEL_FIELDS):
@@ -546,20 +552,11 @@ def _audit_checkpoint_role(
             name: torch.as_tensor(raw[name], device=device) for name in _MODEL_FIELDS
         }
         states_t = batch["state_index"].long()
-        model_output = model(states_t, batch["wo"].float(), batch["wi"].float())
-        core = None
+        prediction_f = pipeline.predict_f(model, batch, store, device)
+        core = None if core_f is None else core_f(model, batch, store, device)
         preclamp = None
-        if is_m2:
-            core = direct_top_bsdf(
-                fitted_state["direct_top"],
-                states_t,
-                batch["wo"].float(),
-                batch["wi"].float(),
-            )
-            preclamp = core + model_output
-            prediction_f = torch.clamp(preclamp, min=0.0)
-        else:
-            prediction_f = model_output
+        if core is not None and has_signed_residual:
+            preclamp = core + model(states_t, batch["wo"].float(), batch["wi"].float())
         if not torch.all(torch.isfinite(prediction_f)):
             raise ValueError("P1 audit encountered a non-finite prediction")
         prediction = prediction_f.cpu().numpy().astype(np.float64, copy=False)
@@ -587,8 +584,9 @@ def _audit_checkpoint_role(
             accumulator["target_energy"] += target_energy
             accumulator["predicted_group_energy"].append(float(np.sum(predicted_energy)))
             accumulator["target_group_energy"].append(float(np.sum(target_energy)))
-            if core_y is not None and preclamp_numpy is not None:
+            if core_y is not None:
                 accumulator["core_energy"] += np.sum(core_y[row] * row_weights, axis=0)
+            if preclamp_numpy is not None:
                 deadzone = _deadzone_row_metrics(
                     preclamp_numpy[row],
                     target[row],
@@ -622,12 +620,12 @@ def _audit_checkpoint_role(
             "signed_energy": signed,
             "reference_noise": noise_report["states"][state_id],
         }
-        if is_m2:
-            core_ratio = float(
+        if core_f is not None:
+            record["analytic_core_energy_ratio"] = float(
                 np.sum(accumulator["core_energy"])
                 / max(np.sum(accumulator["target_energy"]), 1e-15)
             )
-            record["analytic_core_energy_ratio"] = core_ratio
+        if has_signed_residual:
             record["deadzone"] = _finalize_deadzone(accumulator["deadzone"])
         states_report[state_id] = record
         directional_values.append(directional)
@@ -707,14 +705,14 @@ def _audit_checkpoint_role(
             seed=seed + 5,
         )
     )
-    if is_m2:
+    correlations: dict[str, Any] = {}
+    if has_signed_residual:
         deadzone_names = (
             "negative_rgb_fraction",
             "all_negative_direction_fraction",
             "solid_angle_weighted_negative_rgb_fraction",
             "target_energy_weighted_negative_rgb_fraction",
         )
-        correlations: dict[str, Any] = {}
         keep = np.asarray([state_id not in promoted_state_ids for state_id in state_ids])
         for offset, name in enumerate(deadzone_names):
             values = np.asarray(
@@ -735,6 +733,7 @@ def _audit_checkpoint_role(
                     seed=seed + 20 + offset,
                 )
             )
+    if core_f is not None:
         core_ratios = np.asarray(
             [states_report[state_id]["analytic_core_energy_ratio"] for state_id in state_ids],
             dtype=np.float64,
@@ -745,6 +744,7 @@ def _audit_checkpoint_role(
             iterations=bootstrap_iterations,
             seed=seed + 30,
         )
+    if correlations:
         result["deadzone_correlations"] = correlations
     return result
 

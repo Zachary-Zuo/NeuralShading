@@ -18,16 +18,22 @@ from ncls.learning.data import (
 )
 
 
+def _is_descriptor_value(name: str, value: object) -> bool:
+    if name == "deployment_candidate":
+        return isinstance(value, bool)
+    return isinstance(value, str) and bool(value)
+
+
 @dataclass(frozen=True)
 class LearningPipelineDescriptor:
-    """候选的可读身份；精确实现身份由整个结构的 SHA-256 给出。"""
+    """候选的可读身份；精确实现身份由结构的 SHA-256 给出（不含研究期分类 `runtime.deployment_candidate`）。"""
 
     name: str
     stage: str
     data: Mapping[str, str]
     model: Mapping[str, str]
     fitting: Mapping[str, str]
-    runtime: Mapping[str, str]
+    runtime: Mapping[str, str | bool]
     supported_families: tuple[str, ...]
     scope: str
     schema_name: str = "learning-pipeline"
@@ -44,11 +50,11 @@ class LearningPipelineDescriptor:
             "data": (self.data, {"reader", "partition", "source_adapter"}),
             "model": (self.model, {"representation", "architecture", "latent"}),
             "fitting": (self.fitting, {"path", "loss"}),
-            "runtime": (self.runtime, {"compiler", "exporter"}),
+            "runtime": (self.runtime, {"compiler", "exporter", "deployment_candidate"}),
         }
         for group, (value, fields) in required.items():
             if set(value) != fields or any(
-                not isinstance(item, str) or not item for item in value.values()
+                not _is_descriptor_value(name, item) for name, item in value.items()
             ):
                 raise ValueError(f"pipeline {group} fields must be exactly {sorted(fields)}")
         if self.fitting["path"] not in {"gradient", "direct-fit", "hybrid"}:
@@ -62,6 +68,10 @@ class LearningPipelineDescriptor:
     def partition_policy_id(self) -> str:
         return self.data["partition"]
 
+    @property
+    def deployment_candidate(self) -> bool:
+        return bool(self.runtime["deployment_candidate"])
+
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
         value["data"] = dict(self.data)
@@ -73,8 +83,14 @@ class LearningPipelineDescriptor:
 
     @property
     def sha256(self) -> str:
+        """实现身份；`deployment_candidate` 只是部署预算分类，不改变实现，P1 v1 checkpoint 仍可评测。"""
+
+        value = self.to_dict()
+        value["runtime"] = {
+            name: item for name, item in value["runtime"].items() if name != "deployment_candidate"
+        }
         payload = json.dumps(
-            self.to_dict(),
+            value,
             ensure_ascii=False,
             allow_nan=False,
             sort_keys=True,

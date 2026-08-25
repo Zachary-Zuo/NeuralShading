@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -28,6 +29,7 @@ from .checkpoint import (
     sha256_file,
 )
 from .config import TrainingConfig
+from .selection import checkpoint_score, directional_summary
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
@@ -214,7 +216,8 @@ def train(
     _write_json_atomic(output / "run_manifest.json", manifest)
     writer = SummaryWriter(log_dir=str(output / "tensorboard"))
     validation_history: list[dict[str, Any]] = []
-    best_score = (float("inf"), float("inf"))
+    best_record: dict[str, Any] | None = None
+    minimum_p95 = math.inf
     best_hash: str | None = None
     last_hash: str | None = None
     start_time = time.perf_counter()
@@ -273,10 +276,12 @@ def train(
                             writer.add_scalar(
                                 f"validation/{metric_name}_{summary_name}", value, step
                             )
-                direction = latest_validation["primary"]["directional_l1_by_state"]
-                score = (float(direction["median"]), float(direction["p95"]))
-                if score < best_score:
-                    best_score = score
+                minimum_p95 = min(minimum_p95, directional_summary(record)[1])
+                score = checkpoint_score(record, minimum_p95, config.checkpoint_selection)
+                if best_record is None or score < checkpoint_score(
+                    best_record, minimum_p95, config.checkpoint_selection
+                ):
+                    best_record = record
                     best_hash = save_checkpoint_atomic(
                         output / "checkpoints" / "best.pt",
                         _checkpoint_payload(
@@ -331,8 +336,9 @@ def train(
         manifest["completed_steps"] = completed_step
         manifest["early_stopped"] = early_stopped
         manifest["best_validation"] = {
-            "selection": "directional_l1_by_state.median_then_p95",
-            "value": list(best_score),
+            "selection": f"directional_l1_by_state.{config.checkpoint_selection}",
+            "step": None if best_record is None else best_record["step"],
+            "value": None if best_record is None else list(directional_summary(best_record)),
         }
         manifest["checkpoints"] = {
             "best": {"uri": "checkpoints/best.pt", "sha256": best_hash},

@@ -8,23 +8,39 @@ from typing import Any, Mapping
 
 import numpy as np
 
+from ncls.learning.training.selection import TAIL_GUARD_P95_RATIO
 from ncls.paths import PROJECT_ROOT
 
 
 QUALITY_SUITE_NAME = "quality-v1"
+# v2 只改 checkpoint_selection 块（tail guard，见 training/selection.py）；指标层与 v1 完全一致。
+CHECKPOINT_SELECTION_BLOCKS: dict[str, dict[str, Any]] = {
+    "quality-v1": {
+        "metric": "directional_state_median",
+        "tie_break": "directional_state_p95",
+    },
+    "quality-v2": {
+        "strategy": "tail_guard",
+        "metric": "directional_state_median",
+        "tie_break": "directional_state_p95",
+        "p95_guard_ratio": TAIL_GUARD_P95_RATIO,
+    },
+}
 
 
-def _load_quality_suite() -> tuple[dict[str, Any], str]:
-    path = PROJECT_ROOT / "configs" / "evaluation" / "quality-v1.json"
+def load_quality_suite(name: str = QUALITY_SUITE_NAME) -> tuple[dict[str, Any], str]:
+    if name not in CHECKPOINT_SELECTION_BLOCKS:
+        raise ValueError(f"unsupported quality suite {name!r}")
+    path = PROJECT_ROOT / "configs" / "evaluation" / f"{name}.json"
     value = json.loads(path.read_text(encoding="utf-8"))
     if set(value) != {
         "schema", "name", "sanity", "primary", "checkpoint_selection", "comparison"
     }:
-        raise ValueError("quality-v1 fields do not match the fixed suite")
+        raise ValueError(f"{name} fields do not match the fixed suite")
     if value.get("schema") != {"name": "quality-suite", "version": 1}:
         raise ValueError("unsupported quality suite schema")
-    if value.get("name") != QUALITY_SUITE_NAME:
-        raise ValueError("the fixed quality suite must be named quality-v1")
+    if value.get("name") != name:
+        raise ValueError(f"the fixed quality suite must be named {name}")
     if value.get("sanity") != {
         "invalidate_on_failure": True,
         "checks": [
@@ -32,7 +48,7 @@ def _load_quality_suite() -> tuple[dict[str, Any], str]:
             "train-only-fitted-state", "finite-output", "family-color-contract",
         ],
     }:
-        raise ValueError("quality-v1 sanity contract does not match the implementation")
+        raise ValueError(f"{name} sanity contract does not match the implementation")
     primary = value.get("primary", {})
     if (
         set(primary) != {"directional", "energy", "report", "reference_lines"}
@@ -45,12 +61,9 @@ def _load_quality_suite() -> tuple[dict[str, Any], str]:
             "energy_median": 0.03,
         }
     ):
-        raise ValueError("quality-v1 primary metrics do not match the implementation")
-    if value.get("checkpoint_selection") != {
-        "metric": "directional_state_median",
-        "tie_break": "directional_state_p95",
-    }:
-        raise ValueError("quality-v1 checkpoint selection is unsupported")
+        raise ValueError(f"{name} primary metrics do not match the implementation")
+    if value.get("checkpoint_selection") != CHECKPOINT_SELECTION_BLOCKS[name]:
+        raise ValueError(f"{name} checkpoint selection is unsupported")
     comparison = value.get("comparison", {})
     if comparison != {
         "resampling_unit": "state",
@@ -58,14 +71,14 @@ def _load_quality_suite() -> tuple[dict[str, Any], str]:
         "minimum_bootstrap_iterations": 1000,
         "confidence": 0.95,
     }:
-        raise ValueError("quality-v1 comparison contract is unsupported")
+        raise ValueError(f"{name} comparison contract is unsupported")
     payload = json.dumps(
         value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")
     )
     return value, hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-QUALITY_SUITE_DOCUMENT, QUALITY_SUITE_SHA256 = _load_quality_suite()
+QUALITY_SUITE_DOCUMENT, QUALITY_SUITE_SHA256 = load_quality_suite()
 QUALITY_SUITE = {
     "name": QUALITY_SUITE_NAME,
     "sha256": QUALITY_SUITE_SHA256,

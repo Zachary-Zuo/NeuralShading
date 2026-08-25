@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import math
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 import numpy as np
 import torch
-from torch.nn import functional as F
 
 from ncls.learning.models import ConditionedSharedEvaluator, PerStateTeacher
 from ncls.learning.source_adapters import direct_top_bsdf, fit_direct_top_state
 
+from .appearance_loss import p1_appearance_loss
 from .base import LearningPipeline, LearningPipelineDescriptor
 from .registry import register_pipeline
 
@@ -120,8 +119,13 @@ class P1PipelineSpec:
 
 
 class P1EvaluatorPipeline(LearningPipeline):
+    # 可选成员，供 evaluation/p1_audit.py 探测：M2 暴露解析 core（E_core/E_ref），并声明 signed 残差（死区诊断）。
+    core_f: Callable[[torch.nn.Module, Mapping[str, torch.Tensor], Any, torch.device], torch.Tensor] | None = None
+
     def __init__(self, spec: P1PipelineSpec) -> None:
         self.spec = spec
+        if spec.family == "m2":
+            self.core_f = self._direct_top_core
         representation = {
             "m1": "conditioned-shared-evaluator-v1",
             "m2": "analytic-core-neural-residual-v1",
@@ -149,11 +153,15 @@ class P1EvaluatorPipeline(LearningPipeline):
                 "latent": latent,
             },
             fitting={"path": "gradient", "loss": "p1-appearance-v3"},
-            runtime={"compiler": "none", "exporter": "deferred"},
+            runtime={"compiler": "none", "exporter": "deferred", "deployment_candidate": False},
             supported_families=("layer-stack",),
             scope=f"P1 {spec.family.upper()} {spec.capacity} appearance validation",
         )
         self._fitted_state: dict[str, Any] | None = None
+
+    @property
+    def has_signed_residual(self) -> bool:
+        return self.spec.family == "m2"
 
     def fit_training_state(
         self,
@@ -230,6 +238,21 @@ class P1EvaluatorPipeline(LearningPipeline):
             **resolved,
         )
 
+    def _direct_top_core(
+        self,
+        model: torch.nn.Module,
+        batch: Mapping[str, torch.Tensor],
+        store: Any,
+        device: torch.device,
+    ) -> torch.Tensor:
+        del model, store, device
+        return direct_top_bsdf(
+            self._require_state()["direct_top"],
+            batch["state_index"].long(),
+            batch["wo"].float(),
+            batch["wi"].float(),
+        )
+
     def predict_f(
         self,
         model: torch.nn.Module,
@@ -237,19 +260,10 @@ class P1EvaluatorPipeline(LearningPipeline):
         store: Any,
         device: torch.device,
     ) -> torch.Tensor:
-        del store, device
-        state_index = batch["state_index"].long()
-        wo = batch["wo"].float()
-        wi = batch["wi"].float()
-        prediction = model(state_index, wo, wi)
+        prediction = model(batch["state_index"].long(), batch["wo"].float(), batch["wi"].float())
         if self.spec.family != "m2":
             return prediction
-        core = direct_top_bsdf(
-            self._require_state()["direct_top"],
-            state_index,
-            wo,
-            wi,
-        )
+        core = self._direct_top_core(model, batch, store, device)
         return torch.clamp(core + prediction, min=0.0)
 
     def training_loss(
@@ -257,51 +271,7 @@ class P1EvaluatorPipeline(LearningPipeline):
         prediction_f: torch.Tensor,
         batch: Mapping[str, torch.Tensor],
     ) -> torch.Tensor:
-        state = self._require_state()
-        target = torch.clamp(batch["mean"].float(), min=0.0)
-        cosine = torch.abs(batch["wi"].float()[..., 2:3])
-        prediction_y = torch.clamp(prediction_f, min=0.0) * cosine
-        scales = torch.as_tensor(
-            state["target_scale"],
-            dtype=target.dtype,
-            device=target.device,
-        )[batch["state_index"].long()][:, None, :]
-        transformed = F.smooth_l1_loss(
-            torch.log(prediction_y / scales + 1e-4),
-            torch.log(target / scales + 1e-4),
-        )
-
-        weights = batch["solid_angle_weight"].float()[..., None]
-        linear_numerator = torch.sum(torch.abs(prediction_y - target) * weights, dim=(1, 2))
-        scale_energy_envelope = (
-            torch.sum(scales, dim=(1, 2)) * torch.sum(weights, dim=(1, 2))
-        )
-        linear_denominator = torch.clamp(
-            torch.sum(torch.abs(target) * weights, dim=(1, 2)),
-            min=1e-8,
-        )
-        linear_denominator = torch.maximum(
-            linear_denominator,
-            1e-3 * scale_energy_envelope,
-        )
-        linear = torch.mean(linear_numerator / linear_denominator)
-
-        predicted_energy = torch.sum(prediction_y * weights, dim=1)
-        target_energy = torch.sum(target * weights, dim=1)
-        energy_scale = torch.clamp(torch.amax(target_energy, dim=1, keepdim=True), min=1e-6)
-        energy = F.smooth_l1_loss(
-            torch.log1p(predicted_energy / energy_scale),
-            torch.log1p(target_energy / energy_scale),
-        )
-
-        magnitude = torch.sum(target, dim=-1)
-        peak_count = max(1, int(math.ceil(target.shape[1] * 0.05)))
-        peak_indices = torch.topk(magnitude, peak_count, dim=1, sorted=False).indices
-        peak_mask = torch.zeros_like(magnitude, dtype=torch.bool).scatter_(1, peak_indices, True)
-        peak_error = torch.abs(prediction_y - target)[peak_mask]
-        peak_target = torch.abs(target)[peak_mask]
-        peak = torch.mean(peak_error / torch.clamp(peak_target + scales.expand_as(target)[peak_mask], min=1e-6))
-        return transformed + 0.25 * linear + 0.10 * energy + 0.15 * peak
+        return p1_appearance_loss(prediction_f, batch, self._require_state()["target_scale"])
 
     def parameter_costs(self, model: torch.nn.Module) -> Mapping[str, Any]:
         total = sum(parameter.numel() for parameter in model.parameters())

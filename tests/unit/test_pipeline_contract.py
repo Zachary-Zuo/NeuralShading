@@ -28,7 +28,7 @@ def _descriptor() -> LearningPipelineDescriptor:
             "latent": "autodecoder-v1",
         },
         fitting={"path": "gradient", "loss": "response-v1"},
-        runtime={"compiler": "none", "exporter": "method-bundle-v1"},
+        runtime={"compiler": "none", "exporter": "method-bundle-v1", "deployment_candidate": False},
         supported_families=("layer-stack",),
         scope="P1 LayerStack evaluator candidate",
     )
@@ -43,6 +43,15 @@ def test_pipeline_identity_is_readable_structured_and_hash_exact() -> None:
         **{**descriptor.__dict__, "model": {**descriptor.model, "latent": "encoder-v1"}}
     )
     assert changed.sha256 != descriptor.sha256
+    assert not descriptor.deployment_candidate
+    promoted = LearningPipelineDescriptor(
+        **{**descriptor.__dict__, "runtime": {**descriptor.runtime, "deployment_candidate": True}}
+    )
+    assert promoted.deployment_candidate and promoted.sha256 == descriptor.sha256
+    with pytest.raises(ValueError, match="runtime fields"):
+        LearningPipelineDescriptor(
+            **{**descriptor.__dict__, "runtime": {**descriptor.runtime, "deployment_candidate": "yes"}}
+        )
     assert {item.name for item in pipeline_descriptors()} == {
         "film-evaluator-s-v1",
         "film-evaluator-m-v1",
@@ -51,6 +60,9 @@ def test_pipeline_identity_is_readable_structured_and_hash_exact() -> None:
         "analytic-residual-m-v1",
         "analytic-residual-l-v1",
         "per-state-teacher-l-v1",
+        "lobe-residual-k2-v1",
+        "lobe-residual-k2-log32-v1",
+        "lobe-residual-k3-log32-v1",
     }
 
 
