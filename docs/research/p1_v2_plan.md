@@ -149,4 +149,4 @@ S2.4 ──► P4.1 exporter ──► V4.2 loader ──► V4.3 泛型 pass �
 2. `correction` 默认 `none`（48 B state），`log32` 只作 matched 对照。
 3. PT + method 做完整第二累积链（V4.4），不做单帧折中。
 4. SlangPy 固定版本写入 `environment.yml`；不升级 Falcor 的 slang。
-5. 代码风格：实现以简洁为先——复用现成件（`torch_eval.py`、`interfaces.slang`、`p1-appearance-v3` loss 抽函数而非复制），只暴露 `K` 与 `correction` 两个配置轴，不为未来阶段预留抽象；每个新文件控制在 200 行内。
+5. 代码风格：实现以简洁为先——复用现成件（`torch_eval.py`、`interfaces.slang`、`p1-appearance-v3` loss 抽函数而非复制），只暴露 `K` 与 `correction` 两个配置轴，不为未来阶段预留抽象；文件按语义单一职责划分，不设行数硬限（规则见 `.trellis/spec/project/code-organization.md`）。

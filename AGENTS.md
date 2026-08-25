@@ -82,6 +82,14 @@
 - 不因 `[Console]::OutputEncoding` 或 `$OutputEncoding` 已设为 UTF-8 而省略 `Get-Content` 的 `-Encoding UTF8`。
 - 如果显式使用 UTF-8 后仍出现乱码，先确认文件实际编码；只有确认是旧式 GBK/ANSI 后才使用 `-Encoding Default`。不得把乱码当作原文继续分析或回写。
 
+## Trellis 工作流
+
+- 本项目由 Trellis 管理（见文末托管块）。项目级工程规则入口是 `.trellis/spec/project/index.md`；按功能块分为 `core/`、`data/`、`learning/`、`viewer/` 四层，各层 `index.md` 含开发前检查清单与质量检查。写代码前先读项目级规则，再读对应层。
+- 每个会话在做任何验证、测试、构建或训练之前，先按 `.trellis/spec/project/dev-environment.md` 判定开发机状态（完整 / 仅 GPU / 静态），并在第一次涉及验证的回复里写明状态与证据；静态状态下把待运行命令写进 `TESTING.md`，不宣称"已验证"。
+- 提出或实现任何新候选方法之前先过 `.trellis/spec/project/method-constraints.md`：可以超软线验证表达力，但不允许没有硬件部署可能的形态。
+- 语言：`.trellis/spec/`、`.trellis/tasks/`（`prd.md`、`design.md`、`implement.md`、`research/`）与 `.trellis/workspace/` journal 统一以中文为主体；文件名、标识符、命令、数学符号与常用术语保留英文，规则与本文件「文档与表述」一致。Trellis 自带的 hook 脚本、`workflow.md` 状态机文本与 skill 正文保持原文，不翻译。
+- 临时诊断脚本放当前任务目录 `.trellis/tasks/<task>/scratch/`，不进 `src/`、`scripts/`、`tools/`。
+
 <!-- TRELLIS:START -->
 # Trellis Instructions
 
