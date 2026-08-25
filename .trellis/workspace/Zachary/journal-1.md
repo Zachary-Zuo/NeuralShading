@@ -26,3 +26,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 2: 完成 02 Directional Mollification 数据充分性
+
+**Date**: 2026-08-26
+**Task**: 完成 02 Directional Mollification 数据充分性
+**Branch**: `main`
+
+### Summary
+
+冻结并验证方向 mollification adequacy protocol；旧 v5 audit 触发 supplement；发布 30-state composite corpus 与 training entry，补齐 fail-stop curriculum reader、统计重算 validator、schema、测试和长期 spec。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `123a94b` | (see git log) |
+
+### Status
+
+[OK] **Completed**
