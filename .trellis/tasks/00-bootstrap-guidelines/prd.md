@@ -21,8 +21,8 @@ the rest conversationally.
 
 ## Status (update the checkboxes as you complete each item)
 
-- [ ] Fill backend guidelines
-- [ ] Add code examples
+- [x] Fill backend guidelines（已改为按功能块的 project / core / data / learning / viewer 五层，backend 模板删除）
+- [x] Add code examples（每条规则引用真实文件路径与符号）
 
 ---
 
@@ -124,3 +124,21 @@ spec — a one-time setup so every future AI session follows the team's
 conventions instead of writing generic code. Before we start, do you have
 any existing convention docs (CLAUDE.md, .cursorrules, CONTRIBUTING.md,
 etc.) I can pull from, or should I scan the codebase from scratch?"
+
+---
+
+## 完成记录（2026-08-25，中文）
+
+本任务已按项目实际情况完成，与上面的通用模板不同之处：
+
+- spec 不按 `backend/` 通用模板填，而按 `docs/architecture.md` 的"三大功能块 + 公共核心"组织：`.trellis/spec/{project,core,data,learning,viewer}/`，`guides/` 保留并追加本项目触发点；`backend/` 模板（database / logging 等不适用）整体删除。
+- 每个 spec 文件带 `paths:` frontmatter，按触碰的代码路径自动注入；规则引用真实文件与符号，权威定义链接 `AGENTS.md` 与 `docs/`，不复制。
+- 项目级规则覆盖用户指定的全部要点：开发机三态判定（`project/dev-environment.md`）、任意材质族通用接口（`core/material-interface.md`）、共享 Slang 后端（`core/shared-slang-backend.md`）、方法根本约束（`project/method-constraints.md`）、语义划分 / 临时诊断代码 / 递归迁移清理（`project/code-organization.md`）、代码事实（`project/coding-conventions.md`）。
+- 语言：`.trellis/spec/`、`.trellis/tasks/` 与 journal 统一中文为主体、术语保留英文；对应要求写在 `AGENTS.md`「Trellis 工作流」与 `project/index.md`「文档与语言」，`workspace/index.md` 末行的英文要求已改。Trellis 的 hook、workflow 状态机与 skill 正文不翻译。
+
+收尾命令（由用户在确认后执行）：
+
+```bash
+python3 ./.trellis/scripts/task.py finish
+python3 ./.trellis/scripts/task.py archive 00-bootstrap-guidelines
+```

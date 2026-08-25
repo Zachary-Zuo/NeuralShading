@@ -122,4 +122,4 @@ Use this template when recording sessions:
 
 ---
 
-**Language**: All documentation must be written in **English**.
+**语言**：journal 与 session 记录以中文为主体，文件名、标识符、命令和常用术语保留英文。

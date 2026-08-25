@@ -21,7 +21,12 @@
   "children": [],
   "parent": null,
   "relatedFiles": [
-    ".trellis/spec/backend/"
+    ".trellis/spec/project/",
+    ".trellis/spec/core/",
+    ".trellis/spec/data/",
+    ".trellis/spec/learning/",
+    ".trellis/spec/viewer/",
+    ".trellis/spec/guides/"
   ],
   "notes": "First-time setup task created by trellis init (backend project)",
   "meta": {}
