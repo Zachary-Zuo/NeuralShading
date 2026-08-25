@@ -1,1 +1,11 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/project/index.md","reason":"公共核心、数据 reference 与仓库边界的项目级入口"}
+{"file":".trellis/spec/project/dev-environment.md","reason":"任何测试前必须判定完整、仅 GPU 或静态开发机状态"}
+{"file":".trellis/spec/project/method-constraints.md","reason":"analytic control/backend 的有界执行、sample/pdf 与单一 Slang 硬约束"}
+{"file":".trellis/spec/project/code-organization.md","reason":"新公共 shader 目录、公式复用和旧调用者递归迁移规则"}
+{"file":".trellis/spec/project/coding-conventions.md","reason":"Slang 命名、Falcor-free core、测试分层和中文文档约定"}
+{"file":".trellis/spec/core/index.md","reason":"公共 scattering 合同所有权、开发前检查和质量门"}
+{"file":".trellis/spec/core/shared-slang-backend.md","reason":"生产前向单一 Slang source 与 pure core/contract wrapper 边界"}
+{"file":".trellis/spec/data/index.md","reason":"LayerStack reference shader 迁移与 GPU 回归属于数据/reference 层"}
+{"file":".trellis/spec/data/reference-and-corpus.md","reason":"reference 固定语义、随机采集和 shard 回归边界"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"迁移重复 LTC/GGX/frame 公式时执行唯一所有者检查"}
+{"file":".trellis/tasks/08-25-01-reusable-scattering-math/research/math-inventory.md","reason":"现有公式 inventory、NVIDIA 官方 Listing 3/4 与 null/Jacobian 测试含义"}

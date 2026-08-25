@@ -19,7 +19,7 @@ description: NeuralShading 项目级规则入口：三大功能块与公共核�
 | 源材质接入与数据采集 | `src/ncls/data/`、`src/ncls/source_materials/`、`src/ncls/references/`、`references/`、`shaders/ncls/reference/`、`shaders/ncls/data/`、`configs/corpus/`、`tools/reference/` | `data/` |
 | 训练、评测与导出 | `src/ncls/learning/`、`src/ncls/bundle/`、`configs/learning/`、`configs/evaluation/`、`docs/research/` | `learning/` |
 | Windows viewer | `apps/viewer/`、`patches/`、`scripts/build_viewer.ps1`、`scripts/benchmark_viewer.ps1`、`configs/viewer-*.json` | `viewer/` |
-| 公共核心（不形成第四条工作流） | `src/ncls/core/`、`shaders/ncls/contracts/`、`shaders/ncls/backends/`、`docs/contracts/` | `core/` |
+| 公共核心（不形成第四条工作流） | `src/ncls/core/`、`shaders/ncls/contracts/`、`shaders/ncls/scattering/`、`shaders/ncls/backends/`、`docs/contracts/` | `core/` |
 
 依赖方向固定：三块都只依赖公共核心，块之间只通过 `MaterialProgram`、`reference-corpus`/HDF5 shard、`MethodBundle` 三种产物交换数据。viewer 不依赖训练代码或 PyTorch；训练侧只能通过 `MethodBundle` 向 viewer 交付方法。
 

@@ -36,7 +36,7 @@ paths:
 
 - include guard `NCLS_<路径大写>_SLANG`；自由函数 `ncls*`，结构 `Ncls*`，常量 `NCLS_*`；相对路径 `#include`。
 - `shaders/ncls/contracts/scattering_contract.slang` 与 `layer_stack_ir.slang` 由 `src/ncls/core/{scattering,material}/abi_layout.py` 从 `abi/*.json` 生成，文件头写着"不要手工编辑"——改 ABI 先改 JSON 再重新生成。
-- backend core 文件（`shaders/ncls/backends/<name>/<name>_core.slang`）必须 Falcor-free：只 `#include` `contracts/` 与 `reference/`，不 `import` Falcor 模块；合同包装（`<name>.slang`）才 `import Utils.Sampling.SampleGeneratorInterface`。
+- backend core 文件（`shaders/ncls/backends/<name>/<name>_core.slang`）必须 Falcor-free：只 `#include` `contracts/`、`scattering/` 与必要的 `reference/`，不 `import` Falcor 模块；合同包装（`<name>.slang`）才 `import Utils.Sampling.SampleGeneratorInterface`。
 - 配置轴用 `#ifndef NCLS_<NAME>` 宏给默认值（`lobe_residual_mlp.slang`）；固定循环 `[unroll]`；可微函数标 `[Differentiable]`，IR 与方向输入 `no_diff`；Slang 内不写权重偏移常量，偏移由 Python 反射写入 `Params`。
 - 只用 Falcor 8.0 锁定的 Slang 2024.1.34 已验证写法（固定数组、`typedef` 绑定 associated type、`[unroll]`）；SlangPy 携带更新的 slang，新语法先由双编译探针（`p1_v2_plan.md` P2.7）确认。
 - 注释中文；每个 backend 文件头一句话说明"哪个文档定义了它"。

@@ -6,6 +6,7 @@ paths:
   - src/ncls/references/**
   - src/ncls/bundle/**
   - shaders/ncls/contracts/**
+  - shaders/ncls/scattering/**
   - shaders/ncls/backends/**
   - docs/contracts/**
 ---
@@ -29,6 +30,8 @@ paths:
 - `material-interface.md`：任意材质族的接入合同（GT 原则、IR、reference、验收条件）。
 - `shared-slang-backend.md`：散射合同的实现规则与"每个方法一份 Slang"的架构。
 
+`shaders/ncls/scattering/` 是上述散射合同共用的 Falcor-free 数学实现，不新增第六个公共 ABI：它统一拥有 frame、cosine/LTC/GGX、Fresnel、fixed-size mixture 与方向 `sample/pdf`，backend 和 reference 只做语义适配。
+
 ## 开发前检查清单
 
 - [ ] 我改的是公共合同还是某个块的私有实现？私有实现（backend 的 `State` 字段、latent 维数、shader 布局）不得进入公共合同。
@@ -41,4 +44,5 @@ paths:
 - [ ] Python 与 Slang 的枚举 / 布局数值都来自同一份 `abi/*.json`，没有手写副本。
 - [ ] 不支持的操作 / 版本 / capability 返回明确错误，没有"套用相近实现"的静默 fallback。
 - [ ] 合同测试（`tests/unit/test_material_program.py`、`test_scattering_contract.py`、`test_film_m1_bundle.py`）与 GPU 编译冒烟（`tests/gpu/kernels/*.cs.slang`）覆盖了改动。
+- [ ] 改公共方向分布时，GPU oracle 直接包含生产 Slang，并同时覆盖独立固定公式值、PDF quadrature、sample histogram、`sample.pdf == pdf(direction)` 与 null mass；不能只让 sample 与同源 PDF 互相自证。
 - [ ] `docs/contracts/` 的描述与代码命名一致（`p1_v2_plan.md` D4.6 列出的已知不一致要一并修）。

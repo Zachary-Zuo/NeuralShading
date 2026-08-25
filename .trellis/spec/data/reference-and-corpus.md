@@ -42,7 +42,7 @@ paths:
 ## reference shader（`shaders/ncls/reference/`）
 
 - 随机游走 reference 已是单一源：`random_walk_reference.slang` 同时服务采集（`shaders/ncls/data/reference_layer_stack.cs.slang`）与 viewer。新族的 reference shader 同样只写一份，采集入口与 viewer 都 `#include` 它。
-- `interfaces.slang` 提供四种界面的 evaluate / pdf / sample 三件套，`sampling.slang` 提供各向异性 VNDF；backend 与测试直接复用，不复制公式。改这两个文件必须保持现有 reference GPU 测试与已采集结果的 hash 不变（`p1_v2_plan.md` S2.2 的验收）。
+- `interfaces.slang` 提供四种界面的 evaluate / pdf / sample 三件套；纯 frame、Fresnel、cosine、GGX/VNDF 在 `shaders/ncls/scattering/` 单一拥有。`sampling.slang` 只保留 PCG/reference RNG、体相函数，以及“恰好一次 `nextFloat2()` 后转调公共 VNDF”的薄包装。改这些文件必须保持现有 reference GPU 测试、固定 seed 随机数消费与已采集结果的 hash 不变（`p1_v2_plan.md` S2.2 的验收）。
 - reference 可以在 `evaluate()` 内部用随机样本、逐像素累积；它不参与 MethodBundle 成本比较，也不生成通用 packet。
 
 ## 反例

@@ -3,7 +3,7 @@
   "name": "01-reusable-scattering-math",
   "title": "01 可复用散射数学原语",
   "description": "建立唯一的 Falcor-free Slang 散射、采样与 PDF 数学组件",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

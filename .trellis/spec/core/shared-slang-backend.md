@@ -5,6 +5,7 @@ paths:
   - shaders/ncls/backends/**
   - shaders/ncls/contracts/scattering_backend.slang
   - shaders/ncls/contracts/scattering_contract.slang
+  - shaders/ncls/scattering/**
   - src/ncls/core/scattering/**
   - src/ncls/core/representations/**
   - src/ncls/bundle/**
@@ -31,6 +32,75 @@ interface INclsScatteringBackend { associatedtype CompiledMaterial; associatedty
 - `CompiledMaterial` 与 `State` 是 backend 私有 associated type；renderer 只按 `BackendDescriptor` 分配资源，从不解释内容。`sample/pdf` 的可调用性只由 capability 决定（`REQUIRED_REALTIME_CAPABILITIES = Prepare | Evaluate | Sample | Pdf | AnisotropicFrame`，`src/ncls/core/scattering/contract.py`）。
 - `State` 只在材质状态、footprint、shading frame 与 `wo` 都未变时复用；`prepare()` 不消费选方向的随机数；`sample()` 用 `State` 里的 proposal 参数生成方向，`pdf()` 算同一 proposal 的密度。
 - 合同范例：`shaders/ncls/backends/legacy_ltc_k2/legacy_ltc_k2.slang` 的 `LegacyLtcK2State` / `LegacyLtcK2Backend`（cosine proposal，pdf 诚实匹配）。
+
+## 公共散射数学层
+
+### 1. Scope / Trigger
+
+新增或修改 frame、cosine/LTC/GGX、Fresnel、方向 proposal、`sample/pdf`、mixture 或 null-event 语义时，公式必须落在 `shaders/ncls/scattering/`。它是纯方向分布的唯一源码所有者，只依赖 `contracts/` 与同目录模块，不依赖 Falcor、`ISampleGenerator`、reference RNG、LayerStack IR 或具体 backend。
+
+### 2. Signatures
+
+```slang
+struct NclsDirectionalSample {
+    float3 direction;
+    float pdf;       // continuous solid-angle PDF；null / invalid 为 0
+    uint valid;
+    uint nullEvent;
+};
+
+float3 nclsSampleGgxVisibleNormal(float3 w, float2 alpha, float2 u);
+NclsDirectionalSample nclsSampleLtc(NclsLtcTransform transform, float2 u);
+float nclsLtcPdf(NclsLtcTransform transform, float3 direction);
+NclsDirectionalSample nclsSampleNvidiaProposal(
+    NclsNvidiaProposalParams params, float3 wo, float3 u, out uint component);
+float nclsNvidiaProposalPdf(
+    NclsNvidiaProposalParams params, float3 wo, float3 wi);
+```
+
+### 3. Contracts
+
+- 所有方向使用 outward、local `+z` 约定；连续 PDF 都相对于 solid angle。
+- 公共 `sample()` 接受预抽的 `float2/float3 u`。reference 若保留 RNG overload，它只能恰好预抽一次再转调纯函数，从而冻结随机数消费顺序。
+- `sample()` 与 `pdf()` 共用同一 decode、frame 和 Jacobian；mixture sample 的连续结果必须重算完整 mixture PDF，不能返回被选 component density。
+- upper-hemisphere reflection proposal 落到连续域外时记 null。GGX VNDF 先以 sampled normal 的 visible-normal PDF 验证；把 normal reflection 成方向后的域外频率另记 null，不能混入 normal histogram。
+- fixed-size mixture 的 component 随机数若与二维方向随机数独立，CDF `remapped` 只作为公共 primitive 输出，不替代方向所需的两维随机数。
+
+### 4. Validation & Error Matrix
+
+| 结果 | `valid` | `nullEvent` | `pdf` | 调用方行为 |
+|---|---:|---:|---:|---|
+| 连续方向 | 1 | 0 | 完整分布 `pdf(direction) > 0` | 才计算 `f·abs(cos)/pdf` |
+| 合法域外事件 | 1 | 1 | 0 | 零贡献，不 rejection / resample |
+| 参数或数值无效 | 0 | 0 | 0 | 明确失败，不能伪装成 null |
+
+- 非有限 direction、非法 transform、非法 random input → invalid；不得修成 canonical direction 后标 null。
+- 有限 sample 落到声明支持域外 → null；连续 PDF 为 0，调用方返回零贡献。
+- 连续 sample 的完整 PDF 非有限或 `≤0` → invalid；不得继续形成 path weight。
+
+### 5. Good / Base / Bad Cases
+
+- Good：NVIDIA proposal 在 canonical upper hemisphere 内由固定 cosine safety component 保证严格正 PDF；learned specular/diffuse 域外事件进入 null bin。
+- Base：cosine/LTC sample 总在 upper hemisphere，返回 continuous 且 `sample.pdf == pdf(direction)`。
+- Bad：非有限 slope、奇异 LTC transform 或越界随机数返回 invalid；不能静默 clamp 成一个看似合法的 sample。
+
+### 6. Tests Required
+
+质量门至少包括：生产 Slang 的锁定 Falcor 编译、独立固定公式值、Gauss-Legendre × azimuth normalization、sample histogram、`sample.pdf == pdf(direction)`、null mass，以及 reference 固定 seed 零漂移。只拿生产 `sample()` 对生产 `pdf()` 做自洽比较是不完整的 oracle。
+
+具体 assertion points：NVIDIA raw output 顺序/range warp、slope density 与 `1/(4|dot(wo,h)|)` reflection Jacobian、LTC determinant/`|q|^4` Jacobian、mixture component frequency、continuous/null/invalid 三态、VNDF normal histogram 与 reflection-null 分离、grazing/各参数边界有限值。
+
+### 7. Wrong vs Correct
+
+```slang
+// 错：域外方向静默重采，且只返回 componentPdf。
+do { wi = sampleComponent(u); } while (wi.z <= NCLS_MIN_COS);
+result.pdf = componentPdf;
+
+// 对：域外是显式 null；连续事件重算完整 mixture PDF。
+if (wi.z <= NCLS_MIN_COS) return nclsNullDirectionalSample(wi);
+result.pdf = nclsNvidiaProposalPdf(params, wo, wi);
+```
 
 ## 每个方法一份 Slang
 

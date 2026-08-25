@@ -223,7 +223,7 @@ struct LegacyLtcK2P1Backend : INclsScatteringBackend
 
     State prepare(NclsScatteringContext context, CompiledMaterial material)
     {
-        const float3 woLocal = nclsLegacyLtcK2ToLocal(
+        const float3 woLocal = nclsFrameToLocal(
             context.surface.shadingFrame,
             context.woWorld);
         return {context, nclsCompileLegacyLtcK2P1(material, woLocal, weights, width)};

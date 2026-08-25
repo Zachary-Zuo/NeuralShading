@@ -77,6 +77,7 @@ src/ncls/
 
 shaders/ncls/
   contracts/               共用语义结构和生成的 ABI
+  scattering/              Falcor-free 方向、frame、cosine/LTC/GGX、mixture 与 sample/PDF 数学
   reference/               当前随机游走及后续族专属 reference 共用实现
   data/                    数据生成 compute 入口
   backends/                neural material backend 与解析基线

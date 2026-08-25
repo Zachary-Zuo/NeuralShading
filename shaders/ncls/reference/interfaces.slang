@@ -38,20 +38,6 @@ float3 nclsLayerColor(const NclsLayerInterfaceIR layer)
     return float3(layer.colorR, layer.colorG, layer.colorB);
 }
 
-float3 nclsToLayerFrame(float3 w, float rotation)
-{
-    const float c = cos(rotation);
-    const float s = sin(rotation);
-    return float3(c * w.x + s * w.y, -s * w.x + c * w.y, w.z);
-}
-
-float3 nclsFromLayerFrame(float3 w, float rotation)
-{
-    const float c = cos(rotation);
-    const float s = sin(rotation);
-    return float3(c * w.x - s * w.y, s * w.x + c * w.y, w.z);
-}
-
 float nclsCharlieD(float normalDotHalf, float roughness)
 {
     const float inverseAlpha = 1.0f / max(roughness, 1e-3f);
@@ -197,8 +183,8 @@ float3 nclsEvalInterface(
 {
     return nclsEvalInterfaceLocal(
         layer,
-        nclsToLayerFrame(wi, layer.tangentRotation),
-        nclsToLayerFrame(wo, layer.tangentRotation),
+        nclsRotateTangentToLocal(wi, layer.tangentRotation),
+        nclsRotateTangentToLocal(wo, layer.tangentRotation),
         etaI,
         etaT);
 }
@@ -213,8 +199,8 @@ float nclsInterfacePdf(
 {
     return nclsInterfacePdfLocal(
         layer,
-        nclsToLayerFrame(wi, layer.tangentRotation),
-        nclsToLayerFrame(wo, layer.tangentRotation),
+        nclsRotateTangentToLocal(wi, layer.tangentRotation),
+        nclsRotateTangentToLocal(wo, layer.tangentRotation),
         etaI,
         etaT,
         sampleModes);
@@ -229,7 +215,7 @@ LayerBsdfSample nclsSampleInterface(
     inout NclsRng rng)
 {
     LayerBsdfSample result = {};
-    const float3 wi = nclsToLayerFrame(wiWorld, layer.tangentRotation);
+    const float3 wi = nclsRotateTangentToLocal(wiWorld, layer.tangentRotation);
     if (abs(wi.z) <= NCLS_MIN_COS) return result;
 
     float3 wo = float3(0.0f);
@@ -241,7 +227,8 @@ LayerBsdfSample nclsSampleInterface(
     else if (layer.kind == (uint)NclsInterfaceKind::RoughConductor)
     {
         if ((sampleModes & NCLS_SAMPLE_REFLECTION) == 0u || wi.z <= 0.0f) return result;
-        const float3 h = nclsSampleGgxVisibleNormal(wi, nclsLayerAlpha(layer), rng);
+        const float2 u = rng.nextFloat2();
+        const float3 h = nclsSampleGgxVisibleNormal(wi, nclsLayerAlpha(layer), u);
         wo = reflect(-wi, h);
         if (wo.z <= NCLS_MIN_COS) return result;
     }
@@ -252,7 +239,7 @@ LayerBsdfSample nclsSampleInterface(
         {
             if ((sampleModes & NCLS_SAMPLE_TRANSMISSION) == 0u) return result;
             wo = -wi;
-            result.direction = nclsFromLayerFrame(wo, layer.tangentRotation);
+            result.direction = nclsRotateTangentFromLocal(wo, layer.tangentRotation);
             result.f = float3(1.0f / abs(wo.z));
             result.weight = float3(1.0f);
             result.pdf = 1.0f;
@@ -260,7 +247,8 @@ LayerBsdfSample nclsSampleInterface(
             result.valid = 1u;
             return result;
         }
-        const float3 h = nclsSampleGgxVisibleNormal(wi, nclsLayerAlpha(layer), rng);
+        const float2 u = rng.nextFloat2();
+        const float3 h = nclsSampleGgxVisibleNormal(wi, nclsLayerAlpha(layer), u);
         const float fresnel = nclsFresnelDielectric(1.0f / relativeEta, dot(wi, h));
         const float reflectionWeight = (sampleModes & NCLS_SAMPLE_REFLECTION) != 0u ? fresnel : 0.0f;
         const float transmissionWeight = (sampleModes & NCLS_SAMPLE_TRANSMISSION) != 0u ? 1.0f - fresnel : 0.0f;
@@ -282,7 +270,7 @@ LayerBsdfSample nclsSampleInterface(
         return result;
     }
 
-    result.direction = nclsFromLayerFrame(wo, layer.tangentRotation);
+    result.direction = nclsRotateTangentFromLocal(wo, layer.tangentRotation);
     result.f = nclsEvalInterfaceLocal(layer, wi, wo, etaI, etaT);
     result.pdf = nclsInterfacePdfLocal(layer, wi, wo, etaI, etaT, sampleModes);
     result.isReflection = wi.z * wo.z > 0.0f ? 1u : 0u;

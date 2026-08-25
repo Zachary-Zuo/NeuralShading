@@ -3,7 +3,7 @@
 
 // lobe-residual 的原语：配置轴、权重缓冲与偏移、dense 层、lobe 解码与 LTC lobe 响应。
 // 由 lobe_residual_core.slang 包含；本文件同样不依赖任何 Falcor 模块。
-#include "../../reference/sampling.slang"
+#include "../../scattering/ltc.slang"
 
 #ifndef NCLS_LOBE_RESIDUAL_K
 #define NCLS_LOBE_RESIDUAL_K 2u
@@ -116,17 +116,11 @@ NclsLobeResidualLobe nclsLobeResidualDecodeLobe(float raw[NCLS_LOBE_RESIDUAL_WID
 [Differentiable]
 float3 nclsLobeResidualLobeResponseCos(NclsLobeResidualLobe lobe, no_diff float3 wiLocal)
 {
-    const float cosine = cos(lobe.angle);
-    const float sine = sin(lobe.angle);
-    const float rotatedX = cosine * wiLocal.x + sine * wiLocal.y;
-    const float rotatedY = -sine * wiLocal.x + cosine * wiLocal.y;
-    const float qx = lobe.inverseScale.x * rotatedX + lobe.shear.x * rotatedY + lobe.shear.y * wiLocal.z;
-    const float qy = lobe.inverseScale.y * rotatedY + lobe.shear.z * wiLocal.z;
-    const float qz = wiLocal.z;
-    const float norm2 = max(qx * qx + qy * qy + qz * qz, 1e-10f);
-    const float determinant = lobe.inverseScale.x * lobe.inverseScale.y;
-    const float basis = determinant * max(qz, 0.0f) / (NCLS_PI * norm2 * norm2);
-    return basis * lobe.amplitude;
+    NclsLtcTransform transform;
+    transform.inverseScale = lobe.inverseScale;
+    transform.shear = lobe.shear;
+    transform.angle = lobe.angle;
+    return nclsLtcResponseCosUnchecked(transform, lobe.amplitude, wiLocal);
 }
 
 #endif

@@ -1,1 +1,10 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/project/index.md","reason":"跨 core/data 的项目级质量与仓库边界"}
+{"file":".trellis/spec/project/dev-environment.md","reason":"验证证据与开发机状态声明要求"}
+{"file":".trellis/spec/project/code-organization.md","reason":"公式唯一性、递归迁移和无兼容 fallback 审计"}
+{"file":".trellis/spec/project/coding-conventions.md","reason":"Slang/Python 测试与命名质量检查"}
+{"file":".trellis/spec/core/index.md","reason":"scattering 合同、capability 和 GPU compile 质量门"}
+{"file":".trellis/spec/core/shared-slang-backend.md","reason":"单一 Slang source、pure core 与 parity 检查"}
+{"file":".trellis/spec/data/index.md","reason":"LayerStack reference 语义与采集回归质量门"}
+{"file":".trellis/spec/data/reference-and-corpus.md","reason":"reference measure、随机性与 shard 行为审计"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"扫描重复公式与常量所有权"}
+{"file":".trellis/tasks/08-25-01-reusable-scattering-math/research/math-inventory.md","reason":"核对官方公式、项目适配与各类 normalization/null oracle"}
