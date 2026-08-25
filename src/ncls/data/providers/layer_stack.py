@@ -29,7 +29,12 @@ from ncls.data.priors import (
     layer_stack_v1_families,
     layer_stack_v1_splits,
 )
-from ncls.data.reference import FalcorReferenceEvaluator, evaluate_reference_adaptive, evaluate_reference_fixed
+from ncls.data.reference import (
+    FalcorReferenceEvaluator,
+    evaluate_reference_adaptive,
+    evaluate_reference_batched_fixed,
+    evaluate_reference_fixed,
+)
 
 from .base import BaseProvider, PROJECT_ROOT, implementation_hash
 
@@ -368,6 +373,7 @@ class LayerStackProvider(BaseProvider):
         *,
         adaptive: bool,
         fixed_samples_per_replica: int,
+        batched_fixed_samples_per_replica: int | None = None,
     ) -> EvaluatedBlock:
         if len(surfaces) != 1:
             raise ValueError("constant LayerStack states require exactly one surface sample")
@@ -411,7 +417,22 @@ class LayerStackProvider(BaseProvider):
                     query_group_seeds=seeds[group_start:group_stop],
                     light_directions=lights,
                 )
-                if adaptive:
+                if batched_fixed_samples_per_replica is not None:
+                    batch_samples = min(
+                        self.provider_config.batch_samples_per_replica,
+                        batched_fixed_samples_per_replica,
+                    )
+                    if batched_fixed_samples_per_replica % batch_samples:
+                        raise ValueError("batched fixed reference budget must divide its batch size")
+                    evaluated = evaluate_reference_batched_fixed(
+                        evaluator,
+                        materials[group_start:group_stop],
+                        plan.view_directions[group_start:group_stop],
+                        samples_per_replica=batched_fixed_samples_per_replica,
+                        batch_samples_per_replica=batch_samples,
+                        **arguments,
+                    )
+                elif adaptive:
                     evaluated = evaluate_reference_adaptive(
                         evaluator,
                         materials[group_start:group_stop],
@@ -484,6 +505,47 @@ class LayerStackProvider(BaseProvider):
             plan,
             adaptive=self.provider_config.adaptive,
             fixed_samples_per_replica=self.provider_config.fixed_samples_per_replica,
+        )
+
+    def evaluate_fixed(
+        self,
+        state: SourceState,
+        surfaces: Sequence[SurfaceSample],
+        plan: QueryPlan,
+        *,
+        samples_per_replica: int,
+    ) -> EvaluatedBlock:
+        """用调用方冻结的固定双 replica 预算执行同一 reference。"""
+
+        if samples_per_replica < 1:
+            raise ValueError("samples_per_replica must be positive")
+        return self._evaluate_queries(
+            state,
+            surfaces,
+            plan,
+            adaptive=False,
+            fixed_samples_per_replica=samples_per_replica,
+        )
+
+    def evaluate_batched_fixed(
+        self,
+        state: SourceState,
+        surfaces: Sequence[SurfaceSample],
+        plan: QueryPlan,
+        *,
+        samples_per_replica: int,
+    ) -> EvaluatedBlock:
+        """用 GPU 小 batch 与 CPU float64 moments 合并执行高预算固定采样。"""
+
+        if samples_per_replica < 1:
+            raise ValueError("samples_per_replica must be positive")
+        return self._evaluate_queries(
+            state,
+            surfaces,
+            plan,
+            adaptive=False,
+            fixed_samples_per_replica=samples_per_replica,
+            batched_fixed_samples_per_replica=samples_per_replica,
         )
 
     def metadata(self):

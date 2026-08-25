@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mollification supplement reference budget plan v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "name", "protocol_sha256", "audit_report_sha256",
+    "supplement_anchor_lock_sha256", "predecessor_failure", "derivation",
+    "reference_budget"
+  ],
+  "properties": {
+    "schema": {"const": {"name": "mollification-supplement-budget", "version": 1}},
+    "name": {"const": "layer-stack-p1-mollification-reference-se-v2"},
+    "protocol_sha256": {"const": "7160bd6f210038a6d2f39cac3ec513287b0cacab3ffb94423737c8e4d0cbbec2"},
+    "audit_report_sha256": {"const": "c85474bc96f8cbf80fd62ded7257e9011cf1f4e0d5150dc05c6ff9c7ede7c13d"},
+    "supplement_anchor_lock_sha256": {"const": "23d865f167809c1e340c4ca9581ea1c1e813b9ef2c6dd7919b9383ff3a9204ac"},
+    "predecessor_failure": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "name", "maximum_paths_per_jitter_per_replica", "state_id",
+        "view_index", "level_index", "observed_relative_se_p95",
+        "observed_relative_se_max", "published", "directory"
+      ],
+      "properties": {
+        "name": {"const": "layer-stack-p1-mollification-reference-se-v1"},
+        "maximum_paths_per_jitter_per_replica": {"const": 512},
+        "state_id": {"const": "4ebd9258461716ed23d523a0b221d015feb190270471e2a55b63c3a219fcb1e7"},
+        "view_index": {"const": 2},
+        "level_index": {"const": 0},
+        "observed_relative_se_p95": {"const": 0.152108},
+        "observed_relative_se_max": {"const": 0.365159},
+        "published": {"const": false},
+        "directory": {"const": "data/reference-responses/layer-stack-p1-mollification-v1-reference-se-v1"}
+      }
+    },
+    "derivation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["rule", "estimated_required_paths", "rounded_power_of_two"],
+      "properties": {
+        "rule": {"const": "ceil-power-of-two((observed_p95/target_p95)^2*previous_cap)"},
+        "estimated_required_paths": {"const": 3291},
+        "rounded_power_of_two": {"const": 4096}
+      }
+    },
+    "reference_budget": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "initial_paths_per_jitter_per_replica", "maximum_paths_per_jitter_per_replica",
+        "target_relative_se_p95", "maximum_group_relative_se", "jitter_count",
+        "replica_count"
+      ],
+      "properties": {
+        "initial_paths_per_jitter_per_replica": {"const": 64},
+        "maximum_paths_per_jitter_per_replica": {"const": 4096},
+        "target_relative_se_p95": {"const": 0.06},
+        "maximum_group_relative_se": {"const": 0.25},
+        "jitter_count": {"const": 256},
+        "replica_count": {"const": 2}
+      }
+    }
+  }
+}

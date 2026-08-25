@@ -1,1 +1,9 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/project/index.md","reason":"跨 data/learning 依赖、稳定文档和 repository policy 质量检查"}
+{"file":".trellis/spec/project/dev-environment.md","reason":"验证证据与开发机状态声明要求"}
+{"file":".trellis/spec/project/code-organization.md","reason":"检查协议/schema/reader 唯一所有者和无兼容 fallback"}
+{"file":".trellis/spec/project/coding-conventions.md","reason":"Python/JSON/HDF5 错误处理、测试分层和命名检查"}
+{"file":".trellis/spec/data/index.md","reason":"validate-corpus、原子续采、reference provenance 与仓库边界 gate"}
+{"file":".trellis/spec/data/reference-and-corpus.md","reason":"measure、role、noise budget、semantic hash 与 v5 不可静默重解释审计"}
+{"file":".trellis/spec/learning/index.md","reason":"data entry 到 curriculum batch 的端到端 data flow 与训练侧边界"}
+{"file":".trellis/tasks/08-25-02-mollification-data-adequacy/design.md","reason":"冻结顺序、binary decision、supplement 完整性和 error matrix 验收基线"}
+{"file":".trellis/tasks/08-25-02-mollification-data-adequacy/research/protocol-source.md","reason":"核对实现未偏离 NVIDIA 原始定义与冻结的 v5 现状"}

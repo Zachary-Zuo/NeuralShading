@@ -40,6 +40,19 @@ conda run -n neural-shading python -m ncls.cli data validate `
 
 同一路径已存在时采集器会拒绝覆盖。单-state shard 可以直接交给 learning reader 做工程诊断；正式训练和结论仍必须使用通过完整验证的 `reference-corpus` manifest。
 
+## Directional mollification 数据入口
+
+训练前 directional mollification 使用独立的 freeze/run 状态机。`mollification-freeze` 先锁定 protocol、base corpus 与 matched anchors；audit 任一 gate 失败后，`mollification-supplement-freeze` 锁定全部 30 个 state 的 `8×64` train anchors。每个 versioned reference budget 都必须在 fresh query 前再生成 collection lock，达到 cap 仍失败就保留证据并新增 plan，不能回写 threshold。
+
+逐 state 晋升只重采失败或尚无通过证据的 state。collection lock v2/v3 显式保存 reused shard 的 URI、dataset/file hash、metrics 和各自 source budget plan/lock；最终 composite manifest 允许不同 shard 保留自己的预算 provenance。正式入口与校验命令为：
+
+```powershell
+conda run -n neural-shading python -m ncls data validate-mollification artifacts/corpus/layer-stack-p1-mollification-v1.json
+conda run -n neural-shading python -m ncls data mollification-data-entry --config configs/corpus/layer-stack-p1-mollification-adequacy-v1.json --anchor-lock artifacts/mollification/layer-stack-p1-v1-anchor-lock.json --audit-report artifacts/mollification/layer-stack-p1-v1-audit-c.json --supplement-manifest artifacts/corpus/layer-stack-p1-mollification-v1.json --output artifacts/corpus/layer-stack-p1-mollification-training-v1.json
+```
+
+HDF5 仍只进入 `data/reference-responses/`；locks、失败报告、manifest 与 training data entry 进入 `artifacts/`。旧 v5 和未发布失败目录都不覆盖。
+
 ### P1 代表性子语料
 
 P1 先使用版本化 selection [`layer-stack-p1-v1.selection.json`](../configs/corpus/layer-stack-p1-v1.selection.json)。它只从 source-train 中冻结 30 个 state，按 `W/G/S × 无 M/有 M` 六个 strata 各取 5 个；这样 P1 可以读取同一 state 的 train/validation/test 方向而不提前污染 P2/P3 的 G2/G2s source holdout。

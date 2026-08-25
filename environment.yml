@@ -4,6 +4,7 @@ channels:
 dependencies:
   - python=3.10
   - numpy
+  - scipy
   - h5py
   - pillow
   - openimageio=3.1.15

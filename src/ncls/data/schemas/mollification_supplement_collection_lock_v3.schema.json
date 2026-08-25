@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mollification supplement collection lock v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "budget_plan_uri", "budget_plan_sha256", "protocol_sha256",
+    "audit_report_sha256", "supplement_anchor_lock_sha256", "base_corpus_id",
+    "state_ids", "reference_implementation_sha256", "predecessor_failure",
+    "frozen_at", "collection_state_ids", "promoted_state_ids", "reused_shards",
+    "collection_lock_sha256"
+  ],
+  "properties": {
+    "schema": {"const": {"name": "mollification-supplement-collection-lock", "version": 3}},
+    "budget_plan_uri": {"const": "configs/corpus/layer-stack-p1-mollification-reference-se-v8.json"},
+    "budget_plan_sha256": {"const": "d430305f92dbf619d51ee3fa6634fc05f900437131ccf48efd2fd56b9e64abfd"},
+    "protocol_sha256": {"const": "7160bd6f210038a6d2f39cac3ec513287b0cacab3ffb94423737c8e4d0cbbec2"},
+    "audit_report_sha256": {"const": "c85474bc96f8cbf80fd62ded7257e9011cf1f4e0d5150dc05c6ff9c7ede7c13d"},
+    "supplement_anchor_lock_sha256": {"const": "23d865f167809c1e340c4ca9581ea1c1e813b9ef2c6dd7919b9383ff3a9204ac"},
+    "base_corpus_id": {"const": "0513d0c837b109f74cbf6fd4f811e05c6bc68c02226bd6d443f3225ef5dd64b7"},
+    "state_ids": {"type": "array", "minItems": 30, "maxItems": 30, "items": {"$ref": "#/$defs/sha256"}},
+    "reference_implementation_sha256": {"$ref": "#/$defs/sha256"},
+    "predecessor_failure": {
+      "type": "object", "additionalProperties": false,
+      "required": ["directory", "file_count", "total_bytes"],
+      "properties": {
+        "directory": {"const": "data/reference-responses/layer-stack-p1-mollification-v1-reference-se-v7"},
+        "file_count": {"const": 2},
+        "total_bytes": {"const": 295970}
+      }
+    },
+    "frozen_at": {"type": "string", "format": "date-time"},
+    "collection_state_ids": {"const": ["1796065779d0932fe7ded3cc2c40b84a8a19190dd7e68732f06bc518ae7fe54a"]},
+    "promoted_state_ids": {"const": ["1796065779d0932fe7ded3cc2c40b84a8a19190dd7e68732f06bc518ae7fe54a"]},
+    "reused_shards": {
+      "type": "array", "minItems": 29, "maxItems": 29,
+      "items": {"$ref": "#/$defs/shard"}
+    },
+    "collection_lock_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "shard": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "source", "state_id", "structure_family_id", "uri", "dataset_id", "sha256",
+        "target_count", "combined_reference_samples", "maximum_relative_se_p95",
+        "maximum_relative_se", "budget_plan_uri", "budget_plan_sha256",
+        "collection_lock_uri", "collection_lock_sha256"
+      ],
+      "properties": {
+        "source": {"const": "reused"},
+        "state_id": {"$ref": "#/$defs/sha256"},
+        "structure_family_id": {"type": "string", "minLength": 1},
+        "uri": {"type": "string", "minLength": 1},
+        "dataset_id": {"$ref": "#/$defs/sha256"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "target_count": {"const": 2048},
+        "combined_reference_samples": {"type": "integer", "minimum": 1},
+        "maximum_relative_se_p95": {"type": "number", "minimum": 0.0, "maximum": 0.06},
+        "maximum_relative_se": {"type": "number", "minimum": 0.0, "maximum": 0.25},
+        "budget_plan_uri": {"type": "string", "minLength": 1},
+        "budget_plan_sha256": {"$ref": "#/$defs/sha256"},
+        "collection_lock_uri": {"type": "string", "minLength": 1},
+        "collection_lock_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

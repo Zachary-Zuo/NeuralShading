@@ -19,6 +19,8 @@ P1 v1 已完成正式单-seed 比较。M1-M 是通过全部主参考线的 best 
 
 训练和评测的 `--data` 可以指向单个 `reference-shard`，也可以指向完整 `reference-corpus` manifest。corpus reader 建立全局 state 索引，但每个实际 batch 只从一个矩形 shard 读取，因此 W/G/S、普通 role 和 dense slice 的不同方向数不会被混装或 padding。
 
+Directional mollification 由 `MollificationCurriculumStore` 读取冻结的 `mollification-training-data-entry`，训练配置不得自行选择 corpus、半径或阈值。reader 输入 normalized training progress：`t<0.875` 选择距离最近的 `{0,0.25,0.5,0.75}` level，并返回 `mollification_progress`、实际 level progress、radius 与 `target_source=mollified-reference`；`t≥0.875` 返回同一 anchor 锁定的 base-v5 0° response，并标记 `target_source=base-v5`。这是一组有限离线 target，不宣称与连续在线 schedule 无误差等价。
+
 `parametric-v1` 使用 source split 与同名 query role 的交集；`target-visible-v1` 只按 query role 切分，允许 encoder 或 bounded refinement 读取 source-test state 的 train response；`workflow-v1` 用于资产式族的固定工作流批量评测。三者必须在候选 descriptor 中明确选择。
 
 ## 固定四层 quality-v1

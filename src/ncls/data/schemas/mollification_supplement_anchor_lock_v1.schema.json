@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mollification supplement anchor lock v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "protocol_sha256", "anchor_lock_sha256", "audit_report_sha256",
+    "base_corpus_id", "selection_sha256", "states", "frozen_at",
+    "supplement_anchor_lock_sha256"
+  ],
+  "properties": {
+    "schema": {"const": {"name": "mollification-supplement-anchor-lock", "version": 1}},
+    "protocol_sha256": {"$ref": "#/$defs/sha256"},
+    "anchor_lock_sha256": {"$ref": "#/$defs/sha256"},
+    "audit_report_sha256": {"$ref": "#/$defs/sha256"},
+    "base_corpus_id": {"$ref": "#/$defs/sha256"},
+    "selection_sha256": {"$ref": "#/$defs/sha256"},
+    "states": {
+      "type": "array", "minItems": 30, "maxItems": 30,
+      "items": {"$ref": "#/$defs/state"}
+    },
+    "frozen_at": {"type": "string", "format": "date-time"},
+    "supplement_anchor_lock_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "vector3": {
+      "type": "array", "minItems": 3, "maxItems": 3,
+      "items": {"type": "number"}
+    },
+    "state": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "state_id", "structure_family_id", "difficulty_class", "difficulty_tags",
+        "source", "views"
+      ],
+      "properties": {
+        "state_id": {"$ref": "#/$defs/sha256"},
+        "structure_family_id": {"type": "string", "minLength": 1},
+        "difficulty_class": {"enum": ["W", "G", "S"]},
+        "difficulty_tags": {
+          "type": "array", "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "source": {"$ref": "#/$defs/source"},
+        "views": {
+          "type": "array", "minItems": 8, "maxItems": 8,
+          "items": {"$ref": "#/$defs/view"}
+        }
+      }
+    },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["shard_id", "dataset_id"],
+      "properties": {
+        "shard_id": {"type": "string", "minLength": 1},
+        "dataset_id": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "view": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "view_index", "source_group_index", "wo", "light_direction_indices",
+        "light_roles", "wi", "source_response"
+      ],
+      "properties": {
+        "view_index": {"type": "integer", "minimum": 0, "maximum": 7},
+        "source_group_index": {"type": "integer", "minimum": 0},
+        "wo": {"$ref": "#/$defs/vector3"},
+        "light_direction_indices": {
+          "type": "array", "minItems": 64, "maxItems": 64, "uniqueItems": true,
+          "items": {"type": "integer", "minimum": 0}
+        },
+        "light_roles": {
+          "type": "array", "minItems": 64, "maxItems": 64,
+          "items": {"enum": ["peak", "log-response", "proposal-index"]}
+        },
+        "wi": {
+          "type": "array", "minItems": 64, "maxItems": 64,
+          "items": {"$ref": "#/$defs/vector3"}
+        },
+        "source_response": {
+          "type": "array", "minItems": 64, "maxItems": 64,
+          "items": {"$ref": "#/$defs/vector3"}
+        }
+      }
+    }
+  }
+}

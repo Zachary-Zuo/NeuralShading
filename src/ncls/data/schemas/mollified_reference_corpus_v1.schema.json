@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mollified reference corpus v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format_name", "format_version", "name", "created_at", "base_corpus_uri",
+    "base_corpus_id", "protocol_sha256", "anchor_selection_sha256",
+    "supplement_budget_plan_sha256", "collection_lock_sha256",
+    "reference", "response_measure", "state_ids", "shards", "totals", "corpus_id"
+  ],
+  "properties": {
+    "format_name": {"const": "mollified-reference-corpus"},
+    "format_version": {"const": 1},
+    "name": {"const": "layer-stack-p1-mollification-v1"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "base_corpus_uri": {"type": "string", "minLength": 1},
+    "base_corpus_id": {"$ref": "#/$defs/sha256"},
+    "protocol_sha256": {"$ref": "#/$defs/sha256"},
+    "anchor_selection_sha256": {"$ref": "#/$defs/sha256"},
+    "supplement_budget_plan_sha256": {"$ref": "#/$defs/sha256"},
+    "collection_lock_sha256": {"$ref": "#/$defs/sha256"},
+    "reference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["family_id", "reference_id", "implementation_sha256"],
+      "properties": {
+        "family_id": {"const": "ncls.layer-stack@1"},
+        "reference_id": {"const": "ncls.layer-stack-random-walk@1"},
+        "implementation_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "response_measure": {"const": "rgb-bsdf-times-absolute-shading-normal-light-cosine"},
+    "state_ids": {"type": "array", "minItems": 30, "maxItems": 30, "items": {"$ref": "#/$defs/sha256"}},
+    "shards": {
+      "type": "array", "minItems": 30, "maxItems": 30,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": [
+          "source", "state_id", "structure_family_id", "uri", "dataset_id", "sha256",
+          "target_count", "combined_reference_samples", "maximum_relative_se_p95",
+          "maximum_relative_se", "budget_plan_uri", "budget_plan_sha256",
+          "collection_lock_uri", "collection_lock_sha256"
+        ],
+        "properties": {
+          "source": {"enum": ["reused", "collected"]},
+          "state_id": {"$ref": "#/$defs/sha256"},
+          "structure_family_id": {"type": "string", "minLength": 1},
+          "uri": {"type": "string", "minLength": 1},
+          "dataset_id": {"$ref": "#/$defs/sha256"},
+          "sha256": {"$ref": "#/$defs/sha256"},
+          "target_count": {"const": 2048},
+          "combined_reference_samples": {"type": "integer", "minimum": 1},
+          "maximum_relative_se_p95": {"type": "number", "minimum": 0.0},
+          "maximum_relative_se": {"type": "number", "minimum": 0.0},
+          "budget_plan_uri": {"type": "string", "minLength": 1},
+          "budget_plan_sha256": {"$ref": "#/$defs/sha256"},
+          "collection_lock_uri": {"type": "string", "minLength": 1},
+          "collection_lock_sha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    },
+    "totals": {
+      "type": "object", "additionalProperties": false,
+      "required": ["state_count", "target_count", "combined_reference_samples"],
+      "properties": {
+        "state_count": {"const": 30},
+        "target_count": {"const": 61440},
+        "combined_reference_samples": {"type": "integer", "minimum": 1}
+      }
+    },
+    "corpus_id": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

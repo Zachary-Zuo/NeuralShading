@@ -4,6 +4,8 @@
 
 本文同时记录已经实现的生命周期边界和下一阶段目标方法。MaterialProgram、CorpusPlan/reference-corpus、MethodBundle、viewer 与散射语义已经形成基础闭环；P1 最佳 M1-M 已能以 Slang MLP 直接执行 `evaluate(wo, wi)`，并用 frozen corpus state MethodBundle 完成 GPU parity 和 viewer 外观验证。它仍是 evaluator-only diagnostic：尚无任意材质 compiler、matched `sample/pdf`，实测成本也未进入实时范围。架构不冻结 latent 布局、网络规模、sampler family 或 backend 的物理状态。
 
+训练数据边界还包含一个显式的 directional-mollification supplement：它引用 base `reference-corpus`，以 per-shard frozen budget/lock 保存有限正半径 target，再通过单一 training data entry 交给 learning reader。该 supplement 是训练 curriculum 数据，不改变源材质 reference、公共 scattering ABI 或 base v5 corpus。
+
 详细合同见：
 
 - `docs/contracts/material_program.md`；

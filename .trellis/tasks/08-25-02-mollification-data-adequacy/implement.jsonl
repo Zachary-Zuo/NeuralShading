@@ -1,1 +1,9 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/project/index.md","reason":"数据 supplement 与 learning reader 的跨层边界、术语和仓库政策入口"}
+{"file":".trellis/spec/project/dev-environment.md","reason":"fresh LayerStack reference、GPU 测试和采集前的完整开发机判定"}
+{"file":".trellis/spec/project/code-organization.md","reason":"新 schema、data module、CLI 与 task scratch 的文件所有权"}
+{"file":".trellis/spec/project/coding-conventions.md","reason":"Python、JSON schema、测试和中文文档规范"}
+{"file":".trellis/spec/data/index.md","reason":"CorpusPlan/reference-shard/corpus 正式入口与数据层开发前检查"}
+{"file":".trellis/spec/data/reference-and-corpus.md","reason":"v5 measure、角色、噪声预算、hash、续采与 reference 单一源合同"}
+{"file":".trellis/spec/learning/index.md","reason":"mollification curriculum reader 向 03 交付训练 batch 的层边界"}
+{"file":".trellis/tasks/08-25-02-mollification-data-adequacy/research/protocol-source.md","reason":"NVIDIA 原始 schedule、256 ωo 样本和 P1 v5 实际方向布局"}
+{"file":".trellis/tasks/archive/2026-08/08-25-01-reusable-scattering-math/design.md","reason":"前序冻结的方向、solid-angle measure、reference RNG 与公共数学语义"}

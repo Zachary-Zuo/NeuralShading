@@ -295,3 +295,70 @@ def evaluate_reference_fixed(
         mean_b,
         combined.sample_count,
     )
+
+
+def evaluate_reference_batched_fixed(
+    evaluator: FalcorReferenceEvaluator,
+    materials: Sequence[LayerStackIR],
+    view_directions: np.ndarray,
+    *,
+    query_group_seeds: np.ndarray,
+    light_directions: np.ndarray | None = None,
+    samples_per_replica: int,
+    batch_samples_per_replica: int = 256,
+) -> EvaluatedReferenceBatch:
+    """以连续 sample offset 分批执行，并在 CPU float64 合并固定预算 moments。"""
+
+    query_group_count = len(materials)
+    views = np.asarray(view_directions, dtype=np.float32)
+    seeds = np.asarray(query_group_seeds, dtype=np.uint32)
+    lights = None if light_directions is None else np.asarray(light_directions, dtype=np.float32)
+    if views.shape not in {(query_group_count, 3), (query_group_count, 4)} or seeds.shape != (query_group_count,):
+        raise ValueError("materials, view_directions and query_group_seeds must have matching counts")
+    if samples_per_replica < 1 or batch_samples_per_replica < 1:
+        raise ValueError("batched fixed reference sample counts must be positive")
+    shape = (query_group_count, evaluator.light_count, 3)
+    means_a = np.zeros(shape, dtype=np.float64)
+    means_b = np.zeros(shape, dtype=np.float64)
+    m2_a = np.zeros(shape, dtype=np.float64)
+    m2_b = np.zeros(shape, dtype=np.float64)
+    counts = np.zeros(query_group_count, dtype=np.uint64)
+    active = np.arange(query_group_count, dtype=np.int64)
+    sample_offset = 0
+    while sample_offset < samples_per_replica:
+        batch_count = min(batch_samples_per_replica, samples_per_replica - sample_offset)
+        batch = evaluator.evaluate_query_groups(
+            materials,
+            views,
+            sample_count_per_replica=batch_count,
+            query_group_seeds=seeds,
+            light_directions=lights,
+            sample_offset=sample_offset,
+        )
+        for name, values in zip(("mean_a", "second_a", "mean_b", "second_b"), batch, strict=True):
+            if not np.all(np.isfinite(values)):
+                raise RuntimeError(f"reference produced non-finite {name}")
+        batch_mean_a, second_a, batch_mean_b, second_b = (
+            np.asarray(item, dtype=np.float64) for item in batch
+        )
+        if np.any(batch_mean_a < 0.0) or np.any(batch_mean_b < 0.0):
+            raise RuntimeError("reference produced a negative response for an unsupported material state")
+        variance_a = np.maximum(second_a - batch_mean_a * batch_mean_a, 0.0)
+        variance_b = np.maximum(second_b - batch_mean_b * batch_mean_b, 0.0)
+        _merge_batch(means_a, m2_a, counts, active, batch_mean_a, variance_a, batch_count)
+        _merge_batch(means_b, m2_b, counts, active, batch_mean_b, variance_b, batch_count)
+        counts += np.uint64(batch_count)
+        sample_offset += batch_count
+    if np.any(counts != samples_per_replica):
+        raise AssertionError("batched fixed reference sample offsets are not contiguous")
+    count_view = counts[:, None, None].astype(np.float64)
+    replica_a = ReplicaMoments(means_a, m2_a / count_view, counts)
+    replica_b = ReplicaMoments(means_b, m2_b / count_view, counts)
+    combined = combine_replica_moments(replica_a, replica_b)
+    return EvaluatedReferenceBatch(
+        combined.mean,
+        combined.variance,
+        means_a,
+        means_b,
+        combined.sample_count,
+    )

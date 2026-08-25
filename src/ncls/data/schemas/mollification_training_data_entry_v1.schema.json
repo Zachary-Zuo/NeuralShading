@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mollification training data entry v1",
+  "oneOf": [
+    {"$ref": "#/$defs/reuse"},
+    {"$ref": "#/$defs/supplement"}
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "schema": {"const": {"name": "mollification-training-data-entry", "version": 1}},
+    "uri": {"type": "string", "minLength": 1},
+    "curriculum": {
+      "type": "object", "additionalProperties": false,
+      "required": ["stored_progress", "stored_radius_degrees", "zero_radius_switch_progress", "selection", "zero_radius_source"],
+      "properties": {
+        "stored_progress": {"const": [0.0, 0.25, 0.5, 0.75]},
+        "stored_radius_degrees": {"const": [10.0, 8.535533905932738, 5.0, 1.4644660940672627]},
+        "zero_radius_switch_progress": {"const": 0.875},
+        "selection": {"const": "nearest-stored-level-v1"},
+        "zero_radius_source": {"const": "base-v5"}
+      }
+    },
+    "reconstruction": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_role", "embedding", "neighbors", "shepard_power", "support_wo_degrees", "support_wi_degrees"],
+      "properties": {
+        "source_role": {"const": "train"},
+        "embedding": {"const": "scaled-wo-wi-chord-v1"},
+        "neighbors": {"const": 32},
+        "shepard_power": {"const": 2.0},
+        "support_wo_degrees": {"const": 2.0},
+        "support_wi_degrees": {"const": 1.0}
+      }
+    },
+    "reuse": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "variant", "base_corpus_uri", "base_corpus_id", "protocol_sha256", "anchor_lock_sha256", "audit_report_sha256", "curriculum", "reconstruction", "entry_id"],
+      "properties": {
+        "schema": {"$ref": "#/$defs/schema"},
+        "variant": {"const": "base-v5-neighborhood-v1"},
+        "base_corpus_uri": {"$ref": "#/$defs/uri"},
+        "base_corpus_id": {"$ref": "#/$defs/sha256"},
+        "protocol_sha256": {"$ref": "#/$defs/sha256"},
+        "anchor_lock_sha256": {"$ref": "#/$defs/sha256"},
+        "audit_report_sha256": {"$ref": "#/$defs/sha256"},
+        "curriculum": {"$ref": "#/$defs/curriculum"},
+        "reconstruction": {"$ref": "#/$defs/reconstruction"},
+        "entry_id": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "supplement": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "variant", "base_corpus_uri", "base_corpus_id", "protocol_sha256", "anchor_lock_sha256", "audit_report_sha256", "curriculum", "supplement_corpus_uri", "supplement_corpus_id", "entry_id"],
+      "properties": {
+        "schema": {"$ref": "#/$defs/schema"},
+        "variant": {"const": "base-v5-plus-mollification-v1"},
+        "base_corpus_uri": {"$ref": "#/$defs/uri"},
+        "base_corpus_id": {"$ref": "#/$defs/sha256"},
+        "protocol_sha256": {"$ref": "#/$defs/sha256"},
+        "anchor_lock_sha256": {"$ref": "#/$defs/sha256"},
+        "audit_report_sha256": {"$ref": "#/$defs/sha256"},
+        "curriculum": {"$ref": "#/$defs/curriculum"},
+        "supplement_corpus_uri": {"$ref": "#/$defs/uri"},
+        "supplement_corpus_id": {"$ref": "#/$defs/sha256"},
+        "entry_id": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

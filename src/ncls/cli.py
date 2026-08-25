@@ -136,6 +136,125 @@ def _audit_dense(args: argparse.Namespace) -> int:
     return 0
 
 
+def _mollification_freeze(args: argparse.Namespace) -> int:
+    from .data import freeze_mollification_anchors
+
+    lock = freeze_mollification_anchors(args.config, args.output)
+    print(f"Mollification anchor lock: {lock['anchor_lock_sha256']} -> {args.output}")
+    return 0
+
+
+def _mollification_audit(args: argparse.Namespace) -> int:
+    from .data import run_mollification_audit
+
+    report = run_mollification_audit(args.config, args.anchor_lock, args.raw, args.output)
+    print(
+        f"Mollification adequacy {report['report_sha256']}: "
+        f"decision={report['decision']}"
+    )
+    return 0
+
+
+def _mollification_supplement_freeze(args: argparse.Namespace) -> int:
+    from .data import freeze_mollification_supplement_anchors
+
+    lock = freeze_mollification_supplement_anchors(
+        args.config, args.anchor_lock, args.audit_report, args.output
+    )
+    print(
+        "Mollification supplement anchor lock: "
+        f"{lock['supplement_anchor_lock_sha256']} -> {args.output}"
+    )
+    return 0
+
+
+def _mollification_collection_freeze(args: argparse.Namespace) -> int:
+    from .data import freeze_mollification_supplement_collection
+
+    lock = freeze_mollification_supplement_collection(
+        args.config,
+        args.anchor_lock,
+        args.audit_report,
+        args.supplement_anchor_lock,
+        args.budget_plan,
+        args.output,
+    )
+    print(
+        "Mollification supplement collection lock: "
+        f"{lock['collection_lock_sha256']} -> {args.output}"
+    )
+    return 0
+
+
+def _collect_mollification_supplement(args: argparse.Namespace) -> int:
+    from .data import collect_mollification_supplement
+
+    manifest = collect_mollification_supplement(
+        args.config,
+        args.anchor_lock,
+        args.audit_report,
+        args.supplement_anchor_lock,
+        args.budget_plan,
+        args.collection_lock,
+        args.shard_root,
+        args.output,
+    )
+    print(
+        f"Collected MollifiedReferenceCorpus {manifest['corpus_id']} "
+        f"({manifest['totals']['state_count']} states) -> {args.output}"
+    )
+    return 0
+
+
+def _collect_mollification_supplement_states(args: argparse.Namespace) -> int:
+    from .data import collect_mollification_supplement_states
+
+    entries = collect_mollification_supplement_states(
+        args.config,
+        args.anchor_lock,
+        args.audit_report,
+        args.supplement_anchor_lock,
+        args.budget_plan,
+        args.collection_lock,
+        args.shard_root,
+        args.state_id,
+    )
+    for entry in entries:
+        print(
+            f"Collected MollifiedReferenceShard {entry['dataset_id']} "
+            f"(state={entry['state_id']}) -> {entry['uri']}"
+        )
+    return 0
+
+
+def _validate_mollification_supplement(args: argparse.Namespace) -> int:
+    from .data import validate_mollification_supplement
+
+    manifest = validate_mollification_supplement(args.path)
+    print(
+        f"MollifiedReferenceCorpus OK: {manifest['corpus_id']} "
+        f"({manifest['totals']['state_count']} states)"
+    )
+    return 0
+
+
+def _write_mollification_data_entry(args: argparse.Namespace) -> int:
+    from .data import write_mollification_training_data_entry
+
+    entry = write_mollification_training_data_entry(
+        args.config,
+        args.anchor_lock,
+        args.audit_report,
+        args.output,
+        supplement_manifest_path=args.supplement_manifest,
+    )
+    print(
+        f"Mollification training data entry {entry['entry_id']} "
+        f"(variant={entry['variant']}) -> {args.output}"
+    )
+    return 0
+
+
 def _train_learning(args: argparse.Namespace) -> int:
     from .learning.training import TrainingConfig, train
 
@@ -327,6 +446,78 @@ def build_parser() -> argparse.ArgumentParser:
     audit_dense = data_commands.add_parser("audit-dense", help="审计 dense slice 峰邻域并给出 16,384 晋级清单")
     audit_dense.add_argument("path", type=Path)
     audit_dense.add_argument("--output", type=Path, required=True)
+    mollification_freeze = data_commands.add_parser(
+        "mollification-freeze",
+        help="在 fresh reference 查询前锁定 directional mollification 协议与 anchor",
+    )
+    mollification_freeze.add_argument("--config", type=Path, required=True)
+    mollification_freeze.add_argument("--output", type=Path, required=True)
+    mollification_audit = data_commands.add_parser(
+        "mollification-audit",
+        help="执行或复用 frozen directional mollification matched audit",
+    )
+    mollification_audit.add_argument("--config", type=Path, required=True)
+    mollification_audit.add_argument("--anchor-lock", type=Path, required=True)
+    mollification_audit.add_argument("--raw", type=Path, required=True)
+    mollification_audit.add_argument("--output", type=Path, required=True)
+    supplement_freeze = data_commands.add_parser(
+        "mollification-supplement-freeze",
+        help="在 supplement reference 查询前锁定 30-state 的 8×64 train anchor",
+    )
+    supplement_freeze.add_argument("--config", type=Path, required=True)
+    supplement_freeze.add_argument("--anchor-lock", type=Path, required=True)
+    supplement_freeze.add_argument("--audit-report", type=Path, required=True)
+    supplement_freeze.add_argument("--output", type=Path, required=True)
+    collection_freeze = data_commands.add_parser(
+        "mollification-collection-freeze",
+        help="在 versioned supplement query 前锁定 budget plan 与 collection identity",
+    )
+    collection_freeze.add_argument("--config", type=Path, required=True)
+    collection_freeze.add_argument("--anchor-lock", type=Path, required=True)
+    collection_freeze.add_argument("--audit-report", type=Path, required=True)
+    collection_freeze.add_argument("--supplement-anchor-lock", type=Path, required=True)
+    collection_freeze.add_argument("--budget-plan", type=Path, required=True)
+    collection_freeze.add_argument("--output", type=Path, required=True)
+    collect_supplement = data_commands.add_parser(
+        "collect-mollification-supplement",
+        help="按 frozen 30-state anchor lock 采集 versioned mollification supplement",
+    )
+    collect_supplement.add_argument("--config", type=Path, required=True)
+    collect_supplement.add_argument("--anchor-lock", type=Path, required=True)
+    collect_supplement.add_argument("--audit-report", type=Path, required=True)
+    collect_supplement.add_argument("--supplement-anchor-lock", type=Path, required=True)
+    collect_supplement.add_argument("--budget-plan", type=Path, required=True)
+    collect_supplement.add_argument("--collection-lock", type=Path, required=True)
+    collect_supplement.add_argument("--shard-root", type=Path, required=True)
+    collect_supplement.add_argument("--output", type=Path, required=True)
+    collect_supplement_states = data_commands.add_parser(
+        "collect-mollification-supplement-state",
+        help="按 frozen collection lock 续采指定 state，且不提前发布 manifest",
+    )
+    collect_supplement_states.add_argument("--config", type=Path, required=True)
+    collect_supplement_states.add_argument("--anchor-lock", type=Path, required=True)
+    collect_supplement_states.add_argument("--audit-report", type=Path, required=True)
+    collect_supplement_states.add_argument(
+        "--supplement-anchor-lock", type=Path, required=True
+    )
+    collect_supplement_states.add_argument("--budget-plan", type=Path, required=True)
+    collect_supplement_states.add_argument("--collection-lock", type=Path, required=True)
+    collect_supplement_states.add_argument("--shard-root", type=Path, required=True)
+    collect_supplement_states.add_argument("--state-id", action="append", required=True)
+    validate_supplement = data_commands.add_parser(
+        "validate-mollification",
+        help="验证 mollified-reference-corpus 的 hash、measure、noise 与 provenance",
+    )
+    validate_supplement.add_argument("path", type=Path)
+    mollification_data_entry = data_commands.add_parser(
+        "mollification-data-entry",
+        help="把 frozen adequacy 决定发布成 learning 可消费的唯一数据入口",
+    )
+    mollification_data_entry.add_argument("--config", type=Path, required=True)
+    mollification_data_entry.add_argument("--anchor-lock", type=Path, required=True)
+    mollification_data_entry.add_argument("--audit-report", type=Path, required=True)
+    mollification_data_entry.add_argument("--supplement-manifest", type=Path)
+    mollification_data_entry.add_argument("--output", type=Path, required=True)
 
     learn = commands.add_parser("learn", help="训练、validation 与 held-out test 工具")
     learn_commands = learn.add_subparsers(dest="learn_command", required=True)
@@ -443,6 +634,22 @@ def main(argv: list[str] | None = None) -> int:
         return _validate_corpus(args)
     if args.command == "data" and args.data_command == "audit-dense":
         return _audit_dense(args)
+    if args.command == "data" and args.data_command == "mollification-freeze":
+        return _mollification_freeze(args)
+    if args.command == "data" and args.data_command == "mollification-audit":
+        return _mollification_audit(args)
+    if args.command == "data" and args.data_command == "mollification-supplement-freeze":
+        return _mollification_supplement_freeze(args)
+    if args.command == "data" and args.data_command == "mollification-collection-freeze":
+        return _mollification_collection_freeze(args)
+    if args.command == "data" and args.data_command == "collect-mollification-supplement":
+        return _collect_mollification_supplement(args)
+    if args.command == "data" and args.data_command == "collect-mollification-supplement-state":
+        return _collect_mollification_supplement_states(args)
+    if args.command == "data" and args.data_command == "validate-mollification":
+        return _validate_mollification_supplement(args)
+    if args.command == "data" and args.data_command == "mollification-data-entry":
+        return _write_mollification_data_entry(args)
     if args.command == "learn" and args.learn_command == "train":
         return _train_learning(args)
     if args.command == "learn" and args.learn_command == "list-pipelines":

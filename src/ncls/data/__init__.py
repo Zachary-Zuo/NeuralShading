@@ -56,6 +56,25 @@ from .directions import (
     stratified_view_directions,
 )
 from .statistics import ReplicaMoments, combine_replica_moments
+from .mollification import (
+    MollificationProtocol,
+    freeze_mollification_anchors,
+    freeze_mollification_supplement_anchors,
+    load_mollification_anchor_lock,
+    load_mollification_supplement_anchor_lock,
+    load_mollification_training_data_entry,
+    mollification_cone_directions,
+    run_mollification_audit,
+    write_mollification_training_data_entry,
+)
+from .mollification_collection import (
+    MollificationSupplementBudgetPlan,
+    collect_mollification_supplement,
+    collect_mollification_supplement_states,
+    freeze_mollification_supplement_collection,
+    load_mollification_supplement_collection_lock,
+    validate_mollification_supplement,
+)
 
 __all__ = [
     "COLOR_MODEL",
@@ -96,6 +115,21 @@ __all__ = [
     "equal_area_sphere",
     "grazing_anchored_view_directions",
     "make_state_id",
+    "MollificationProtocol",
+    "MollificationSupplementBudgetPlan",
+    "freeze_mollification_anchors",
+    "freeze_mollification_supplement_anchors",
+    "freeze_mollification_supplement_collection",
+    "collect_mollification_supplement",
+    "collect_mollification_supplement_states",
+    "load_mollification_anchor_lock",
+    "load_mollification_supplement_anchor_lock",
+    "load_mollification_supplement_collection_lock",
+    "load_mollification_training_data_entry",
+    "mollification_cone_directions",
+    "run_mollification_audit",
+    "validate_mollification_supplement",
+    "write_mollification_training_data_entry",
     "peak_grazing_mixture_pdf",
     "peak_grazing_mixture_query",
     "polar_band_view_directions",

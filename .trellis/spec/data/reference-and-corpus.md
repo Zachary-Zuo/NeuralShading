@@ -39,6 +39,53 @@ paths:
 - reciprocal pair 只进 source-aware reciprocity scorecard，不进训练、方向 L1 或能量主指标；高噪声 reciprocal 不得支撑质量结论。
 - dense slice 默认 `4×8192`，只把 dense audit 证明峰邻域不足的 state 晋升到 `4×16384` 并独立成 shard；这两个值之外的密度不属于 v1。
 
+## Scenario: directional mollification supplement
+
+### 1. Scope / Trigger
+
+- 当冻结 audit 证明 base v5 不能重建训练早期的 directional mollification target 时，使用 `mollified-reference-shard/corpus` v1；它只补充固定 `wo` cone average，不替换 base v5。
+
+### 2. Signatures
+
+- 验证入口：`ncls data validate-mollification <manifest>` / `validate_mollification_supplement(path)`。
+- 学习入口：`MollificationCurriculumStore(entry_path).batch(state_ids, view_indices, light_indices, training_progress=t)`；调用方只传冻结 entry，不扫描目录寻找最新 manifest。
+
+### 3. Contracts
+
+- 每 shard 固定一个 state，布局为 `8×4×64`；四个正半径 level 为 `10°/8.5355339059°/5°/1.4644660941°`，每 target 使用 256 个 deterministic upper-cap `wo`，`wi` 保持不变。
+- composite corpus 必须覆盖 selection 的 30 个唯一 state；每个 shard 自带产生它的 budget plan/collection lock URI 与 hash，允许复用已经通过自身 `p95≤0.06/max≤0.25` 门的旧 plan shard。
+- training entry 显式绑定 base corpus ID、audit report hash、supplement corpus URI/ID 和 curriculum；`t<0.875` 取最近的正半径 level，`t≥0.875` 必须读取该 shard 内冻结的 base-v5 `source_response`（0°）。
+
+### 4. Validation & Error Matrix
+
+- state 缺失、重复或不等于 selection → corpus 拒绝。
+- shard semantic/file hash、base/protocol/anchor/reference identity 或自身 plan/lock 不一致 → corpus 拒绝。
+- validator 必须从 replica mean 复算 mean、variance 与 relative-SE `p95/max`；stored/manifest 摘要与复算值不一致，或复算值越门 → corpus 拒绝。
+- entry 与 supplement corpus identity 不一致、reader 遇到未知 state/越界 view/light → 训练加载或 batch 立即失败，不允许 fallback。
+
+### 5. Good/Base/Bad Cases
+
+- Good：一个 composite manifest 显式组合 v6/v7/v8 已验证 shard，逐 shard 使用其自身 plan/lock 判门。
+- Base：`t=0.875` 返回 `target_source=base-v5`、`radius_degrees=0`。
+- Bad：按最终全局 cap 重新解释所有旧 shard，或在 reader 中按目录名猜测最新语料。
+
+### 6. Tests Required
+
+- unit：protocol/schema 严格字段、连续 `sample_offset` 与 CPU float64 Welford merge、摘要/tamper、curriculum `.874/.875` 边界和未知 state fail-stop。
+- GPU/reference：通过 `scripts/run_falcor_python.ps1` 覆盖固定 batch reference 路径。
+- corpus：同时运行 base v5 与 composite validator，并用真实 training entry 做 reader smoke。
+
+### 7. Wrong vs Correct
+
+```python
+# Wrong：目录发现与隐式 fallback 会让训练数据随磁盘状态漂移。
+store = MollificationCurriculumStore(find_latest_manifest())
+
+# Correct：训练配置只消费版本化 entry；entry 再显式绑定 composite manifest。
+store = MollificationCurriculumStore(frozen_entry_path)
+batch = store.batch(state_ids, views, lights, training_progress=progress)
+```
+
 ## reference shader（`shaders/ncls/reference/`）
 
 - 随机游走 reference 已是单一源：`random_walk_reference.slang` 同时服务采集（`shaders/ncls/data/reference_layer_stack.cs.slang`）与 viewer。新族的 reference shader 同样只写一份，采集入口与 viewer 都 `#include` 它。

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Iterator, Mapping, Sequence
 
+import h5py
 import numpy as np
 
 from ncls.data import (
@@ -10,6 +12,8 @@ from ncls.data import (
     ReferenceCorpusManifest,
     ReferenceDataset,
     SPLIT_NAMES,
+    load_mollification_training_data_entry,
+    validate_mollification_supplement,
     validate_reference_corpus,
 )
 from ncls.paths import PROJECT_ROOT
@@ -20,6 +24,151 @@ PARTITION_POLICY_IDS = (
     "target-visible-v1",
     "workflow-v1",
 )
+
+
+def select_mollification_curriculum_target(
+    training_progress: float,
+    stored_progress: Sequence[float],
+    stored_radius_degrees: Sequence[float],
+    zero_radius_switch_progress: float,
+) -> dict[str, Any]:
+    progress = float(training_progress)
+    levels = np.asarray(stored_progress, dtype=np.float64)
+    radii = np.asarray(stored_radius_degrees, dtype=np.float64)
+    if not math.isfinite(progress) or not 0.0 <= progress <= 1.0:
+        raise ValueError("training progress must be finite and in [0, 1]")
+    if levels.shape != (4,) or radii.shape != (4,):
+        raise ValueError("mollification curriculum requires four stored levels")
+    if progress >= float(zero_radius_switch_progress):
+        return {
+            "target_source": "base-v5",
+            "level_index": None,
+            "level_progress": 1.0,
+            "radius_degrees": 0.0,
+        }
+    level_index = int(np.argmin(np.abs(levels - progress)))
+    return {
+        "target_source": "mollified-reference",
+        "level_index": level_index,
+        "level_progress": float(levels[level_index]),
+        "radius_degrees": float(radii[level_index]),
+    }
+
+
+class MollificationCurriculumStore:
+    """读取冻结 supplement，并显式返回当前 curriculum target 来源。"""
+
+    def __init__(self, data_entry_path: Path | str) -> None:
+        self.data_entry_path = Path(data_entry_path)
+        self.entry = load_mollification_training_data_entry(self.data_entry_path)
+        if self.entry["variant"] != "base-v5-plus-mollification-v1":
+            raise ValueError("mollification curriculum store requires the supplement variant")
+        manifest_path = Path(str(self.entry["supplement_corpus_uri"]))
+        if not manifest_path.is_absolute():
+            manifest_path = PROJECT_ROOT / manifest_path
+        self.manifest = validate_mollification_supplement(manifest_path)
+        self._streams: dict[str, h5py.File] = {}
+        try:
+            for shard in self.manifest["shards"]:
+                state_id = str(shard["state_id"])
+                path = Path(str(shard["uri"]))
+                if not path.is_absolute():
+                    path = PROJECT_ROOT / path
+                self._streams[state_id] = h5py.File(path, "r")
+        except Exception:
+            self.close()
+            raise
+        self._progress = np.asarray(
+            self.entry["curriculum"]["stored_progress"], dtype=np.float64
+        )
+        self._radii = np.asarray(
+            self.entry["curriculum"]["stored_radius_degrees"], dtype=np.float64
+        )
+        self._switch_progress = float(
+            self.entry["curriculum"]["zero_radius_switch_progress"]
+        )
+
+    @property
+    def data_id(self) -> str:
+        return str(self.entry["entry_id"])
+
+    @property
+    def state_count(self) -> int:
+        return len(self._streams)
+
+    def close(self) -> None:
+        for stream in self._streams.values():
+            stream.close()
+        self._streams.clear()
+
+    def __enter__(self) -> "MollificationCurriculumStore":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    def select_target(self, training_progress: float) -> dict[str, Any]:
+        return select_mollification_curriculum_target(
+            training_progress,
+            self._progress,
+            self._radii,
+            self._switch_progress,
+        )
+
+    def batch(
+        self,
+        state_ids: Sequence[str],
+        view_indices: Sequence[int],
+        light_indices: Sequence[int],
+        *,
+        training_progress: float,
+    ) -> dict[str, np.ndarray]:
+        requested_states = tuple(map(str, state_ids))
+        views = np.asarray(view_indices, dtype=np.int64)
+        lights = np.asarray(light_indices, dtype=np.int64)
+        if len(requested_states) != len(views) or len(views) != len(lights):
+            raise ValueError("mollification batch fields must have equal length")
+        if not requested_states:
+            raise ValueError("mollification batch must be non-empty")
+        if np.any((views < 0) | (views >= 8)) or np.any((lights < 0) | (lights >= 64)):
+            raise ValueError("mollification batch indices are outside the frozen 8x64 layout")
+        unknown = set(requested_states) - set(self._streams)
+        if unknown:
+            raise ValueError(f"mollification batch contains unknown states: {sorted(unknown)}")
+        target = self.select_target(training_progress)
+        response = np.empty((len(views), 3), dtype=np.float32)
+        wo = np.empty_like(response)
+        wi = np.empty_like(response)
+        for index, (state_id, view_index, light_index) in enumerate(
+            zip(requested_states, views.tolist(), lights.tolist(), strict=True)
+        ):
+            stream = self._streams[state_id]
+            wo[index] = stream["anchors/wo"][view_index]
+            wi[index] = stream["anchors/wi"][view_index, light_index]
+            if target["level_index"] is None:
+                response[index] = stream["anchors/source_response"][view_index, light_index]
+            else:
+                response[index] = stream["responses/mean"][
+                    view_index, int(target["level_index"]), light_index
+                ]
+        return {
+            "state_id": np.asarray(requested_states, dtype=object),
+            "view_index": views,
+            "light_index": lights,
+            "wo": wo,
+            "wi": wi,
+            "response": response,
+            "mollification_progress": np.full(len(views), training_progress, dtype=np.float32),
+            "mollification_level_progress": np.full(
+                len(views), target["level_progress"], dtype=np.float32
+            ),
+            "mollification_radius_degrees": np.full(
+                len(views), target["radius_degrees"], dtype=np.float32
+            ),
+            "target_source": np.full(
+                len(views), target["target_source"], dtype=object
+            ),
+        }
 
 
 class ReferenceQueryStore:

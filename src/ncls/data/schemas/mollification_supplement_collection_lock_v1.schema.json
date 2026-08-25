@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mollification supplement collection lock v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "budget_plan_uri", "budget_plan_sha256", "protocol_sha256",
+    "audit_report_sha256", "supplement_anchor_lock_sha256", "base_corpus_id",
+    "state_ids", "reference_implementation_sha256", "predecessor_failure",
+    "frozen_at", "collection_lock_sha256"
+  ],
+  "properties": {
+    "schema": {"const": {"name": "mollification-supplement-collection-lock", "version": 1}},
+    "budget_plan_uri": {"type": "string", "minLength": 1},
+    "budget_plan_sha256": {"$ref": "#/$defs/sha256"},
+    "protocol_sha256": {"$ref": "#/$defs/sha256"},
+    "audit_report_sha256": {"$ref": "#/$defs/sha256"},
+    "supplement_anchor_lock_sha256": {"$ref": "#/$defs/sha256"},
+    "base_corpus_id": {"$ref": "#/$defs/sha256"},
+    "state_ids": {
+      "type": "array", "minItems": 30, "maxItems": 30,
+      "items": {"$ref": "#/$defs/sha256"}
+    },
+    "reference_implementation_sha256": {"$ref": "#/$defs/sha256"},
+    "predecessor_failure": {
+      "type": "object", "additionalProperties": false,
+      "required": ["directory", "file_count", "total_bytes"],
+      "properties": {
+        "directory": {"type": "string", "minLength": 1},
+        "file_count": {"type": "integer", "minimum": 1},
+        "total_bytes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "frozen_at": {"type": "string", "format": "date-time"},
+    "collection_lock_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}
