@@ -77,7 +77,7 @@ v8 按同一规则计算 `ceil((0.107237/0.06)^2×131072)=418694`，向上取二
 - [x] `reuse-v5` 路径包含确定性重建、support/noise/数值/repeat 全部通过证据；不通过时不得选择该路径。
 - [x] supplement 路径具有版本化 schema/manifest、30-state 完整生成、hash/measure/noise/provenance 验证和唯一 corpus identity。
 - [x] `03` 获得一个明确、可读取、可追溯的数据入口和 curriculum reader，不存在局部静默重解释。
-- [ ] unit/GPU/reference/corpus gate、Quality Check、scoped local commits 与任务归档全部完成后，父任务才进入 `03`。
+- [x] unit/GPU/reference/corpus gate、Quality Check、scoped local commit `123a94b` 与任务归档全部完成后，父任务才进入 `03`。
 
 ## Out Of Scope
 

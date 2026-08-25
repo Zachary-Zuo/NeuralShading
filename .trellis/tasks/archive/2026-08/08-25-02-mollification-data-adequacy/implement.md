@@ -48,8 +48,8 @@ conda run -n neural-shading python -m ncls data validate-mollification <publishe
 
 - [x] 使用 `trellis-check` 审计协议先于结果、measure、hash、reader data flow、no fallback和测试独立性；reviewer 自修 schema 漂移、统计摘要重算、循环 re-export 与 tamper 覆盖。
 - [x] 使用 `trellis-update-spec` 固化 directional-mollification supplement 与 data-entry 所有权；长期合同已写入 `.trellis/spec/data/reference-and-corpus.md`。
-- [ ] 记录 dirty path 归属与逻辑提交计划，创建 scoped local commits；排除 `SmileySans-Oblique.otf`，不 amend、不 push。
-- [ ] `trellis-finish-work` 归档并确认 archive/commit provenance 后才进入 `03`。
+- [x] 记录 dirty path 归属与逻辑提交计划，创建 scoped local commit `123a94b`；排除 `SmileySans-Oblique.otf`，未 amend、未 push。
+- [x] `trellis-finish-work` 按 work commit `123a94b` 归档并记录 journal；归档完成后才进入 `03`。
 
 ## 6. Rollback
 
