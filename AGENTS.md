@@ -81,3 +81,25 @@
 - 在 Windows PowerShell 中读取预期为 UTF-8 的文本文件，尤其是包含中文的 Markdown、JSON、配置和源码时，必须显式指定 UTF-8 解码：`Get-Content -LiteralPath <path> -Encoding UTF8`；一次性读取全文时再加 `-Raw`。
 - 不因 `[Console]::OutputEncoding` 或 `$OutputEncoding` 已设为 UTF-8 而省略 `Get-Content` 的 `-Encoding UTF8`。
 - 如果显式使用 UTF-8 后仍出现乱码，先确认文件实际编码；只有确认是旧式 GBK/ANSI 后才使用 `-Encoding Default`。不得把乱码当作原文继续分析或回写。
+
+<!-- TRELLIS:START -->
+# Trellis Instructions
+
+These instructions are for AI assistants working in this project.
+
+This project is managed by Trellis. The working knowledge you need lives under `.trellis/`:
+
+- `.trellis/workflow.md` — development phases, when to create tasks, skill routing
+- `.trellis/spec/` — package- and layer-scoped coding guidelines (read before writing code in a given layer)
+- `.trellis/workspace/` — per-developer journals and session traces
+- `.trellis/tasks/` — active and archived tasks (PRDs, research, jsonl context)
+
+If a Trellis command is available on your platform (e.g. `/trellis:finish-work`, `/trellis:continue`), prefer it over manual steps. Not every platform exposes every command.
+
+If you're using Codex or another agent-capable tool, additional project-scoped helpers may live in:
+- `.agents/skills/` — reusable Trellis skills
+- `.codex/agents/` — optional custom subagents
+
+Managed by Trellis. Edits outside this block are preserved; edits inside may be overwritten by a future `trellis update`.
+
+<!-- TRELLIS:END -->
