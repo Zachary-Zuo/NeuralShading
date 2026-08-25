@@ -234,6 +234,23 @@ def _benchmark_learning(args: argparse.Namespace) -> int:
     return 0
 
 
+def _audit_p1_learning(args: argparse.Namespace) -> int:
+    from .learning.evaluation.p1_audit import parse_checkpoint_specs, run_p1_audit
+
+    result = run_p1_audit(
+        args.data,
+        parse_checkpoint_specs(args.checkpoint),
+        args.output,
+        roles=tuple(args.roles),
+        device_name=args.device,
+        bootstrap_iterations=args.iterations,
+        bootstrap_seed=args.seed,
+        progress=lambda message: print(message, flush=True),
+    )
+    print(f"P1 audit complete: {result['report_sha256']}")
+    return 0
+
+
 def _validate_bundle(path: Path) -> int:
     from .bundle import MethodBundle
 
@@ -373,6 +390,28 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--warmup", type=int, default=10)
     benchmark.add_argument("--iterations", type=int, default=50)
 
+    audit_p1 = learn_commands.add_parser(
+        "audit-p1",
+        help="对冻结的 P1 checkpoint 运行独立死区、signed 能量、reference SE 与长尾诊断",
+    )
+    audit_p1.add_argument("--data", type=Path, required=True)
+    audit_p1.add_argument(
+        "--checkpoint",
+        action="append",
+        required=True,
+        help="可重复；格式为 label=path，省略 label 时从 run/checkpoint 路径推导",
+    )
+    audit_p1.add_argument("--output", type=Path, required=True)
+    audit_p1.add_argument(
+        "--roles",
+        nargs="+",
+        choices=("train", "validation", "test", "adversarial_probe", "dense_slice"),
+        default=("train", "validation", "test", "adversarial_probe", "dense_slice"),
+    )
+    audit_p1.add_argument("--device", type=str)
+    audit_p1.add_argument("--iterations", type=int, default=10000)
+    audit_p1.add_argument("--seed", type=int, default=20260825)
+
     bundle = commands.add_parser("bundle", help="MethodBundle 导出与验证")
     bundle_commands = bundle.add_subparsers(dest="bundle_command", required=True)
     validate_bundle = bundle_commands.add_parser("validate", help="验证 manifest 与全部内容哈希")
@@ -424,6 +463,8 @@ def main(argv: list[str] | None = None) -> int:
         return _oracle_m3(args)
     if args.command == "learn" and args.learn_command == "benchmark":
         return _benchmark_learning(args)
+    if args.command == "learn" and args.learn_command == "audit-p1":
+        return _audit_p1_learning(args)
     if args.command == "bundle" and args.bundle_command == "validate":
         return _validate_bundle(args.path)
     if args.command == "bundle" and args.bundle_command == "export-film-m1":
