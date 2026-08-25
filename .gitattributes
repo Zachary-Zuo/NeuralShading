@@ -7,3 +7,6 @@
 # picking either side (task state lives in task.json, not index.md). See
 # .trellis/spec/cli/backend/directory-structure.md for details.
 .trellis/workspace/*/journal-*.md merge=union
+
+# 两侧统一 LF：WSL（autocrlf=input）与 Windows（autocrlf=true）共用同一工作树，不在仓库里混入 CRLF。
+* text=auto eol=lf
