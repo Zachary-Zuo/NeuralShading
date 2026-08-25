@@ -21,7 +21,7 @@ paths:
 
 ## 训练配置（`training/config.py`）
 
-- 只接受完整 `training-config-v1`；`capacity ∈ {S, M, L}`；默认 `seed=20260824`、`steps=25000`、`checkpoint_selection="median_then_p95"`（旧默认不进 hash）。新配置用 `"tail_guard"`：先剔除 validation p95 > 该 run 至今最小 p95 × 1.25 的 checkpoint，再取 median 最小。
+- 只接受完整 `training-config-v1`；`capacity` 可省略，P1 v1 历史配置保留其 S/M/L 字符串；默认 `seed=20260824`、`steps=25000`、`checkpoint_selection="median_then_p95"`（旧默认不进 hash）。新配置用 `"tail_guard"`：先剔除 validation p95 > 该 run 至今最小 p95 × 1.25 的 checkpoint，再取 median 最小。
 - `dataset_selection` 只允许 `state_ids / asset_ids / family_ids`。
 - 预算档位：快速档（≤ 30 min GPU，只做 smoke，不入注册表）、标准档（全量阶段数据、共同 seed、4,000 步后 validation patience 早停）、冲刺档（×5–10）。P1 主搜索只用一个 deterministic seed；只有差距接近或轨迹异常才追加 seed。
 - `run_manifest.json` 记录解析后配置、Git 提交、reference 实现 hash、合同版本、seed、依赖版本、输入产物 ID；命令行只能覆盖配置里已声明的字段。
@@ -36,13 +36,13 @@ paths:
 ## compare（`evaluation/comparison.py`）
 
 - 只接受 `valid=True`、`evaluation_role=test`、hash 自洽的 quality 报告；baseline 与 candidate 必须同 `data_id`、完全相同的 test state，≥ 20 个 matched state，≥ 1,000 次 95% state-block paired bootstrap。
-- 只允许声明的差异：容量曲线加 `--vary capacity`；其余未声明的训练字段差异直接拒绝。
+- `steps / seed / dataset_selection` 必须一致，否则直接拒绝；候选之间的差异只体现在 pipeline 与 model 字段。
 - CI 跨零记"无显著差异"，不写"X 优于 Y"。30-state p95 的 CI 很宽，只作 selection 诊断；正式长尾结论用 ≥ 50 个 test state 并附 p90/p95、最差 state 清单、CI 与 leave-one-state-out。
 - 有 core 的候选始终与 direct 候选配对报告；跨族汇总分层报告。
 
 ## experiment_log 登记（`docs/research/experiment_log.md`）
 
-每个正式 run 一行：日期、run ID、候选+档位、数据版本（`data_id`）、预算档、seeds、方向 L1 med/p95、能量误差 med/p95、一句话结论（含是否部署候选、超了哪条线）、artifacts 路径。详细数值留 `artifacts/`；阶段结论写在表下方小节。
+每个正式 run 一行：日期、run ID、候选+配置、数据版本（`data_id`）、预算档、seeds、方向 L1 med/p95、能量误差 med/p95、一句话结论（含是否部署候选、超了哪条线）、artifacts 路径。详细数值留 `artifacts/`；阶段结论写在表下方小节。
 
 ## 导出（`src/ncls/bundle/`）
 

@@ -33,6 +33,28 @@ conda run -n neural-shading python -m pytest `
 
 运行时边界（静态检查覆盖不到）：`training/runner.py` 在 `tail_guard` 下的 best.pt 替换发生在「当前 validation 把至今最小 p95 压低到使已保存 best 被剔除」时，用 `configs/learning/smoke/lobe-residual-k2-p1-smoke.json` 之外的任一 M2 smoke 配置加 `"checkpoint_selection": "tail_guard"` 跑 8 步确认 `run_manifest.json["best_validation"]` 含 `selection`、`step`、`value` 三个键。`lobe-residual-*` 配置本次只能解析，`create_model/predict_f` 抛 `NotImplementedError`（等 P2.5）。
 
+### 取消容量档位（`capacity` 改为可选、`compare` 去掉 `--vary`；本地只做静态检查）
+
+```powershell
+conda run -n neural-shading python -m pytest `
+  tests\unit\test_training_config.py `
+  tests\unit\test_quality_evaluation.py `
+  tests\unit\test_deployment_budget.py `
+  tests\unit\test_pipeline_contract.py -q
+```
+
+期望：全部通过，无 skip。重点断言：
+
+- `test_training_config.py`：`TrainingConfig(pipeline, stage, model)` 不带 `capacity` 可构造，`capacity is None`，`to_dict()` 中无 `capacity` 键，JSON 往返相等；四个 `lobe-residual-*` 配置解析后 `capacity is None`；P1 v1 配置（`film-evaluator-*`、`analytic-residual-*`、`per-state-teacher-l-v1`）仍带 `"S"/"M"/"L"` 且 `resolved_sha256` 不变（`test_checkpoint_selection_defaults_to_legacy_and_keeps_its_hash`）。
+- `test_quality_evaluation.py`：`compare_quality_reports` 的报告 `matched.fixed_training_fields == {"steps", "seed", "dataset_selection"}` 三键；baseline 与 candidate `seed` 不同时抛 `ValueError`，消息含 `matched training fields`；报告里没有 `varied_training_fields` 键。
+- `test_deployment_budget.py`、`test_pipeline_contract.py`：P1 v1 家族内部仍按 `P1PipelineSpec(family, capacity)` 注册 7 个 pipeline，本次未改动，用作回归。
+
+CLI：`conda run -n neural-shading python -m ncls.cli learn compare --help` 不再列出 `--vary`；带 `--vary capacity` 调用应报 argparse `unrecognized arguments`。
+
+兼容性复核（远程有 P1 v1 checkpoint 时）：`lobe-residual-*` 配置删去 `"capacity": "S"` 后 `resolved_sha256` 变化，这些配置在此前没有正式 run，无需迁移；P1 v1 checkpoint 的 `training_config_sha256` 校验仍须通过。
+
+静态分析覆盖不到：`runner.py` / `evaluator.py` / `p1_audit.py` 把 `config.capacity` 写进 provenance，`capacity=None` 时应落成 JSON `null`，确认 `run_manifest.json` 与 quality 报告仍能被 `_read_report` 的 hash 校验接受（`allow_nan=False` 对 `null` 无影响，但需实跑一次 smoke 配置确认）。
+
 ## P1.0 SlangPy autodiff spike（仅远程，`p1_v2_plan.md` Phase 1）
 
 ```powershell

@@ -13,8 +13,8 @@ from .selection import CHECKPOINT_SELECTIONS
 class TrainingConfig:
     pipeline: str
     stage: str
-    capacity: str
     model: Mapping[str, Any]
+    capacity: str | None = None
     dataset_selection: Mapping[str, Any] = field(default_factory=dict)
     steps: int = 25000
     batch_size: int = 64
@@ -38,8 +38,8 @@ class TrainingConfig:
     def __post_init__(self) -> None:
         if self.schema_name != "training-config" or self.schema_version != 1:
             raise ValueError("unsupported training config")
-        if not self.pipeline or not self.stage or self.capacity not in {"S", "M", "L"}:
-            raise ValueError("training config requires pipeline, stage and S/M/L capacity")
+        if not self.pipeline or not self.stage:
+            raise ValueError("training config requires pipeline and stage")
         if self.learning_rate_schedule not in {"constant", "cosine"}:
             raise ValueError("unsupported learning rate schedule")
         if not 0.0 <= self.final_learning_rate_fraction <= 1.0:
@@ -74,6 +74,8 @@ class TrainingConfig:
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
+        if value["capacity"] is None:
+            del value["capacity"]
         value["model"] = dict(self.model)
         value["dataset_selection"] = {
             name: list(values) for name, values in self.dataset_selection.items()
@@ -105,7 +107,7 @@ class TrainingConfig:
         unknown = set(value) - fields
         if unknown:
             raise ValueError(f"training config contains unsupported fields: {sorted(unknown)}")
-        required = {"pipeline", "stage", "capacity", "model"}
+        required = {"pipeline", "stage", "model"}
         missing = required - set(value)
         if missing:
             raise ValueError(f"training config is missing required fields: {sorted(missing)}")

@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "TrainingConfig v1",
   "type": "object",
-  "required": ["pipeline", "stage", "capacity", "model"],
+  "required": ["pipeline", "stage", "model"],
   "properties": {
     "pipeline": {"type": "string", "minLength": 1},
     "stage": {"type": "string", "minLength": 1},
-    "capacity": {"enum": ["S", "M", "L"]},
+    "capacity": {"type": "string", "minLength": 1},
     "model": {"type": "object"},
     "dataset_selection": {"type": "object"},
     "steps": {"type": "integer", "minimum": 1},

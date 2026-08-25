@@ -183,7 +183,6 @@ def _compare_learning(args: argparse.Namespace) -> int:
         args.candidate,
         iterations=args.iterations,
         seed=args.seed,
-        varied_fields=tuple(args.vary),
     )
     write_comparison_report(args.output, result)
     print(
@@ -359,13 +358,6 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--output", type=Path, required=True)
     compare.add_argument("--iterations", type=int, default=1000)
     compare.add_argument("--seed", type=int, default=20260824)
-    compare.add_argument(
-        "--vary",
-        action="append",
-        choices=("capacity",),
-        default=[],
-        help="显式声明 matched 对照唯一允许变化的训练字段",
-    )
 
     oracle_m3 = learn_commands.add_parser(
         "oracle-m3",

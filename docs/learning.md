@@ -13,7 +13,7 @@ P1 v1 已完成正式单-seed 比较。M1-M 是通过全部主参考线的 best 
 - `fitting`：gradient/direct-fit/hybrid 路径和 loss；
 - `runtime`：compiler 与 exporter。
 
-名称用于人读，descriptor 的 SHA-256 才是精确实现身份。容量档位固定写成 `S/M/L`。schema 见 [`learning_pipeline_v1.schema.json`](../src/ncls/learning/schemas/learning_pipeline_v1.schema.json) 和 [`training_config_v1.schema.json`](../src/ncls/learning/schemas/training_config_v1.schema.json)。
+名称用于人读，descriptor 的 SHA-256 才是精确实现身份。`capacity` 可省略，P1 v1 历史配置保留其 S/M/L 字符串。schema 见 [`learning_pipeline_v1.schema.json`](../src/ncls/learning/schemas/learning_pipeline_v1.schema.json) 和 [`training_config_v1.schema.json`](../src/ncls/learning/schemas/training_config_v1.schema.json)。
 
 ## 数据读取
 
@@ -79,7 +79,7 @@ conda run -n neural-shading python -m ncls.cli learn compare `
   --output artifacts/comparisons/baseline-vs-candidate.json
 ```
 
-容量曲线比较必须显式加 `--vary capacity`。比较器只允许这一项变化，并把 baseline/candidate 的容量值写入报告；未声明的训练字段差异仍直接拒绝。
+比较器要求 baseline 与 candidate 的 `steps / seed / dataset_selection` 完全一致，不一致直接拒绝；候选之间的差异只体现在 pipeline 与 model。
 
 冻结 checkpoint 后测实际 query 成本：
 

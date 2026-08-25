@@ -75,7 +75,6 @@ def compare_quality_reports(
     *,
     iterations: int | None = None,
     seed: int = 20260824,
-    varied_fields: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     comparison_config = QUALITY_SUITE_DOCUMENT["comparison"]
     minimum_iterations = int(comparison_config["minimum_bootstrap_iterations"])
@@ -99,13 +98,7 @@ def compare_quality_reports(
         raise ValueError(
             f"formal comparison requires at least {minimum_states} matched test states"
         )
-    matched_fields = ("capacity", "steps", "seed", "dataset_selection")
-    allowed_varied_fields = {"capacity"}
-    unknown_varied_fields = set(varied_fields) - allowed_varied_fields
-    if unknown_varied_fields:
-        raise ValueError(
-            f"comparison cannot vary fields: {sorted(unknown_varied_fields)}"
-        )
+    matched_fields = ("steps", "seed", "dataset_selection")
     baseline_training = baseline.get("training")
     candidate_training = candidate.get("training")
     if not isinstance(baseline_training, dict) or not isinstance(candidate_training, dict):
@@ -115,10 +108,9 @@ def compare_quality_reports(
         for field in matched_fields
         if baseline_training.get(field) != candidate_training.get(field)
     ]
-    if set(mismatched) != set(varied_fields):
+    if mismatched:
         raise ValueError(
-            "comparison training mismatches must exactly equal the declared varied fields: "
-            f"actual={mismatched}, declared={list(varied_fields)}"
+            f"comparison requires matched training fields, mismatched: {mismatched}"
         )
     direction_a = tuple(np.asarray([baseline_states[state]["directional_l1"]]) for state in state_ids)
     direction_b = tuple(np.asarray([candidate_states[state]["directional_l1"]]) for state in state_ids)
@@ -159,16 +151,7 @@ def compare_quality_reports(
             "data_id": True,
             "test_states": True,
             "fixed_training_fields": {
-                field: baseline_training.get(field)
-                for field in matched_fields
-                if field not in varied_fields
-            },
-            "varied_training_fields": {
-                field: {
-                    "baseline": baseline_training.get(field),
-                    "candidate": candidate_training.get(field),
-                }
-                for field in varied_fields
+                field: baseline_training.get(field) for field in matched_fields
             },
         },
         "statistics": {

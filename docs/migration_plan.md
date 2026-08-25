@@ -31,14 +31,14 @@ CorpusPlan
 - `configs/corpus/layer-stack-v1.json` 冻结 28×10 LayerStack 状态、W/G/S 密度、+T/+M 采样、G1/G2/G2s split 和 adaptive reference 预算。
 - dense slice 默认 `4×8192`；实际 response 审计只把峰邻域不足的 state 晋升到 `4×16384`，并保持独立矩形 shard。
 - HDF5 v5 保存原始和 reciprocal paired response；corpus validator 检查 hash、角色完整性、state 元数据稳定性及 split/source 泄漏。
-- learning registry 在 P0 保持为空。P1 候选必须用 `LearningPipelineDescriptor` 的 `data/model/fitting/runtime` 结构注册，并在 S/M/L 档位中选择容量。
+- learning registry 在 P0 保持为空。P1 候选必须用 `LearningPipelineDescriptor` 的 `data/model/fitting/runtime` 结构注册。
 - `configs/evaluation/quality-v1.json` 是固定评测协议；报告记录其精确 hash。能量 bootstrap 对完整 `(state, wo)` 行重采样，不使用 state 摘要近似。
 - 已有解析实现继续作为部署回归 fixture、成本对照或 sampling proposal；它不注册成研究候选，也不形成第二套训练/评测入口。
 
 ## 后续顺序
 
 1. 生成并审计 LayerStack v1 corpus，冻结 manifest；
-2. 在 P1 注册首批 evaluator 候选，按 S/M/L 做 matched 容量比较；
+2. 在 P1 注册首批 evaluator 候选，做 matched 比较；
 3. 稳定共享 decoder、latent 与 compiler；
 4. 每个研究阶段收尾时执行一次 MethodBundle、Slang parity、成本与 viewer 证据；
 5. evaluator/compiler 稳定后再扩展 matched sampler、环境积分和 Falcor/UE 式工作流。

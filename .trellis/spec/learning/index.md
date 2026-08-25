@@ -37,7 +37,7 @@ configs/learning/<name>.json（training-config-v1）
 ## 开发前检查清单
 
 - [ ] 已读 `project/method-constraints.md`，新候选通过注册时静态检查。
-- [ ] 新候选用 `LearningPipelineDescriptor` 的 `data / model / fitting / runtime` 四组字段注册，容量选 `S/M/L`，`deployment_candidate` 明确。
+- [ ] 新候选用 `LearningPipelineDescriptor` 的 `data / model / fitting / runtime` 四组字段注册，`capacity` 字段省略，`deployment_candidate` 明确。
 - [ ] 模型前向是 Slang（`core/shared-slang-backend.md`）；Torch 只有 loss、optimizer 与 parity oracle。
 - [ ] 复用 `pipelines/appearance_loss.py` 与现有 `source_adapters/`，不复制。
 - [ ] 改 `TrainingConfig` / descriptor / quality suite 字段时同步 `schemas/*.json`、对应测试，并确认旧 hash 不变（`test_training_config.py`）。

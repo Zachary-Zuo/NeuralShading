@@ -7,12 +7,12 @@
 3. 候选方法怎么「训练」（梯度训练、直接拟合或两者混合），预算怎么统一；
 4. 怎么测试、怎么比较、怎么记录，使不同方法能在同一个稳定框架下反复迭代。
 
-模型候选本身的设计（结构、公式、容量档位、动机）见 [`model_candidates.md`](model_candidates.md)。HDF5 字段与采集命令的稳定合同见 [`../data.md`](../data.md) 与 [`../contracts/`](../contracts/)。
+模型候选本身的设计（结构、公式、容量形态、动机）见 [`model_candidates.md`](model_candidates.md)。HDF5 字段与采集命令的稳定合同见 [`../data.md`](../data.md) 与 [`../contracts/`](../contracts/)。
 
 ## 0. 框架定位
 
 - **基准优先**：先冻结「数据 + 评测协议」的 v1 基准，方法迭代只在 Python 评测框架内进行。MethodBundle/Slang/viewer 是独立的部署轨道，每个研究阶段收尾时对当期最优候选执行一次，不阻塞日常实验。`evaluate()` 返回线性 `f`、`prepare/evaluate` 划分、单 query 随机访问这些运行时合同保留为设计期静态约束，每个候选注册时检查。
-- **容量分档 + 部署预算**：每个候选按 S/M/L 三档容量测「容量–质量曲线」，`C_eval`、`C_prepare`、`B_shared`、`B_asset`、state bytes 和实测时间完整记录。每个候选同时按 §0.1 的部署预算判定：超软线的候选可以跑、可以进注册表，但必须标注「非部署候选」，不得成为默认配置或进入 D 轨道；硬线由 MethodBundle 合同承担。表达力探索不被预算提前扼杀，预算也不是后置到部署阶段才想起的东西。
+- **单一容量 + 部署预算**：每个候选实现一个形态——§0.1 着色器预算内能容纳的最大容量。`C_eval`、`C_prepare`、`B_shared`、`B_asset`、state bytes 和实测时间每 run 完整记录。超软线但仍能进 shader 的 run 可以跑、可以进注册表，但必须标注「非部署候选」，不得成为默认配置或进入 D 轨道；硬线由 MethodBundle 合同承担。先在这个形态上追求质量，再在形态内提速。
 - **足量语料**：正式语料按第 2 节密度表生成，覆盖未见方向、未见参数状态和未见结构 family；长尾分位数只从满足 state 数量要求的冻结 test 集计算。
 
 术语规范：禁止用「上界/下界/ceiling/floor」描述有限实验的容量结论。统一句式为「配置 C 在数据 D、预算 B 下达到 X」。「运行成本静态有界」这一工程含义（固定循环数、固定访存数）不受影响。
@@ -212,7 +212,7 @@ viewer 固定 light/view/state sweep 的 HDR 误差与 display-referred FLIP、s
 | 阶段 | 回答的问题 | 数据 | 主要候选 |
 |---|---|---|---|
 | **P0 基准建设** | — | 实现密度表 → provider 配置；生成语料；评测 harness 按第 5 节调整；建实验注册表 | — |
-| **P1 表达力（G1）** | 哪个表示族、在什么容量档位，能把最难分级（S/T/M）做到达标线？给出容量–质量曲线 | 代表性子集：每个分级组合选 4–6 个 state，约 30 个 | M1 S/M/L、M2、M3 oracle、T 诊断 |
+| **P1 表达力（G1）** | 哪个表示族在着色器预算内能把最难分级（S/T/M）做到达标线？ | 代表性子集：每个分级组合选 4–6 个 state，约 30 个 | lobe-residual（P1 v2）；M1 S/M/L、M2、M3 oracle、T 为 P1 v1 记录 |
 | **P2 共享与状态泛化（G2）** | 共享 decoder + 每态 latent 的容量；三种 latent 获取路径（autodecoder / M5 encoder / M3 字典）的质量差距 | LayerStack 全语料 | M1（P1 胜出配置）、M3、M5 |
 | **P3 编译（G2/G2s）** | pure feed-forward compiler 与 target-visible 路径的差距；refinement cook 能收窄多少 | 同 P2 | M6 + M5 对照 |
 | **P4 资产式工作流（W）** | 同一 pipeline 不调参能否吃下 MERL 100 表 + OpenPBR 全资产？质量分布如何 | MERL/OpenPBR 语料 | P2 胜出配置 |
@@ -223,7 +223,7 @@ P1 与 P2 的语料同批生成；P1 的结论决定 P2 的 decoder 起点。P4 
 
 ## 7. 实验记录与比较规则
 
-- **实验注册表** `docs/research/experiment_log.md`：每个正式 run 一行——日期、候选+档位、数据版本、预算档、seed 数、两个主指标、一句话结论、artifacts 路径。这是回答「现在做到哪了」的唯一入口；详细数值留在 `artifacts/`。
+- **实验注册表** `docs/research/experiment_log.md`：每个正式 run 一行——日期、候选+配置、数据版本、预算档、seed 数、两个主指标、一句话结论、artifacts 路径。这是回答「现在做到哪了」的唯一入口；详细数值留在 `artifacts/`。
 - **可比性**：只有数据版本、预算档、split 全部相同的 run 才能同表比较。
 - **结论强度**：任何「X 优于 Y」写入注册表前，用 test state 上的 paired difference + bootstrap 置信区间（≥1,000 次重采样）确认区间不跨零；跨零则记为「无显著差异」。30 个 state 的 p95 bootstrap CI 很宽（P1 v1 M1-M 为 `[0.074, 0.243]`），只作 selection 诊断；正式长尾结论用 ≥ 50 个 test state，并附 p90/p95、最差 state 清单、bootstrap CI 与 leave-one-state-out 范围。
 - **对照要求**：每个结论必须有 matched 对照（同数据、同预算、只差声明的机制组）。允许一次实验同时改变一组相关机制（例如「chart + FiLM」作为一个 bundle），但 bundle 内要保留能识别主要贡献的消融。

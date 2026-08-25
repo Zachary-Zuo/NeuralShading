@@ -1,7 +1,6 @@
 {
   "pipeline": "lobe-residual-k2-v1",
   "stage": "P1",
-  "capacity": "S",
   "model": {
     "state_count": 30,
     "latent_dim": 16,

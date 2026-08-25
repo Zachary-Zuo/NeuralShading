@@ -32,8 +32,10 @@ def test_training_config_has_fixed_checkpoint_selection_contract() -> None:
     )
     assert "selection_metric" not in config.to_dict()
     assert config.early_stopping_patience is None
-    with pytest.raises(ValueError, match="S/M/L"):
-        TrainingConfig(pipeline="film-v1", stage="P1", capacity="XL", model={})
+    untiered = TrainingConfig(pipeline="lobe-residual-k2-v1", stage="P1", model={})
+    assert untiered.capacity is None
+    assert "capacity" not in untiered.to_dict()
+    assert TrainingConfig.from_json(untiered.to_json()) == untiered
 
 
 def test_training_config_supports_bounded_adaptive_stopping() -> None:
@@ -76,6 +78,7 @@ def test_all_versioned_learning_configs_parse() -> None:
         config = TrainingConfig.load(path)
         assert config.stage == "P1"
         if path.stem.startswith("lobe-residual"):
+            assert config.capacity is None
             assert config.checkpoint_selection == "tail_guard"
             assert set(config.model) == {"state_count", "latent_dim", "lobe_count", "correction"}
 

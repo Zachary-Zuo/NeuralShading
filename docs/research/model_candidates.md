@@ -87,17 +87,19 @@ per-state 统计（E2 已证明跨态共用 scale 会把 1e-8 与 1e-1 的残差
 | `L_peak` | train query 的 top-energy 支持集加权项，防窄峰被低值区淹没 |
 | `L_recip` | source-aware reciprocity（沿用 E2 修正：对已知非互易源扣除固有偏差，不强加错误零约束） |
 
-### 1.5 容量档位（S/M/L）
+### 1.5 容量：单一形态
 
-所有神经候选按三档报告，构成容量–质量曲线；数值是设计基准，允许按证据微调，实际参数量/MAC 逐 run 记录：
+每个神经候选实现一个形态：在 [`experiment_framework.md`](experiment_framework.md) §0.1 着色器预算内能容纳的最大容量。候选自己的配置轴（例如 lobe-residual 的 `K`、`correction`）随 run 记录，实际参数量与 MAC 逐 run 登记；先在这个形态上追求质量，再在形态内提速。
 
-| 档 | 定位 | width | blocks (prepare/evaluate) | latent D | 量级 |
-|---|---|---:|---|---:|---|
-| S | 部署候选形态 | 128 | 2 / 3 | 32 | ~0.2M 参数，`C_eval` ~1e5 MAC |
-| M | 结构完整的研究主力 | 256 | 3 / 6 | 64 | ~1.3M 参数，`C_eval` ~1e6 MAC |
-| L | 容量诊断 / distillation teacher | 512 | 3 / 8 | 128 | ~6M 参数 |
+P1 v1 曾用下表的三档做 M1/M2 的容量–质量曲线，结论已登记（§9、[`experiment_log.md`](experiment_log.md)）；三档的 `C_eval`（约 1e5 / 1e6 / 4e6 MAC）、state（512 B / 1 KB / 2 KB）与烘焙资产全部超 §0.1 软线，作为历史记录保留：
 
-block = pre-norm residual block（linear→GELU→linear + skip；LayerNorm 只作用于 hidden，不跨 query/材质统计）。按 [`experiment_framework.md`](experiment_framework.md) §0.1 的部署软线，S/M/L 三档的 `C_eval`（约 1e5 / 1e6 / 4e6 MAC）、state（512 B / 1 KB / 2 KB）与烘焙资产全部超线，只用于容量–质量曲线与 teacher 诊断；部署候选须另按软线定义（例如 ≤ 64 宽 × 2–3 层的 direct evaluator，或 `prepare` 输出 lobe 参数、`evaluate` 解析的形态），并在注册表标注。
+| 档 | width | blocks (prepare/evaluate) | latent D | 量级 |
+|---|---:|---|---:|---|
+| S | 128 | 2 / 3 | 32 | ~0.2M 参数 |
+| M | 256 | 3 / 6 | 64 | ~1.3M 参数 |
+| L | 512 | 3 / 8 | 128 | ~6M 参数 |
+
+block = pre-norm residual block（linear→GELU→linear + skip；LayerNorm 只作用于 hidden，不跨 query/材质统计）。
 
 ---
 
@@ -145,8 +147,8 @@ h_{l+1} = act( γ_l(z) ⊙ ((W_l + U_l·diag(a_l(z))·V_l)·h_l) + β_l(z) )
 
 ### 2.5 风险与判定
 
-- 风险：FiLM 仍不足以覆盖跨态长尾（→ 升低秩调制）；lobe 路由在 view sweep 上抖动（→ 时序连续性指标把关）；latent 维数在语料扩大后成为新瓶颈（→ D 是档位轴，随曲线报告）。
-- 判定实验：P1 用 M1-S/M/L 对最难分级 state 画容量–质量曲线。若 M 档在 G1 上达标 → P2 起点；若 L 档仍不达标而 T 诊断（无 latent 瓶颈）达标 → 瓶颈在条件化/latent，升级调制方式；若 T 也不达标 → 瓶颈在方向表示或监督，转 M4/数据侧。
+- 风险：FiLM 仍不足以覆盖跨态长尾（→ 升低秩调制）；lobe 路由在 view sweep 上抖动（→ 时序连续性指标把关）；latent 维数在语料扩大后成为新瓶颈（→ D 是配置轴，随 run 报告）。
+- 判定实验（P1 v1 已执行，见下）：用 M1 三档对最难分级 state 画容量–质量曲线。若达标 → P2 起点；若最大档仍不达标而 T 诊断（无 latent 瓶颈）达标 → 瓶颈在条件化/latent，升级调制方式；若 T 也不达标 → 瓶颈在方向表示或监督，转 M4/数据侧。
 
 P1 v1 已完成：M1-M test `0.0452/0.1180`，通过 directional median/p95 与 energy median 三条主参考线，作为 P2 质量起点；M1-S test `0.0506/0.1196`，实测查询快约 36%，保留为效率 Pareto 端点。S→M 质量差异的 paired CI 跨零，因此不宣称 M 显著优于 S。M1-L `0.0766/0.2119` 且成本更高，被 M 显著支配。
 
@@ -204,7 +206,7 @@ z_m = Σ_{j∈top-k} w_j · c_j        # codebook C 共享计入 B_shared
 
 ### 4.3 风险与判定
 
-- 风险：凸混合偏向条件均值，压峰值（→ 峰指标把关；residual 变体兜底）；top-k 线段表达界（→ k 与 residual 是档位轴）；codebook 随语料增长的规模律未知（→ K 是档位轴）。
+- 风险：凸混合偏向条件均值，压峰值（→ 峰指标把关；residual 变体兜底）；top-k 线段表达界（→ k 与 residual 是配置轴）；codebook 随语料增长的规模律未知（→ K 是配置轴）。
 - 判定：oracle 的 rate-distortion 明显优于同 bytes PCA → 字典假设成立，进入 (b)；(b) 在同 bytes 下逼近 dense `z` 且拟合更快 → 成为资产表示默认；否则保留为低 bytes 端点或放弃。
 
 P1 v1 结论：简单 K-means++ top-2 字典在 K8/K16 和 per-view K64 上均落后 matched PCA；K16 state response 的 paired 字典减 PCA CI 为 `[0.071,0.200]`。该结构不进入 P2 主路径。

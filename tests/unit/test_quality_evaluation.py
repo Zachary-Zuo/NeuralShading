@@ -137,7 +137,6 @@ def test_state_block_paired_bootstrap_uses_matched_test_states(tmp_path) -> None
         }
         report["training"] = {
             "stage": "P1",
-            "capacity": "S",
             "steps": 25000,
             "seed": 17,
             "dataset_selection": {},
@@ -163,27 +162,18 @@ def test_state_block_paired_bootstrap_uses_matched_test_states(tmp_path) -> None
     assert comparison["suite"] == QUALITY_SUITE
     assert "energy_relative_error.state_wo_p95" in comparison["statistics"]
 
-    candidate_with_capacity_change = dict(candidate)
-    candidate_with_capacity_change["training"] = {
-        **candidate["training"],
-        "capacity": "M",
+    assert comparison["matched"]["fixed_training_fields"] == {
+        "steps": 25000,
+        "seed": 17,
+        "dataset_selection": {},
     }
-    candidate_with_capacity_change = finalize_quality_report(
-        candidate_with_capacity_change
-    )
-    write_quality_report(candidate_path, candidate_with_capacity_change)
-    with pytest.raises(ValueError, match="declared varied fields"):
+
+    candidate_with_seed_change = dict(candidate)
+    candidate_with_seed_change["training"] = {**candidate["training"], "seed": 18}
+    candidate_with_seed_change = finalize_quality_report(candidate_with_seed_change)
+    write_quality_report(candidate_path, candidate_with_seed_change)
+    with pytest.raises(ValueError, match="matched training fields"):
         compare_quality_reports(baseline_path, candidate_path, iterations=1000, seed=17)
-    capacity_comparison = compare_quality_reports(
-        baseline_path,
-        candidate_path,
-        iterations=1000,
-        seed=17,
-        varied_fields=("capacity",),
-    )
-    assert capacity_comparison["matched"]["varied_training_fields"] == {
-        "capacity": {"baseline": "S", "candidate": "M"}
-    }
 
 
 def test_cpu_query_benchmark_reports_finite_latency() -> None:

@@ -4,7 +4,7 @@
 
 v1 基准（P0）生效前本表为空；迁移前结果的适用边界已汇总在 [`model_candidates.md`](model_candidates.md) §9，不重复登记，也不为其保留当前 pipeline/config 入口。
 
-| 日期 | run ID | 候选+档位 | 数据版本 | 预算档 | seeds | 方向 L1 (med/p95) | 能量误差 (med/p95) | 结论 | artifacts |
+| 日期 | run ID | 候选+配置 | 数据版本 | 预算档 | seeds | 方向 L1 (med/p95) | 能量误差 (med/p95) | 结论 | artifacts |
 |---|---|---|---|---|---|---|---|---|---|
 | 2026-08-25 | `4ce8bd54ddd0b7c27d279cc4ece426c200488f3aab15b366a9d841c41719a27b` | M1 FiLM S | LayerStack P1 v1 `0513d0c8…` | 25k（实际 25k） | `20260824` × 1 | 0.0506 / 0.1196 | 0.0116 / 0.2169 | median 略高于 0.05 参考线；`C_eval` 1.2e5 MAC、state 512 B、烘焙资产 5.6 KB 超 framework §0.1 软线，非部署候选 | `artifacts/runs/p1-film-s-seed-20260824/` |
 | 2026-08-25 | `ec1ceb5a745b6cf17e71d5c526c9125fd85f9e039fd7bd62f47d2f4e7d8a16f2` | M1 FiLM M | LayerStack P1 v1 `0513d0c8…` | 25k（实际 25k） | `20260824` × 1 | 0.0452 / 0.1180 | 0.0126 / 0.1551 | 三条主参考线均通过；S→M 质量差异 CI 跨零；`C_eval` 8.6e5 MAC、state 1 KB、烘焙资产 19.5 KB 超 §0.1 软线，非部署候选，仅作容量曲线记录 | `artifacts/runs/p1-film-m-seed-20260824/` |

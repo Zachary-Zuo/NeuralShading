@@ -6,7 +6,7 @@ NeuralShading 研究如何把多种保持原生语义的源材质族编译为统
 
 目标运行时分成三个清晰阶段：`compile_material()` 生成 view-independent latent 资产；`prepare()` 在每个 raster pixel 或 ray hit 获取、过滤并编码 latent、footprint 与 `wo`；小型 evaluator MLP 对每个 `wi` 直接输出散射。Path tracing profile 在 evaluator 成形后再增加匹配且具有可计算密度的 `sample()/pdf()`；环境光和面光积分作为后续独立能力研究。
 
-当前采用基准优先顺序：先生成 LayerStack v1 corpus 并冻结 `quality-v1`，再按 S/M/L 容量比较 evaluator 候选，之后进入 compiler、Slang、sampler 与 Falcor/UE 式系统验收。现有解析 backend 只承担部署回归 fixture、成本对照和可选物理 core/sampling proposal，不注册为研究候选。
+当前采用基准优先顺序：先生成 LayerStack v1 corpus 并冻结 `quality-v1`，再在着色器预算内比较 evaluator 候选，之后进入 compiler、Slang、sampler 与 Falcor/UE 式系统验收。现有解析 backend 只承担部署回归 fixture、成本对照和可选物理 core/sampling proposal，不注册为研究候选。
 
 源材质 reference 已扩展为五个 active package：LayerStack 随机游走、pbrt coated 独立验证、OpenPBR 1.1.1、MERL 测量 BRDF，以及 8 个原生 MaterialX/Poly Haven 4K 纹理材质。它们从 `references/registry.json` 统一发现，但各自保留原始参数、测量表或图/纹理 GT。
 
