@@ -12,6 +12,7 @@
 - [模型候选设计](model_candidates.md)：每个候选（M1–M6、诊断 teacher T）的完整设计——动机、数学结构、S/M/L 容量档位、拟合方式、风险与判定实验，以及已有实验证据的适用边界。
 - [实验注册表](experiment_log.md)：每个正式 run 一行的结果索引（P0 建表，随首个正式 run 启用）。
 - [P1 v1 审计](p1_audit.md)：对 P1 结果与部署的代码级审计——放宽了哪些约束、当前模型/Slang 实现的成本量级、质量与长尾差的原因（FiLM 钳位、残差 clamp 死区、log 域噪声偏置）、应采用的 lobe 参数化 + 匹配 sampler 形态，以及训练/评测/viewer 共用单一 Slang 后端的目标结构。
+- [P1 v2 实施计划](p1_v2_plan.md)：lobe-residual 候选（精确顶层 core + 非负 LTC lobe + 可选 log 修正、64 B state、匹配 sample/pdf）的数学定义与成本自检，分五期的文件级任务、验收测试、依赖图、风险与待决事项。
 
 ## 文档维护规则
 
