@@ -61,7 +61,7 @@ git -C external/Falcor status --short
 - [x] 使用 `trellis-check` 复读 core/data Quality Check，审计数据流、公式唯一性、include 依赖和测试 oracle 非同源性。
 - [x] 使用 `trellis-update-spec` 判断 `shaders/ncls/scattering/` 所有权、null-event 与 pre-drawn RNG 规则是否需要长期固化。
 - [x] 记录 dirty-path 归属与逻辑提交计划：一个 `refactor(core): 建立可复用散射数学层` work commit，包含 01 task/research/scratch、公共 math、reference/legacy 调用者、GPU oracle、CMake、architecture 与 core/data/project spec；唯一未识别 dirty 文件 `SmileySans-Oblique.otf` 明确排除。
-- [ ] 直接创建 scoped local commit，不 amend、不 push；随后运行 `trellis-finish-work` 归档并确认 archive/commit provenance。
+- [x] 已创建 scoped local commit `c9e5ae5`，未 amend、未 push；本次 `trellis-finish-work` 紧接着归档并确认 archive/commit provenance。
 
 ## 7. Rollback Points
 

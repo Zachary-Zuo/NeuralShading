@@ -64,7 +64,7 @@
 - [x] 迁移前后的 LayerStack reference 固定 seed probe 在冻结容差内一致，reference physics/shard 回归通过。
 - [x] `ltc-k2-analytic-control` core 可编译，旧 `legacy_ltc_k2` Python/Slang parity 继续通过且 packed ABI 未变。
 - [x] `external/Falcor` 与其他锁定上游保持原提交和干净工作树。
-- [ ] 质量检查、spec 判断、scoped local commit 与归档完成后，父任务才进入 `02`。
+- [x] 质量检查与 spec 判断通过，scoped local work commit 为 `c9e5ae5`；本次 `trellis-finish-work` 紧接着完成归档后，父任务才进入 `02`。
 
 ## Out Of Scope
 
