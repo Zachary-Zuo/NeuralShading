@@ -1,0 +1,32 @@
+{
+  "id": "05-viewer-method-deferred-pt",
+  "name": "05-viewer-method-deferred-pt",
+  "title": "05 Viewer Method Deferred 与 PT",
+  "description": "在 viewer 中以同一通用 backend 显示 method deferred 与 method path tracing",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "Zachary",
+  "assignee": "Zachary",
+  "createdAt": "2026-08-25",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "08-25-unified-scattering-method",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "execution_mode": "continuous",
+    "continuous_authorized": "true",
+    "authorization_parent": "08-25-unified-scattering-method",
+    "sequence": "05",
+    "commit_policy": "preauthorized-scoped-local-no-push"
+  }
+}

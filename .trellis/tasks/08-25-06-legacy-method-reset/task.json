@@ -1,0 +1,32 @@
+{
+  "id": "06-legacy-method-reset",
+  "name": "06-legacy-method-reset",
+  "title": "06 旧方法彻底归零",
+  "description": "在替代路径验收后删除旧方法、旁路、错误模型和失效数据入口",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "Zachary",
+  "assignee": "Zachary",
+  "createdAt": "2026-08-25",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "08-25-unified-scattering-method",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "execution_mode": "continuous",
+    "continuous_authorized": "true",
+    "authorization_parent": "08-25-unified-scattering-method",
+    "sequence": "06",
+    "commit_policy": "preauthorized-scoped-local-no-push"
+  }
+}

@@ -1,0 +1,16 @@
+{"file":".trellis/spec/project/index.md","reason":"跨 core/data/learning/viewer 的依赖方向、术语、仓库边界与文档规则。"}
+{"file":".trellis/spec/project/dev-environment.md","reason":"所有测试、训练、Falcor GPU 与 viewer 构建前必须判定完整开发机状态。"}
+{"file":".trellis/spec/project/method-constraints.md","reason":"着色器预算和四条运行时硬约束；其中旧 lobe-only 主线与本任务冻结设计冲突，实施时以 AGENTS.md、稳定合同和 design.md 为准并在收口时修正 spec。"}
+{"file":".trellis/spec/project/code-organization.md","reason":"公共数学模块、backend、临时诊断脚本和跨层文件所有权。"}
+{"file":".trellis/spec/project/coding-conventions.md","reason":"Python、Slang、C++ 实现约定。"}
+{"file":".trellis/spec/core/index.md","reason":"散射合同、生成 ABI、MethodBundle 与 backend 私有布局边界。"}
+{"file":".trellis/spec/core/shared-slang-backend.md","reason":"SlangPy、GPU 测试与 viewer 共用单一 Slang 前向。"}
+{"file":".trellis/spec/core/material-interface.md","reason":"LayerStack reference 与 backend compiled representation 的语义边界。"}
+{"file":".trellis/spec/data/index.md","reason":"v5 response corpus 读取、schema 变更与重采的开发检查。"}
+{"file":".trellis/spec/data/reference-and-corpus.md","reason":"reference response、manifest/provenance 与数据落盘规则。"}
+{"file":".trellis/spec/learning/index.md","reason":"候选注册、质量评测、bootstrap、成本与 bundle 导出 gate。"}
+{"file":".trellis/spec/learning/pipeline-and-evaluation.md","reason":"Slang 前向训练接入、checkpoint selection 与质量报告合同。"}
+{"file":".trellis/spec/viewer/index.md","reason":"通用 backend 接入、Falcor overlay、capture/replay 与 viewer 质量门。"}
+{"file":".trellis/spec/viewer/conventions.md","reason":"viewer shader specialization、资源生命周期和构建约定。"}
+{"file":".trellis/tasks/08-25-unified-scattering-method/research/current-state.md","reason":"当前硬编码、数据版本、旧路径和可复用原语的代码证据。"}
+{"file":".trellis/tasks/08-25-unified-scattering-method/research/method-synthesis.md","reason":"P1 审计、旧计划、现有骨架和原始文献综合出的冻结方法依据。"}

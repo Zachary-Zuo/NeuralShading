@@ -171,6 +171,14 @@ Use child tasks for deliverables that can be planned, implemented, checked, and 
 
 Create new children with `task.py create "<title>" --slug <name> --parent <parent-dir>`. Link existing tasks with `task.py add-subtask <parent> <child>`, and unlink mistakes with `task.py remove-subtask <parent> <child>`.
 
+### Task-Scoped Continuous Execution
+
+A task tree may inherit one explicit user authorization for uninterrupted execution when the parent and every participating child record all of the following in `task.json.meta`: `execution_mode=continuous`, `continuous_authorized=true`, the same `authorization_parent`, and `commit_policy=preauthorized-scoped-local-no-push`. This is a task-scoped exception, not the project default.
+
+For such a tree, the reviewed parent requirements/design are the authorization boundary. A child must still complete its own planning artifacts, context manifests, quality gates, scoped local commits, and archive lifecycle, but it does not pause for another planning approval or commit confirmation when its refinements stay inside that boundary. It records the planning/commit summary in task artifacts or the progress report and continues. Never include unrecognized dirty files, amend, or push.
+
+Continuous authorization ends immediately if work would change a frozen product/scope/compatibility/risk decision, requires an unapproved destructive action, needs external authority, or encounters a genuine blocker. In those cases stop and ask; ordinary technical choices supported by repository evidence are not blockers.
+
 <!-- Per-turn breadcrumb: shown when there is no active task (before Phase 1) -->
 
 [workflow-state:no_task]
@@ -192,6 +200,7 @@ Complex task: ask the user if you can create a Trellis task and enter the planni
 [workflow-state:planning]
 Load `trellis-brainstorm`; stay in planning.
 Lightweight: `prd.md` can be enough. Complex: finish `prd.md`, `design.md`, and `implement.md`; ask for review before `task.py start`.
+Continuous exception: when this task and its approved parent carry the complete continuous-execution metadata defined above, finish and validate all planning artifacts, record the summary, then run `task.py start` without pausing unless the refinement leaves the frozen parent boundary.
 Multi-deliverable scope: consider a parent task plus independently verifiable child tasks; dependencies must be written in child artifacts, not implied by tree position.
 Sub-agent mode: curate `implement.jsonl` and `check.jsonl` as spec/research manifests before start.
 [/workflow-state:planning]
@@ -205,6 +214,7 @@ Sub-agent mode: curate `implement.jsonl` and `check.jsonl` as spec/research mani
 [workflow-state:planning-inline]
 Load `trellis-brainstorm`; stay in planning.
 Lightweight: `prd.md` can be enough. Complex: finish `prd.md`, `design.md`, and `implement.md`; ask for review before `task.py start`.
+Continuous exception: when this task and its approved parent carry the complete continuous-execution metadata defined above, finish and validate all planning artifacts, record the summary, then run `task.py start` without pausing unless the refinement leaves the frozen parent boundary.
 Multi-deliverable scope: consider a parent task plus independently verifiable child tasks; dependencies must be written in child artifacts, not implied by tree position.
 Inline mode: skip jsonl curation; Phase 2 reads artifacts/specs via `trellis-before-dev`.
 [/workflow-state:planning-inline]
@@ -225,6 +235,7 @@ Sub-agent dispatch protocol applies to all platforms and all sub-agents, includi
 [workflow-state:in_progress]
 Tools: `trellis-implement` / `trellis-research` are sub-agent types only (Task/Agent tool, NOT Skill; there is no skill by these names). `trellis-update-spec` is a skill. `trellis-check` exists as both; prefer the Agent form when verifying after code changes.
 Flow: `trellis-implement` -> `trellis-check` -> `trellis-update-spec` -> commit (Phase 3.4) -> `/trellis:finish-work`.
+Continuous exception: with valid task-tree metadata, create only scoped local commits and archive automatically after gates pass; report the commit plan/result without pausing. Exclude every unrecognized dirty file and never push.
 Main-session default: dispatch implement/check sub-agents. Sub-agent self-exemption: if already running as `trellis-implement`, do NOT spawn another `trellis-implement` or `trellis-check`; if already running as `trellis-check`, do NOT spawn another `trellis-check` or `trellis-implement`. Dispatch is main session only.
 Dispatch prompt starts with `Active task: <task path from task.py current>`. Read context: jsonl entries -> `prd.md` -> `design.md if present` -> `implement.md if present`.
 [/workflow-state:in_progress]
@@ -236,6 +247,7 @@ Dispatch prompt starts with `Active task: <task path from task.py current>`. Rea
 
 [workflow-state:in_progress-inline]
 Flow: `trellis-before-dev` -> edit -> `trellis-check` -> validation -> `trellis-update-spec` -> commit (Phase 3.4) -> `/trellis:finish-work`.
+Continuous exception: with valid task-tree metadata, create only scoped local commits and archive automatically after gates pass; report the commit plan/result without pausing. Exclude every unrecognized dirty file and never push.
 Do not dispatch implement/check sub-agents in inline mode.
 Read context: `prd.md` -> `design.md if present` -> `implement.md if present`, plus relevant spec/research loaded by skills.
 [/workflow-state:in_progress-inline]
@@ -443,6 +455,8 @@ python3 ./.trellis/scripts/task.py start <task-dir>
 
 For lightweight tasks, `prd.md` can be enough. For complex tasks, `prd.md`, `design.md`, and `implement.md` must exist and be reviewed before start. On sub-agent-dispatch platforms, `implement.jsonl` and `check.jsonl` must both have real curated entries before start. Runtime consumers tolerate missing or seed-only manifests for compatibility, but that tolerance is not a planning-ready state.
 
+For a task tree with valid continuous-execution metadata, the user's recorded parent-tree authorization satisfies the start review for non-material child refinements. Complete and validate every required artifact, record the review result, and start immediately. Any material departure from the frozen parent plan returns to the normal explicit review gate.
+
 After this command succeeds, the breadcrumb auto-switches to `[workflow-state:in_progress]`, and the rest of Phase 2 / 3 follows.
 
 If `task.py start` errors with a session-identity message (no context key from hook input, `TRELLIS_CONTEXT_ID`, or platform-native session env), follow the hint in the error to set up session identity, then retry.
@@ -612,6 +626,8 @@ The AI drives a batched commit of this task's code changes so `/finish-work` can
 
 4. **Draft a commit plan**. Group AI-edited files into logical commits (1 commit per coherent change unit, not 1 commit per file). Each entry: `<commit message>` + file list. List unrecognized files separately at the bottom.
 
+   If valid task-tree metadata sets `commit_policy=preauthorized-scoped-local-no-push`, persist or report this plan, exclude every unrecognized path, then continue directly to scoped local commits without pausing. The authorization never permits amend, push, or destructive handling of unrelated files.
+
 5. **Present the plan once, ask for one-shot confirmation**. Format:
    ```
    Proposed commits (in order):
@@ -628,7 +644,9 @@ The AI drives a batched commit of this task's code changes so `/finish-work` can
    Reply 'ok' / '行' to execute. Reply with edits, or '我自己来' / 'manual' to abort.
    ```
 
-6. **On confirmation**: run `git add <files>` + `git commit -m "<msg>"` for each batch in order. Do not amend. Do not push.
+   Skip only the confirmation wait for the continuous-execution policy above; all inspection, classification, grouping, exclusion, and reporting requirements remain mandatory.
+
+6. **On confirmation, or under valid continuous authorization**: run `git add <files>` + `git commit -m "<msg>"` for each batch in order. Do not amend. Do not push.
 
 7. **On rejection** (user replies "不行" / "我自己来" / "manual" / any pushback on the plan): stop. Do not attempt a second plan. The user will commit by hand; you skip ahead to 3.5 once they confirm.
 

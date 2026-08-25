@@ -1,0 +1,11 @@
+{"file":".trellis/spec/project/index.md","reason":"检查跨层依赖、术语、仓库产物边界与中文文档规则。"}
+{"file":".trellis/spec/project/dev-environment.md","reason":"核对验证声明与实际开发机状态证据。"}
+{"file":".trellis/spec/project/method-constraints.md","reason":"机械复核有界执行、成本、state、asset 与 evaluate/sample/pdf 硬约束，并识别待修正的旧主线表述。"}
+{"file":".trellis/spec/core/index.md","reason":"检查 ABI/schema/capability/MethodBundle 的跨语言一致性。"}
+{"file":".trellis/spec/core/shared-slang-backend.md","reason":"确认生产前向与数学公式只有一份 Slang 源。"}
+{"file":".trellis/spec/data/index.md","reason":"检查数据合同结论、版本化与重采边界。"}
+{"file":".trellis/spec/learning/index.md","reason":"检查质量、tail、bootstrap、成本和导出证据。"}
+{"file":".trellis/spec/viewer/index.md","reason":"检查 generic backend、deferred/PT、capture/replay 与 Falcor 干净性。"}
+{"file":".trellis/spec/viewer/conventions.md","reason":"检查 viewer 生命周期、shader specialization 和构建规则。"}
+{"file":".trellis/tasks/08-25-unified-scattering-method/research/current-state.md","reason":"对照旧路径清理范围和当前代码事实。"}
+{"file":".trellis/tasks/08-25-unified-scattering-method/research/method-synthesis.md","reason":"对照冻结方法的证据、复用/修正/淘汰判定。"}

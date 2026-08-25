@@ -1,0 +1,41 @@
+{
+  "id": "unified-scattering-method",
+  "name": "unified-scattering-method",
+  "title": "统一散射方法与路径追踪验证",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "Zachary",
+  "assignee": "Zachary",
+  "createdAt": "2026-08-25",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-25-01-reusable-scattering-math",
+    "08-25-02-mollification-data-adequacy",
+    "08-25-03-neural-baseline-and-candidate",
+    "08-25-04-generic-method-bundle-runtime",
+    "08-25-05-viewer-method-deferred-pt",
+    "08-25-06-legacy-method-reset"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "execution_mode": "continuous",
+    "continuous_authorized": "true",
+    "authorization_scope": "01-through-06-and-parent-finalization",
+    "commit_policy": "preauthorized-scoped-local-no-push",
+    "stop_policy": "scope-expansion-destructive-external-blocker-only",
+    "authorization_parent": "08-25-unified-scattering-method",
+    "sequence": "00"
+  }
+}

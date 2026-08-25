@@ -1,0 +1,32 @@
+{
+  "id": "01-reusable-scattering-math",
+  "name": "01-reusable-scattering-math",
+  "title": "01 可复用散射数学原语",
+  "description": "建立唯一的 Falcor-free Slang 散射、采样与 PDF 数学组件",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "Zachary",
+  "assignee": "Zachary",
+  "createdAt": "2026-08-25",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "08-25-unified-scattering-method",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "execution_mode": "continuous",
+    "continuous_authorized": "true",
+    "authorization_parent": "08-25-unified-scattering-method",
+    "sequence": "01",
+    "commit_policy": "preauthorized-scoped-local-no-push"
+  }
+}
