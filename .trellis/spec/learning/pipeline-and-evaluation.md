@@ -26,6 +26,12 @@ paths:
 - 预算档位：快速档（≤ 30 min GPU，只做 smoke，不入注册表）、标准档（全量阶段数据、共同 seed、4,000 步后 validation patience 早停）、冲刺档（×5–10）。P1 主搜索只用一个 deterministic seed；只有差距接近或轨迹异常才追加 seed。
 - `run_manifest.json` 记录解析后配置、Git 提交、reference 实现 hash、合同版本、seed、依赖版本、输入产物 ID；命令行只能覆盖配置里已声明的字段。
 
+### 分阶段冻结与 sampler-only 梯度门
+
+- sampler-only 阶段只允许目标 sampler head 的参数 `requires_grad=True`；shared prepare、latent、evaluator 与另一 sampler head 必须冻结，shared hidden 在进入 sampler head 前 detach。
+- 在 optimizer step 之前执行结构门：目标 head 输出与 PDF 必须 `requires_grad=True`；backward 后目标参数梯度有限且至少一个非零，所有冻结参数保持 `grad is None`。
+- 该门必须在先运行过冻结 evaluator/deployment 路径的 warm session 中覆盖。SlangPy callable 身份与 active-gradient mask 的具体约束见 `core/shared-slang-backend.md`。
+
 ## quality-v1（`evaluation/quality.py`，`configs/evaluation/quality-v1.json`）
 
 - 候选只返回线性 RGB `f`；harness 在指标内乘一次 `|cos θi|`；candidate 不能替换 metric suite；报告记录 suite 的 SHA-256，`compare` 拒绝 suite hash 不一致的报告。

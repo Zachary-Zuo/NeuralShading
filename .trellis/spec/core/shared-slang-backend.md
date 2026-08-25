@@ -122,6 +122,17 @@ shaders/ncls/backends/<name>/
 
 Falcor 8.0 锁定 Slang 2024.1.34；SlangPy（`environment.yml` 固定 `slangpy==0.43.1`）携带更新的 slang。core 只用两边都验证过的写法；语法差异清单由 P1.0 spike 回填到 `p1_v2_plan.md`，`lobe_residual_mlp.slang` 的 `NCLS_LOBE_RESIDUAL_WEIGHTS_T` / `NCLS_LOBE_RESIDUAL_WEIGHT_READ` 宏承接训练侧的可微张量写法。不升级 Falcor 的 slang。
 
+### SlangPy Torch callable 身份
+
+SlangPy `0.43.1` 的 Torch wrapper 会按公开 callable 身份缓存首次调用观察到的可微参数掩码。一个 callable 若先由全冻结参数与 detach 输入调用，之后即使用 `requires_grad=True` 的权重调用，输出也可能没有 `grad_fn`。因此：
+
+- “每个方法一份 Slang”指唯一数学源码，不要求不同训练角色共用同一公开函数名；相同算术可以由角色专属 wrapper 转调同一基础函数。
+- active-gradient mask 不同的 prepare、evaluator、sampler head，以及 diagnostic 中重复的同宽层，必须使用不同 callable 身份；不得只因矩阵宽度相同就复用名称。
+- 回归测试必须先 warm 冻结的 deployment/evaluator 路径，再进入 sampler-only 或其他分阶段训练，并断言目标输出进入 autograd graph、只有目标参数获得有限非零梯度。
+- 新入口若要复用 callable，必须以 cold / warm 两种调用顺序证明可微参数集合不受首次调用污染；没有该证据时按角色拆分身份。
+
+这条约束只处理训练桥接的 wrapper specialization；Falcor GPU 与 viewer 仍 include 同一份 core 和同一基础算术。
+
 ## MethodBundle 边界（`docs/contracts/method_bundle.md`）
 
 - viewer 与评测只加载 `MethodBundle`，不加载训练目录或裸 `.pt`；导出必须从不可变 checkpoint 生成全新 bundle 并算内容哈希。
