@@ -1,6 +1,6 @@
 # P1 v2 实施计划：lobe-residual 候选、单一 Slang 后端与 PT 对照
 
-本文是 [`p1_audit.md`](p1_audit.md) §5–§7 与 [`experiment_framework.md`](experiment_framework.md) §0.1 部署预算落地为工程任务的计划。它回答：新候选长什么样、每一步改哪些文件、每一步用什么测试判定完成、哪些决定还没做。所有行号对应 commit `9a458fa`。
+本文是 [`p1_audit.md`](p1_audit.md) §5–§7 与 [`experiment_framework.md`](experiment_framework.md) §0.1 部署预算落地为工程任务的计划。它回答：新候选长什么样、每一步改哪些文件、每一步用什么测试判定完成、哪些决定已经做了。所有行号对应 commit `9a458fa`。
 
 ## 0. 目标与完成判定
 
@@ -13,7 +13,7 @@
 | C1 成本 | `C_eval ≤ 2e3` MAC、`C_prepare ≤ 1e4`、state ≤ 64 B、`B_asset ≤ 512 B`、evaluate 权重 ≤ 32 KB；由单元测试机械判定 | framework §0.1 |
 | C2 实测 | RTX 4090、640×360 benchmark preset 下 prepare + lighting ≤ 1 ms；1080p 单灯 ≤ 2 ms | §0.1 工况 |
 | S1 sampler | `sample/pdf` 与 `evaluate` 一致性、白炉、pdf 归一化在 GPU 测试中通过 | `scattering_backend.md` 一致性测试节 |
-| E1 单一源 | 训练（SlangPy）、GPU 测试（Falcor Python）、viewer 三处 `#include` 同一份 `lobe_residual.slang`；Torch 实现只作 parity oracle | `p1_audit.md` §6.2 |
+| E1 单一源 | 训练（SlangPy）、GPU 测试（Falcor Python）、viewer 三处 `#include` 同一份 `lobe_residual_core.slang`；不写第二套模型前向，现有 `torch_eval.py` 只作 parity oracle | `p1_audit.md` §6.2 |
 | V1 对照 | viewer 新增「PT + 源材质 vs PT + method material」比较模式，4 个失效 state 与 `6324e3…` 各出一张 capture | `p1_audit.md` §5.4 |
 
 **非目标**：P2 全语料、spatial latent texture、cooperative vector、MERL/OpenPBR 族、`integrate_*` 专用积分器。这些等 P1 v2 通过 Q1/C1 后按 framework §6 推进。
@@ -28,8 +28,8 @@ h, θ_1..θ_K = Prepare(z, φ(wo))            ≤64 宽 2 层 MLP；h ∈ R^8 �
 f(wo, wi) = [ f_top(wo, wi; IR_0) + Σ_k A_k · D_k(wi; θ_k) / cos θ_i ] · exp(Δ(h, ψ(wi)))
 ```
 
-- `f_top`：顶层界面精确 microfacet，参数直接来自 `LayerStackIR.interfaces[0]`，不学习；实现复用 `shaders/ncls/reference/interfaces.slang:191` `nclsEvalInterface`（Torch 侧 `torch_eval.py:249` `eval_direct_top_bsdf`）。只取反射分支（`NCLS_SAMPLE_REFLECTION`）；进入 coat 的能量由 residual lobe 表示。
-- `D_k`：LTC 余弦分布，参数 `(inverseScaleX/Y, shearX/Y/Z, angle)` + RGB 幅值 `A_k`，即现有 `NclsLegacyLtcK2Lobe` 的 9 个有效 float；解码沿用 `torch_eval.py:38` `decode_ltc_residual`（`softplus / exp(clamp ±3) / 3·tanh / π·tanh`），**幅值非负由 softplus 保证，全程无 clamp**。
+- `f_top`：顶层界面精确 microfacet，参数直接来自 `LayerStackIR.interfaces[0]`，不学习；实现复用 `shaders/ncls/reference/interfaces.slang:191` `nclsEvalInterface`（Torch 侧 `torch_eval.py:249` `eval_direct_top_bsdf` 只作 parity oracle）。只取反射分支（`NCLS_SAMPLE_REFLECTION`）；进入 coat 的能量由 residual lobe 表示。
+- `D_k`：LTC 余弦分布，参数 `(inverseScaleX/Y, shearX/Y/Z, angle)` + RGB 幅值 `A_k`，即现有 `NclsLegacyLtcK2Lobe` 的 9 个有效 float；解码沿用 `p1_compiler.slang:203-211` / `torch_eval.py:38` 的 `softplus / exp(clamp ±3) / 3·tanh / π·tanh`，**幅值非负由 softplus 保证，全程无 clamp**。
 - `Δ`：可选乘性 log 修正，`ψ(wi)` 为 6 维（`wi`、half-slope 2 维、`wi.z`），网络 `(8+6)→32→3`，输出 `clamp(·, −2, 2)`。配置轴 `correction ∈ {none, log32}`；`none` 即纯 Adapter 形态，`log32` 保留「evaluate 由 MLP 直接补全」的项目定位（[`../realtime_material_compilation.md`](../realtime_material_compilation.md) §「Neural evaluator 是目标表示的主体」），两者 matched 对照后决定是否保留。
 - `sample/pdf`：混合 proposal `p = w_0 · p_top + Σ_k w_k · p_k`，`p_top` 为顶层 VNDF 反射采样（`sampling.slang:92` `nclsSampleGgxVisibleNormal` + `interfaces.slang:144` `nclsInterfacePdfLocal`），`p_k = D_k` 自身（LTC 逆变换：`q̂ ~ cosine`，`wi = normalize(M_k q̂)`，pdf 即 `det·max(q_z,0)/(π|q|⁴)`，也就是 `legacy_ltc_k2.slang:40` 已算出的 basis）。权重 `w` 由 `prepare` 按各项估计能量归一。Δ 有界，所以 pdf 不含 Δ 仍无偏。
 
@@ -54,63 +54,48 @@ f(wo, wi) = [ f_top(wo, wi; IR_0) + Σ_k A_k · D_k(wi; θ_k) / cos θ_i ] · ex
 | state | `float[256]` = 1 KB | 64 B |
 | sample/pdf | 无 | 混合 VNDF + LTC，精确 pdf |
 | 条件化 | condition 向量烘焙 19.5 KB | latent 直接进 prepare，无烘焙 |
-| Slang | 手写复刻 + 手工偏移 | 单一源，Python 生成 layout |
+| 实现 | Torch 前向 + 手写 Slang 复刻 + 手工偏移 | 一份 Slang（SlangPy 训练、Falcor 部署），layout 由反射生成 |
 
 ## 2. 现状中可复用与必须新建的部件
 
-复用（已存在、有测试）：`interfaces.slang` 四种界面的 evaluate/pdf/sample 三件套（`:91/:144/:223`）；`sampling.slang` 各向异性 VNDF（`:92`）；`legacy_ltc_k2.slang` 的 LTC evaluate 与 `INclsScatteringBackend` 合同实现范例（`:103-160`）；`torch_eval.py` 的 `decode_ltc_residual/eval_ltc_residual/eval_direct_top_bsdf`；`source_adapters/layer_stack_direct_top.py` 的 `fit_direct_top_state`；`tests/gpu/kernels/legacy_ltc_k2.cs.slang:10-20` 的 `ISampleGenerator` 测试实现；`p1_audit.py` 的 signed 能量 / 死区 / tail 诊断；`film_m1.py:44-71` 的 `_canonical_json/_write_json/_git_commit`。
+复用（已存在、有测试）：`interfaces.slang` 四种界面的 evaluate/pdf/sample 三件套（`:91/:144/:223`）；`sampling.slang` 各向异性 VNDF（`:92`）；`legacy_ltc_k2.slang` 的 LTC evaluate 与 `INclsScatteringBackend` 合同实现范例（`:103-160`）；`torch_eval.py` 的 `decode_ltc_residual/eval_ltc_residual/eval_direct_top_bsdf`（只作 parity oracle）；`source_adapters/layer_stack_direct_top.py` 的 `fit_direct_top_state`；`tests/gpu/kernels/legacy_ltc_k2.cs.slang:10-20` 的 `ISampleGenerator` 测试实现；`p1_audit.py` 的 signed 能量 / 死区 / tail 诊断；`film_m1.py:44-71` 的 `_canonical_json/_write_json/_git_commit`。
 
 蓝本但不可直接用：`p1_compiler.slang`（零调用者、GRU 数据相关循环、手工偏移）——只借用 25 维 IR 特征函数与 18 维 raw→lobe 解码。
 
-必须新建（按 §3 分期）：LTC lobe 的 sample/pdf（Slang + Torch 两侧都没有）；`NclsRng`↔`ISampleGenerator` 适配；Falcor-free 的后端核心文件；SlangPy 训练路径（仓库零依赖、零 `[Differentiable]` 代码）；通用 bundle exporter；viewer 的 realtime 加载路径、泛型 pass、PT+method family；`sample/pdf` 的任何测试（目前零覆盖）。
+必须新建（按 §3 分期）：LTC lobe 的 sample/pdf（Slang 侧）；`NclsRng`↔`ISampleGenerator` 适配；Falcor-free 的后端核心文件；SlangPy 训练路径（仓库零依赖、零 `[Differentiable]` 代码）；通用 bundle exporter；viewer 的 realtime 加载路径、泛型 pass、PT+method family；`sample/pdf` 的任何测试（目前零覆盖）。
 
 ## 3. 分期任务
 
 每期列出改动文件、验收测试、执行地点（本地 = 静态分析/编写，远程 = 运行）。任务前缀：P=Python、S=Slang、V=viewer、D=文档。
 
-### Phase 1 — Torch 参考实现与质量信号（先回答「形态对不对」）
+### Phase 1 — SlangPy 可行性 spike（先排除最大风险）
 
-Torch 版只作 parity oracle，Phase 3 之后不再承担训练。它几乎全由现成件拼成，所以先用它拿质量信号，避免把 SlangPy 0→1 的工程风险挡在质量问题前面。
-
-| # | 任务 | 文件 | 验收 |
-|---|---|---|---|
-| P1.1 | 新 pipeline 家族 `m2b`：`LobeResidualPipeline`，descriptor `model.representation="analytic-core-lobe-residual-v1"`、`architecture="lobe-residual-prepare-mlp-v1"`、`data.source_adapter="layer-stack-direct-top-v1"`；`predict_f` 返回 `f_top + Σ lobe`（`log32` 时再乘 `exp(Δ)`），**无 clamp**；`fit_training_state` 复用 `fit_direct_top_state`；`training_loss` 复用 `p1-appearance-v3` 四项（`pipelines/p1_evaluator.py:255-304`），去掉 `:263` 的 clamp | `src/ncls/learning/pipelines/lobe_residual.py`（新）、`pipelines/__init__.py:5` 注册 | `tests/unit/test_lobe_residual_pipeline.py`：duck-typed Store + monkeypatch `direct_top_bsdf`（照 `test_pipeline_contract.py:112-175`）；断言输出非负、无 clamp 路径、descriptor sha 稳定 |
-| P1.2 | 模型 `LobeResidualModel`：`nn.Embedding(30,16)` + prepare MLP `(16+7)→64→64→(8+9K+3K)` SiLU + 可选 Δ 网 `(8+6)→32→3`；lobe evaluate 调 `eval_ltc_residual`，core 调 `eval_direct_top_bsdf` | `src/ncls/learning/models/lobe_residual.py`（新） | 同上；`parameter_costs()` 返回与 §1.2 一致的 `C_prepare_macs/C_eval_macs/state_bytes_per_pixel/B_asset/B_shared` |
-| P1.3 | Torch 侧 LTC lobe `sample/pdf` + 混合 proposal（为 Phase 2 parity 与 S1 准备） | `src/ncls/core/representations/legacy_ltc_k2/torch_eval.py` 追加 `sample_ltc_lobe / ltc_lobe_pdf / mixture_pdf` | `tests/unit/test_ltc_sampling.py`：MC 估计 `∫pdf dω = 1 ± 1e-2`；`pdf(sample(u)) == sample.pdf`；importance 估计的 lobe 能量与求积一致 |
-| P1.4 | 部署预算单元门：遍历注册表中 `deployment_candidate=True` 的 pipeline，断言 `parameter_costs()` 满足 §0.1 全部软线 | `tests/unit/test_deployment_budget.py`（新）；descriptor 增加 `runtime.deployment_candidate` 需同步 `schemas/learning_pipeline_v1.schema.json` 与 `base.py:36-59` 的精确字段集校验 | M1/M2 三档必须被标 `False` 且测试通过；`lobe-residual-k2` 为 `True` 且通过 |
-| P1.5 | checkpoint tail guard：`TrainingConfig` 增字段 `checkpoint_selection: "median_then_p95" \| "tail_guard"`（默认旧值，`from_dict` 拒绝未知字段所以要同步 `training_config_v1.schema.json`）；runner `:277` 的 `(median, p95)` 元组改为按策略分支；新增 `configs/evaluation/quality-v2.json`（只改 `checkpoint_selection` 块，指标定义不变，`quality.py:49-53` 校验分支化） | `training/config.py`、`training/runner.py:276-302`、`evaluation/quality.py:17-65` | `tests/unit/test_training_config.py` 增策略往返；用 P1 v1 M2-S 的 validation history 回放断言选到 step 7500 而非 4500 |
-| P1.6 | 审计工具泛化：`p1_audit.py:540-560` 的 `is_m2` 改为探测 pipeline 可选方法 `core_f(model, batch, store, device)`，有则算 `E_core/E_ref`；死区分支只在 pipeline 声明 `has_signed_residual` 时执行 | `evaluation/p1_audit.py`、`pipelines/base.py` 增可选协议 | `tests/unit/test_p1_audit.py` 增 `core_f` 探测用例 |
-| P1.7 | 配置：`configs/learning/lobe-residual-k2-v1.json`（`correction:none`）、`lobe-residual-k2-log32-v1.json`、`lobe-residual-k3-log32-v1.json`（研究）、`smoke/lobe-residual-k2-p1-smoke.json`；训练调度沿用 S 档（bs 16、lr 3e-4、25k、patience 6、`tail_guard`） | `configs/learning/` | `test_training_config.py:70-76` 自动覆盖 |
-| P1.8 | 远程：三个配置各跑 seed `20260824`；`ncls learn evaluate` test/adversarial/dense；`audit-p1` 出 signed 能量与 core coverage；`compare` 对 M1-M | 远程 | Q1 判定。若 K=2 `none` 未达 p95 ≤ 0.10 而 `log32` 达到 → 修正项保留；两者都未达 → 看最差 state 的 `E_core/E_ref` 与 lobe 承担能量，决定是否需要 K=3 或 lobe 型别（GGX 型 vs LTC 型）扩展，再进 Phase 2 |
-
-Phase 1 出口：Q1 通过或明确的失败归因；`tests/unit` 全绿；注册表登记三个 run（标注部署候选与否）。
-
-### Phase 2 — 单一 Slang 后端（evaluate/sample/pdf）与 GPU parity
+单一 Slang 源的前提是 SlangPy 能对该源求梯度并与 Torch 互操作；仓库目前零 slangpy 依赖、零 `[Differentiable]` 代码，所以第一件事是 spike，不是写模型。
 
 | # | 任务 | 文件 | 验收 |
 |---|---|---|---|
-| S2.1 | **Falcor-free 核心**：`lobe_residual_core.slang` 定义 `NclsLobeResidualState`（64 B 布局见 §1.2）、`NclsLobeResidualParams`（权重偏移表结构，由 Python 写入 cbuffer/StructuredBuffer，Slang 不再手写偏移常量）、`nclsLobeResidualPrepare(z, woLocal, params)`、`EvaluateF(state, top, woLocal, wiLocal, params)`、`Pdf(...)`、`Sample(state, top, woLocal, float3 u, params)`（随机数由调用者传入）。只 `#include` `contracts/layer_stack_ir.slang`、`reference/interfaces.slang`、`reference/sampling.slang` | `shaders/ncls/backends/lobe_residual/lobe_residual_core.slang`（新） | GPU 编译冒烟 + parity（S2.5） |
-| S2.2 | `interfaces.slang` 的 `nclsSampleInterface(:223)` 增加接受预抽随机数 `float3 u` 的重载，原 `inout NclsRng` 版本改为薄包装；`sampling.slang:92` 同样加 `float2 u` 重载 | `shaders/ncls/reference/interfaces.slang`、`sampling.slang` | 现有 reference GPU 测试不变（`tests/gpu`、`tests/integration/reference`）；random walk 采集结果 hash 不变 |
-| S2.3 | LTC lobe 采样与 pdf：`nclsLtcLobeSample(lobe, float2 u)`（上三角矩阵闭式求逆）、`nclsLtcLobePdf(lobe, wiLocal)`；混合 proposal 的选择与 pdf 合成 | `lobe_residual_core.slang` | S2.5 中与 P1.3 Torch 版逐点 parity |
-| S2.4 | **合同包装**：`lobe_residual.slang` `#include` core 与 `contracts/scattering_backend.slang`，实现 `struct LobeResidualBackend : INclsScatteringBackend`（`CompiledMaterial = {NclsLayerInterfaceIR top; float latent[16];}`，`State` 为 64 B 结构 + context），`evaluate/sample/pdf` 从 `ISampleGenerator` 取 `sampleNext2D/1D` 后调 core | `shaders/ncls/backends/lobe_residual/lobe_residual.slang`（新） | `tests/gpu/test_scattering_contract_gpu.py` 同型的编译冒烟：在锁定 Slang 2024.1.34 上 conform 成功 |
-| S2.5 | GPU parity 与 sampler 测试：kernel 提供 `evaluateDirect / evaluateThroughContract / pdfThroughContract / sampleThroughContract` 四个入口；Python 打包 state 与 params | `tests/gpu/kernels/lobe_residual.cs.slang`、`tests/gpu/test_lobe_residual_gpu.py`（照 `test_legacy_ltc_k2_gpu.py` 样板） | evaluate parity `rtol 2e-5`；`pdf(sample.wi) == sample.pdf`；白炉：`A_k` 设为使 lobe 反照率为 1、`f_top` 关闭时，`E[f·cos/pdf] = 1 ± 1e-2`；pdf MC 归一化；grazing/退化方向无 NaN |
-| S2.6 | Python 侧 state/params 打包与 layout 生成：`pack_state`（64 B，`struct` 校验）、`build_params_layout(model) -> (np.ndarray, layout_json)`；layout JSON 是权重偏移的唯一来源，Slang 从 params 缓冲读偏移 | `src/ncls/core/representations/lobe_residual/{state.py,layout.py}`（新） | `tests/unit/test_lobe_residual_layout.py`：往返 + 与 core.slang 结构字段名一致（正则抽取，照 `test_film_m1_bundle.py:30-45`） |
-| S2.7 | 生成合同若需新事件位（无预期）走 `abi/scattering_contract_v1.json` + `abi_layout.py`；本期预计不改 | — | `test_scattering_contract.py:111` 逐字节断言保持 |
+| P1.0 | **远程 spike**：`environment.yml` pip 段固定 `slangpy==<版本>`；写最小 `[Differentiable]` 核（一个 64 宽 MLP + `nclsLegacyLtcK2LobeResponseCos` 型 evaluate），用 SlangPy 调 `bwd_diff` 得到对权重与 lobe 参数的梯度，与 Torch 对照：lobe 部分用 `torch_eval.py:117` `eval_ltc_residual` 的 autograd，MLP 部分用有限差分 | `scripts/spike_slangpy_autodiff.py`（一次性） | 梯度 `rtol 1e-3`；batch 16 group × 256 方向前向+反向吞吐 ≥ P1 v1 M1-S Torch 的 0.5×；记录 slangpy 携带的 slang 版本与 2024.1.34 的语法差异清单 |
+| P1.1 | **备选，不默认执行**：spike 失败时改用 Torch 模型做训练路径（形态同 §1.1），Slang 只做部署 | — | 只有 spike 明确失败才启用，原因登记到 `experiment_log.md` |
 
-Phase 2 出口：S1 通过；Torch 与 Slang 在 evaluate/pdf/sample 三条路径 parity；一份 core 源。
-
-### Phase 3 — SlangPy 训练路径（同一源做梯度）
-
-这是 0→1 的部分，先做一个独立 spike 决定可行性，再接入 runner。
+### Phase 2 — 单一 Slang 后端与 SlangPy 训练接入
 
 | # | 任务 | 文件 | 验收 |
 |---|---|---|---|
-| P3.0 | **Spike（远程）**：在 `neural-shading` env 安装 `slangpy`（版本写入 `environment.yml` pip 段），用它编译 `lobe_residual_core.slang`（加 `[Differentiable]` 标注、`no_diff` 标记 IR/方向输入），对随机 batch 调 `bwd_diff(evaluate)` 得到对 params 与 latent 的梯度，与 Torch autograd 比 | `scripts/spike_slangpy_autodiff.py`（一次性，放 `scripts/`） | 梯度 `rtol 1e-3`；吞吐 ≥ Torch 版 0.5×（batch 16 group × 256 方向）；记录 slangpy 携带的 slang 版本与 2024.1.34 的语法差异清单 |
-| P3.1 | 若 spike 通过：`LobeResidualPipeline.predict_f` 增 `backend="torch" \| "slangpy"` 开关；slangpy 分支把 `batch["wo"/"wi"/"state_index"]` 交给 SlangPy 模块，返回 `torch.Tensor`（带自定义 autograd Function 包装 `bwd_diff`）；loss/optimizer 不动 | `src/ncls/learning/pipelines/lobe_residual.py`、`src/ncls/learning/slang/session.py`（新，SlangPy 模块加载与缓存） | `tests/gpu/test_lobe_residual_slangpy.py`（marker `slangpy`）：同一 checkpoint 两个 backend 的 `predict_f` parity `rtol 1e-4`，一次训练 step 后权重差 `≤ 1e-4` |
-| P3.2 | 训练配置增 `backend` 字段；远程用 slangpy backend 复跑 `lobe-residual-k2-*`，结果与 Torch 版 run 同表登记 | `configs/learning/*`、`training/config.py` | 两版 test median/p95 差异在 paired bootstrap CI 内 |
-| P3.3 | 语法约束探针：`tests/gpu/test_lobe_residual_gpu.py` 中的 Falcor 编译 + P3.1 的 SlangPy 编译共用同一文件；任一失败即阻止提交 | 同上 | `p1_audit.md` §6.2 要求的「两个编译器同一源」探针 |
+| S2.1 | **Falcor-free 核心**：`lobe_residual_core.slang` 定义 `NclsLobeResidualState`（64 B 布局见 §1.2）、`NclsLobeResidualParams`（权重缓冲；偏移由 SlangPy 反射出的 layout 决定，Slang 内不写偏移常量）、`[Differentiable] nclsLobeResidualPrepare(z, woLocal, params)`、`[Differentiable] nclsLobeResidualEvaluateF(state, top, woLocal, wiLocal, params)`、`Pdf(...)`、`Sample(..., float3 u)`（随机数由调用者传入）；IR 与方向输入标 `no_diff`。只 `#include` `contracts/layer_stack_ir.slang`、`reference/interfaces.slang`、`reference/sampling.slang` | `shaders/ncls/backends/lobe_residual/lobe_residual_core.slang`（新） | Falcor 与 SlangPy 两个编译器编译同一文件（P2.7） |
+| S2.2 | `interfaces.slang:223` `nclsSampleInterface` 与 `sampling.slang:92` 增加接受预抽随机数（`float3 u` / `float2 u`）的重载，原 `inout NclsRng` 版本改为薄包装 | `shaders/ncls/reference/{interfaces,sampling}.slang` | 现有 reference GPU 测试与采集结果 hash 不变 |
+| S2.3 | LTC lobe 采样与 pdf（上三角矩阵闭式求逆）+ 混合 proposal，Slang 侧实现；测试里用 `torch_eval.py:117` 的 basis 项做 pdf 对照，**不新增 Torch 生产代码** | `lobe_residual_core.slang`、`tests/gpu/test_lobe_residual_gpu.py` | `pdf(sample.wi) == sample.pdf`；白炉 `E[f·cos/pdf] = 1 ± 1e-2`；pdf MC 归一化；grazing 无 NaN |
+| S2.4 | **合同包装** `lobe_residual.slang`：`struct LobeResidualBackend : INclsScatteringBackend`（`CompiledMaterial = {NclsLayerInterfaceIR top; float latent[16];}`），`evaluate/sample/pdf` 从 `ISampleGenerator` 取随机数后调 core | `shaders/ncls/backends/lobe_residual/lobe_residual.slang`（新） | 锁定 Slang 2024.1.34 编译冒烟（照 `tests/gpu/test_scattering_contract_gpu.py`） |
+| P2.5 | **Python 接入**：`src/ncls/learning/slang/session.py`（SlangPy 加载 core、反射 layout、`torch.autograd.Function` 包装 `bwd_diff`）；`pipelines/lobe_residual.py`（family `m2b`；descriptor `model.representation="analytic-core-lobe-residual-v1"`、`architecture="lobe-residual-prepare-mlp-v1"`、`data.source_adapter="layer-stack-direct-top-v1"`、`runtime.deployment_candidate`）；`create_model` 返回只持有 params 与 latent 张量的薄 `nn.Module`，`predict_f` 调 Slang，**无 Torch 前向**；`fit_training_state` 复用 `fit_direct_top_state`；loss 从 `p1_evaluator.py:255-304` 抽成 `p1_appearance_loss` 共用并去掉 `:263` 的 clamp；`parameter_costs` 按 §1.2，返回 key 与现有 pipeline 一致并加 `state_bytes_per_pixel` | 新文件、`pipelines/__init__.py:5`、`pipelines/p1_evaluator.py` | `tests/gpu/test_lobe_residual_slangpy.py`（marker `slangpy`）：给定 lobe 参数时 evaluate 与 `torch_eval` parity `rtol 1e-4`；一次 step 后梯度与有限差分一致 |
+| P2.6 | state/params 打包：`pack_state`（64 B）用 SlangPy 反射布局；测试只做往返 | `src/ncls/core/representations/lobe_residual/state.py`（新）、`tests/unit/test_lobe_residual_layout.py` | 往返一致 |
+| P2.7 | 双编译探针：GPU 测试同时用 Falcor（`falcor.ComputePass`）与 SlangPy 编译 core，evaluate 数值一致 | `tests/gpu/kernels/lobe_residual.cs.slang`、`tests/gpu/test_lobe_residual_gpu.py` | `rtol 2e-5`；任一编译器失败即阻止提交 |
+| P2.8 | **框架接入（纯 Python，无 Slang 依赖，可最先做）**：部署预算单元门 `tests/unit/test_deployment_budget.py`（遍历注册表，`deployment_candidate=True` 的 pipeline 必须满足 §0.1；M1/M2 七个标 `False`），descriptor 增 `runtime.deployment_candidate` 需同步 `schemas/learning_pipeline_v1.schema.json` 与 `base.py:36-59` 的精确字段集校验；tail guard：`TrainingConfig.checkpoint_selection ∈ {"median_then_p95","tail_guard"}`（默认旧值，同步 `training_config_v1.schema.json`）、`runner.py:277` 的 `(median, p95)` 元组按策略分支（`tail_guard` = 先剔除 validation p95 > 该 run 至今最小 p95 × 1.25 的 checkpoint 再取 median 最小）、`configs/evaluation/quality-v2.json` 只改 `checkpoint_selection` 块、`quality.py:49-53` 接受 v1/v2；`p1_audit.py:540-560` 的 `is_m2` 改为探测 pipeline 可选方法 `core_f(model, batch, store, device)` 与属性 `has_signed_residual`；配置 `lobe-residual-k2-v1`（`none`，部署候选）、`lobe-residual-k2-log32-v1`、`lobe-residual-k3-log32-v1`（研究，`deployment_candidate=False`）、`smoke/lobe-residual-k2-p1-smoke`，调度沿用 S 档（bs 16、lr 3e-4、25k、minimum 4000、patience 6、seed 20260824）+ `tail_guard` | `training/{config,runner}.py`、`evaluation/{quality,p1_audit}.py`、`configs/learning/`、`configs/evaluation/` | `tests/unit` 全绿；用 P1 v1 M2-S 的 validation history 回放断言 tail guard 选 step 7500 而非 4500 |
+| P2.9 | 远程：三个配置各跑 seed `20260824`；`evaluate` test/adversarial/dense；`audit-p1`；`compare` 对 M1-M | 远程 | Q1 判定。`none` 未达 p95 ≤ 0.10 而 `log32` 达到 → 修正项保留；都未达 → 按最差 state 的 `E_core/E_ref` 与 lobe 承担能量归因，决定 K=3 或 lobe 型别扩展 |
 
-若 spike 失败（语法/性能/Torch 互操作任一不可接受）：记录原因到 `experiment_log.md`，Phase 3 降级为「Torch 训练 + 生成式 layout + GPU parity」，单一源目标保留在 evaluate/sample/pdf 与 viewer，训练梯度暂留 Torch。这是本计划最大的技术风险，由 spike 尽早暴露。
+Phase 2 出口：Q1 与 S1 通过或明确归因；一份 core 源同时被 SlangPy、Falcor 测试编译；注册表登记三个 run。
+
+### Phase 3 — 已并入 Phase 2
+
+保留编号，Phase 4/5 的引用不变。
 
 ### Phase 4 — Bundle 与 viewer：realtime 加载、泛型 pass、PT + method 对照
 
@@ -135,34 +120,32 @@ Phase 2 出口：S1 通过；Torch 与 Slang 在 evaluate/pdf/sample 三条路�
 ## 4. 依赖关系与并行性
 
 ```text
-P1.1–P1.7 (Torch, 本地可写) ──► P1.8 (远程) ──► Q1 判定
-        │
-        ├─► S2.1–S2.6 (Slang core + parity)  可与 P1.8 并行；S2.3 依赖 P1.3 的 Torch 对偶
-        │            │
-        │            └─► P3.0 spike (远程)  ──► P3.1–P3.3
-        │
-        └─► P4.1 exporter  ──► V4.2 loader ──► V4.3 泛型 pass ──► V4.4 PT family ──► V4.5 benchmark
-                                                    (V4.2–V4.4 依赖 S2.4 的合同包装存在)
+P1.0 spike (远程) ──► S2.1–S2.4 core/合同 ──► P2.5 SlangPy 接入 ──► P2.9 训练 (远程) ──► Q1
+                        │                          ▲
+P2.8 框架接入 (本地, 无依赖) ───────────────────────┘
+S2.1 ──► P2.7 双编译探针 / S2.3 sampler 测试 (远程)
+S2.4 ──► P4.1 exporter ──► V4.2 loader ──► V4.3 泛型 pass ──► V4.4 PT family ──► V4.5 benchmark
 ```
 
-- 本地（静态）可直接推进：P1.1–P1.7、S2.1–S2.4、S2.6、P4.1、V4.2–V4.4 的代码与 D4.6。
-- 必须远程：P1.8、S2.5、P3.0–P3.3、V4.5，以及每期的 pytest/GPU 回归。
-- 规模：Phase 1 小（现成件拼装，主要是 pipeline 与测试）；Phase 2 中（sampler 与 parity 测试是新内容）；Phase 3 spike 小、接入中，但风险最高；Phase 4 大（viewer 五处硬编码、PT family、第二累积链）；Phase 5 小。
+- 本地（静态）可直接推进：P2.8 全部；S2.1–S2.4、P2.5–P2.6、P4.1、V4.2–V4.4、D4.6 的代码。但 S2.1 与 P2.5 的 API 细节依赖 P1.0 spike 给出的 slangpy 版本与语法清单，所以 **spike 是第一个动作**，P2.8 可与之并行。
+- 必须远程：P1.0、S2.3/P2.7 的 GPU 测试、P2.9、V4.5，以及每期 pytest/GPU 回归。
+- 规模：Phase 1 小；Phase 2 大（core、sampler、SlangPy 接入、框架四块）；Phase 4 大（viewer 五处硬编码、PT family、第二累积链）；Phase 5 小。
 
 ## 5. 风险与应对
 
 | 风险 | 影响 | 应对 |
 |---|---|---|
-| SlangPy 携带的 slang 与 Falcor 8.0 的 2024.1.34 语法不兼容 | E1 单一源无法同时训练与部署 | P3.0 spike 先行；core 文件只用 2024.1.34 已验证的写法（固定数组、`typedef` 绑定 associated type、`[unroll]`），新特性一律不用；P3.3 双编译探针常驻 |
-| LTC 型 lobe 表达不了 M2 失效的 4 个 state（coat 下 base 的多次散射形态） | Q1 p95 不达标 | Phase 1 用 `E_core/E_ref` 与 lobe 承担能量分解失败原因；备选：lobe 型别扩展为 GGX-VNDF 型（`interfaces.slang` 三件套直接可用）或 K=3 研究档 |
-| 64 B state 在 `log32` 下刚好卡线，half 打包引入精度误差 | parity 容差 | S2.5 用 half 打包后的 state 做 parity，容差按 half 量级单列；`none` 配置 48 B 留余量 |
+| SlangPy 携带的 slang 与 Falcor 8.0 的 2024.1.34 语法不兼容，或 Torch 互操作/吞吐不可接受 | E1 单一源无法同时训练与部署 | P1.0 spike 先行；core 只用 2024.1.34 已验证的写法（固定数组、`typedef` 绑定 associated type、`[unroll]`）；P2.7 双编译探针常驻；失败则启用 P1.1 备选并登记 |
+| 质量信号要等 SlangPy 接入后才有 | Q1 判定晚于 Torch-first 方案 | 接受：避免写一套会被扔掉的 Torch 模型；P2.8 框架部分先行，接入后立即可跑 |
+| LTC 型 lobe 表达不了 M2 失效的 4 个 state（coat 下 base 的多次散射形态） | Q1 p95 不达标 | 用 `E_core/E_ref` 与 lobe 承担能量分解失败原因；备选：lobe 型别扩展为 GGX-VNDF 型（`interfaces.slang` 三件套直接可用）或 K=3 研究档 |
+| 64 B state 在 `log32` 下刚好卡线，half 打包引入精度误差 | parity 容差 | parity 用 half 打包后的 state，容差按 half 量级单列；`none` 配置 48 B 留余量 |
 | viewer 改造范围大，容易把 film-m1 diagnostic 路径改坏 | 回归 | V4.2 保留 film-m1 表项，加载测试双 bundle；泛型 pass 先在 film-m1 上验证再切新后端 |
-| PT + method 的第二累积链把左右噪声关联/去关联处理错 | 差图误判 | 左右使用独立 seed 流、相同 spp；capture manifest 记录两侧 `estimated_mean_relative_standard_error` |
-| 30-state 上的 p95 本身不稳定（framework §7） | Q1 判定过拟合到 P1 子集 | 报告 CI 与 leave-one-out；Q1 的 p95 门只作 P1 selection 判定，P2 用 ≥ 50 state 重判 |
+| PT + method 的第二累积链把左右噪声关联/去关联处理错 | 差图误判 | 左右独立 seed 流、相同 spp；capture manifest 记录两侧 `estimated_mean_relative_standard_error` |
+| 30-state 上的 p95 本身不稳定（framework §7） | Q1 判定过拟合到 P1 子集 | 报告 CI 与 leave-one-out；p95 门只作 P1 selection 判定，P2 用 ≥ 50 state 重判 |
 
 ## 6. 已定事项（2026-08-25）
 
-1. Phase 1 保留 Torch 参考实现，作为 Phase 2/3 的 parity oracle；Phase 3 后不再承担训练。
+1. **Slang 优先，不写 Torch 参考模型。** 现有 `torch_eval.py` 只作 evaluate/pdf 的 parity oracle；Torch 训练路径（P1.1）只是 spike 失败时的备选。
 2. `correction` 默认 `none`（48 B state），`log32` 只作 matched 对照。
 3. PT + method 做完整第二累积链（V4.4），不做单帧折中。
 4. SlangPy 固定版本写入 `environment.yml`；不升级 Falcor 的 slang。
