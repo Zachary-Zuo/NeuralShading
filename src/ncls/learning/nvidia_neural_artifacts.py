@@ -172,7 +172,7 @@ def _runtime_adapter(
         ),
     )
     return {
-        "architecture_id": "nvidia-frame-two-lobe-paper-v1",
+        "architecture_id": "nvidia-frame-two-lobe-layer-stack-budget-adapted-v1",
         "shader_module": (
             "ncls/backends/nvidia_neural_appearance/"
             "nvidia_neural_appearance.slang"
@@ -192,7 +192,7 @@ def export_nvidia_neural_compiled_set(
     checkpoint_path: Path | str,
     output_dir: Path | str,
 ) -> dict[str, Any]:
-    """从原 baseline joint checkpoint 导出可部署的原规模资产。"""
+    """从 LayerStack 离线预算适配 checkpoint 导出原规模网络资产。"""
 
     checkpoint_file = Path(checkpoint_path).resolve()
     output = Path(output_dir).resolve()
@@ -200,8 +200,8 @@ def export_nvidia_neural_compiled_set(
         raise ValueError("NVIDIA compiled set output directory must be new or empty")
     output.mkdir(parents=True, exist_ok=True)
     checkpoint = load_checkpoint(checkpoint_file)
-    if checkpoint.get("pipeline") != "nvidia-frame-two-lobe-paper-v1":
-        raise ValueError("compiled set requires the exact NVIDIA reproduction pipeline")
+    if checkpoint.get("pipeline") != "nvidia-frame-two-lobe-layer-stack-budget-adapted-v1":
+        raise ValueError("compiled set requires the exact NVIDIA offline adaptation pipeline")
     pipeline = create_pipeline(str(checkpoint["pipeline"]))
     if checkpoint.get("pipeline_sha256") != pipeline.descriptor.sha256:
         raise ValueError("NVIDIA checkpoint pipeline identity mismatch")
@@ -234,7 +234,7 @@ def export_nvidia_neural_compiled_set(
     manifest: dict[str, Any] = {
         "format_name": "nvidia-neural-appearance-compiled-set",
         "format_version": 1,
-        "method_identity": "nvidia-frame-two-lobe-paper-v1",
+        "method_identity": "nvidia-frame-two-lobe-layer-stack-budget-adapted-v1",
         "runtime_class": cost["runtime_class"],
         "pipeline": checkpoint["pipeline"],
         "sampler": "nvidia-diffuse-ggx9",

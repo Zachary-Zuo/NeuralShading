@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
+import sys
 
 import numpy as np
 
@@ -10,12 +10,29 @@ def import_falcor():
         import falcor
     except ModuleNotFoundError as exc:
         raise RuntimeError(
-            "Falcor reference collection must run through scripts/run_falcor_python.ps1"
+            "Falcor reference collection must run through scripts/run_falcor_python.ps1 "
+            "on Windows or scripts/run_falcor_python.sh on Linux"
         ) from exc
     return falcor
 
 
-def direction_rows(views: np.ndarray, lights: np.ndarray, surface_count: int) -> tuple[np.ndarray, np.ndarray]:
+def create_falcor_device(falcor):
+    """按当前操作系统选择锁定 Falcor 支持的图形 API，不做跨 API fallback。"""
+
+    if sys.platform == "win32":
+        device_type = falcor.DeviceType.D3D12
+    elif sys.platform.startswith("linux"):
+        device_type = falcor.DeviceType.Vulkan
+    else:
+        raise RuntimeError(f"Falcor reference collection does not support platform {sys.platform!r}")
+    return falcor.Device(type=device_type)
+
+
+def direction_rows(
+    views: np.ndarray,
+    lights: np.ndarray,
+    surface_count: int,
+) -> tuple[np.ndarray, np.ndarray]:
     view_values = np.asarray(views, dtype=np.float32)
     light_values = np.asarray(lights, dtype=np.float32)
     if light_values.ndim == 2:
@@ -53,7 +70,14 @@ def output_buffer(device, falcor, count: int):
     return device.create_structured_buffer(struct_size=16, element_count=count, bind_flags=flags)
 
 
-def execute_direction_kernel(compute, device, falcor, views: np.ndarray, lights: np.ndarray, surface_count: int) -> np.ndarray:
+def execute_direction_kernel(
+    compute,
+    device,
+    falcor,
+    views: np.ndarray,
+    lights: np.ndarray,
+    surface_count: int,
+) -> np.ndarray:
     view_rows, light_rows = direction_rows(views, lights, surface_count)
     query_count = len(view_rows)
     view_buffer = structured_buffer(device, falcor, view_rows, 16)
@@ -64,7 +88,9 @@ def execute_direction_kernel(compute, device, falcor, views: np.ndarray, lights:
     compute.globals.gOutput = output
     compute.globals.gQueryCount = query_count
     compute.execute(threads_x=query_count)
-    return (
+    result = (
         output.to_numpy().view(np.float32).reshape(query_count, 4)[:, :3]
         .reshape(surface_count, len(views), np.asarray(lights).shape[-2], 3).copy()
     )
+    device.end_frame()
+    return result

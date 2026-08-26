@@ -10,20 +10,23 @@
 
 ## 实现文件
 
-项目维护的正式实现暂时保存在：
+项目维护的正式实现位于：
 
+- `src/ncls/data/directions.py`；
+- `src/ncls/data/falcor.py`；
+- `src/ncls/data/priors.py`；
+- `src/ncls/data/reference.py`；
+- `shaders/ncls/contracts/layer_stack_ir.slang`；
 - `shaders/ncls/reference/sampling.slang`；
 - `shaders/ncls/reference/interfaces.slang`；
 - `shaders/ncls/reference/random_walk_reference.slang`；
-- `shaders/ncls/data/reference_tile.cs.slang`；
-- `src/ncls/data/reference.py`；
-- `src/ncls/data/generator.py`。
+- `shaders/ncls/data/reference_layer_stack.cs.slang`。
 
-这些路径共同参与 `reference_source_sha256`。在 package manifest 和迁移回归测试实现前不移动，以免为了路径调整改变已验证的 reference 身份。
+`LayerStackProvider` 对上述文件内容计算 `implementation_sha256`。路径变化本身不是语义正确性的证据；修改实现后必须产生新 hash，并由 corpus/报告记录实际使用的 reference identity。旧的 `reference_tile.cs.slang` 与 `src/ncls/data/generator.py` 已不属于当前实现，文档不得继续把它们列入 provenance。
 
 ## 验证边界
 
 - 单界面原子使用解析性质、能量、互易性和采样/PDF 一致性验证；
 - pbrt coated diffuse/conductor 只验证对应两界面 source slice，不声称 pbrt 是任意 N 层 GT；
 - `N > 2` 验证组合算法、退化关系、互易性、有限值和独立实现一致性，不按层数枚举；
-- pbrt coated diffuse 与 coated conductor 交叉验证均已完成；验证覆盖 clear、吸收介质和散射介质，以及粗糙各向异性导体基底，不再以增加无物理目的的层数扩展 probe。
+- pbrt coated diffuse 与 coated conductor 已有历史 smoke，覆盖 clear、吸收介质和散射介质，以及粗糙各向异性导体基底；当前 registry 仍把 `numerical_parity` 标为 `pending`，需要先修正并重跑锁定的 pbrt harness，不能仅凭历史数值改成 `ready`。不再以增加无物理目的的层数扩展 probe。

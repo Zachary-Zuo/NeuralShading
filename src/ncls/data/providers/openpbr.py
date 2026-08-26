@@ -13,7 +13,7 @@ from ncls.source_materials import OpenPBRMaterial, load_openpbr_luts, resolve_op
 from ncls.source_materials.openpbr import ACESCG_TO_LINEAR_SRGB
 
 from .base import BaseProvider, PROJECT_ROOT, assign_group_splits, implementation_hash
-from .falcor import direction_rows, import_falcor, output_buffer, structured_buffer
+from ..falcor import create_falcor_device, direction_rows, import_falcor, output_buffer, structured_buffer
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,7 @@ class OpenPBRProvider(BaseProvider):
             capabilities=("evaluate", "sample", "pdf", "transmission"),
             implementation_sha256=implementation_hash((
                 Path(__file__),
+                PROJECT_ROOT / "src/ncls/data/falcor.py",
                 PROJECT_ROOT / "src/ncls/source_materials/openpbr.py",
                 shader,
                 PROJECT_ROOT / "shaders/ncls/reference/openpbr_reference.slang",
@@ -90,7 +91,7 @@ class OpenPBRProvider(BaseProvider):
         if self._compute is not None:
             return self._falcor, self._device, self._compute
         falcor = import_falcor()
-        device = falcor.Device(type=falcor.DeviceType.D3D12)
+        device = create_falcor_device(falcor)
         compute = falcor.ComputePass(
             device,
             file=PROJECT_ROOT / "shaders/ncls/data/reference_openpbr.cs.slang",
@@ -147,6 +148,7 @@ class OpenPBRProvider(BaseProvider):
         compute.globals.gQueryCount = query_count
         compute.execute(threads_x=query_count)
         rows = output.to_numpy().view(np.float32).reshape(query_count, 4).copy()
+        device.end_frame()
         response = rows[:, :3]
         if material.color_space == "acescg":
             response = response @ ACESCG_TO_LINEAR_SRGB.T

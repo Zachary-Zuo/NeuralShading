@@ -2,7 +2,9 @@
 
 ## 它是什么
 
-本任务在 `01` 的公共散射数学和 `02` 的冻结训练数据入口上，建立第一个可信的 neural evaluator / learned sampler 研究闭环。它先忠实复现 NVIDIA learned-frame direct evaluator 与 9 参数解析 proposal，再实现 exact top-interface core + positive neural residual 候选；随后在相同数据与评测协议下比较各方法。
+本任务在 `01` 的公共散射数学和 `02` 的冻结训练数据入口上，建立第一个可信的 neural evaluator / learned sampler 研究闭环。原始目标是先忠实复现 NVIDIA learned-frame direct evaluator、9 参数解析 proposal 及论文训练 lifecycle，再实现 exact top-interface core + positive neural residual 候选；随后在相同数据与评测协议下比较各方法。
+
+> 状态更正（2026-08-27）：下文 R2 仍是未完成的需求，不是既有实现的完成声明。现有实现只对齐主要网络形态，训练采用冻结 LayerStack HDF5、25k steps、每条 route 每 step 1,024 个方向查询；论文采用 GPU online reference、300k iterations、每次两个 65k batch。现有 run 必须登记为 `nvidia-frame-two-lobe-layer-stack-budget-adapted-v1` 离线诊断，不能称为忠实复现、原训练协议或 paper-scale baseline。
 
 “复现成功”和“方法选择”是两个独立结论。前者只回答实现是否对应原方法、训练是否稳定收敛，不由收敛后的绝对质量决定；后者才使用按材质结构分组的质量、时间、内存与 sampler 方差证据描述 Pareto。若不同材质结构上的优劣不一致，结论必须保留这种条件性，不能用一个全局阈值或单一分数抹平。
 

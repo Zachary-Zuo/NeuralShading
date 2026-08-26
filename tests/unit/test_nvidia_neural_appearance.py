@@ -1,4 +1,4 @@
-"""锁定 NVIDIA baseline 的原规模结构、私有 ABI、方向顺序与 response 适配。"""
+"""锁定 NVIDIA 方法形态的原规模结构、私有 ABI、方向顺序与 response 适配。"""
 
 from __future__ import annotations
 
@@ -104,7 +104,7 @@ def test_nvidia_model_contains_only_paper_scale_parameters() -> None:
 
 
 def test_nvidia_pipeline_identity_and_real_costs_are_not_unified_padding() -> None:
-    pipeline = create_pipeline("nvidia-frame-two-lobe-paper-v1")
+    pipeline = create_pipeline("nvidia-frame-two-lobe-layer-stack-budget-adapted-v1")
     assert pipeline.descriptor.model == {
         "representation": "nvidia-learned-frame-two-lobe-v1",
         "architecture": "nvidia-evaluator-3x64-sampler-3x32-v1",
@@ -146,7 +146,7 @@ def test_nvidia_independent_oracle_locks_nonorthogonal_frames_and_input_order() 
 
 def test_nvidia_response_activation_and_log1p_loss_have_no_quality_threshold() -> None:
     np.testing.assert_allclose(np.exp(np.zeros(3) - 3.0), math.exp(-3.0))
-    pipeline = create_pipeline("nvidia-frame-two-lobe-paper-v1")
+    pipeline = create_pipeline("nvidia-frame-two-lobe-layer-stack-budget-adapted-v1")
     prediction_f = torch.tensor([[[0.5, 1.0, 2.0]]])
     batch = {
         "wi": torch.tensor([[[0.0, 0.0, 0.8]]]),
@@ -184,7 +184,7 @@ def test_nvidia_private_record_and_shared_parameter_pack_match_static_cost() -> 
         offsets,
         record_stride=32,
         state_stride=96,
-        cost=create_pipeline("nvidia-frame-two-lobe-paper-v1").parameter_costs(model),
+        cost=create_pipeline("nvidia-frame-two-lobe-layer-stack-budget-adapted-v1").parameter_costs(model),
     )
     descriptor = BackendDescriptor.from_dict(adapter["backend_descriptor"])
     assert descriptor.capabilities & BackendCapability.SAMPLE

@@ -19,10 +19,10 @@ from .sampler_objective import sampler_cross_entropy
 
 
 class NvidiaNeuralAppearancePipeline(LearningPipeline):
-    """原规模 learned-frame evaluator 与 GGX9 sampler 的联合复现。"""
+    """在离线 LayerStack 数据上训练论文形态的 evaluator 与 GGX9 sampler。"""
 
     descriptor = LearningPipelineDescriptor(
-        name="nvidia-frame-two-lobe-paper-v1",
+        name="nvidia-frame-two-lobe-layer-stack-budget-adapted-v1",
         stage="P1",
         data={
             "reader": "unified-scattering-entry-v1",
@@ -44,7 +44,7 @@ class NvidiaNeuralAppearancePipeline(LearningPipeline):
             "deployment_candidate": False,
         },
         supported_families=("layer-stack",),
-        scope="03 NVIDIA 原规模 learned-frame evaluator 与 GGX9 sampler 复现",
+        scope="03 NVIDIA learned-frame 结构的 LayerStack 离线预算适配诊断",
     )
 
     def __init__(self) -> None:
@@ -77,24 +77,24 @@ class NvidiaNeuralAppearancePipeline(LearningPipeline):
             or len(set(state_ids)) != len(state_ids)
             or state.get("train_only") is not True
         ):
-            raise ValueError("invalid NVIDIA baseline fitted training state")
+            raise ValueError("invalid NVIDIA offline adaptation fitted training state")
         self._fitted_state = dict(state)
 
     def _require_state(self) -> dict[str, Any]:
         if self._fitted_state is None:
-            raise ValueError("NVIDIA baseline fitted state has not been loaded")
+            raise ValueError("NVIDIA offline adaptation fitted state has not been loaded")
         return self._fitted_state
 
     def create_model(self, model_parameters: Mapping[str, Any]) -> torch.nn.Module:
         if set(model_parameters) != {"state_count", "sampler"}:
             raise ValueError(
-                "NVIDIA baseline model parameters must be state_count and sampler"
+                "NVIDIA offline adaptation model parameters must be state_count and sampler"
             )
         if model_parameters["sampler"] != "nvidia-diffuse-ggx9":
-            raise ValueError("NVIDIA reproduction requires its native GGX9 sampler")
+            raise ValueError("NVIDIA offline adaptation requires its native GGX9 sampler")
         state_count = int(model_parameters["state_count"])
         if state_count != len(self._require_state()["state_ids"]):
-            raise ValueError("NVIDIA baseline state count disagrees with fitted state")
+            raise ValueError("NVIDIA offline adaptation state count disagrees with fitted state")
         return NvidiaNeuralAppearanceModel(state_count=state_count)
 
     def predict_f(

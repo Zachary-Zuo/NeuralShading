@@ -86,10 +86,12 @@ reference adapter 只负责把共同查询所需的几何、方向、光谱/颜�
 
 ## 已完成的源材质接入与当前优先级
 
+LayerStack 随机游走不是从旧架构误留的通用 GT，也不是其他材质族必须归约到的中间表示。它之所以仍是当前采集主线，是因为当前第一种源材质族原生就是“多层界面 + 均匀 slab”；对这个族，随机游走直接实现其多次界面/介质传输语义。这个决定只绑定 `ncls.layer-stack@1`，不向 OpenPBR、MERL、MaterialX 或未来材质族扩张。
+
 本轮不按层数或材质名称堆功能，而用少量语义差异明显的源材质族验证完整架构。以下 1–5 已按顺序完成：
 
 1. **reference package 与源资产登记路径**：根目录 `references/` 已成为唯一入口，并分开管理 reference 身份、第三方实现、原始源材质资产和派生响应数据。
-2. **LayerStack reference 的独立验证**：pbrt `CoatedDiffuseBxDF` 与 `CoatedConductorBxDF` 均已覆盖代表性的粗糙度、各向异性、IOR、吸收/散射和方向切片，没有扩展成按 `N=2/3/4/...` 枚举。
+2. **LayerStack reference 的独立验证**：历史 smoke 用 pbrt `CoatedDiffuseBxDF` 与 `CoatedConductorBxDF` 覆盖了代表性的粗糙度、各向异性、IOR、吸收/散射和方向切片，没有扩展成按 `N=2/3/4/...` 枚举。该结果是有限样本观察；当前 registry 的 `numerical_parity` 仍为 `pending`，在 pbrt harness 修正并按锁定提交重跑前不提升为正式 acceptance。
 3. **OpenPBR 1.1.1 纯数学、原生可编辑材质族**：完整 resolved input 字段、83 个官方 MaterialX 示例索引、常量编辑 round-trip、直接纹理 binding、独立 `eval/sample/pdf` CPU reference 和离线预览已经接入。任意图节点保留原生连接，未实现图求值时显式拒绝。
 4. **MERL 测量 BRDF 材质族**：100 个原始密集表、发布包身份、官方 Rusinkiewicz 参数化、RGB scale、向量化查表和离线预览已经接入；没有制造不存在的解析 GT 参数。
 5. **原生 MaterialX 高分辨率纹理小集**：8 个 Poly Haven CC0 4K 材质已经锁定并下载，完整保留 `.mtlx`、纹理、物理尺寸、颜色空间、切线 normal 和 displacement 语义；均已在 Falcor 中直接呈现，并通过上游 MaterialX float renderer 的共同相机线性 HDR 图像验收。当前 surface-response 验收不移动 displacement 几何，但没有从原始 GT 删除该图或参数。
@@ -111,7 +113,7 @@ OpenPBR 在这里是一个源材质族，不是项目统一方法的目标结构
 - `N>2` 验证插入无效界面/介质后的退化关系、互易性、能量与有限值、相同随机流下的新旧实现一致性，以及有明确原生定义的实际材质构造；
 - 如果以后接入的 MaterialX、薄膜或其他源材质原生包含多层，则用该源材质自己的 reference 验证，而不是人为嵌套 pbrt 只为得到更大的 N。
 
-coated conductor 验证已经完成；“通用 pbrt N 层 probe”仍不进入计划。当前 smoke suite 的总体 mean 相对误差为 0.414%，max 为 2.554%，误差包含两侧 Monte Carlo 噪声。
+历史 coated conductor smoke 已执行；“通用 pbrt N 层 probe”仍不进入计划。该次 smoke suite 的总体 mean 相对误差为 0.414%，max 为 2.554%，误差包含两侧 Monte Carlo 噪声。由于当前 `tools/reference/pbrt_compare.py` 尚未与新的 `FalcorReferenceEvaluator` 参数名同步，这组数值只保留为历史观察，不能把 registry 的 `numerical_parity` 从 `pending` 改为 `ready`；修正 harness 并重跑后再更新状态。
 
 ## 下载状态与后续计划
 

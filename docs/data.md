@@ -86,7 +86,7 @@ conda run -n neural-shading python -m ncls.cli data plan-corpus `
   --output artifacts/corpus/layer-stack-v1-plan.json
 ```
 
-LayerStack reference 依赖 Falcor Python，正式采集使用锁定环境入口：
+LayerStack reference 依赖 Falcor Python。Windows 使用锁定的 D3D12 构建：
 
 ```powershell
 .\scripts\run_falcor_python.ps1 -m ncls.cli data collect-corpus `
@@ -94,6 +94,33 @@ LayerStack reference 依赖 Falcor Python，正式采集使用锁定环境入口
   --shard-root data/reference-responses `
   --output artifacts/corpus/layer-stack-v1.json
 ```
+
+Ubuntu 22.04 + NVIDIA RTX A6000 使用同一个 Falcor 8.0 提交的 Linux/GCC 构建和 Vulkan device。A6000 支持 Vulkan 和硬件 ray tracing，但当前 reference collector 调用的是 Falcor compute pass，采集本身不依赖 RT core。首次部署：
+
+```bash
+sudo apt update
+sudo apt install -y build-essential git xorg-dev libgtk-3-dev
+
+conda env create -f environment.yml
+conda run -n neural-shading python -m pip install -r requirements-torch-cu128.txt
+
+(cd external/Falcor && ./setup.sh)
+bash scripts/build_falcor_python_linux.sh
+bash scripts/run_falcor_python.sh -c "import falcor; print(falcor.DeviceType.Vulkan)"
+```
+
+正式采集命令只替换 launcher，CorpusPlan、reference shader、HDF5 与 identity 合同不变：
+
+```bash
+bash scripts/run_falcor_python.sh -m ncls.cli data collect-corpus \
+  --config configs/corpus/layer-stack-v1.json \
+  --shard-root data/reference-responses \
+  --output artifacts/corpus/layer-stack-v1.json
+```
+
+`src/ncls/data/falcor.py` 在 Windows 明确选择 D3D12、在 Linux 明确选择 Vulkan；任一 backend 创建失败都会直接报错，不跨 API 静默 fallback。锁定 Falcor 对 Linux 的上游表述仍是“Ubuntu 22.04 experimental support”，所以 Ubuntu 24.04 等环境必须单独记录并验证，不能沿用 22.04 的完成声明。
+
+这条适配解决的是 **headless reference 采集**。当前 collector 在每个 batch 后通过 `Buffer.to_numpy()` 把结果读回 CPU，并最终写 HDF5；它不是 NVIDIA 论文的 GPU-resident online training。A6000 可以同时运行 Falcor/Vulkan reference 与 CUDA/SlangPy 训练，但要忠实实现论文 online lifecycle，还需让 reference response 以 GPU buffer/tensor 直接进入 loss，消除逐 batch CPU readback 与 HDF5 replay。
 
 采集按结构 family、query role 和实际密度拆成矩形 HDF5 shard。每个 shard 只有一个 `direction_count`，所以训练 batch 不需要 padding。已有文件只有在 HDF5 内容 hash、state 集合和计划完全一致时才会续用；不一致文件会直接报错，不会被覆盖。
 

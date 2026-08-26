@@ -64,7 +64,7 @@ def test_pipeline_identity_is_readable_structured_and_hash_exact() -> None:
         "lobe-residual-k2-log32-v1",
         "lobe-residual-k3-log32-v1",
         "core-frame-neural-v1",
-        "nvidia-frame-two-lobe-paper-v1",
+        "nvidia-frame-two-lobe-layer-stack-budget-adapted-v1",
     }
 
 

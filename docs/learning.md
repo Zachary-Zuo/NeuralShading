@@ -25,21 +25,24 @@ Directional mollification 由 `MollificationCurriculumStore` 读取冻结的 `mo
 
 ## 统一散射 evaluator 与 sampler（03）
 
-03 的生产前向只有 `shaders/ncls/backends/unified_neural/unified_neural_core.slang` 一份。`UnifiedNeuralModel` 只持有 FP32 master 参数并把 `prepare/evaluate/pdf` 调到 SlangPy；Torch 负责 loss、optimizer 和独立数值 oracle，不提供生产前向 fallback。参数打包从实际 model 反射出连续 FP16 offset manifest，材质 record 的 128 B ABI 则由 [`unified_neural_layout_v1.json`](../src/ncls/learning/abi/unified_neural_layout_v1.json) 生成 Slang layout，不能在 Python/Slang 两侧各写一套 offset。
+03 的 NVIDIA evaluator 与 `core-frame-neural-v1` 各自拥有一份 Falcor-free Slang 生产前向，分别位于 `shaders/ncls/backends/nvidia_neural_appearance/` 与 `shaders/ncls/backends/unified_neural/`。SlangPy 训练、Falcor parity、MethodBundle 和 viewer 编译各方法自己的同一份 core；Torch 只承载 loss、optimizer、统计与独立数值 oracle，不提供第二套生产前向。参数 offset 从实际模型反射并随 packed asset 版本化，不能在 Python、Slang 与 viewer 中各维护一份布局。
 
-三个 evaluator 共用 learned-frame 与方向 feature 合同：
+### NVIDIA 复现身份与训练协议
 
-- `nvidia-frame-two-lobe-realtime-v1` 是 `C_eval≤2,000 MAC` 的 deployment-matched direct baseline；
-- `core-frame-neural-v1` 把 01 的 exact top-interface 作为固定物理项，只学习非负 residual，不做 prediction clamp、correction-none 或 lobe-only 回退；
-- `nvidia-frame-two-lobe-paper-v1` 使用论文规模 64-wide 三隐层 evaluator，只是同数据、同 25k 预算的 `diagnostic`，不参加 realtime 2×2 选择。
+论文方法包含两层不同要求，必须同时满足后才能称为忠实复现：
 
-正式训练唯一接受 `artifacts/corpus/layer-stack-p1-mollification-training-v1.json`（entry `47ef2013…5a89`）。step `1…17,500` 读取冻结的 mollified reference，step `17,501…25,000` 读取 base-v5；early stopping 的有效 floor 固定为 step 20,000，保证任何正式 run 都经历 base 段。validation/test 始终来自 base-v5，训练 manifest 记录各 target source 的实际计数。
+1. **方法形态**：`z8`、只依赖 latent 的两个非正交 learned frame、`20→64→64→64→3` evaluator、`exp(raw-3)` cosine-weighted response，以及 `11→32→32→32→9` 的 GGX9 sampler；
+2. **训练生命周期**：训练时在 GPU 上在线生成 source-material query 并立即求 reference BRDF；论文报告 300k iterations，每次分别处理两个 65k batch，共接近 400 亿个在线样本。
 
-evaluator 冻结后，`nvidia-diffuse-ggx9` 与 `ltc-k2` head 各自训练 10k step。shared trunk、latent 与 evaluator 参数全部 detach，两个 sampler head 使用独立的 Slang callable identity，避免 SlangPy 首次 active-gradient mask 被预热顺序污染。常驻 warm-order 回归同时要求 head/PDF 有梯度、目标 head 梯度 finite 且非零、所有冻结参数 `grad is None`。
+当前正式入口已改名为 `nvidia-frame-two-lobe-layer-stack-budget-adapted-v1`，只对齐第一层的主要网络形态。它使用冻结的 LayerStack HDF5/mollification entry、25k steps、每 step 16 个 query group；每组 64 个方向，因此每条训练 route 每 step 只有 1,024 个方向查询。它是 **LayerStack 上的离线、预算适配诊断**，不是论文训练协议的忠实复现，也不能用 `paper baseline` 描述其训练结论。旧 run/artifact 中的 `nvidia-frame-two-lobe-paper-v1` 只按原 hash 作为历史诊断 provenance 保留；pipeline registry、config 与 exporter 不提供旧身份 alias。
 
-sampler 正确性不是用自己的 `sample/pdf` 自证：正式协议对 30 state × 4 个含 grazing 的 view 使用独立 CPU quadrature/PDF oracle，并检查 normalization/null、sample→pdf、histogram和相对冻结 evaluator 的 MC 无偏性。packed checkpoint 还要在 SlangPy 与 Falcor 执行完整 evaluator+PDF parity；FP32 双编译阈值为 `rtol≤2e-5`，FP16-packed 对 FP32 evaluator 为 `rtol≤2e-3`。
+该 25k run 的 validation 相对初始化显著改善、数值有限且后期没有发散，但 best checkpoint 正好落在最后一步，最后 25 个 validation 记录的 normalized slope 为 `-0.168`，95% bootstrap CI 为 `[-0.265,-0.099]`。这说明训练仍在可信改善，证据只支持“有限、改善、未发散”，不支持“已经训练到论文规模或已经饱和收敛”。其 test directional L1 state median/p95 为 `0.680/1.205`，能量相对误差 median/p95 为 `0.408/4.372`；这些数值说明当前 checkpoint 本身存在显著底色/能量误差，不是 viewer packing 或 shader parity 单独造成的。
 
-realtime 选择固定为 NVIDIA direct/core evaluator × GGX9/LTC 两种 sampler 的 A–D 四格。配置和 best checkpoint 冻结后，只运行一次含 test/adversarial/dense 的 P1 audit；Q1 再从该带哈希报告机械提取，不重复读取 test。Q1 要求 test directional state median/p95 `≤0.045/0.10`、15 个单层 state 各 `≤0.013`、四个冻结尾部 state 各 `≤0.15`。只有 Q1、sampler correctness 和 checkpoint parity 全过的格才可选；质量、signed energy、sampler variance 与实际单-query 时间按同一 30 state 做配对 bootstrap，若候选没有可信 Pareto 改善则选择 baseline A。
+现有离线 curriculum 读取 `artifacts/corpus/layer-stack-p1-mollification-training-v1.json`（entry `47ef2013…5a89`）：前 20k step 由 reader 在四个冻结半径和 base-v5 之间路由，之后只读 base-v5。它可以继续用于 matched 的离线 LayerStack 候选比较，但必须使用独立的 `budget-adapted` 身份；若目标是论文复现，则需实现 GPU-resident online reference query 与 joint evaluator/sampler lifecycle，不能只把离线 step 数提高到 300k。
+
+sampler 正确性仍不能用自己的 `sample/pdf` 自证：正式协议对 30 state × 4 个含 grazing 的 view 使用独立 CPU quadrature/PDF oracle，并检查 normalization/null、sample→pdf、histogram 和相对同一冻结 evaluator 的 MC 无偏性。packed checkpoint 还要在 SlangPy 与 Falcor 执行完整 evaluator+PDF parity；这些门只证明数学实现与打包一致，不证明模型已经学对 source material。
+
+方法对应、训练状态和质量比较必须分开登记。绝对 quality 数值不决定 prior-art 方法形态是否实现正确，但训练预算与 online/offline lifecycle 属于 method correspondence，不能以“未设置绝对质量门”为由省略。候选比较只在共享数据角色、预算类别和评测协议的 matched cell 间报告 paired bootstrap 与成本；不得恢复旧的 Q1 绝对阈值或默认 winner 规则。
 
 ## 固定四层 quality-v1
 

@@ -1,7 +1,7 @@
 {
-  "evaluator_pipeline": "nvidia-frame-two-lobe-paper-v1",
+  "evaluator_pipeline": "nvidia-frame-two-lobe-layer-stack-budget-adapted-v1",
   "evaluator_checkpoint": "artifacts/runs/unified-scattering-03/formal-nvidia-original-seed-20260824/checkpoints/best.pt",
-  "sampler": "nvidia-diffuse-ggx9",
+  "sampler": "ltc-k2",
   "steps": 10000,
   "batch_size": 16,
   "learning_rate": 0.0003,

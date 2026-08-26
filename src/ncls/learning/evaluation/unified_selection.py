@@ -64,8 +64,8 @@ def load_unified_selection_protocol(
     if value["seed"] != 20260824 or value["bootstrap_iterations"] < 1000:
         raise ValueError("unified selection seed/bootstrap contract drifted")
     expected_cells = {
-        "A": {"evaluator": "nvidia-frame-two-lobe-paper-v1", "sampler": "nvidia-diffuse-ggx9", "baseline": True},
-        "B": {"evaluator": "nvidia-frame-two-lobe-paper-v1", "sampler": "ltc-k2", "baseline": False},
+        "A": {"evaluator": "nvidia-frame-two-lobe-layer-stack-budget-adapted-v1", "sampler": "nvidia-diffuse-ggx9", "baseline": True},
+        "B": {"evaluator": "nvidia-frame-two-lobe-layer-stack-budget-adapted-v1", "sampler": "ltc-k2", "baseline": False},
         "C": {"evaluator": "core-frame-neural-v1", "sampler": "nvidia-diffuse-ggx9", "baseline": False},
         "D": {"evaluator": "core-frame-neural-v1", "sampler": "ltc-k2", "baseline": False},
     }

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import importlib
 from pathlib import Path
 from typing import Sequence
 
@@ -9,6 +8,7 @@ import numpy as np
 
 from ncls.core.material import BINARY_SIZE, LayerStackIR, pack_layer_stack
 
+from .falcor import create_falcor_device, import_falcor
 from .statistics import ReplicaMoments, combine_replica_moments
 
 
@@ -36,12 +36,7 @@ class FalcorReferenceEvaluator:
         max_query_group_batch: int = 64,
         light_index_offset: int = 0,
     ) -> None:
-        try:
-            falcor = importlib.import_module("falcor")
-        except ModuleNotFoundError as exc:
-            raise RuntimeError(
-                "Falcor reference evaluation must run through scripts/run_falcor_python.ps1"
-            ) from exc
+        falcor = import_falcor()
         self._falcor = falcor
         directions = np.asarray(light_directions, dtype=np.float32)
         if directions.ndim not in {2, 3} or directions.shape[-1] not in {3, 4}:
@@ -53,7 +48,7 @@ class FalcorReferenceEvaluator:
         self.max_query_group_batch = max_query_group_batch
         self.query_capacity = self.light_count * max_query_group_batch
         self.max_depth = max_depth
-        self.device = falcor.Device(type=falcor.DeviceType.D3D12)
+        self.device = create_falcor_device(falcor)
         self.material_buffer = self._buffer(BINARY_SIZE, max_query_group_batch)
         self.view_buffer = self._buffer(16, max_query_group_batch)
         self.seed_buffer = self._buffer(4, max_query_group_batch)

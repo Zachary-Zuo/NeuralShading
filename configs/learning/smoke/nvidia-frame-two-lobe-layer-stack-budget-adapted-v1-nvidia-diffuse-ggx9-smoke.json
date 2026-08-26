@@ -1,5 +1,5 @@
 {
-  "evaluator_pipeline": "nvidia-frame-two-lobe-paper-v1",
+  "evaluator_pipeline": "nvidia-frame-two-lobe-layer-stack-budget-adapted-v1",
   "evaluator_checkpoint": "artifacts/runs/unified-scattering-03/smoke-nvidia-original-joint-v2/checkpoints/best.pt",
   "sampler": "nvidia-diffuse-ggx9",
   "steps": 2,

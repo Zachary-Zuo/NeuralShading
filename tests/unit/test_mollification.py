@@ -185,18 +185,26 @@ def test_anchor_lock_rerun_timestamp_changes_hash_without_known_hash_requirement
     assert hashes[0] != hashes[1]
 
 
-def test_v8_budget_freezes_multi_source_state_promotion() -> None:
-    plan = MollificationSupplementBudgetPlan.load(
-        PROJECT_ROOT / "configs/corpus/layer-stack-p1-mollification-reference-se-v8.json"
+def test_v8_budget_is_frozen_and_rejects_reference_implementation_drift() -> None:
+    path = PROJECT_ROOT / "configs/corpus/layer-stack-p1-mollification-reference-se-v8.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    canonical = json.dumps(
+        document,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
     )
-    assert plan.sha256 == V8_BUDGET_SHA256
-    assert plan.document["reference_budget"]["maximum_paths_per_jitter_per_replica"] == 524288
-    reuse = plan.document["reuse_policy"]
+    assert hashlib.sha256(canonical.encode("utf-8")).hexdigest() == V8_BUDGET_SHA256
+    assert document["reference_budget"]["maximum_paths_per_jitter_per_replica"] == 524288
+    reuse = document["reuse_policy"]
     assert reuse["name"] == "verified-multi-source-state-shard-reuse-v1"
     assert len(reuse["sources"]) == 2
     assert reuse["promoted_state_ids"] == [
         "1796065779d0932fe7ded3cc2c40b84a8a19190dd7e68732f06bc518ae7fe54a"
     ]
+    with pytest.raises(ValueError, match="accumulator implementation hash mismatch"):
+        MollificationSupplementBudgetPlan.load(path)
 
 
 def test_upper_cap_hammersley_is_deterministic_and_inside_measure() -> None:

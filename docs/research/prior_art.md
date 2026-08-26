@@ -114,7 +114,7 @@
 
 [论文与项目页](https://research.nvidia.com/labs/rtr/neural_appearance_models/)是当前最接近本项目 runtime 形态的强基线。它从复杂 layered material 烘焙 hierarchical latent texture，用 neural decoder 直接输出 BRDF；decoder 从 latent 中提取 learned shading frames，再把方向变换后求值。独立 sampler decoder 预测可解析 two-lobe microfacet proposal 的参数。系统把小网络 inline 到 raster/ray-tracing shader，支持 anisotropy 和 LOD。
 
-其训练流程尤其重要：先把每个表面位置的高维 source material parameters 输入 encoder，与 decoder 端到端训练；之后全图求值 encoder 得到 latent texture，再丢弃 encoder并可选直接 refinement。论文明确指出 encoder 改善 latent 结构和插值，并减少高分辨率直接优化残留的初始化噪声。[开源实现](https://github.com/NVlabs/neuralappearance)还支持多个 MaterialX/MDL 材质联合训练成各自 latent texture + 一个共享 neural model。这里的输入是 source parameters，不是 Qualcomm texture codec 中的完整目标 tensor；二者都在 runtime 前丢弃 encoder，但能支持的 compiler 结论不同。
+其训练流程尤其重要：先把每个表面位置的高维 source material parameters 输入 encoder，与 decoder 端到端训练；之后全图求值 encoder 得到 latent texture，再丢弃 encoder并可选直接 refinement。训练 query 不是先导出成固定 HDF5 再反复读取：论文在训练中从 UV、half/difference directions 等分布取样，在 GPU 上在线求 reference BRDF；报告规模为 300k iterations、每次两个 65k batch，共接近 400 亿个在线样本，单个材质在 RTX 4090 上约 4–5 小时。论文明确指出 encoder 改善 latent 结构和插值，并减少高分辨率直接优化残留的初始化噪声。[开源实现](https://github.com/NVlabs/neuralappearance)还支持多个 MaterialX/MDL 材质联合训练成各自 latent texture + 一个共享 neural model。这里的输入是 source parameters，不是 Qualcomm texture codec 中的完整目标 tensor；二者都在 runtime 前丢弃 encoder，但能支持的 compiler 结论不同。复现时，网络形态、online reference 生成、joint evaluator/sampler lifecycle 和训练规模必须分别登记；只对齐网络宽度不能单独称为论文复现。
 
 本项目应直接参考/复现的组件：
 

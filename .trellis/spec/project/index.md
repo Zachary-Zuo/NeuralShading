@@ -55,4 +55,4 @@ description: NeuralShading 项目级规则入口：三大功能块与公共核�
 
 ## 唯一环境
 
-Python 只用 Conda 环境 `neural-shading`（`environment.yml` + `requirements-torch-cu128.txt`，PyTorch 2.11.0 / CUDA 12.8）；需要 Falcor 模块时经 `scripts/run_falcor_python.ps1`。新增长期依赖同步改 `environment.yml`。Windows PowerShell 读 UTF-8 文本必须显式 `-Encoding UTF8`。
+Python 只用 Conda 环境 `neural-shading`（`environment.yml` + `requirements-torch-cu128.txt`，PyTorch 2.11.0 / CUDA 12.8）；需要 Falcor 模块时 Windows 经 `scripts/run_falcor_python.ps1`，Ubuntu 经 `scripts/run_falcor_python.sh`。Linux/Falcor 只用于 headless Vulkan reference 采集，viewer 仍是 Windows/D3D12。新增长期依赖同步改 `environment.yml`。Windows PowerShell 读 UTF-8 文本必须显式 `-Encoding UTF8`。

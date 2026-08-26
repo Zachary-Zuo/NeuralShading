@@ -1,6 +1,6 @@
 # 测试说明
 
-所有 Python 命令使用唯一 Conda 环境 `neural-shading`。需要导入 Falcor Python 模块的测试只能通过 `scripts/run_falcor_python.ps1` 启动。
+所有 Python 命令使用唯一 Conda 环境 `neural-shading`。需要导入 Falcor Python 模块的测试必须通过平台 launcher 启动：Windows 使用 `scripts/run_falcor_python.ps1`，Linux 使用 `scripts/run_falcor_python.sh`。
 
 ## CPU 单元测试
 
@@ -100,6 +100,42 @@ external\Falcor\build\windows-vs2022\bin\Release\slangc.exe `
 ```
 
 覆盖 Python/Slang ABI、方向和余弦语义、`prepare/evaluate`、sampling-capable backend 的 `sample/pdf`、各向异性、解析 diffuse、互易性、多层执行、统计量，以及各源材质 reference 的真实执行。P0 的正式大语料按 family/role 分 shard，不再用“全部材质写入同一 HDF5”作为架构测试。
+
+### Ubuntu 22.04 + RTX A6000 待实机验证
+
+本轮只在 Windows/RTX 4090 上完成了 D3D12 回归，无法据此宣称 Linux/Vulkan 已经实测通过。A6000 服务器首次部署后执行：
+
+```bash
+nvidia-smi
+conda env create -f environment.yml
+conda run -n neural-shading python -m pip install -r requirements-torch-cu128.txt
+
+(cd external/Falcor && ./setup.sh)
+bash scripts/build_falcor_python_linux.sh
+bash scripts/run_falcor_python.sh -c \
+  "import falcor; d=falcor.Device(type=falcor.DeviceType.Vulkan); print(d.info.adapter_name)"
+
+conda run -n neural-shading python -m pytest \
+  tests/unit/test_falcor_platform.py -q
+bash scripts/run_falcor_python.sh -m pytest \
+  tests/integration/reference/test_reference_physics_gpu.py -q
+```
+
+通过判据：平台选择测试全部通过；Falcor 明确创建 Vulkan device；三项 LayerStack reference physics 测试通过；运行后 `external/Falcor` 仍为干净工作树。随后才执行一个 validation state 的采集冒烟：
+
+```bash
+bash scripts/run_falcor_python.sh -m ncls.cli data collect-state \
+  --config configs/corpus/layer-stack-v1.json \
+  --structure-family layers-01-diffuse-variant-00 \
+  --state-index 3 \
+  --role validation \
+  --output data/reference-responses/smoke/layer-stack-v1-validation-linux-vulkan.h5
+
+conda run -n neural-shading python -m ncls.cli data validate \
+  data/reference-responses/smoke/layer-stack-v1-validation-linux-vulkan.h5
+```
+
+这些命令只验收 headless reference 采集适配，不验收论文的 GPU-resident online training；后者尚未实现，不能用 HDF5 离线训练结果替代完成声明。
 
 ## Neural material 方法的分阶段门槛
 

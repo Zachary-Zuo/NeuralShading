@@ -32,7 +32,9 @@
 - 支持 split、线性绝对差、相对差和放大误差显示；
 - 左右不能分别自动曝光，显示操作不能修改任一侧物理输入。
 
-右侧目前没有 path-traced 全局传输，因此图像 difference 是 reference 与完整实时系统的视觉差异，会混入可见性和间接光差异。它适合发现系统级伪影，不是 neural evaluator 表示误差的定量替代；核心材质指标仍由固定方向响应和匹配入射光/可见性的局部图像计算。
+右侧目前只有 deferred lighting，没有 method path tracer。`08-25-05-viewer-method-deferred-pt` 中定义的 `Reference PT | Method PT` 尚未实现，当前任何 capture 都不能作为这项验收的完成证据。尤其是 `unified-scattering-03-nvidia-original-viewer-smoke.json`：左侧虽然使用 `ncls.scene-path-tracer@1`，但 capture 把 `reference_scene_max_bounces` 固定为 `0`，右侧仍是 deferred；它只证明 bundle 能加载并执行，不是两侧 path tracing 对照。
+
+因此当前图像 difference 是有限深度 reference 与 deferred 系统的视觉差异，会混入阴影可见性、间接光和积分器差异。它适合发现系统级伪影，不是 neural evaluator 表示误差的定量替代；核心材质指标仍由固定方向响应和匹配入射光/可见性的局部图像计算。若 bundle 的 Falcor/packed parity 已通过而底色仍显著不同，应先检查该 checkpoint 的离线方向响应和能量误差，不能把差异默认归因于 viewer PT。
 
 ## Reference estimator 与噪声语义
 

@@ -24,7 +24,7 @@ paths:
 ```text
 CorpusPlan（configs/corpus/*.json）
   → ncls data plan-corpus
-  → ncls data collect-corpus（LayerStack 需 scripts/run_falcor_python.ps1）
+  → ncls data collect-corpus（LayerStack 在 Windows 经 run_falcor_python.ps1，在 Ubuntu 经 run_falcor_python.sh）
   → 按 family / role / direction_count 拆分的矩形 reference-shard v5（data/reference-responses/）
   → reference-corpus manifest（artifacts/corpus/*.json）
   → ncls data validate-corpus / audit-dense
@@ -41,7 +41,7 @@ CorpusPlan（configs/corpus/*.json）
 - [ ] 采样密度、split、噪声预算只在 `CorpusPlan` 里声明；不给采集器加可任意拼接的 profile 参数。
 - [ ] 已区分 pilot 与 formal：pilot 只确定成本 / 精度 / 吞吐，formal plan 在采集前一次冻结；达到 formal cap 后不会自动生成更高 cap 的 vN 继续追门。
 - [ ] 改 shard / corpus 字段时同步 `src/ncls/data/schemas/*.json`、`docs/contracts/reference_dataset.md`、`tests/unit/test_reference_shard.py` / `test_corpus_plan.py`。
-- [ ] 已判定开发机状态：正式采集与 `falcor` marker 测试只在"完整"状态可做。
+- [ ] 已判定开发机状态：正式采集只在“完整 Windows”或“Linux reference”状态可做；viewer 与 D3D12-only `falcor` marker 测试仍只在完整 Windows 状态运行。
 
 ## 质量检查
 

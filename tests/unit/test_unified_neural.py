@@ -99,12 +99,12 @@ def test_unified_layout_matches_frozen_budget() -> None:
 
 def test_unified_pipeline_runtime_classes_and_costs() -> None:
     residual = create_pipeline("core-frame-neural-v1")
-    paper = create_pipeline("nvidia-frame-two-lobe-paper-v1")
+    offline_control = create_pipeline("nvidia-frame-two-lobe-layer-stack-budget-adapted-v1")
     assert residual.descriptor.deployment_candidate
-    assert not paper.descriptor.deployment_candidate
+    assert not offline_control.descriptor.deployment_candidate
     assert residual.parameter_costs(None)["C_eval_macs"] == 1664
-    assert paper.parameter_costs(None)["runtime_class"] == "diagnostic"
-    assert paper.parameter_costs(None)["C_eval_macs"] > 2000
+    assert offline_control.parameter_costs(None)["runtime_class"] == "diagnostic"
+    assert offline_control.parameter_costs(None)["C_eval_macs"] > 2000
 
 
 def test_unified_data_identities_are_not_directory_guesses() -> None:
@@ -348,10 +348,10 @@ def _synthetic_selection_cell(
 def test_unified_selection_manifest_applies_pareto_and_illegal_baseline_rules() -> None:
     cells = {
         "A": _synthetic_selection_cell(
-            "nvidia-frame-two-lobe-paper-v1", "nvidia-diffuse-ggx9"
+            "nvidia-frame-two-lobe-layer-stack-budget-adapted-v1", "nvidia-diffuse-ggx9"
         ),
         "B": _synthetic_selection_cell(
-            "nvidia-frame-two-lobe-paper-v1", "ltc-k2", variance=0.8
+            "nvidia-frame-two-lobe-layer-stack-budget-adapted-v1", "ltc-k2", variance=0.8
         ),
         "C": _synthetic_selection_cell(
             "core-frame-neural-v1", "nvidia-diffuse-ggx9"
@@ -402,7 +402,7 @@ def test_unified_selection_assembles_only_identity_matched_formal_artifacts(
     }
     evaluator_sha = {"direct": "4" * 64, "core": "5" * 64}
     pipelines = {
-        "direct": "nvidia-frame-two-lobe-paper-v1",
+        "direct": "nvidia-frame-two-lobe-layer-stack-budget-adapted-v1",
         "core": "core-frame-neural-v1",
     }
 

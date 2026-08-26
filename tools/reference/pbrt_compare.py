@@ -167,7 +167,11 @@ def _run_case(
     pbrt_response = np.mean(pbrt_batches, axis=0)
 
     light_directions = np.stack([_direction(float(theta), float(phi)) for theta, phi in directions])
-    evaluator = FalcorReferenceEvaluator(light_directions, max_depth=max_depth, max_tile_batch=1)
+    evaluator = FalcorReferenceEvaluator(
+        light_directions,
+        max_depth=max_depth,
+        max_query_group_batch=1,
+    )
     falcor_batches = [
         evaluate_reference_fixed(
             evaluator,

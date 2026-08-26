@@ -64,7 +64,7 @@ paths:
 ### 3. Contracts
 
 - 每 shard 固定一个 state，布局为 `8×4×64`；四个正半径 level 为 `10°/8.5355339059°/5°/1.4644660941°`，每 target 使用 256 个 deterministic upper-cap `wo`，`wi` 保持不变。
-- composite corpus 必须覆盖 selection 的 30 个唯一 state；每个 shard 自带产生它的 budget plan/collection lock URI 与 hash。当前已经发布的 `f6931474…e4f3` 仍按其 v6/v7/v8 provenance 验证和读取，但这种历史组合只说明产物可追溯，不是未来 formal acquisition 的模板。
+- composite corpus 必须覆盖 selection 的 30 个唯一 state；每个 shard 自带产生它的 budget plan/collection lock URI 与 hash。已经发布的 `f6931474…e4f3` 仍按产物内嵌的 v6/v7/v8 provenance 读取；根仓库中的 v8 acquisition plan 则继续冻结旧 `reference.py` hash。2026-08-27 的 Linux/Vulkan device 迁移改变了该实现文件，因此当前 loader 会拒绝用 v8 续采，这是防止跨实现拼接的预期行为。新采集必须先冻结新 plan/lock identity，不能原地改写 v8 hash。
 - training entry 显式绑定 base corpus ID、audit report hash、supplement corpus URI/ID 和 curriculum；`t<0.875` 取最近的正半径 level，`t≥0.875` 必须读取该 shard 内冻结的 base-v5 `source_response`（0°）。
 
 ### 4. Validation & Error Matrix
@@ -83,7 +83,7 @@ paths:
 ### 6. Tests Required
 
 - unit：protocol/schema 严格字段、连续 `sample_offset` 与 CPU float64 Welford merge、摘要/tamper、curriculum `.874/.875` 边界和未知 state fail-stop。
-- GPU/reference：通过 `scripts/run_falcor_python.ps1` 覆盖固定 batch reference 路径。
+- GPU/reference：Windows 通过 `scripts/run_falcor_python.ps1`、Ubuntu 通过 `scripts/run_falcor_python.sh` 覆盖固定 batch reference 路径；报告分别记录 D3D12/Vulkan，不能把单平台结果外推为跨 API parity。
 - corpus：同时运行 base v5 与 composite validator，并用真实 training entry 做 reader smoke。
 
 ### 7. Wrong vs Correct

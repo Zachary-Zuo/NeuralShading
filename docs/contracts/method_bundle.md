@@ -171,7 +171,7 @@ viewer 的方法 pass 已泛型化。compiled set 在导出时提供 `runtime_ad
 - 方法 module 用公共 alias 绑定 associated types，并通过 `INclsScatteringBackend` 提供 `prepare/evaluate/sample/pdf`；
 - bundle 加载时必须通过同一 compiled set 的固定方向 GPU parity。
 
-当前 03 轨道的原规模 NVIDIA paper baseline 与 core-frame candidate 都包含完整 matched GGX9 sampler。baseline 因真实运行成本标为 `diagnostic`，candidate 标为 `realtime`；分类不靠缩模，也不使用收敛后质量数值决定复现是否成功。
+当前 03 轨道的 NVIDIA learned-frame LayerStack 离线预算适配方法与 core-frame candidate 都包含完整 matched GGX9 sampler。前者因真实运行成本标为 `diagnostic`，candidate 标为 `realtime`；分类不靠缩模，也不使用收敛后 quality 数值决定方法对应或训练状态。离线预算适配方法不等同于论文的 online training 复现。
 
 ## 训练 run 与 bundle 的边界
 

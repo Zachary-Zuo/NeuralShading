@@ -19,7 +19,7 @@ from ncls.paths import SOURCE_MATERIAL_ROOT
 from ncls.source_materials.identity import materialx_asset_sha256
 
 from .base import BaseProvider, PROJECT_ROOT, assign_group_splits, implementation_hash
-from .falcor import direction_rows, import_falcor, output_buffer, structured_buffer
+from ..falcor import create_falcor_device, direction_rows, import_falcor, output_buffer, structured_buffer
 
 
 @dataclass(frozen=True)
@@ -267,6 +267,7 @@ class MaterialXProvider(BaseProvider):
             capabilities=("evaluate", "spatial", "uv-footprint", "normal-map"),
             implementation_sha256=implementation_hash((
                 Path(__file__),
+                PROJECT_ROOT / "src/ncls/data/falcor.py",
                 PROJECT_ROOT / "src/ncls/source_materials/materialx.py",
                 shader,
                 PROJECT_ROOT / "shaders/ncls/reference/materialx_standard_surface_reference.slang",
@@ -316,7 +317,7 @@ class MaterialXProvider(BaseProvider):
     def _runtime(self):
         if self._compute is None:
             self._falcor = import_falcor()
-            self._device = self._falcor.Device(type=self._falcor.DeviceType.D3D12)
+            self._device = create_falcor_device(self._falcor)
             self._compute = self._falcor.ComputePass(
                 self._device,
                 file=PROJECT_ROOT / "shaders/ncls/data/reference_materialx.cs.slang",
@@ -354,6 +355,7 @@ class MaterialXProvider(BaseProvider):
         compute.globals.gQueryCount = len(surfaces)
         compute.execute(threads_x=len(surfaces))
         normals = output.to_numpy().view(np.float32).reshape(len(surfaces), 4)[:, :3].copy()
+        device.end_frame()
         del normal_texture
         gc.collect()
         lengths = np.linalg.norm(normals, axis=1, keepdims=True)
@@ -475,6 +477,7 @@ class MaterialXProvider(BaseProvider):
         response = output.to_numpy().view(np.float32).reshape(len(view_rows), 4)[:, :3].reshape(
             len(surfaces), len(plan.view_directions), plan.direction_count, 3
         ).copy()
+        device.end_frame()
         del textures
         gc.collect()
         return EvaluatedBlock.deterministic(response)

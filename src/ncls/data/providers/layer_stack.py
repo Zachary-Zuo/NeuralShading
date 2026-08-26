@@ -104,6 +104,7 @@ class LayerStackProvider(BaseProvider):
             Path(__file__),
             PROJECT_ROOT / "src/ncls/data/providers/base.py",
             PROJECT_ROOT / "src/ncls/data/directions.py",
+            PROJECT_ROOT / "src/ncls/data/falcor.py",
             PROJECT_ROOT / "src/ncls/data/priors.py",
             PROJECT_ROOT / "src/ncls/data/reference.py",
             PROJECT_ROOT / "shaders/ncls/contracts/layer_stack_ir.slang",

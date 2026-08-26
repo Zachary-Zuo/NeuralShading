@@ -13,6 +13,7 @@ v1 基准（P0）生效前本表为空；迁移前结果的适用边界已汇总
 | 2026-08-25 | `71bd9e733e768a2bf711f3bf0e9b950f9f4997ba9a1121db1bb7f301976437d5` | M2 analytic residual M | LayerStack P1 v1 `0513d0c8…` | 25k（早停 6k） | `20260824` × 1 | 0.0237 / 0.5618 | 0.0191 / 0.5534 | 相对 M2-S 无显著容量收益、成本更高；淘汰该 M 配置 | `artifacts/runs/p1-analytic-residual-m-seed-20260824/` |
 | 2026-08-25 | `8c4168dbbc594d7da20f553b75338065cb4f5de07593003ce09cc1370a8428f1` | M2 analytic residual L | LayerStack P1 v1 `0513d0c8…` | 25k（早停 5.5k） | `20260824` × 1 | 0.0260 / 0.5342 | 0.0281 / 0.6875 | 相对 M2-M 无显著容量收益、成本最高；淘汰该 L 配置 | `artifacts/runs/p1-analytic-residual-l-seed-20260824/` |
 | 2026-08-25 | `cd18d7bc0dabf66d093799becbbd7050bc029d8beab7dd7a6f181954e514e52a` | T per-state teacher L | LayerStack P1 v1 `0513d0c8…` | 25k（实际 25k） | `20260824` × 1 | 0.0775 / 0.3749 | 0.0184 / 0.3559 | 当前预算下未形成可引用的 high-capacity teacher；不支持把 M1 误差归因为共享 latent 瓶颈 | `artifacts/runs/p1-teacher-l-seed-20260824/` |
+| 2026-08-26 | `be5c565e0458e5d01332f2aa2df3d13c7446f01bafa0c37512c5aa6e17f8af69` | NVIDIA learned-frame 3×64 + GGX9，离线预算适配诊断 | LayerStack mollification entry `47ef2013…5a89` | 25k（实际 25k；非论文 300k×2×65k online） | `20260824` × 1 | 0.6801 / 1.2053 | 0.4080 / 4.3722 | 网络形态主要对齐论文，但训练使用冻结 HDF5、方向覆盖和总预算远低于论文；best@25k 且 late slope 仍显著为负，只能判为有限/改善/未发散，不能称 paper-scale baseline。当前 checkpoint 本身有显著底色与能量误差 | `artifacts/runs/unified-scattering-03/formal-nvidia-original-seed-20260824/` |
 
 ## P1 v1 阶段结论（2026-08-25）
 

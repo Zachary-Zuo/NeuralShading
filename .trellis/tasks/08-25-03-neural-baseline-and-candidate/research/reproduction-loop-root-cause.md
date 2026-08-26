@@ -47,6 +47,19 @@
 
 正式训练应先用 smoke 确认正确性和显存，再让 train、validation 等长循环通过 `tqdm` 显示真实完成量、吞吐与 ETA。如果实测速率明显不合理或长时间没有 work unit 完成，再对对应慢段做 profile，定位 batch 过小、HDF5 I/O、SlangPy AD / callable launch 或同步边界等主导成本并优化。没有证据表明需要无人值守调度基础设施时，不先实现通用 heartbeat / watcher 系统。
 
+## 为什么忠实复现要求最终变成了低预算离线训练
+
+这不是论文含糊，也不是 RTX 4090/A6000 缺少能力，而是本项目执行顺序违反了原需求。论文一手材料给出的训练协议是 GPU 上在线生成 reference query，300k iterations、每次两个 65k batch，总计接近 400 亿个样本；现有配置却先冻结成 HDF5 curriculum，再以 25k steps、每 step 16 个 query group、每组 64 个方向训练。也就是说，每条 route 只有 2,560 万个方向查询；即便按 evaluator/sampler 两条 route 合计，也比论文名义样本量低约 760 倍。
+
+形成该偏差的直接原因有四个：
+
+1. method correspondence 只冻结了网络层数、宽度和 frame/sampler 参数化，没有把 online reference lifecycle、batch size、iteration count 与联合训练顺序作为同等强度的身份合同；
+2. 为复用已经发布的 LayerStack HDF5 与降低 SlangPy 小 batch 运行成本，训练入口被改造成离线预算适配，但 pipeline ID 仍错误保留 `paper-v1`；
+3. shader runtime 的软成本分类与训练复现混在一起，先追求可运行/可显示，再把未对齐的训练预算当作工程折中，而没有建立独立 adaptation identity；
+4. 既有测试锁定了 schema、方向数学、打包 parity 和有限梯度，却没有锁定“论文训练协议不得降格”的 correspondence test，所以身份漂移没有及时失败。
+
+因此，先前“忠实复现”的要求确实没有被完成。正确修复不是把 25k 简单改成 300k：当前 `Buffer.to_numpy()` + HDF5 replay 仍是离线链路。必须先实现 Falcor/Vulkan reference response 到 GPU tensor/loss 的直接传递，再以独立正式配置恢复论文的 online batch、iteration 和 joint evaluator/sampler lifecycle；在此之前现有 checkpoint 只能作为 LayerStack 离线预算适配诊断。
+
 ## 本质根因
 
 - **任务合同缺失**：没有约束 hard gate 的来源，也没有把需求交付 / 理论正确性 / observed quality 分开。

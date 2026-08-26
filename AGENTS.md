@@ -57,7 +57,7 @@
   ```
 
 - 不使用 `base`、其他已有 Conda 环境或系统 Python 执行本项目代码。
-- 需要导入 Falcor Python 模块时，统一通过 `scripts/run_falcor_python.ps1` 启动；该脚本设置锁定构建的 `PATH`/`PYTHONPATH` 后仍使用 `neural-shading` 环境。
+- 需要导入 Falcor Python 模块时，Windows 统一通过 `scripts/run_falcor_python.ps1` 启动，Ubuntu 统一通过 `scripts/run_falcor_python.sh` 启动；两个脚本都设置锁定构建的 `PATH`/`PYTHONPATH` 后继续使用 `neural-shading` 环境。Ubuntu 只承载 headless Falcor/Vulkan reference 采集，不承载 Windows/D3D12 viewer。
 - 新增长期依赖时同步更新 `environment.yml`，确保环境可复现。
 - 首次创建环境：
 

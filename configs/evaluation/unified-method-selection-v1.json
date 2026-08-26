@@ -4,8 +4,8 @@
   "seed": 20260824,
   "bootstrap_iterations": 1000,
   "cells": {
-    "A": {"evaluator": "nvidia-frame-two-lobe-paper-v1", "sampler": "nvidia-diffuse-ggx9", "baseline": true},
-    "B": {"evaluator": "nvidia-frame-two-lobe-paper-v1", "sampler": "ltc-k2", "baseline": false},
+    "A": {"evaluator": "nvidia-frame-two-lobe-layer-stack-budget-adapted-v1", "sampler": "nvidia-diffuse-ggx9", "baseline": true},
+    "B": {"evaluator": "nvidia-frame-two-lobe-layer-stack-budget-adapted-v1", "sampler": "ltc-k2", "baseline": false},
     "C": {"evaluator": "core-frame-neural-v1", "sampler": "nvidia-diffuse-ggx9", "baseline": false},
     "D": {"evaluator": "core-frame-neural-v1", "sampler": "ltc-k2", "baseline": false}
   },

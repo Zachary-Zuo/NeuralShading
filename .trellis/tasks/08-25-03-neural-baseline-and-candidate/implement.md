@@ -79,6 +79,13 @@ Final planning summary：先审计并实现原规模 NVIDIA learned-frame evalua
 
 - viewer 已移除 `film_m1` backend/layout/state 硬编码。`Prepare / Approximation / Parity` 只读取 bundle 的 shader specialization、共享权重和 `CompiledMaterial` table，并经 `INclsScatteringBackend` 调用。
 - core-frame candidate MethodBundle：`5d2169642fadf47ae56999a4191102e8905e0c0c768754c1bf7c0890129fe55d`，`runtime_class=realtime`，完整 matched GGX9 `sample/pdf`，位于 `artifacts/exports/unified-scattering-03-viewer/core-frame-native/`。
-- 原规模 NVIDIA paper baseline MethodBundle：`572d6b877eb5a293f9d6798ce44e83208334c9a8893998af483fefed047aeb1d`，`runtime_class=diagnostic`，保留 z8/frame/evaluator 与 native GGX9，位于 `artifacts/exports/unified-scattering-03-viewer/nvidia-paper-native/`。
-- 两个 bundle 的 load-time GPU parity 均通过；candidate headless capture 为 `artifacts/captures/unified-scattering-03-core-frame-viewer-smoke.json`，记录 `approximation_available=true`。baseline 的跨编译器 parity 容差由实测 envelope 得到，报告在 `artifacts/reports/unified-scattering-03/nvidia-viewer-parity-probe.json`；该容差只验证实现一致性，不参与材质质量或复现成功判定。
+- NVIDIA learned-frame 原规模网络的离线预算适配 MethodBundle：`572d6b877eb5a293f9d6798ce44e83208334c9a8893998af483fefed047aeb1d`，`runtime_class=diagnostic`，保留 z8/frame/evaluator 与 native GGX9，位于 `artifacts/exports/unified-scattering-03-viewer/nvidia-paper-native/`。该目录名和 pipeline ID 是当时产物身份，不代表已经完成论文 online training 复现。
+- 两个 bundle 的 load-time GPU parity 均通过；candidate headless capture 为 `artifacts/captures/unified-scattering-03-core-frame-viewer-smoke.json`，记录 `approximation_available=true`。NVIDIA 诊断产物的跨编译器 parity 容差由实测 envelope 得到，报告在 `artifacts/reports/unified-scattering-03/nvidia-viewer-parity-probe.json`；该容差只验证 SlangPy/Falcor/packed asset 一致，不验证 source-material quality 或论文训练 lifecycle。
 - 可见 viewer 以共同 bundle 根目录启动，默认选择 candidate；UI 下拉可切换原规模 baseline。
+
+## 10. 状态纠正（2026-08-27）
+
+- 现有 NVIDIA run 是 25k-step、batch size 16 的离线 LayerStack 训练；论文是 GPU online reference、300k iterations、每次两个 65k batch。现有证据不得再写成“论文 baseline 已忠实复现”。
+- `nvidia-original-convergence.json` 只证明数值有限、相对初始化改善且后期未发散；best checkpoint 在最后一步，late normalized slope `-0.168` 且 CI 全负，不能宣称训练已饱和。
+- `nvidia-original-test-quality.json` 的 directional L1 state median/p95 为 `0.680/1.205`，能量误差 median/p95 为 `0.408/4.372`。viewer 底色差首先是 checkpoint quality 问题；load-time parity 反而证明 viewer 忠实执行了这个错误较大的模型。
+- NVIDIA viewer smoke 的 `reference_scene_max_bounces=0`，右侧仍是 deferred。它不是 `Reference PT | Method PT`，也不能用来判断 method PT 是否正确。

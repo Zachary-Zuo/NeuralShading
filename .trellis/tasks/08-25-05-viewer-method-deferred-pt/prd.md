@@ -9,6 +9,7 @@
 - 前置任务：`01` 至 `04` 已完成、提交并归档。
 - 本任务只能调用 `04` 的公共 loader/backend adapter，不得新增 method-specific viewer 分支。
 - 本任务是复杂任务；启动前根据实际 loader 与 Falcor renderer lifecycle 补全并审阅三件套与 context manifests。
+- 当前状态截至 2026-08-27 仍为 planning：viewer 右侧只实现 Method Deferred；现有 NVIDIA smoke capture 的左侧 `reference_scene_max_bounces=0`，右侧也不是 Method PT。它只验证 bundle/deferred 加载，不能勾选下方任一 Method PT 验收项。
 
 ## Requirements
 
@@ -16,7 +17,7 @@
 - 提供 `Reference PT | Method PT`：右侧 ray hit 调 `prepare/sample/pdf/evaluate`，路径权重恰好使用一次 `f·|cos|/pdf`。
 - method PT 拥有正确的 accumulation/reset 生命周期；两侧共享场景、相机、材质、灯光、曝光和 tone mapping。
 - UI、CLI 与 capture manifest 显式记录两侧 integrator、bundle identity/runtime class、spp、bounce limit、seed 和 raw-authoritative 标志。
-- paper-scale diagnostic 可以显示和测时，但不得被 UI/capture 标为 realtime。
+- 超过实时软成本线的 diagnostic 可以显示和测时，但不得被 UI/capture 标为 realtime；当前 NVIDIA 离线预算适配资产不得标成 paper-scale。
 - viewer 变更只位于根仓库自有源码和既定 Falcor overlay 边界。
 
 ## Acceptance Criteria

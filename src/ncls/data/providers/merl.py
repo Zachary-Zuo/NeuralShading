@@ -13,7 +13,7 @@ from ncls.source_materials import MerlBrdfReference, MerlMaterial
 from ncls.paths import SOURCE_MATERIAL_ROOT
 
 from .base import BaseProvider, PROJECT_ROOT, assign_group_splits, implementation_hash
-from .falcor import execute_direction_kernel, import_falcor, structured_buffer
+from ..falcor import create_falcor_device, execute_direction_kernel, import_falcor, structured_buffer
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,7 @@ class MerlProvider(BaseProvider):
             capabilities=("evaluate", "measured-table"),
             implementation_sha256=implementation_hash((
                 Path(__file__),
+                PROJECT_ROOT / "src/ncls/data/falcor.py",
                 PROJECT_ROOT / "src/ncls/source_materials/merl.py",
                 shader,
                 PROJECT_ROOT / "shaders/ncls/reference/merl_reference.slang",
@@ -87,7 +88,7 @@ class MerlProvider(BaseProvider):
     def _runtime(self):
         if self._compute is None:
             self._falcor = import_falcor()
-            self._device = self._falcor.Device(type=self._falcor.DeviceType.D3D12)
+            self._device = create_falcor_device(self._falcor)
             self._compute = self._falcor.ComputePass(
                 self._device,
                 file=PROJECT_ROOT / "shaders/ncls/data/reference_merl.cs.slang",
