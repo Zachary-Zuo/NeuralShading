@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 2
-- **Last Active**: 2026-08-26
+- **Total Sessions**: 3
+- **Last Active**: 2026-08-27
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~49 | Active |
+| `journal-1.md` | ~71 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 3 | 2026-08-27 | 统一 Pipeline 架构重整 | `7a10a5f`, `d5b8016` | `main` |
 | 2 | 2026-08-26 | 完成 02 Directional Mollification 数据充分性 | `123a94b` | `main` |
 | 1 | 2026-08-26 | 01 可复用散射数学原语 | `c9e5ae5` | `main` |
 <!-- @@@/auto:session-history -->

@@ -47,3 +47,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: 统一 Pipeline 架构重整
+
+**Date**: 2026-08-27
+**Task**: 统一 Pipeline 架构重整
+**Branch**: `main`
+
+### Summary
+
+完成 source、reference query、offline/live batch、方法注册、TrainingCheckpoint@2、ScatteringPackage@1 与双 slot viewer 的原子迁移；删除旧并行路径，通过全量 unit、Falcor GPU 与 Release viewer 构建，并归档任务。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7a10a5f` | (see git log) |
+| `d5b8016` | (see git log) |
+
+### Status
+
+[OK] **Completed**
