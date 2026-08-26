@@ -16,12 +16,11 @@ Triggers:
 * Claude Code PostToolUse (matcher "Read|Edit|Write|MultiEdit") receives one
   structured file path after the tool runs.
 * Codex PreToolUse (matcher "Edit|Write") receives an ``apply_patch`` command.
-  Every patch header is matched before the patch runs. When a FULL spec is
-  emitted, the patch is denied once so the model can read the injected rules
-  and retry; ticket-only reminders do not block.
-* OpenCode ``tool.execute.before`` adapts ``write``, ``edit``, and
-  ``apply_patch`` into the same PreToolUse payload. FULL delivery uses the same
-  deny-once decision before the JS plugin surfaces context as a tool error.
+  Every patch header is matched before the patch runs. FULL specs and tickets
+  are returned as non-blocking ``additionalContext``; spec delivery is an
+  informational reminder, not a tool permission gate.
+* OpenCode ``tool.execute.before`` uses a separate platform hook copy; its
+  delivery policy is outside this Codex-local implementation.
 
 Behavior — per matched spec, per event (recency-decay aware):
 
@@ -72,8 +71,8 @@ Refresh window (config.yaml `spec_injection:`): `refresh_window_seconds`
 passed).
 
 Fail-open on errors: non-matching events, malformed paths, no matches, or any
-internal error → exit 0 with no stdout (stderr warnings allowed). The only
-deliberate block is a Codex patch that just received a FULL governing spec.
+internal error → exit 0 with no stdout (stderr warnings allowed). Codex FULL
+and ticket deliveries never deny the pending tool call.
 """
 from __future__ import annotations
 
@@ -787,7 +786,6 @@ def main() -> int:
                     }
 
     edited_rel = match_files[matches[0].rel_path]
-    records_persisted = True
     try:
         payload, records = assemble_payload(
             edited_rel,
@@ -801,7 +799,7 @@ def main() -> int:
             match_files=match_files,
         )
         if fd is not None and records:
-            records_persisted = append_records(fd, records)
+            append_records(fd, records)
     finally:
         if fd is not None:
             unlock_shard(fd)
@@ -817,20 +815,6 @@ def main() -> int:
         "hookEventName": "PreToolUse" if is_pre_tool_use else "PostToolUse",
         "additionalContext": payload,
     }
-    if (
-        is_pre_tool_use
-        and records_persisted
-        and any(record.get("mode") == "full" for record in records)
-    ):
-        hook_specific_output.update(
-            {
-                "permissionDecision": "deny",
-                "permissionDecisionReason": (
-                    "Trellis injected governing specs. Review them, then retry "
-                    "this tool call."
-                ),
-            }
-        )
     output = {"hookSpecificOutput": hook_specific_output}
     print(json.dumps(output, ensure_ascii=False))
     return 0

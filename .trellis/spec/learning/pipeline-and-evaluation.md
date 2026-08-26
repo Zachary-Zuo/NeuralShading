@@ -25,6 +25,16 @@ paths:
 - `dataset_selection` 只允许 `state_ids / asset_ids / family_ids`。
 - 预算档位：快速档（≤ 30 min GPU，只做 smoke，不入注册表）、标准档（全量阶段数据、共同 seed、4,000 步后 validation patience 早停）、冲刺档（×5–10）。P1 主搜索只用一个 deterministic seed；只有差距接近或轨迹异常才追加 seed。
 - `run_manifest.json` 记录解析后配置、Git 提交、reference 实现 hash、合同版本、seed、依赖版本、输入产物 ID；命令行只能覆盖配置里已声明的字段。
+- `steps / batch_size / seed / validation_interval` 是方法或预算适配，不是任务质量门。复现方法若有权威训练定义，差异必须进入 method correspondence；没有用户授权时不得因为 observed quality 追加 seed 或增加预算。
+
+### 长运行的进度与性能合同
+
+- train step 和耗时明显的 validation / data collection 循环使用 `tqdm`。进度条以真实 batch、query 或 chunk 为单位，显示 `completed / total`、elapsed、rate、ETA；postfix 只放当前 phase、loss 等少量有用信息。
+- 更新粒度以可见且不扰动训练为准：通常每个 batch 或合理 chunk 更新，不为逐 sample 展示强制 GPU 同步。阶段切换时结束旧进度条并为新阶段建立可解释的 total。
+- smoke 负责发现正确性、显存和基本数据流问题。根据 smoke 或短时运行的实测速率估计长跑耗时；速率合理即可运行，不要求先建立覆盖所有 phase 的完整 timing 报告。
+- 若吞吐显著低于方法与硬件规模应有的水平、ETA 不可接受或进度长时间不前进，先停止盲跑并 profile 实际慢段。只分解与嫌疑有关的 CPU data、transfer、forward、backward、optimizer 或 validation/I/O，再通过扩大有效 batch、合批、缓存、减少 host round-trip / kernel launch / 同步边界等方式优化主导成本。
+- heartbeat、watcher、PID/start-time、liveness timeout 和进程树状态机不属于普通训练的默认合同。只有明确引入无人值守调度、多进程 wrapper 或断点恢复服务时，才为相应边界设计这些机制。
+- 一个 formal run 完成 implementation/convergence/correctness 报告前，不因 observed quality 自动排队额外 seed、候选或 sampler run。质量较低但正确收敛时登记结果。
 
 ### 分阶段冻结与 sampler-only 梯度门
 
@@ -91,7 +101,7 @@ benchmark + compiled + parity
 
 ### 5. Good / Base / Bad Cases
 
-- Good：原方法逐项对应、多个 seed 稳定收敛；某些 LayerStack 结构 quality 较低。登记“复现成功 + 当前结构上的质量限制”，并继续 viewer 证据。
+- Good：原方法逐项对应、预先冻结的主 seed 稳定收敛；某些 LayerStack 结构 quality 较低。登记“复现成功 + 当前结构上的质量限制”；只有轨迹异常或用户明确要求时才补 seed。
 - Base：baseline 与 candidate 都 eligible，分组 paired CI 在不同结构上给出不同 Pareto；保留多个条件性非支配结果。
 - Bad：拿旧 run 的 median/p95 数值写进 `require_q1`，未过就修改网络/seed反复训练；或把缩小网络仍命名为原 baseline。
 
@@ -143,3 +153,5 @@ quality_comparison = paired_state_bootstrap(baseline.metrics, candidate.metrics)
 - 为一个候选单独调 loss 权重后再与别的候选"同表比较"。
 - 把 PyTorch `benchmark` 的 kernel 时间当最终 viewer 时间。
 - 报告里用"上界"描述有限预算下的结果。
+- formal 训练没有 `tqdm` 进度与 ETA，明显缓慢时仍不分析热点；或只用存活进程代替实际完成量。
+- 前一方法还没完成 joint evaluator/sampler lifecycle，就排队多个 seed、缩模版本和其他 sampler。

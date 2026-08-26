@@ -39,6 +39,7 @@ CorpusPlan（configs/corpus/*.json）
 - [ ] 已读 `core/material-interface.md`：新材质族保留原生语义，不反演成 LayerStack。
 - [ ] 新 reference 已在 `references/registry.json` 与 `references/<package-id>/` 登记身份、实现、资产清单、许可证与 capability 状态。
 - [ ] 采样密度、split、噪声预算只在 `CorpusPlan` 里声明；不给采集器加可任意拼接的 profile 参数。
+- [ ] 已区分 pilot 与 formal：pilot 只确定成本 / 精度 / 吞吐，formal plan 在采集前一次冻结；达到 formal cap 后不会自动生成更高 cap 的 vN 继续追门。
 - [ ] 改 shard / corpus 字段时同步 `src/ncls/data/schemas/*.json`、`docs/contracts/reference_dataset.md`、`tests/unit/test_reference_shard.py` / `test_corpus_plan.py`。
 - [ ] 已判定开发机状态：正式采集与 `falcor` marker 测试只在"完整"状态可做。
 
@@ -46,6 +47,7 @@ CorpusPlan（configs/corpus/*.json）
 
 - [ ] `ncls data validate` / `validate-corpus` 通过：hash、role 完整性、方向不跨 role 重合、state metadata 不跨 shard 漂移。
 - [ ] 采集器对已存在且不一致的文件报错而不是覆盖；续采只在 hash / state 集合 / 计划完全一致时复用。
-- [ ] reference 噪声预算按用途分层（validation/test 主 response 是硬门；train / diagnostic / reciprocal 只落盘 SE 不拒绝 shard）；没有把诊断 role 的噪声改成训练目标。
+- [ ] 正式 corpus 的每个 shard 都来自同一份预先批准的 acquisition policy；plan 变更后的结果使用新身份，不能与旧 plan 混合后称为一次冻结采集。
+- [ ] reference 噪声预算按用途分层：validation/test 主 response 通过精度门；train 主 response 使用 pilot 推导并在 formal plan 中冻结的足够 SPP，SE/variance 用于审计该 SPP 是否充分；diagnostic / reciprocal 只落盘 SE。没有把诊断 role 的噪声改成训练目标。
 - [ ] 新族的 `ReferenceDescriptor` 声明了 `incident_domain`、`capabilities`、`implementation_sha256`。
 - [ ] 一次性采集报告进 `artifacts/`，没有把 `.h5` 以外的东西写进 `data/`。

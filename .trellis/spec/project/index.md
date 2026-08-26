@@ -29,6 +29,7 @@ description: NeuralShading 项目级规则入口：三大功能块与公共核�
 |---|---|
 | `dev-environment.md` | 每个会话开始、任何"验证 / 测试 / 构建 / 训练"之前 |
 | `method-constraints.md` | 提出、注册或实现任何新候选方法或 backend 之前 |
+| `research-execution.md` | 规划研究任务、设验收门、采集数据、启动正式训练或解释失败之前 |
 | `code-organization.md` | 新建文件、拆文件、写诊断脚本、改接口或字段名之前 |
 | `coding-conventions.md` | 写 Python / Slang / C++ 代码时 |
 

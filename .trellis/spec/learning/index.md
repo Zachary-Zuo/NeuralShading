@@ -43,11 +43,13 @@ configs/learning/<name>.json（training-config-v1）
 - [ ] 复用 `pipelines/appearance_loss.py` 与现有 `source_adapters/`，不复制。
 - [ ] 改 `TrainingConfig` / descriptor / quality suite 字段时同步 `schemas/*.json`、对应测试，并确认旧 hash 不变（`test_training_config.py`）。
 - [ ] 已判定开发机状态：训练与 GPU 测试只在"完整 / 仅 GPU"状态可做；静态状态把命令写进 `TESTING.md`。
+- [ ] 训练及长 validation 等循环使用 `tqdm` 显示真实进度、吞吐和 ETA；smoke 后若实测速率明显不合理，再对代表性慢段做 profile 并优化主导热点。
 
 ## 质量检查
 
 - [ ] 训练只读 train / validation；test 只由独立 evaluate 命令在配置冻结后读取一次。
 - [ ] checkpoint 选择走 `training/selection.py` 的策略（新配置用 `tail_guard`）。
+- [ ] 长循环的进度条按 batch/chunk 更新实际完成量，不靠存活状态伪造进度，也没有因逐 sample 刷新引入明显同步开销。
 - [ ] 报告含成本字段（`B_asset`、`B_shared`、`C_prepare`、`C_eval`、state bytes、参数量）与 signed 能量比等诊断。
 - [ ] 结论用 `learn compare` 的 paired bootstrap 支撑，CI 跨零记"无显著差异"。
 - [ ] baseline 的复现状态没有读取test quality阈值；缩模或接口适配使用独立identity，原规模超软线只改变成本分类。

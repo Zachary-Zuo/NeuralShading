@@ -17,6 +17,11 @@ project_doc_fallback_filenames = ["AGENTS.md"]
 # Codex 0.129+ additionally gates each installed hook behind a one-time
 # `/hooks` TUI review; until the user approves it, the hook stays inactive.
 
+# Trellis path-scoped spec injection is registered on PreToolUse as a
+# non-blocking reminder: it returns additionalContext but never denies the
+# pending edit. AGENTS.md and trellis-before-dev remain responsible for loading
+# the complete governing specs before implementation begins.
+
 # NOTE: Trellis intentionally does NOT write a [features.multi_agent_v2]
 # block here. Codex CLI changed `features` deserialization between 0.130
 # and 0.131: the structured table form (with max_concurrent_threads_per_session

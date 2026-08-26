@@ -29,6 +29,34 @@
 
 这会系统性地产生循环：缩模形态并不等于原方法，过不了质量线又不能放宽或改变预算；即使训练正常完成，也既不能证明忠实复现，又不能结束任务。
 
+## 数据采集为什么也形成了循环
+
+`02` 的 directional mollification supplement 最终由 `27 个 v6 + 2 个 v7 + 1 个 v8` shard 组成，cap 从首轮 `512` paths/jitter/replica 逐次提高到 `524288`，合计记录 `86,283,124,736` 个 reference samples。每一版有独立 hash，旧文件未覆盖，最终 corpus 在 provenance 上可验证；但这不等于“一次冻结规则下的正式采集”。
+
+真实执行把三件事混在一起：pilot 用于发现 estimator/预算、formal 用于生成发布数据、PRD 用于定义任务合同。每次 formal 达 cap 后都根据失败值推导下一 cap，再把 v1→v8 结果追加回 PRD，最终形成了事后合理化的版本链。问题不是 train 噪声可以不管，而是没有先用 pilot 确定足够大的 SPP 并一次冻结 formal plan，却让 `0.06/0.25` 等缺少清晰用户目标或理论来源的事后门持续驱动自动扩算。
+
+正确边界是：先用不晋升的 pilot 测量噪声随 SPP 的下降并确定足够大的 SPP，再让用户确认固定 SPP 或带完整自适应停止规则的唯一 formal plan；formal 只执行一次该计划。SE/variance 用于验证 SPP 是否充分，而不是替代 SPP。若审计仍不充分就停止发布并返回 planning，不接纳噪声数据，也不自动提高预算。已发布 `f693…e4f3` 暂按其冻结 identity 读取，但 v6/v7/v8 组合不能作为以后数据采集的流程模板。
+
+## 训练为什么慢且不能及时自诊断
+
+证据链分为三段：
+
+1. 早期 run 在 initial validation 与 post-curriculum base-HDF5 路径留下永久 `status=running` manifest；训练分区当时在优化循环内做小批随机 HDF5 读取，GPU 侧等待 CPU/I/O。后来把冻结 train 分区驻留内存后，25k joint diagnostic 才能在约 30.5 分钟完成；进一步调整后两次 formal 约 18–20 分钟。
+2. 2026-08-26 复跑当前 post-curriculum hot-path：CPU data 中位约 `1.33 ms`、tensor transfer `0.64 ms`、forward `7.08 ms`，但同步测得 backward 中位约 `178.25 ms`、总 step `202.82 ms`。当前主要瓶颈已经从 HDF5 转成小 batch 的 SlangPy AD / 多 callable launch。配置 `batch_size=16` 对应每路 `16×64=1024` directions，远小于论文每路 65k 的训练 batch；这是未先做 batch scaling profile 的预算适配，不是原方法天然只能低利用率运行。
+3. runner 只在 validation 边界更新 progress，训练和 validation 内没有连续的 `tqdm` 工作进度与 ETA，因此正常但缓慢、效率异常和真正停滞在外部看起来相同。一次串联 profile 超时后，外层命令退出但 `profile_validation_batching.py` 子进程仍存活；这是该 wrapper 的具体清理缺陷，不应据此把 PID、heartbeat、watcher 和进程树状态机提升为所有训练的统一准入要求。先前 watcher 约 7 小时 38 分钟无训练工作却继续排队，也说明增加监管层本身不能替代可见进度和性能分析。
+
+正式训练应先用 smoke 确认正确性和显存，再让 train、validation 等长循环通过 `tqdm` 显示真实完成量、吞吐与 ETA。如果实测速率明显不合理或长时间没有 work unit 完成，再对对应慢段做 profile，定位 batch 过小、HDF5 I/O、SlangPy AD / callable launch 或同步边界等主导成本并优化。没有证据表明需要无人值守调度基础设施时，不先实现通用 heartbeat / watcher 系统。
+
+## 本质根因
+
+- **任务合同缺失**：没有约束 hard gate 的来源，也没有把需求交付 / 理论正确性 / observed quality 分开。
+- **顺序错误**：在 method correspondence、数据 acquisition policy 和 long-run performance preflight 冻结前就进入正式采集与训练。
+- **文档职责漂移**：PRD 同时充当需求、实验日志和失败后的新计划，令范围与成本可以在连续执行中自行增长。
+- **进度与性能观测错位**：长循环没有直接展示 work-unit 进度、吞吐和 ETA，遇到异常缓慢时也没有及时转入热点分析；额外 watcher 只放大了“进程仍在”的假象。
+- **范围过宽**：baseline 复现、candidate、两 sampler 的 2×2、bundle 和 viewer 同时成为一个任务的收尾条件；局部正确结果无法形成终点，额外工作又遮蔽了最先需要完成的 joint baseline。
+
+对应长期规则已写入 `project/research-execution.md`、`data/reference-and-corpus.md` 与 `learning/pipeline-and-evaluation.md`。下次继续 03 时应先给实际长循环补 `tqdm` 进度，用短时吞吐判断是否需要针对性 profile，并优化已经确认的主导热点；不再把 formal-run liveness 基础设施当作训练前置。也不能用新 quality 数值、额外 seed 或 watcher 队列替代未完成的 joint lifecycle。
+
 ## 对只读二手复现的结论
 
 `D:\01_Workspace\Real-Time Neural Appearance Models` 提供了有用的结构对照：默认 latent 8、两个由 latent 提取的 frame、`z + T wi + T wo` decoder、`3×64` 最大 preset、`3×32 → 9` sampler，以及较长的正式训练配置。它只能作为二手线索，不能直接作为 correctness oracle。
@@ -40,7 +68,7 @@
 本任务继续使用原目录，不创建新任务。复现状态只由以下证据决定：
 
 1. method-correspondence 逐项证明实现对应原方法或明确登记为 adaptation；
-2. loss、梯度、权重有限，validation 相对初始化改善，后期无可信发散，多 seed 判断一致；
+2. loss、梯度、权重有限，预先冻结的主 seed 上 validation 相对初始化改善且后期无可信发散；额外 seed 只在轨迹异常或用户明确要求时补充；
 3. checkpoint 可恢复，SlangPy/Falcor/packed asset 是同一实现；
 4. sampler 的 PDF/null/sample 数学正确。
 
