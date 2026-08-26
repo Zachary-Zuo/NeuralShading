@@ -10,7 +10,6 @@ RWTexture2D<float4> gDisplay;
 cbuffer CompositeCB
 {
     uint2 gOutputDim;
-    float gSplit;
     uint gComparisonMode;
     float gExposure;
     float gDifferenceScale;
@@ -33,18 +32,21 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
     else if (gComparisonMode == 0u)
     {
-        if (uv.x < gSplit)
+        const uint panelWidth = gOutputDim.x / 2u;
+        const uint dividerWidth = gOutputDim.x - 2u * panelWidth;
+        if (pixel.x < panelWidth)
         {
-            const float2 sourceUv = float2(uv.x / max(gSplit, 1e-4f), uv.y);
+            const float2 sourceUv = float2((float(pixel.x) + 0.5f) / float(panelWidth), uv.y);
             comparisonLinear = gReference.SampleLevel(gLinearSampler, sourceUv, 0.0f).rgb;
             linear = gDisplayReference.SampleLevel(gLinearSampler, sourceUv, 0.0f).rgb;
         }
-        else
+        else if (pixel.x >= panelWidth + dividerWidth)
         {
-            const float2 sourceUv = float2((uv.x - gSplit) / max(1.0f - gSplit, 1e-4f), uv.y);
+            const float2 sourceUv = float2((float(pixel.x - panelWidth - dividerWidth) + 0.5f) / float(panelWidth), uv.y);
             comparisonLinear = gApproximation.SampleLevel(gLinearSampler, sourceUv, 0.0f).rgb;
             linear = comparisonLinear;
         }
+        else { comparisonLinear = float3(0.85f); linear = comparisonLinear; }
     }
     else
     {
@@ -59,7 +61,5 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     gComparisonLinear[pixel] = float4(comparisonLinear, 1.0f);
     float3 display = nclsViewerAces(max(linear, 0.0f) * exp2(gExposure));
     display = pow(display, 1.0f / 2.2f);
-    if (gHasApproximation != 0u && gComparisonMode == 0u && abs(uv.x - gSplit) < 1.5f / float(gOutputDim.x))
-        display = float3(0.85f);
     gDisplay[pixel] = float4(display, 1.0f);
 }

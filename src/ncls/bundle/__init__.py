@@ -1,13 +1,10 @@
-"""MethodBundle 的构建、验证和加载。"""
+"""ScatteringPackage@1 的构建、验证和统一 binding。"""
 
-from .loader import MethodBundle
-from .manifest import FORMAT_NAME, FORMAT_VERSION, MethodBundleManifest
-from .compiled_set import export_compiled_set_bundle
+from .loader import ScatteringBinding, ScatteringPackage
+from .manifest import FORMAT_NAME, FORMAT_VERSION, ScatteringPackageManifest
+from .writer import write_scattering_package
 
 __all__ = [
-    "FORMAT_NAME",
-    "FORMAT_VERSION",
-    "MethodBundle",
-    "MethodBundleManifest",
-    "export_compiled_set_bundle",
+    "FORMAT_NAME", "FORMAT_VERSION", "ScatteringBinding", "ScatteringPackage",
+    "ScatteringPackageManifest", "write_scattering_package",
 ]

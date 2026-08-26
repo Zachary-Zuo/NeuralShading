@@ -1,4 +1,4 @@
-#include "MethodBackend.slang"
+#include "PackageBackend.slang"
 
 StructuredBuffer<uint> gSharedWeights;
 StructuredBuffer<NclsMethodCompiledMaterial> gCompiledMaterials;
@@ -33,7 +33,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         const float3 woWorld = normalize(gViewDirection[pixel].xyz);
         const NclsScatteringContext context = nclsViewerMethodContext(
             position, normal, tangent, woWorld, gTargetMaterialId);
-        const NclsMethodBackend backend = nclsCreateMethodBackend(gSharedWeights);
+        const NclsPackageBackend backend = nclsCreatePackageBackend(gSharedWeights);
         state = nclsPackMethodState(backend.prepare(
             context, gCompiledMaterials[gCompiledMaterialIndex]));
     }

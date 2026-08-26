@@ -8,9 +8,10 @@ from typing import Sequence
 import numpy as np
 
 from ncls.data.collector import CollectionConfig
-from ncls.data.contract import EvaluatedBlock, PositionKind, QueryPlan, ReferenceDescriptor, SourceState, SurfaceSample, make_state_id
+from ncls.data.contract import EvaluatedBlock, PositionKind, QueryPlan, ReferenceDescriptor, SourceState, SurfaceSample
 from ncls.source_materials import OpenPBRMaterial, load_openpbr_luts, resolve_openpbr_inputs
 from ncls.source_materials.openpbr import ACESCG_TO_LINEAR_SRGB
+from ncls.source_materials.families.openpbr import snapshot_from_openpbr
 
 from .base import BaseProvider, PROJECT_ROOT, assign_group_splits, implementation_hash
 from ..falcor import create_falcor_device, direction_rows, import_falcor, output_buffer, structured_buffer
@@ -29,7 +30,7 @@ class OpenPBRProvider(BaseProvider):
         self.provider_config = config
         shader = PROJECT_ROOT / "shaders/ncls/data/reference_openpbr.cs.slang"
         self.descriptor = ReferenceDescriptor(
-            "openpbr.surface@1.1.1",
+            "openpbr.material@1.1.1",
             "ncls.openpbr@1.1.1",
             "ncls.openpbr-material@1",
             incident_domain="full-sphere",
@@ -59,18 +60,18 @@ class OpenPBRProvider(BaseProvider):
                 raise FileNotFoundError(f"OpenPBR source document is missing or truncated: {path}")
             material = OpenPBRMaterial.from_materialx(path)
             material = replace(material, source_document=str(record["document"]).replace("\\", "/"))
-            payload = material.to_json().encode("utf-8")
             source_hash = str(record["sha256"])
+            snapshot = snapshot_from_openpbr(
+                material,
+                source_asset_sha256=source_hash,
+                asset_root=config.source_root,
+            )
             states.append(SourceState(
-                state_id=make_state_id(self.descriptor.family_id, self.descriptor.native_schema_id, payload, source_hash),
-                family_id=self.descriptor.family_id,
+                snapshot=snapshot,
                 reference_id=self.descriptor.reference_id,
                 asset_id=material_id,
                 split_group_id=material_id,
-                native_schema_id=self.descriptor.native_schema_id,
-                native_payload=payload,
                 source_uri=str(record["document"]),
-                source_sha256=source_hash,
                 split=splits[material_id],
                 structure_family_id=material_id,
                 difficulty_class="unclassified",

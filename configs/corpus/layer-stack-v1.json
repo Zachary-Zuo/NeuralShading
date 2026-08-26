@@ -94,31 +94,31 @@
     "diagnostic_reciprocal_maximum_combined_samples": 65536,
     "state_sample_promotions": [
       {
-        "state_id": "bd6de2e9d0cf5b32e6259d90af99b718983783cbfff1a0a9c3025a54ff3672db",
+        "state_id": "235974d303955b8801f627df5fd85656c8272e44983f164cb1eaee85d94ad009",
         "maximum_combined_samples": 1048576,
         "maximum_query_group_relative_se_p95": 0.10,
         "query_roles": ["validation", "test"]
       },
       {
-        "state_id": "1796065779d0932fe7ded3cc2c40b84a8a19190dd7e68732f06bc518ae7fe54a",
+        "state_id": "2dd43e2c1ec462cb8265c467a2b28301a97622cba78a65f014f83f72b676d324",
         "maximum_combined_samples": 1048576,
         "maximum_query_group_relative_se_p95": 0.60,
         "query_roles": ["validation", "test"]
       },
       {
-        "state_id": "1796065779d0932fe7ded3cc2c40b84a8a19190dd7e68732f06bc518ae7fe54a",
+        "state_id": "2dd43e2c1ec462cb8265c467a2b28301a97622cba78a65f014f83f72b676d324",
         "maximum_combined_samples": 262144,
         "maximum_query_group_relative_se_p95": 0.75,
         "query_roles": ["train"]
       },
       {
-        "state_id": "4ebd9258461716ed23d523a0b221d015feb190270471e2a55b63c3a219fcb1e7",
+        "state_id": "f103a1304e64c8e9dcbd7dbc424ab56091c360c9e43ebe9fb1d3318b7e1db47f",
         "maximum_combined_samples": 262144,
         "maximum_query_group_relative_se_p95": 0.65,
         "query_roles": ["validation", "test"]
       },
       {
-        "state_id": "4ebd9258461716ed23d523a0b221d015feb190270471e2a55b63c3a219fcb1e7",
+        "state_id": "f103a1304e64c8e9dcbd7dbc424ab56091c360c9e43ebe9fb1d3318b7e1db47f",
         "maximum_combined_samples": 262144,
         "maximum_query_group_relative_se_p95": 0.75,
         "query_roles": ["train"]

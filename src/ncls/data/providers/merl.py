@@ -8,9 +8,10 @@ from typing import Sequence
 import numpy as np
 
 from ncls.data.collector import CollectionConfig
-from ncls.data.contract import EvaluatedBlock, PositionKind, QueryPlan, ReferenceDescriptor, SourceState, SurfaceSample, make_state_id
+from ncls.data.contract import EvaluatedBlock, PositionKind, QueryPlan, ReferenceDescriptor, SourceState, SurfaceSample
 from ncls.source_materials import MerlBrdfReference, MerlMaterial
 from ncls.paths import SOURCE_MATERIAL_ROOT
+from ncls.source_materials.families.merl import snapshot_from_merl
 
 from .base import BaseProvider, PROJECT_ROOT, assign_group_splits, implementation_hash
 from ..falcor import create_falcor_device, execute_direction_kernel, import_falcor, structured_buffer
@@ -58,18 +59,18 @@ class MerlProvider(BaseProvider):
             if not table.is_file() or table.stat().st_size != int(record["size"]):
                 raise FileNotFoundError(f"MERL source table is missing or truncated: {table}")
             material = MerlMaterial(material_id, str(record["table_uri"]), document["source_record"], document["license"])
-            payload = material.to_json().encode("utf-8")
             source_hash = str(record["sha256"])
+            snapshot = snapshot_from_merl(
+                material,
+                source_asset_sha256=source_hash,
+                asset_root=config.asset_root,
+            )
             states.append(SourceState(
-                state_id=make_state_id(self.descriptor.family_id, self.descriptor.native_schema_id, payload, source_hash),
-                family_id=self.descriptor.family_id,
+                snapshot=snapshot,
                 reference_id=self.descriptor.reference_id,
                 asset_id=material_id,
                 split_group_id=material_id,
-                native_schema_id=self.descriptor.native_schema_id,
-                native_payload=payload,
                 source_uri=str(record["table_uri"]),
-                source_sha256=source_hash,
                 split=splits[material_id],
                 structure_family_id=material_id,
                 difficulty_class="unclassified",

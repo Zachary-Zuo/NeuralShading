@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Sequence
 
 import numpy as np
+import torch
 
 from ncls.core.material import BINARY_SIZE, LayerStackIR, pack_layer_stack
 
@@ -76,14 +77,17 @@ class FalcorReferenceEvaluator:
     def _buffer(self, stride: int, element_count: int, *, writable: bool = False):
         flags = self._falcor.ResourceBindFlags.ShaderResource
         if writable:
-            flags |= self._falcor.ResourceBindFlags.UnorderedAccess
+            flags |= (
+                self._falcor.ResourceBindFlags.UnorderedAccess
+                | self._falcor.ResourceBindFlags.Shared
+            )
         return self.device.create_structured_buffer(
             struct_size=stride,
             element_count=element_count,
             bind_flags=flags,
         )
 
-    def evaluate_query_groups(
+    def _dispatch_query_groups(
         self,
         materials: Sequence[LayerStackIR],
         view_directions: np.ndarray,
@@ -92,7 +96,9 @@ class FalcorReferenceEvaluator:
         query_group_seeds: np.ndarray,
         light_directions: np.ndarray | None = None,
         sample_offset: int = 0,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[int, int]:
+        """提交一个 reference dispatch；结果保持在 shared output buffers 中。"""
+
         query_group_count = len(materials)
         if not 1 <= query_group_count <= self.max_query_group_batch:
             raise ValueError(f"batch must contain 1..{self.max_query_group_batch} query groups")
@@ -131,6 +137,54 @@ class FalcorReferenceEvaluator:
         self.compute.globals.gSampleOffset = sample_offset
         self.compute.globals.gSeed = 0
         self.compute.execute(threads_x=query_count)
+        return query_group_count, query_count
+
+    def evaluate_query_groups_torch(
+        self,
+        materials: Sequence[LayerStackIR],
+        view_directions: np.ndarray,
+        *,
+        sample_count_per_replica: int,
+        query_group_seeds: np.ndarray,
+        light_directions: np.ndarray | None = None,
+        sample_offset: int = 0,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """返回 GPU-resident reference moments，不经过 host readback。"""
+
+        query_group_count, query_count = self._dispatch_query_groups(
+            materials,
+            view_directions,
+            sample_count_per_replica=sample_count_per_replica,
+            query_group_seeds=query_group_seeds,
+            light_directions=light_directions,
+            sample_offset=sample_offset,
+        )
+        self.device.render_context.wait_for_falcor()
+        return tuple(
+            output.to_torch([self.query_capacity, 4], self._falcor.float32)[:query_count, :3].reshape(
+                query_group_count, self.light_count, 3
+            )
+            for output in self.outputs
+        )
+
+    def evaluate_query_groups(
+        self,
+        materials: Sequence[LayerStackIR],
+        view_directions: np.ndarray,
+        *,
+        sample_count_per_replica: int,
+        query_group_seeds: np.ndarray,
+        light_directions: np.ndarray | None = None,
+        sample_offset: int = 0,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        query_group_count, query_count = self._dispatch_query_groups(
+            materials,
+            view_directions,
+            sample_count_per_replica=sample_count_per_replica,
+            query_group_seeds=query_group_seeds,
+            light_directions=light_directions,
+            sample_offset=sample_offset,
+        )
         result = [
             output.to_numpy().view(np.float32).reshape(self.query_capacity, 4)[:query_count, :3]
             .reshape(query_group_count, self.light_count, 3)

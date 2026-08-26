@@ -21,10 +21,10 @@ from ncls.data import (
     SourceState,
     SurfaceSample,
     collect_reference_dataset,
-    make_state_id,
     peak_grazing_mixture_pdf,
     peak_grazing_mixture_query,
 )
+from ncls.core.source import SourceSnapshot
 from ncls.data.collector import _reciprocal_block
 
 
@@ -41,16 +41,15 @@ class _Provider:
         )
         payload = b'{"value":1}'
         source_hash = hashlib.sha256(payload).hexdigest()
+        snapshot = SourceSnapshot(
+            "test-family", 1, "test-state", source_hash, payload,
+        )
         self.state = SourceState(
-            state_id=make_state_id("test-family", "test-state", payload, source_hash),
-            family_id="test-family",
+            snapshot=snapshot,
             reference_id="test-reference",
             asset_id="asset-01",
             split_group_id="asset-01",
-            native_schema_id="test-state",
-            native_payload=payload,
             source_uri="",
-            source_sha256=source_hash,
             split=2,
             structure_family_id="structure-01",
             difficulty_class="S",
@@ -298,8 +297,8 @@ def test_corpus_store_keeps_batches_rectangular_and_state_indices_global(tmp_pat
         shards=tuple(shards),
         corpus_id="c" * 64,
     )
-    monkeypatch.setattr("ncls.learning.data.validate_reference_corpus", lambda path: corpus)
-    from ncls.learning.data import ReferenceCorpusStore
+    monkeypatch.setattr("ncls.data.stores.validate_reference_corpus", lambda path: corpus)
+    from ncls.data.stores import ReferenceCorpusStore
 
     with ReferenceCorpusStore(tmp_path / "corpus.json") as store:
         train = store.partition_indices("target-visible-v1", "train")
@@ -310,65 +309,3 @@ def test_corpus_store_keeps_batches_rectangular_and_state_indices_global(tmp_pat
         assert batch["mean"].shape == (2, 4, 3)
         assert batch["state_index"].tolist() == [0, 0]
         assert store.state_count == 1
-
-
-def test_quality_harness_evaluates_linear_f_and_reciprocal_pairs(tmp_path) -> None:
-    from ncls.learning.data import ReferenceQueryStore
-    from ncls.learning.evaluation import evaluate_model
-    from ncls.learning.pipelines import LearningPipeline, LearningPipelineDescriptor
-
-    class ConstantPipeline(LearningPipeline):
-        descriptor = LearningPipelineDescriptor(
-            name="constant-test-v1",
-            stage="test",
-            data={
-                "reader": "reference-shard-v1",
-                "partition": "parametric-v1",
-                "source_adapter": "none",
-            },
-            model={
-                "representation": "constant",
-                "architecture": "constant",
-                "latent": "none",
-            },
-            fitting={"path": "gradient", "loss": "zero"},
-            runtime={"compiler": "none", "exporter": "none", "deployment_candidate": False},
-            supported_families=("test-family",),
-            scope="unit test",
-        )
-
-        def create_model(self, model_parameters):
-            del model_parameters
-            return torch.nn.Identity()
-
-        def predict_f(self, model, batch, store, device):
-            return torch.ones_like(batch["mean"])
-
-        def training_loss(self, prediction_f, batch):
-            return torch.sum(prediction_f) * 0.0
-
-    config = CollectionConfig(
-        name="uniform-v1", query_role="test", view_count=2, light_count=4, seed=7
-    )
-    path = tmp_path / "quality.h5"
-    collect_reference_dataset(
-        path,
-        (_Provider(config),),
-        config,
-        created_at="2026-08-24T00:00:00+00:00",
-        generator_git_commit="test",
-    )
-    with ReferenceQueryStore(path) as store:
-        report = evaluate_model(
-            torch.nn.Identity(),
-            ConstantPipeline(),
-            store,
-            store.indices_for_query_role("test"),
-            torch.device("cpu"),
-            batch_size=1,
-            evaluation_role="test",
-            provenance_checks={"checkpoint_recovered": True, "fitted_state_train_only": True},
-        )
-    assert report["valid"]
-    assert report["primary"]["directional_l1_by_state"]["maximum"] < 1e-7
-    assert report["scorecard"]["source_aware_reciprocity_deviation"]["maximum"] < 1e-7

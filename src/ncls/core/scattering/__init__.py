@@ -18,6 +18,12 @@ from .contract import (
     positive_light_cosine,
     response_cosine,
 )
+from .program import (
+    MaterialPayload,
+    ReferenceProgramDefinition,
+    ReferenceProgramDescriptor,
+    RuntimePayload,
+)
 
 __all__ = [
     "CONTRACT_NAME",
@@ -27,6 +33,10 @@ __all__ = [
     "BackendCostModel",
     "BackendDescriptor",
     "ScatteringContext",
+    "MaterialPayload",
+    "ReferenceProgramDefinition",
+    "ReferenceProgramDescriptor",
+    "RuntimePayload",
     "ScatteringEval",
     "ScatteringEvent",
     "ScatteringPdf",

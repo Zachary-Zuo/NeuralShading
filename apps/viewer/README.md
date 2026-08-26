@@ -8,11 +8,11 @@
 
 默认勾选的去噪结果只用于观看。raw reference 始终单独累计并作为 comparison、difference、噪声估计和 `*-reference.exr` 的权威输入；a-trous cross-bilateral 去噪预览写入 `*-reference-denoised.exr`，manifest 明确标记它有偏且不具权威性。
 
-右侧只有在用户显式选择通过完整性检查与 GPU parity 的 `MethodBundle` 后才出现。viewer 不识别具体方法名：bundle 声明 shader module、反射生成的权重 offset、`CompiledMaterial` stride 与私有 state stride；通用 pass 通过 `INclsScatteringBackend` 调用 `prepare/evaluate/sample/pdf`。初始化只负责读取和绑定这些资源，不包含 method-specific renderer 分支。
+右侧只有在用户显式选择通过完整性检查与 GPU parity 的 `ScatteringPackage` 后才出现。viewer 不识别具体方法名：bundle 声明 shader module、反射生成的权重 offset、`CompiledMaterial` stride 与私有 state stride；通用 pass 通过 `INclsScatteringBackend` 调用 `prepare/evaluate/sample/pdf`。初始化只负责读取和绑定这些资源，不包含 method-specific renderer 分支。
 
 当前 03 部署轨道可同时加载原规模 NVIDIA paper baseline 与 core-frame candidate。两者都保留完整 matched GGX9 sampler；baseline 按真实成本标为 `diagnostic`，candidate 标为 `realtime`，均未缩小训练或部署形态。它们只接受 bundle 声明的精确 corpus state，任意材质不会被错误映射到这个 latent。普通模式的左右差图会同时包含材质表示、实时积分和全局传输差异；`--evaluator-preview-lighting` 改用单方向光并令 scene bounce cap 为 0，用于更直接观察局部 evaluator 外观，但仍不能替代方向响应数据集指标。
 
-viewer 不是当前 neural 模型结构的搜索工具。先在完整 `wo × wi` 监督上确定单材质 evaluator、共享 decoder/latent 和 compiler，再导出 Slang MethodBundle 进入这里做 GPU 与系统验证；matched sampler 和环境积分同样在 evaluator 成形后接入。
+viewer 不是当前 neural 模型结构的搜索工具。先在完整 `wo × wi` 监督上确定单材质 evaluator、共享 decoder/latent 和 compiler，再导出 Slang ScatteringPackage 进入这里做 GPU 与系统验证；matched sampler 和环境积分同样在 evaluator 成形后接入。
 
 ## 固定 studio-v1 场景
 

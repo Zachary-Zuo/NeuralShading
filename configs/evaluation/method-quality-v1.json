@@ -1,0 +1,6 @@
+{
+  "format_name": "ncls.method-quality-suite", "format_version": 1,
+  "roles": ["test", "adversarial_probe", "dense_slice"],
+  "metrics": ["solid-angle-normalized-l1", "hemisphere-energy-relative-error", "log-domain-error", "peak-direction-error"],
+  "bootstrap": {"unit": "source-state", "replicates": 2000, "confidence": 0.95}
+}

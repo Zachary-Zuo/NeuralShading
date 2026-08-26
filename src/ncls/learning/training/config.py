@@ -1,145 +1,123 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
-import hashlib
+from dataclasses import dataclass
 import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from .selection import CHECKPOINT_SELECTIONS
+from ncls.core.identity import sha256_json
+
+
+@dataclass(frozen=True)
+class TrainingPhase:
+    name: str
+    steps: int
+    learning_rate: float
+
+    def __post_init__(self) -> None:
+        if self.name not in {"evaluator", "joint", "sampler"}:
+            raise ValueError("training phase name must be evaluator, joint or sampler")
+        if self.steps < 1 or self.learning_rate <= 0.0:
+            raise ValueError("training phase steps and learning_rate must be positive")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "steps": self.steps, "learning_rate": self.learning_rate}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "TrainingPhase":
+        if set(value) != {"name", "steps", "learning_rate"}:
+            raise ValueError("training phase fields must be exactly name, steps and learning_rate")
+        return cls(str(value["name"]), int(value["steps"]), float(value["learning_rate"]))
 
 
 @dataclass(frozen=True)
 class TrainingConfig:
-    pipeline: str
-    stage: str
-    model: Mapping[str, Any]
-    capacity: str | None = None
-    dataset_selection: Mapping[str, Any] = field(default_factory=dict)
-    steps: int = 25000
-    batch_size: int = 64
-    learning_rate: float = 3e-4
-    learning_rate_schedule: str = "cosine"
-    final_learning_rate_fraction: float = 0.05
-    optimizer: str = "adamw"
-    adam_beta1: float = 0.9
-    adam_beta2: float = 0.999
-    adam_epsilon: float = 1e-8
-    weight_decay: float = 1e-5
-    gradient_clip: float = 5.0
-    validation_interval: int = 250
-    checkpoint_interval: int = 250
-    minimum_steps: int = 0
-    early_stopping_patience: int | None = None
-    seed: int = 20260824
-    device: str | None = None
-    deterministic: bool = True
-    initialization_checkpoint: str | None = None
-    checkpoint_selection: str = "median_then_p95"
-    schema_name: str = "training-config"
-    schema_version: int = 1
+    method_key: str
+    batch_source: Mapping[str, Any]
+    model_context: Mapping[str, Any]
+    phases: tuple[TrainingPhase, ...]
+    batch_size: int
+    seed: int
+    device: str
+    optimizer: Mapping[str, Any]
+    validation: Mapping[str, Any]
+    checkpoint_selection: str
+    format_name: str = "ncls.training-config"
+    format_version: int = 1
 
     def __post_init__(self) -> None:
-        if self.schema_name != "training-config" or self.schema_version != 1:
-            raise ValueError("unsupported training config")
-        if not self.pipeline or not self.stage:
-            raise ValueError("training config requires pipeline and stage")
-        if self.learning_rate_schedule not in {"constant", "cosine"}:
-            raise ValueError("unsupported learning rate schedule")
-        if self.optimizer not in {"adam", "adamw"}:
-            raise ValueError("unsupported optimizer")
-        if not 0.0 <= self.adam_beta1 < 1.0 or not 0.0 <= self.adam_beta2 < 1.0:
-            raise ValueError("Adam beta values must lie in [0, 1)")
-        if self.adam_epsilon <= 0.0:
-            raise ValueError("Adam epsilon must be positive")
-        if not 0.0 <= self.final_learning_rate_fraction <= 1.0:
-            raise ValueError("final learning-rate fraction must lie in [0, 1]")
-        if not isinstance(self.model, Mapping) or not isinstance(self.dataset_selection, Mapping):
-            raise ValueError("model and dataset_selection must be objects")
-        allowed_selection = {"state_ids", "asset_ids", "family_ids"}
-        if set(self.dataset_selection) - allowed_selection:
-            raise ValueError("dataset_selection contains unsupported fields")
-        for name, values in self.dataset_selection.items():
-            if not isinstance(values, (list, tuple)) or not values or any(
-                not isinstance(value, str) or not value for value in values
-            ):
-                raise ValueError(f"dataset_selection.{name} must be a nonempty string array")
-        positive = (
-            self.steps,
-            self.batch_size,
-            self.learning_rate,
-            self.validation_interval,
-            self.checkpoint_interval,
-        )
-        if min(positive) <= 0 or self.weight_decay < 0.0 or self.gradient_clip <= 0.0:
-            raise ValueError("training config contains invalid numeric values")
-        if self.minimum_steps < 0 or self.minimum_steps > self.steps:
-            raise ValueError("minimum_steps must lie in [0, steps]")
-        if self.early_stopping_patience is not None and self.early_stopping_patience < 1:
-            raise ValueError("early_stopping_patience must be positive when enabled")
-        if self.seed < 0:
-            raise ValueError("seed must be nonnegative")
-        if self.checkpoint_selection not in CHECKPOINT_SELECTIONS:
-            raise ValueError("unsupported checkpoint_selection strategy")
-
-    def to_dict(self) -> dict[str, Any]:
-        value = asdict(self)
-        if value["capacity"] is None:
-            del value["capacity"]
-        value["model"] = dict(self.model)
-        value["dataset_selection"] = {
-            name: list(values) for name, values in self.dataset_selection.items()
-        }
-        if (
-            value["optimizer"] == "adamw"
-            and value["adam_beta1"] == 0.9
-            and value["adam_beta2"] == 0.999
-            and value["adam_epsilon"] == 1e-8
-        ):
-            del value["optimizer"]
-            del value["adam_beta1"]
-            del value["adam_beta2"]
-            del value["adam_epsilon"]
-        return value
-
-    def to_json(self) -> str:
-        return json.dumps(self.to_dict(), ensure_ascii=False, allow_nan=False, indent=2) + "\n"
+        if self.format_name != "ncls.training-config" or self.format_version != 1:
+            raise ValueError("unsupported training config format")
+        if not self.method_key or self.batch_size < 1 or self.seed < 0 or not self.device:
+            raise ValueError("training config identity, batch size, seed and device are invalid")
+        source = dict(self.batch_source)
+        if set(source) != {"kind", "options"} or source["kind"] not in {"offline", "live"}:
+            raise ValueError("batch_source fields must be kind/offline|live and options")
+        if not isinstance(source["options"], Mapping):
+            raise ValueError("batch_source options must be an object")
+        phases = tuple(self.phases)
+        if not phases or len({phase.name for phase in phases}) != len(phases):
+            raise ValueError("training phases must be nonempty with unique names")
+        optimizer = dict(self.optimizer)
+        if set(optimizer) != {"kind", "weight_decay"} or optimizer["kind"] != "adamw":
+            raise ValueError("optimizer must be exactly AdamW with weight_decay")
+        if float(optimizer["weight_decay"]) < 0.0:
+            raise ValueError("optimizer weight_decay must be nonnegative")
+        validation = dict(self.validation)
+        if set(validation) != {"interval", "batches"} or min(int(value) for value in validation.values()) < 1:
+            raise ValueError("validation interval and batches must be positive")
+        if self.checkpoint_selection != "tail_guard":
+            raise ValueError("new training configs require tail_guard checkpoint selection")
+        object.__setattr__(self, "batch_source", {"kind": source["kind"], "options": dict(source["options"])})
+        object.__setattr__(self, "model_context", dict(self.model_context))
+        object.__setattr__(self, "phases", phases)
+        object.__setattr__(self, "optimizer", optimizer)
+        object.__setattr__(self, "validation", validation)
 
     @property
-    def resolved_sha256(self) -> str:
-        """旧默认 `median_then_p95` 不进哈希，P1 v1 checkpoint 的 `training_config_sha256` 保持可复核。"""
+    def total_steps(self) -> int:
+        return sum(phase.steps for phase in self.phases)
 
-        value = self.to_dict()
-        if value["checkpoint_selection"] == "median_then_p95":
-            del value["checkpoint_selection"]
-        payload = json.dumps(
-            value,
-            ensure_ascii=False,
-            allow_nan=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    @property
+    def sha256(self) -> str:
+        return sha256_json(self.to_dict())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "format_name": self.format_name,
+            "format_version": self.format_version,
+            "method_key": self.method_key,
+            "batch_source": {"kind": self.batch_source["kind"], "options": dict(self.batch_source["options"])},
+            "model_context": dict(self.model_context),
+            "phases": [phase.to_dict() for phase in self.phases],
+            "batch_size": self.batch_size,
+            "seed": self.seed,
+            "device": self.device,
+            "optimizer": dict(self.optimizer),
+            "validation": dict(self.validation),
+            "checkpoint_selection": self.checkpoint_selection,
+        }
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "TrainingConfig":
-        fields = set(cls.__dataclass_fields__)
-        unknown = set(value) - fields
-        if unknown:
-            raise ValueError(f"training config contains unsupported fields: {sorted(unknown)}")
-        required = {"pipeline", "stage", "model"}
-        missing = required - set(value)
-        if missing:
-            raise ValueError(f"training config is missing required fields: {sorted(missing)}")
-        return cls(**{name: value[name] for name in fields if name in value})
-
-    @classmethod
-    def from_json(cls, text: str) -> "TrainingConfig":
-        value = json.loads(text)
-        if not isinstance(value, dict):
-            raise ValueError("training config root must be an object")
-        return cls.from_dict(value)
+        required = {
+            "format_name", "format_version", "method_key", "batch_source", "model_context",
+            "phases", "batch_size", "seed", "device", "optimizer", "validation",
+            "checkpoint_selection",
+        }
+        if set(value) != required:
+            raise ValueError(f"training config fields must be exactly {sorted(required)}")
+        return cls(
+            str(value["method_key"]), value["batch_source"], value["model_context"],
+            tuple(TrainingPhase.from_dict(item) for item in value["phases"]),
+            int(value["batch_size"]), int(value["seed"]), str(value["device"]),
+            value["optimizer"], value["validation"], str(value["checkpoint_selection"]),
+            str(value["format_name"]), int(value["format_version"]),
+        )
 
     @classmethod
     def load(cls, path: Path | str) -> "TrainingConfig":
-        return cls.from_json(Path(path).read_text(encoding="utf-8"))
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+        if not isinstance(value, Mapping):
+            raise ValueError("training config root must be an object")
+        return cls.from_dict(value)

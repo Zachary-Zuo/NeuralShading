@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import IntEnum
-import hashlib
 import math
 from typing import Any, Mapping, Protocol, Sequence
 
 import numpy as np
+
+from ncls.core.source import SourceSnapshot
 
 
 SPLIT_NAMES = ("train", "validation", "test")
@@ -67,15 +68,11 @@ class ReferenceDescriptor:
 
 @dataclass(frozen=True)
 class SourceState:
-    state_id: str
-    family_id: str
+    snapshot: SourceSnapshot
     reference_id: str
     asset_id: str
     split_group_id: str
-    native_schema_id: str
-    native_payload: bytes
     source_uri: str
-    source_sha256: str
     split: int
     structure_family_id: str
     difficulty_class: str
@@ -95,36 +92,31 @@ class SourceState:
             raise ValueError("difficulty_tags must be unique")
         if self.evaluation_cohort not in EVALUATION_COHORTS:
             raise ValueError(f"evaluation_cohort must be one of {EVALUATION_COHORTS}")
-        if not self.native_payload:
-            raise ValueError("native_payload must preserve the exact sampled state")
         for name in (
-            "state_id", "family_id", "reference_id", "asset_id", "split_group_id",
-            "native_schema_id", "source_sha256", "structure_family_id",
+            "reference_id", "asset_id", "split_group_id", "structure_family_id",
         ):
             if not getattr(self, name):
                 raise ValueError(f"{name} must be nonempty")
-        for name in ("state_id", "source_sha256"):
-            value = getattr(self, name)
-            if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
-                raise ValueError(f"{name} must be a lowercase SHA-256 digest")
 
+    @property
+    def state_id(self) -> str:
+        return self.snapshot.snapshot_id
 
-def make_state_id(
-    family_id: str,
-    native_schema_id: str,
-    native_payload: bytes,
-    source_sha256: str,
-) -> str:
-    digest = hashlib.sha256()
-    for value in (
-        family_id.encode("utf-8"),
-        native_schema_id.encode("utf-8"),
-        native_payload,
-        source_sha256.encode("ascii"),
-    ):
-        digest.update(len(value).to_bytes(8, "little"))
-        digest.update(value)
-    return digest.hexdigest()
+    @property
+    def family_id(self) -> str:
+        return self.snapshot.family_id
+
+    @property
+    def native_schema_id(self) -> str:
+        return self.snapshot.native_schema_id
+
+    @property
+    def native_payload(self) -> bytes:
+        return self.snapshot.native_payload
+
+    @property
+    def source_sha256(self) -> str:
+        return self.snapshot.source_asset_sha256
 
 
 @dataclass(frozen=True)

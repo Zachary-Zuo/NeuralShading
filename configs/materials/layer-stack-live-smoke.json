@@ -1,0 +1,10 @@
+{
+  "schema_name": "ncls.material-program", "schema_version": 1, "color_model": "linear-srgb",
+  "nodes": [
+    {"id": "interface-000", "operation": {"namespace": "ncls.interface", "name": "diffuse", "version": 1}, "inputs": {}, "parameters": {"color": {"source": "constant", "type": "Color3", "value": [0.6, 0.3, 0.1]}}},
+    {"id": "surface", "operation": {"namespace": "ncls.composition", "name": "layer_stack", "version": 1}, "inputs": {"interfaces": [{"node": "interface-000", "port": "interface"}], "media": []}, "parameters": {}}
+  ],
+  "resources": [],
+  "outputs": {"surface": {"node": "surface", "port": "surface"}, "interior_medium": null, "exterior_medium": null, "emission": null, "opacity": null, "displacement": null},
+  "metadata": {}, "program_id": "a30b49f04eff3504fd258f5fb891fe645adc95acaa30902737e27fef466733ab"
+}

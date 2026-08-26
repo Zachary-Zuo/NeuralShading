@@ -1,0 +1,19 @@
+{
+  "format_name": "ncls.viewer-benchmark",
+  "format_version": 2,
+  "description_zh": "统一 package 双 slot viewer 的固定场景 benchmark。",
+  "resolution": [640, 360],
+  "warmup_frames": 24,
+  "measurement_frames": 32,
+  "studio": "configs/viewer-studio-v2.json",
+  "combinations": [
+    ["path-tracing", "path-tracing"],
+    ["path-tracing", "deferred"],
+    ["deferred", "path-tracing"]
+  ],
+  "camera_path": [
+    {"id": "front-grazing", "target": [-0.05485052, 1.04786098, -0.06448951], "yaw": 0.45, "pitch": 0.12, "distance": 4.37368202, "vertical_fov_degrees": 38.0},
+    {"id": "upper-side", "target": [-0.05485052, 1.04786098, -0.06448951], "yaw": 1.35, "pitch": 0.42, "distance": 4.37368202, "vertical_fov_degrees": 36.0},
+    {"id": "reverse-grazing", "target": [-0.05485052, 1.04786098, -0.06448951], "yaw": -1.1, "pitch": -0.08, "distance": 4.37368202, "vertical_fov_degrees": 40.0}
+  ]
+}

@@ -3,7 +3,11 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from ncls.learning.slang import NvidiaNeuralAppearanceSlangSession
+from ncls.learning.slang.runtime import SlangModuleSession
+from ncls.paths import PROJECT_ROOT
+
+
+_CORE_PATH = PROJECT_ROOT / "shaders/ncls/backends/nvidia_neural_appearance/nvidia_neural_appearance_core.slang"
 
 
 def _parameter(rows: int, columns: int | None = None) -> nn.Parameter:
@@ -46,12 +50,12 @@ class NvidiaNeuralAppearanceModel(nn.Module):
         self.sampler_out_w = _parameter(9, 32)
         self.sampler_out_b = _parameter(9)
 
-        self._session: NvidiaNeuralAppearanceSlangSession | None = None
+        self._session: SlangModuleSession | None = None
 
     @property
-    def session(self) -> NvidiaNeuralAppearanceSlangSession:
+    def session(self) -> SlangModuleSession:
         if self._session is None:
-            self._session = NvidiaNeuralAppearanceSlangSession()
+            self._session = SlangModuleSession(_CORE_PATH)
         return self._session
 
     def _linear(

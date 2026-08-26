@@ -1,0 +1,17 @@
+{
+  "format_name": "ncls.viewer-studio",
+  "format_version": 2,
+  "scene": {
+    "geometry": "assets/viewer/scenes/studio-v1/shaderball.glb",
+    "geometry_sha256": "a47a52c37f6be60c963c766a6279d302d9940456b9d02972cc8a1bf9026a859a",
+    "environment": "assets/viewer/environments/polyhaven-1k/studio_small_03_1k.exr",
+    "environment_sha256": "6c41a5f0c2d42c8dc6b4a5b698e952949b4660ecc2ed5158a20676cacd181c74"
+  },
+  "slots": [
+    {"package": "", "mode": "path-tracing"},
+    {"package": "", "mode": "path-tracing"}
+  ],
+  "camera": {"target": [-0.05485052, 1.04786098, -0.06448951], "yaw": 0.45, "pitch": 0.12, "distance": 4.37368202, "vertical_fov_degrees": 38.0},
+  "lighting": {"environment_rotation": 0.0, "environment_intensity": 0.8},
+  "display": {"exposure_ev": -0.5, "divider_color": [0.85, 0.85, 0.85]}
+}

@@ -1,0 +1,7 @@
+{
+  "format_name": "ncls.training-config", "format_version": 1, "method_key": "nvidia-neural-appearance",
+  "batch_source": {"kind": "live", "options": {"material_programs": ["configs/materials/layer-stack-live-smoke.json"], "light_count": 64, "samples_per_replica": 64, "max_depth": 64}},
+  "model_context": {"state_count": 1}, "phases": [{"name": "joint", "steps": 1, "learning_rate": 0.0003}],
+  "batch_size": 1, "seed": 20260827, "device": "cuda:0", "optimizer": {"kind": "adamw", "weight_decay": 0.0},
+  "validation": {"interval": 1, "batches": 1}, "checkpoint_selection": "tail_guard"
+}

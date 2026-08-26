@@ -1,0 +1,8 @@
+{
+  "format_name": "ncls.training-config", "format_version": 1, "method_key": "nvidia-neural-appearance",
+  "batch_source": {"kind": "offline", "options": {"path": "artifacts/corpus/layer-stack-p1-v1.json", "partition_policy": "parametric-v1", "lifecycle_role": "train"}},
+  "model_context": {"state_count": 30},
+  "phases": [{"name": "evaluator", "steps": 10000, "learning_rate": 0.0003}, {"name": "joint", "steps": 10000, "learning_rate": 0.0001}, {"name": "sampler", "steps": 5000, "learning_rate": 0.0001}],
+  "batch_size": 16, "seed": 20260827, "device": "cuda:0", "optimizer": {"kind": "adamw", "weight_decay": 0.0},
+  "validation": {"interval": 500, "batches": 8}, "checkpoint_selection": "tail_guard"
+}

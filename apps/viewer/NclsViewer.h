@@ -7,7 +7,7 @@
 #include "Scene/Scene.h"
 
 #include "MaterialProgram.h"
-#include "MethodBundle.h"
+#include "ScatteringPackage.h"
 #include "OpenPbrLuts.h"
 #include "ReferenceSource.h"
 
@@ -20,7 +20,7 @@
 
 struct ViewerOptions
 {
-    std::filesystem::path bundleRoot = "artifacts/exports";
+    std::filesystem::path packageRoot = "artifacts/exports";
     std::filesystem::path materialPath;
     std::filesystem::path environmentPath;
     std::string environmentSha256;
@@ -29,7 +29,7 @@ struct ViewerOptions
     std::filesystem::path replayPath;
     std::filesystem::path viewerScenePath;
     std::filesystem::path captureManifest = "artifacts/captures/headless.json";
-    std::string requestedMethodId;
+    std::string requestedPackageId;
     bool headless = false;
     bool verboseConsole = false;
     bool evaluatorPreviewLighting = false;
@@ -129,12 +129,12 @@ private:
     void resetReference(bool visibilityChanged, bool prepareChanged = true);
     void resetCamera();
     Falcor::float3 cameraPosition() const;
-    void scanBundles();
-    Falcor::ref<Falcor::ComputePass> createMethodPass(
+    void scanPackages();
+    Falcor::ref<Falcor::ComputePass> createProgramPass(
         const char* shaderPath,
-        const ncls::ViewerMethod& method);
-    bool runParityProbe(const ncls::ViewerMethod& method, std::string& error);
-    void selectMethod(int32_t methodIndex);
+        const ncls::ViewerProgram& method);
+    bool runParityProbe(const ncls::ViewerProgram& method, std::string& error);
+    void selectProgram(int32_t methodIndex);
     void bindLighting(Falcor::ShaderVar root, const char* constantBufferName);
     void renderVisibility(Falcor::RenderContext* pRenderContext);
     void renderReference(Falcor::RenderContext* pRenderContext);
@@ -155,8 +155,8 @@ private:
     void renderMaterialUi(Falcor::Gui::Widgets& widgets);
     void renderOpenPbrUi(Falcor::Gui::Widgets& widgets);
     void renderMaterialXUi(Falcor::Gui::Widgets& widgets);
-    bool allMaterialsSupportedBy(const ncls::ViewerMethod& method) const;
-    bool hasActiveMethod() const;
+    bool allMaterialsSupportedBy(const ncls::ViewerProgram& method) const;
+    bool hasActiveProgram() const;
 
     ViewerOptions mOptions;
     CameraState mCamera;
@@ -175,10 +175,10 @@ private:
     std::string mMaterialDisplayName = "Default layered material";
     std::string mStatus;
 
-    std::vector<ncls::ViewerMethod> mMethods;
-    std::vector<ncls::BundleFailure> mBundleFailures;
-    int32_t mSelectedMethod = -1;
-    uint32_t mMethodUiValue = 0;
+    std::vector<ncls::ViewerProgram> mPrograms;
+    std::vector<ncls::PackageFailure> mPackageFailures;
+    int32_t mSelectedProgram = -1;
+    uint32_t mProgramUiValue = 0;
     Falcor::ref<Falcor::Buffer> mpSharedWeights;
     Falcor::ref<Falcor::Buffer> mpCompiledMaterials;
     Falcor::ref<Falcor::Buffer> mpReferenceMaterialMetadata;
@@ -238,7 +238,6 @@ private:
     uint32_t mMaxLayerWalkDepth = 24;
     uint32_t mSelectedInterface = 0;
     uint32_t mComparisonMode = 0;
-    float mSplit = 0.5f;
     float mExposure = 0.f;
     float mDifferenceScale = 8.f;
     float mEstimatedRelativeStandardError = 1.f;
@@ -251,7 +250,6 @@ private:
     bool mCameraDragging = false;
     bool mCameraDragMoved = false;
     bool mPanDragging = false;
-    bool mDividerDragging = false;
     Falcor::float2 mLastMouse{0.f, 0.f};
     Falcor::float2 mMousePressScreen{0.f, 0.f};
     uint32_t mRenderedFrames = 0;

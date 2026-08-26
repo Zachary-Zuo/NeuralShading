@@ -15,57 +15,56 @@ float nclsNvidiaNeuralReadPackedWeight(StructuredBuffer<uint> weights, uint inde
 #include "../../contracts/scattering_backend.slang"
 
 #ifndef NCLS_NVIDIA_FRAME_WEIGHT_OFFSET
-#error NCLS_NVIDIA_FRAME_WEIGHT_OFFSET must come from MethodBundle reflection
+#error NCLS_NVIDIA_FRAME_WEIGHT_OFFSET must come from ScatteringPackage reflection
 #endif
 #ifndef NCLS_NVIDIA_EVALUATE_WEIGHT0_OFFSET
-#error NCLS_NVIDIA_EVALUATE_WEIGHT0_OFFSET must come from MethodBundle reflection
+#error NCLS_NVIDIA_EVALUATE_WEIGHT0_OFFSET must come from ScatteringPackage reflection
 #endif
 #ifndef NCLS_NVIDIA_EVALUATE_BIAS0_OFFSET
-#error NCLS_NVIDIA_EVALUATE_BIAS0_OFFSET must come from MethodBundle reflection
+#error NCLS_NVIDIA_EVALUATE_BIAS0_OFFSET must come from ScatteringPackage reflection
 #endif
 #ifndef NCLS_NVIDIA_EVALUATE_WEIGHT1_OFFSET
-#error NCLS_NVIDIA_EVALUATE_WEIGHT1_OFFSET must come from MethodBundle reflection
+#error NCLS_NVIDIA_EVALUATE_WEIGHT1_OFFSET must come from ScatteringPackage reflection
 #endif
 #ifndef NCLS_NVIDIA_EVALUATE_BIAS1_OFFSET
-#error NCLS_NVIDIA_EVALUATE_BIAS1_OFFSET must come from MethodBundle reflection
+#error NCLS_NVIDIA_EVALUATE_BIAS1_OFFSET must come from ScatteringPackage reflection
 #endif
 #ifndef NCLS_NVIDIA_EVALUATE_WEIGHT2_OFFSET
-#error NCLS_NVIDIA_EVALUATE_WEIGHT2_OFFSET must come from MethodBundle reflection
+#error NCLS_NVIDIA_EVALUATE_WEIGHT2_OFFSET must come from ScatteringPackage reflection
 #endif
 #ifndef NCLS_NVIDIA_EVALUATE_BIAS2_OFFSET
-#error NCLS_NVIDIA_EVALUATE_BIAS2_OFFSET must come from MethodBundle reflection
+#error NCLS_NVIDIA_EVALUATE_BIAS2_OFFSET must come from ScatteringPackage reflection
 #endif
 #ifndef NCLS_NVIDIA_EVALUATE_OUT_WEIGHT_OFFSET
-#error NCLS_NVIDIA_EVALUATE_OUT_WEIGHT_OFFSET must come from MethodBundle reflection
+#error NCLS_NVIDIA_EVALUATE_OUT_WEIGHT_OFFSET must come from ScatteringPackage reflection
 #endif
 #ifndef NCLS_NVIDIA_EVALUATE_OUT_BIAS_OFFSET
-#error NCLS_NVIDIA_EVALUATE_OUT_BIAS_OFFSET must come from MethodBundle reflection
+#error NCLS_NVIDIA_EVALUATE_OUT_BIAS_OFFSET must come from ScatteringPackage reflection
 #endif
 #ifndef NCLS_NVIDIA_SAMPLER_WEIGHT0_OFFSET
-#error NCLS_NVIDIA_SAMPLER_WEIGHT0_OFFSET must come from MethodBundle reflection
+#error NCLS_NVIDIA_SAMPLER_WEIGHT0_OFFSET must come from ScatteringPackage reflection
 #endif
 #ifndef NCLS_NVIDIA_SAMPLER_BIAS0_OFFSET
-#error NCLS_NVIDIA_SAMPLER_BIAS0_OFFSET must come from MethodBundle reflection
+#error NCLS_NVIDIA_SAMPLER_BIAS0_OFFSET must come from ScatteringPackage reflection
 #endif
 #ifndef NCLS_NVIDIA_SAMPLER_WEIGHT1_OFFSET
-#error NCLS_NVIDIA_SAMPLER_WEIGHT1_OFFSET must come from MethodBundle reflection
+#error NCLS_NVIDIA_SAMPLER_WEIGHT1_OFFSET must come from ScatteringPackage reflection
 #endif
 #ifndef NCLS_NVIDIA_SAMPLER_BIAS1_OFFSET
-#error NCLS_NVIDIA_SAMPLER_BIAS1_OFFSET must come from MethodBundle reflection
+#error NCLS_NVIDIA_SAMPLER_BIAS1_OFFSET must come from ScatteringPackage reflection
 #endif
 #ifndef NCLS_NVIDIA_SAMPLER_WEIGHT2_OFFSET
-#error NCLS_NVIDIA_SAMPLER_WEIGHT2_OFFSET must come from MethodBundle reflection
+#error NCLS_NVIDIA_SAMPLER_WEIGHT2_OFFSET must come from ScatteringPackage reflection
 #endif
 #ifndef NCLS_NVIDIA_SAMPLER_BIAS2_OFFSET
-#error NCLS_NVIDIA_SAMPLER_BIAS2_OFFSET must come from MethodBundle reflection
+#error NCLS_NVIDIA_SAMPLER_BIAS2_OFFSET must come from ScatteringPackage reflection
 #endif
 #ifndef NCLS_NVIDIA_SAMPLER_OUT_WEIGHT_OFFSET
-#error NCLS_NVIDIA_SAMPLER_OUT_WEIGHT_OFFSET must come from MethodBundle reflection
+#error NCLS_NVIDIA_SAMPLER_OUT_WEIGHT_OFFSET must come from ScatteringPackage reflection
 #endif
 #ifndef NCLS_NVIDIA_SAMPLER_OUT_BIAS_OFFSET
-#error NCLS_NVIDIA_SAMPLER_OUT_BIAS_OFFSET must come from MethodBundle reflection
+#error NCLS_NVIDIA_SAMPLER_OUT_BIAS_OFFSET must come from ScatteringPackage reflection
 #endif
-
 NclsNvidiaNeuralParams nclsNvidiaNeuralParams(StructuredBuffer<uint> weights)
 {
     NclsNvidiaNeuralParams result;
@@ -186,5 +185,14 @@ NclsMethodState nclsUnpackMethodState(
     return {context, material, nclsNvidiaNeuralUnpackPrepared(packed),
         nclsNvidiaNeuralParams(weights)};
 }
+
+// ScatteringPackage@1 的稳定 host 绑定面；viewer 不解释 NVIDIA 私有布局。
+StructuredBuffer<uint> gNclsRuntimeWeights;
+StructuredBuffer<NclsNvidiaNeuralCompiledMaterial> gNclsCompiledMaterials;
+typedef NclsNvidiaNeuralBackend NclsPackageBackend;
+typedef NclsNvidiaNeuralCompiledMaterial NclsPackageCompiledMaterial;
+typedef NclsNvidiaNeuralContractState NclsPackageState;
+NclsPackageBackend nclsCreatePackageBackend() { return {gNclsRuntimeWeights}; }
+NclsPackageCompiledMaterial nclsLoadPackageMaterial(uint index) { return gNclsCompiledMaterials[index]; }
 
 #endif

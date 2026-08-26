@@ -158,14 +158,14 @@ ViewerOptions parseOptions(int argc, char** argv)
             const std::filesystem::path path(value);
             return path.is_absolute() ? path : base / path;
         };
-        options.bundleRoot = resolve(replay.value("bundle_root", std::string()));
+        options.packageRoot = resolve(replay.value("bundle_root", std::string()));
         options.materialPath = resolve(replay.value("source_material", std::string()));
         options.environmentPath = resolve(replay.value("environment", std::string()));
         options.environmentSha256 = replay.value("environment_sha256", std::string());
         options.referenceGeometryPath = resolve(replay.value("reference_geometry", std::string()));
         options.referenceGeometrySha256 = replay.value("reference_geometry_sha256", std::string());
         options.viewerScenePath = resolve(replay.value("viewer_scene", std::string()));
-        options.requestedMethodId = replay.value("method_id", std::string());
+        options.requestedPackageId = replay.value("method_id", std::string());
         const auto resolution = replay.at("resolution");
         options.width = resolution.at(0).get<uint32_t>();
         options.height = resolution.at(1).get<uint32_t>();
@@ -180,9 +180,9 @@ ViewerOptions parseOptions(int argc, char** argv)
     for (int index = 1; index < argc; ++index)
     {
         const std::string argument = argv[index];
-        if (argument == "--bundle-root") options.bundleRoot = value(index, "--bundle-root");
+        if (argument == "--bundle-root") options.packageRoot = value(index, "--bundle-root");
         else if (argument == "--material") options.materialPath = value(index, "--material");
-        else if (argument == "--method") options.requestedMethodId = value(index, "--method");
+        else if (argument == "--method") options.requestedPackageId = value(index, "--method");
         else if (argument == "--environment") options.environmentPath = value(index, "--environment");
         else if (argument == "--reference-geometry") options.referenceGeometryPath = value(index, "--reference-geometry");
         else if (argument == "--replay") { options.replayPath = value(index, "--replay"); }
@@ -303,18 +303,18 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
     if (!mpScene || !mpReferencePathPass)
         throw std::runtime_error("the viewer requires a loaded scene and the unified scene reference path");
     resizeResources(getTargetFbo()->getWidth(), getTargetFbo()->getHeight());
-    scanBundles();
-    if (!mOptions.requestedMethodId.empty())
+    scanPackages();
+    if (!mOptions.requestedPackageId.empty())
     {
         int32_t requested = -1;
-        if (mOptions.requestedMethodId != "none")
-            for (uint32_t index = 0; index < mMethods.size(); ++index)
-                if (mMethods[index].methodId == mOptions.requestedMethodId) requested = static_cast<int32_t>(index);
-        if (requested < 0 && mOptions.requestedMethodId != "none" && mOptions.headless)
-            throw std::runtime_error("replay MethodBundle did not pass compatibility/parity: " + mOptions.requestedMethodId);
-        selectMethod(requested);
+        if (mOptions.requestedPackageId != "none")
+            for (uint32_t index = 0; index < mPrograms.size(); ++index)
+                if (mPrograms[index].packageId == mOptions.requestedPackageId) requested = static_cast<int32_t>(index);
+        if (requested < 0 && mOptions.requestedPackageId != "none" && mOptions.headless)
+            throw std::runtime_error("replay ScatteringPackage did not pass compatibility/parity: " + mOptions.requestedPackageId);
+        selectProgram(requested);
     }
-    mStatus = mMethods.empty()
+    mStatus = mPrograms.empty()
         ? "No compatible neural evaluator bundle was found; showing a full-width reference."
         : "GPU-parity-validated neural evaluator bundles found; the method selection starts empty.";
 }
@@ -503,7 +503,7 @@ void NclsViewer::resizeResources(uint32_t width, uint32_t height)
 {
     mOutputWidth = std::max(width, 2u);
     mOutputHeight = std::max(height, 1u);
-    mViewWidth = hasActiveMethod() ? std::max(mOutputWidth / 2u, 1u) : mOutputWidth;
+    mViewWidth = hasActiveProgram() ? std::max(mOutputWidth / 2u, 1u) : mOutputWidth;
     const auto shaderUav = ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess;
     const auto gBufferFlags = shaderUav | ResourceBindFlags::RenderTarget;
     auto viewTexture = [&]() {
@@ -534,8 +534,8 @@ void NclsViewer::resizeResources(uint32_t width, uint32_t height)
         mOutputWidth, mOutputHeight, ResourceFormat::RGBA32Float, 1, 1, nullptr, shaderUav);
     const uint64_t stateCount64 = uint64_t(mViewWidth) * uint64_t(mOutputHeight);
     if (stateCount64 > std::numeric_limits<uint32_t>::max()) throw std::runtime_error("viewer state buffer is too large");
-    const uint32_t stateStride = hasActiveMethod()
-        ? mMethods[mSelectedMethod].stateBytesPerPixel
+    const uint32_t stateStride = hasActiveProgram()
+        ? mPrograms[mSelectedProgram].stateBytesPerPixel
         : sizeof(float);
     mpStates = getDevice()->createStructuredBuffer(
         stateStride,
@@ -715,7 +715,7 @@ void NclsViewer::activateSceneMaterial(uint32_t materialId)
     mSelectedInterface = 0u;
     resetReference(false, true);
 
-    if (mSelectedMethod >= 0 && !allMaterialsSupportedBy(mMethods[mSelectedMethod])) selectMethod(-1);
+    if (mSelectedProgram >= 0 && !allMaterialsSupportedBy(mPrograms[mSelectedProgram])) selectProgram(-1);
 }
 
 void NclsViewer::updateMaterialBuffer()
@@ -749,7 +749,7 @@ void NclsViewer::updateReferenceSourceBuffer()
     resetReference(false, false);
 }
 
-bool NclsViewer::allMaterialsSupportedBy(const ncls::ViewerMethod& method) const
+bool NclsViewer::allMaterialsSupportedBy(const ncls::ViewerProgram& method) const
 {
     const auto supports = [&](const ncls::ReferenceSource& source) {
         if (source.family != ncls::ReferenceFamily::LayerStack) return false;
@@ -765,11 +765,11 @@ bool NclsViewer::allMaterialsSupportedBy(const ncls::ViewerMethod& method) const
     return true;
 }
 
-bool NclsViewer::hasActiveMethod() const
+bool NclsViewer::hasActiveProgram() const
 {
-    return mSelectedMethod >= 0
-        && mSelectedMethod < static_cast<int32_t>(mMethods.size())
-        && allMaterialsSupportedBy(mMethods[mSelectedMethod]);
+    return mSelectedProgram >= 0
+        && mSelectedProgram < static_cast<int32_t>(mPrograms.size())
+        && allMaterialsSupportedBy(mPrograms[mSelectedProgram]);
 }
 
 void NclsViewer::resetReference(bool visibilityChanged, bool prepareChanged)
@@ -802,46 +802,46 @@ float3 NclsViewer::cameraPosition() const
         cosinePitch * std::cos(mCamera.yaw));
 }
 
-void NclsViewer::scanBundles()
+void NclsViewer::scanPackages()
 {
-    const std::string previousId = mSelectedMethod >= 0 && mSelectedMethod < static_cast<int32_t>(mMethods.size())
-        ? mMethods[mSelectedMethod].methodId
+    const std::string previousId = mSelectedProgram >= 0 && mSelectedProgram < static_cast<int32_t>(mPrograms.size())
+        ? mPrograms[mSelectedProgram].packageId
         : std::string();
-    if (!std::filesystem::is_directory(mOptions.bundleRoot))
+    if (!std::filesystem::is_directory(mOptions.packageRoot))
     {
-        mMethods.clear();
-        mBundleFailures.clear();
-        selectMethod(-1);
-        mStatus = "MethodBundle directory is absent; running reference-only: " + mOptions.bundleRoot.string();
-        logInfo("No MethodBundle directory at '{}'; running reference-only", mOptions.bundleRoot);
+        mPrograms.clear();
+        mPackageFailures.clear();
+        selectProgram(-1);
+        mStatus = "ScatteringPackage directory is absent; running reference-only: " + mOptions.packageRoot.string();
+        logInfo("No ScatteringPackage directory at '{}'; running reference-only", mOptions.packageRoot);
         return;
     }
-    auto scan = ncls::scanMethodBundles(mOptions.bundleRoot, getRuntimeDirectory() / "shaders");
-    std::vector<ncls::ViewerMethod> accepted;
-    for (auto& method : scan.methods)
+    auto scan = ncls::scanScatteringPackages(mOptions.packageRoot, getRuntimeDirectory() / "shaders");
+    std::vector<ncls::ViewerProgram> accepted;
+    for (auto& method : scan.programs)
     {
         std::string error;
         if (runParityProbe(method, error))
         {
-            logInfo("Accepted MethodBundle '{}' ({})", method.displayName, shortId(method.methodId));
+            logInfo("Accepted ScatteringPackage '{}' ({})", method.displayName, shortId(method.packageId));
             accepted.push_back(std::move(method));
         }
         else scan.failures.push_back({method.root, "GPU parity failed: " + error});
     }
-    mMethods = std::move(accepted);
-    mBundleFailures = std::move(scan.failures);
-    for (const auto& failure : mBundleFailures)
-        logWarning("Rejected MethodBundle '{}': {}", failure.path, failure.reason);
+    mPrograms = std::move(accepted);
+    mPackageFailures = std::move(scan.failures);
+    for (const auto& failure : mPackageFailures)
+        logWarning("Rejected ScatteringPackage '{}': {}", failure.path, failure.reason);
     int32_t selection = -1;
     if (!previousId.empty())
-        for (uint32_t index = 0; index < mMethods.size(); ++index)
-            if (mMethods[index].methodId == previousId) selection = static_cast<int32_t>(index);
-    selectMethod(selection >= 0 && allMaterialsSupportedBy(mMethods[selection]) ? selection : -1);
+        for (uint32_t index = 0; index < mPrograms.size(); ++index)
+            if (mPrograms[index].packageId == previousId) selection = static_cast<int32_t>(index);
+    selectProgram(selection >= 0 && allMaterialsSupportedBy(mPrograms[selection]) ? selection : -1);
 }
 
-ref<ComputePass> NclsViewer::createMethodPass(
+ref<ComputePass> NclsViewer::createProgramPass(
     const char* shaderPath,
-    const ncls::ViewerMethod& method)
+    const ncls::ViewerProgram& method)
 {
     ProgramDesc program;
     program.addShaderLibrary(shaderPath).csEntry("main");
@@ -853,7 +853,7 @@ ref<ComputePass> NclsViewer::createMethodPass(
     return ComputePass::create(getDevice(), program, defines, true);
 }
 
-bool NclsViewer::runParityProbe(const ncls::ViewerMethod& method, std::string& error)
+bool NclsViewer::runParityProbe(const ncls::ViewerProgram& method, std::string& error)
 {
     try
     {
@@ -874,7 +874,7 @@ bool NclsViewer::runParityProbe(const ncls::ViewerMethod& method, std::string& e
             sizeof(float4),
             static_cast<uint32_t>(lights.size()),
             ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess);
-        auto parityPass = createMethodPass("NclsViewer/shaders/Parity.cs.slang", method);
+        auto parityPass = createProgramPass("NclsViewer/shaders/PackageParity.cs.slang", method);
         auto root = parityPass->getRootVar();
         root["gSharedWeights"] = weights;
         root["gCompiledMaterials"] = compiledMaterials;
@@ -910,17 +910,17 @@ bool NclsViewer::runParityProbe(const ncls::ViewerMethod& method, std::string& e
     }
 }
 
-void NclsViewer::selectMethod(int32_t methodIndex)
+void NclsViewer::selectProgram(int32_t methodIndex)
 {
-    const bool previouslyActive = hasActiveMethod();
+    const bool previouslyActive = hasActiveProgram();
     const uint32_t previousStateStride = previouslyActive
-        ? mMethods[mSelectedMethod].stateBytesPerPixel : 0u;
-    mSelectedMethod = methodIndex >= 0 && methodIndex < static_cast<int32_t>(mMethods.size()) ? methodIndex : -1;
-    if (mSelectedMethod >= 0 && !allMaterialsSupportedBy(mMethods[mSelectedMethod])) mSelectedMethod = -1;
-    mMethodUiValue = mSelectedMethod >= 0 ? static_cast<uint32_t>(mSelectedMethod + 1) : 0u;
-    if (mSelectedMethod >= 0)
+        ? mPrograms[mSelectedProgram].stateBytesPerPixel : 0u;
+    mSelectedProgram = methodIndex >= 0 && methodIndex < static_cast<int32_t>(mPrograms.size()) ? methodIndex : -1;
+    if (mSelectedProgram >= 0 && !allMaterialsSupportedBy(mPrograms[mSelectedProgram])) mSelectedProgram = -1;
+    mProgramUiValue = mSelectedProgram >= 0 ? static_cast<uint32_t>(mSelectedProgram + 1) : 0u;
+    if (mSelectedProgram >= 0)
     {
-        const auto& method = mMethods[mSelectedMethod];
+        const auto& method = mPrograms[mSelectedProgram];
         auto sharedWeights = getDevice()->createStructuredBuffer(
             sizeof(uint32_t),
             static_cast<uint32_t>(method.sharedWeightWords.size()),
@@ -933,8 +933,8 @@ void NclsViewer::selectMethod(int32_t methodIndex)
             ResourceBindFlags::ShaderResource,
             MemoryType::DeviceLocal,
             method.compiledMaterials.data());
-        auto preparePass = createMethodPass("NclsViewer/shaders/Prepare.cs.slang", method);
-        auto approximationPass = createMethodPass("NclsViewer/shaders/Approximation.cs.slang", method);
+        auto preparePass = createProgramPass("NclsViewer/shaders/Prepare.cs.slang", method);
+        auto approximationPass = createProgramPass("NclsViewer/shaders/DeferredRenderer.cs.slang", method);
         mpSharedWeights = std::move(sharedWeights);
         mpCompiledMaterials = std::move(compiledMaterials);
         mpPreparePass = std::move(preparePass);
@@ -952,9 +952,9 @@ void NclsViewer::selectMethod(int32_t methodIndex)
         mpApproximationPass.reset();
     }
     mPrepareDirty = true;
-    const uint32_t currentStateStride = hasActiveMethod()
-        ? mMethods[mSelectedMethod].stateBytesPerPixel : 0u;
-    if ((previouslyActive != hasActiveMethod() || previousStateStride != currentStateStride)
+    const uint32_t currentStateStride = hasActiveProgram()
+        ? mPrograms[mSelectedProgram].stateBytesPerPixel : 0u;
+    if ((previouslyActive != hasActiveProgram() || previousStateStride != currentStateStride)
         && mOutputWidth > 0u && mOutputHeight > 0u)
         resizeResources(mOutputWidth, mOutputHeight);
 }
@@ -1135,7 +1135,7 @@ void NclsViewer::renderPrepare(RenderContext* pRenderContext)
     auto constants = root["PrepareCB"];
     constants["gFrameDim"] = uint2(mViewWidth, mOutputHeight);
     constants["gUseScene"] = uint32_t(mpScene != nullptr);
-    constants["gCompiledMaterialIndex"] = mMethods[mSelectedMethod].compiledMaterialIndex;
+    constants["gCompiledMaterialIndex"] = mPrograms[mSelectedProgram].compiledMaterialIndex;
     auto executeMaterial = [&](uint32_t materialId) {
         constants["gTargetMaterialId"] = materialId;
         mpPreparePass->execute(pRenderContext, mViewWidth, mOutputHeight);
@@ -1169,9 +1169,9 @@ void NclsViewer::renderApproximation(RenderContext* pRenderContext)
     root["gLinearSampler"] = mpLinearSampler;
     root["gApproximation"] = mpApproximation;
     root["ApproximationCB"]["gFrameDim"] = uint2(mViewWidth, mOutputHeight);
-    root["ApproximationCB"]["gCompiledMaterialIndex"] = mMethods[mSelectedMethod].compiledMaterialIndex;
-    root["ApproximationCB"]["gEnvironmentQueryBudget"] = mMethods[mSelectedMethod].environmentQueryBudget;
-    root["ApproximationCB"]["gRectangleQueryBudget"] = mMethods[mSelectedMethod].rectangleQueryBudget;
+    root["ApproximationCB"]["gCompiledMaterialIndex"] = mPrograms[mSelectedProgram].compiledMaterialIndex;
+    root["ApproximationCB"]["gEnvironmentQueryBudget"] = mPrograms[mSelectedProgram].environmentQueryBudget;
+    root["ApproximationCB"]["gRectangleQueryBudget"] = mPrograms[mSelectedProgram].rectangleQueryBudget;
     bindLighting(root, "ApproximationCB");
     beginTiming(mLightingTiming);
     mpApproximationPass->execute(pRenderContext, mViewWidth, mOutputHeight);
@@ -1190,11 +1190,10 @@ void NclsViewer::renderComposite(RenderContext* pRenderContext)
     root["gDisplay"] = mpDisplay;
     auto constants = root["CompositeCB"];
     constants["gOutputDim"] = uint2(mOutputWidth, mOutputHeight);
-    constants["gSplit"] = mSplit;
     constants["gComparisonMode"] = mComparisonMode;
     constants["gExposure"] = mExposure;
     constants["gDifferenceScale"] = mDifferenceScale;
-    constants["gHasApproximation"] = uint32_t(hasActiveMethod());
+    constants["gHasApproximation"] = uint32_t(hasActiveProgram());
     beginTiming(mCompositeTiming);
     mpCompositePass->execute(pRenderContext, mOutputWidth, mOutputHeight);
     endTiming(mCompositeTiming);
@@ -1205,7 +1204,7 @@ void NclsViewer::onFrameRender(RenderContext* pRenderContext, const ref<Fbo>& pT
     if (mVisibilityDirty) renderVisibility(pRenderContext);
     if (!mFreezeReference) renderReference(pRenderContext);
     renderDenoisedReference(pRenderContext);
-    if (hasActiveMethod())
+    if (hasActiveProgram())
     {
         if (mPrepareDirty) renderPrepare(pRenderContext);
         renderApproximation(pRenderContext);
@@ -1757,10 +1756,9 @@ void NclsViewer::onGuiRender(Gui* pGui)
             group.text("Material and lighting edits automatically resume a frozen reference.");
             group.checkbox("Denoised preview (raw remains authoritative)", mUseDenoisedPreview);
             if (group.button("Clear accumulation")) resetReference(false, false);
-            if (hasActiveMethod())
+            if (hasActiveProgram())
             {
                 group.dropdown("Comparison display", kComparisonModes, mComparisonMode);
-                group.var("Split position", mSplit, 0.1f, 0.9f, 0.005f);
             }
             else
             {
@@ -1781,23 +1779,23 @@ void NclsViewer::onGuiRender(Gui* pGui)
         if (group)
         {
             Gui::DropdownList methodList = {{0, "None (reference only)"}};
-            for (uint32_t index = 0; index < mMethods.size(); ++index)
+            for (uint32_t index = 0; index < mPrograms.size(); ++index)
             {
-                if (allMaterialsSupportedBy(mMethods[index]))
-                    methodList.push_back({index + 1, mMethods[index].displayName
-                        + " [" + shortId(mMethods[index].methodId) + "]"});
+                if (allMaterialsSupportedBy(mPrograms[index]))
+                    methodList.push_back({index + 1, mPrograms[index].displayName
+                        + " [" + shortId(mPrograms[index].packageId) + "]"});
             }
             if (methodList.size() > 1)
             {
-                if (group.dropdown("Right-side method", methodList, mMethodUiValue))
-                    selectMethod(int32_t(mMethodUiValue) - 1);
+                if (group.dropdown("Right-side method", methodList, mProgramUiValue))
+                    selectProgram(int32_t(mProgramUiValue) - 1);
             }
             else group.text("当前材质不是 bundle 的 frozen corpus state；请加载 bundle 内 preview material。");
-            if (group.button("Rescan MethodBundles")) scanBundles();
-            if (mSelectedMethod >= 0)
+            if (group.button("Rescan ScatteringPackages")) scanPackages();
+            if (mSelectedProgram >= 0)
             {
-                const auto& method = mMethods[mSelectedMethod];
-                group.text("method: " + shortId(method.methodId)
+                const auto& method = mPrograms[mSelectedProgram];
+                group.text("method: " + shortId(method.packageId)
                     + " / " + method.runtimeClass + " backend v" + std::to_string(method.backendVersion));
                 group.text("Parameters: " + std::to_string(method.parameterCount)
                     + ", state: " + std::to_string(method.stateBytesPerPixel) + " B/pixel");
@@ -1807,8 +1805,8 @@ void NclsViewer::onGuiRender(Gui* pGui)
                     : "标准接口：当前 bundle 只声明 prepare/evaluate。" );
                 group.text("Difference includes material approximation and transport differences.");
             }
-            if (!mBundleFailures.empty())
-                group.text("Rejected bundles: " + std::to_string(mBundleFailures.size()) + " (details are in the log)");
+            if (!mPackageFailures.empty())
+                group.text("Rejected bundles: " + std::to_string(mPackageFailures.size()) + " (details are in the log)");
         }
     }
 
@@ -1833,7 +1831,7 @@ void NclsViewer::onGuiRender(Gui* pGui)
                 mPrepareTiming.milliseconds,
                 mLightingTiming.milliseconds,
                 mCompositeTiming.milliseconds));
-            group.textWrapped("Controls: left-drag orbit; middle/right-drag pan; wheel dolly; drag divider; Space freezes reference.");
+            group.textWrapped("Controls: left-drag orbit; middle/right-drag pan; wheel dolly; Space freezes accumulation.");
             if (!mStatus.empty()) group.textWrapped("Status: " + mStatus);
             const auto logPath = Logger::getLogFilePath();
             if (!logPath.empty()) group.textWrapped("Detailed log: " + logPath.string());
@@ -1869,7 +1867,7 @@ void NclsViewer::loadMaterial(const std::filesystem::path& path)
 
 void NclsViewer::installReferenceSource(ncls::ReferenceSource source, const std::filesystem::path& path)
 {
-    const bool viewWasSplit = hasActiveMethod();
+    const bool viewWasSplit = hasActiveProgram();
     auto gpu = createSourceGpuResources(source);
     mReferenceSource = std::move(source);
     mSourceGpu = std::move(gpu);
@@ -1882,8 +1880,8 @@ void NclsViewer::installReferenceSource(ncls::ReferenceSource source, const std:
     }
     if (mReferenceSource.family == ncls::ReferenceFamily::LayerStack) updateMaterialBuffer();
     else resetReference(mReferenceSource.family == ncls::ReferenceFamily::MaterialX, true);
-    if (mSelectedMethod >= 0 && !allMaterialsSupportedBy(mMethods[mSelectedMethod])) selectMethod(-1);
-    if (viewWasSplit != hasActiveMethod() && mOutputWidth > 0u && mOutputHeight > 0u)
+    if (mSelectedProgram >= 0 && !allMaterialsSupportedBy(mPrograms[mSelectedProgram])) selectProgram(-1);
+    if (viewWasSplit != hasActiveProgram() && mOutputWidth > 0u && mOutputHeight > 0u)
         resizeResources(mOutputWidth, mOutputHeight);
 }
 
@@ -2136,7 +2134,7 @@ void NclsViewer::loadViewerScene(const std::filesystem::path& requestedPath)
         mSelectedSceneMaterialName = material->getName();
     rebuildReferenceMaterialMetadata();
     createSceneReferencePass();
-    selectMethod(-1);
+    selectProgram(-1);
     resetReference(true, true);
     mStatus = "Loaded viewer scene with " + std::to_string(mpScene->getMaterialCount())
         + " material-slot binding(s): " + path.string();
@@ -2162,7 +2160,6 @@ void NclsViewer::applyReplaySettings(const std::filesystem::path& path)
     mCamera.verticalFovDegrees = camera.at("vertical_fov_degrees").get<float>();
     const auto& display = replay.at("display");
     mComparisonMode = display.at("comparison_mode").get<uint32_t>();
-    mSplit = display.at("split").get<float>();
     mExposure = display.at("exposure_ev").get<float>();
     mDifferenceScale = display.at("difference_scale").get<float>();
     mUseDenoisedPreview = display.value("denoised_preview", true);
@@ -2219,7 +2216,7 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
     refreshTiming(mPrepareTiming);
     refreshTiming(mLightingTiming);
     refreshTiming(mCompositeTiming);
-    const bool approximationAvailable = hasActiveMethod();
+    const bool approximationAvailable = hasActiveProgram();
     if (mReferenceSource.family == ncls::ReferenceFamily::LayerStack)
         ncls::saveMaterialProgram(materialPath, mMaterial, mMaterialDisplayName);
     if (mpScene) saveViewerScene(viewerScenePath);
@@ -2245,10 +2242,10 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         renderComposite(getRenderContext());
         getRenderContext()->blit(mpDisplay->getSRV(), getTargetFbo()->getRenderTargetView(0));
     }
-    const std::string methodId = !approximationAvailable
+    const std::string packageId = !approximationAvailable
         ? "none"
-        : mMethods[mSelectedMethod].methodId;
-    const std::string methodRoot = approximationAvailable ? mMethods[mSelectedMethod].root.string() : std::string();
+        : mPrograms[mSelectedProgram].packageId;
+    const std::string methodRoot = approximationAvailable ? mPrograms[mSelectedProgram].root.string() : std::string();
     nlohmann::json sceneMaterialBindings = nlohmann::json::array();
     auto appendBinding = [&](uint32_t materialId, const ncls::ReferenceSource& source, bool active) {
         std::string sceneMaterialName;
@@ -2278,9 +2275,9 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
     nlohmann::json manifest = {
         {"format_name", "ncls.viewer-capture"},
         {"format_version", 3},
-        {"method_id", methodId},
+        {"method_id", packageId},
         {"method_bundle", methodRoot},
-        {"bundle_root", std::filesystem::absolute(mOptions.bundleRoot).string()},
+        {"bundle_root", std::filesystem::absolute(mOptions.packageRoot).string()},
         {"source_material_family_id", mReferenceSource.familyId()},
         {"source_material_sha256", mReferenceSource.sourceSha256},
         {"source_material_state_sha256", ncls::referenceSourceStateHash(mReferenceSource)},
@@ -2317,18 +2314,18 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         }},
         {"estimated_mean_relative_standard_error", mEstimatedRelativeStandardError},
         {"comparison_semantics", approximationAvailable
-            ? (mMethods[mSelectedMethod].runtimeClass == "diagnostic"
+            ? (mPrograms[mSelectedProgram].runtimeClass == "diagnostic"
                 ? "local_appearance_difference_finite_reference_vs_diagnostic_neural_evaluator"
                 : "visual_system_difference_full_path_reference_vs_realtime_deferred_method")
             : "reference_only"},
         {"method_runtime_class", approximationAvailable
-            ? mMethods[mSelectedMethod].runtimeClass : "none"},
+            ? mPrograms[mSelectedProgram].runtimeClass : "none"},
         {"camera", {
             {"target", {mCamera.target.x, mCamera.target.y, mCamera.target.z}},
             {"yaw", mCamera.yaw}, {"pitch", mCamera.pitch}, {"distance", mCamera.distance},
             {"vertical_fov_degrees", mCamera.verticalFovDegrees},
         }},
-        {"display", {{"comparison_mode", mComparisonMode}, {"split", mSplit}, {"exposure_ev", mExposure},
+        {"display", {{"comparison_mode", mComparisonMode}, {"exposure_ev", mExposure},
             {"difference_scale", mDifferenceScale}, {"denoised_preview", mUseDenoisedPreview}}},
         {"lighting", {
             {"use_environment", mLighting.useEnvironment},
@@ -2373,7 +2370,7 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
     std::ofstream metrics(metricsPath, std::ios::binary | std::ios::trunc);
     if (!metrics) throw std::runtime_error("cannot write capture metrics: " + metricsPath.string());
     metrics << "method_id,width,height,reference_spp,estimated_mean_relative_standard_error,visibility_ms,reference_ms,prepare_ms,lighting_ms,composite_ms\n";
-    metrics << methodId << ',' << mOutputWidth << ',' << mOutputHeight << ',' << mReferenceSpp << ','
+    metrics << packageId << ',' << mOutputWidth << ',' << mOutputHeight << ',' << mReferenceSpp << ','
             << mEstimatedRelativeStandardError << ',' << mVisibilityTiming.milliseconds << ',' << mReferenceTiming.milliseconds << ','
             << mPrepareTiming.milliseconds << ',' << mLightingTiming.milliseconds << ','
             << mCompositeTiming.milliseconds << '\n';
@@ -2387,11 +2384,13 @@ bool NclsViewer::pickSceneObject(const float2& screenPosition)
     const float outputX = std::clamp(screenPosition.x, 0.f, float(mOutputWidth - 1u));
     const float outputY = std::clamp(screenPosition.y, 0.f, float(mOutputHeight - 1u));
     float sourceU = (outputX + 0.5f) / float(mOutputWidth);
-    if (hasActiveMethod() && mComparisonMode == 0u)
+    if (hasActiveProgram() && mComparisonMode == 0u)
     {
-        sourceU = sourceU < mSplit
-            ? sourceU / std::max(mSplit, 1e-4f)
-            : (sourceU - mSplit) / std::max(1.f - mSplit, 1e-4f);
+        const float panelWidth = float(mOutputWidth / 2u);
+        const float dividerWidth = float(mOutputWidth - 2u * (mOutputWidth / 2u));
+        sourceU = outputX < panelWidth
+            ? (outputX + 0.5f) / panelWidth
+            : (outputX - panelWidth - dividerWidth + 0.5f) / panelWidth;
     }
     const uint32_t x = std::min(uint32_t(std::clamp(sourceU, 0.f, 0.999999f) * float(mViewWidth)), mViewWidth - 1u);
     const uint32_t y = std::min(uint32_t(outputY), mOutputHeight - 1u);
@@ -2433,17 +2432,10 @@ bool NclsViewer::onKeyEvent(const KeyboardEvent& event)
 
 bool NclsViewer::onMouseEvent(const MouseEvent& event)
 {
-    const float dividerX = mSplit * float(mOutputWidth);
     if (event.type == MouseEvent::Type::ButtonDown)
     {
         mLastMouse = event.pos;
         mMousePressScreen = event.screenPos;
-        if (event.button == Input::MouseButton::Left && hasActiveMethod() && mComparisonMode == 0u
-            && std::abs(event.screenPos.x - dividerX) < 8.f)
-        {
-            mDividerDragging = true;
-            return true;
-        }
         if (event.button == Input::MouseButton::Left)
         {
             mCameraDragging = true;
@@ -2458,12 +2450,11 @@ bool NclsViewer::onMouseEvent(const MouseEvent& event)
     }
     else if (event.type == MouseEvent::Type::ButtonUp)
     {
-        const bool handled = mDividerDragging || mCameraDragging || mPanDragging;
+        const bool handled = mCameraDragging || mPanDragging;
         const bool shouldPick = event.button == Input::MouseButton::Left
-            && mCameraDragging && !mCameraDragMoved && !mDividerDragging;
+            && mCameraDragging && !mCameraDragMoved;
         if (event.button == Input::MouseButton::Left)
         {
-            mDividerDragging = false;
             mCameraDragging = false;
             mCameraDragMoved = false;
         }
@@ -2485,11 +2476,6 @@ bool NclsViewer::onMouseEvent(const MouseEvent& event)
     {
         const float2 delta = event.pos - mLastMouse;
         mLastMouse = event.pos;
-        if (mDividerDragging)
-        {
-            mSplit = std::clamp(event.screenPos.x / float(mOutputWidth), 0.1f, 0.9f);
-            return true;
-        }
         if (mCameraDragging)
         {
             const float2 dragDistance = event.screenPos - mMousePressScreen;
@@ -2517,8 +2503,8 @@ void NclsViewer::onDroppedFile(const std::filesystem::path& path)
 {
     if (std::filesystem::is_directory(path) || path.filename() == "manifest.json")
     {
-        mOptions.bundleRoot = std::filesystem::is_directory(path) ? path : path.parent_path();
-        scanBundles();
+        mOptions.packageRoot = std::filesystem::is_directory(path) ? path : path.parent_path();
+        scanPackages();
     }
     else if (path.extension() == ".json" || path.extension() == ".binary" || path.extension() == ".mtlx") loadMaterial(path);
     else if (isSceneFile(path))
@@ -2536,7 +2522,7 @@ int runMain(int argc, char** argv)
         Logger::setOutputs(Logger::getOutputs() & ~Logger::OutputFlags::Console);
     SampleAppConfig config;
     config.deviceDesc.type = Device::Type::D3D12;
-    config.windowDesc.title = "NeuralShading - Multi-Family Reference / MethodBundle";
+    config.windowDesc.title = "NeuralShading - Multi-Family Reference / ScatteringPackage";
     config.windowDesc.width = options.width;
     config.windowDesc.height = options.height;
     config.windowDesc.resizableWindow = true;

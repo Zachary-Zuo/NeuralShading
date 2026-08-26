@@ -12,11 +12,13 @@ from PIL import Image
 import pyexr
 
 from ncls.data.collector import CollectionConfig
-from ncls.data.contract import EvaluatedBlock, PositionKind, QueryPlan, QueryRole, ReferenceDescriptor, SourceState, SurfaceSample, make_state_id
+from ncls.data.contract import EvaluatedBlock, PositionKind, QueryPlan, QueryRole, ReferenceDescriptor, SourceState, SurfaceSample
 from ncls.data.directions import peak_grazing_mixture_query
 from ncls.source_materials import MaterialXReference, MaterialXSourceMaterial
 from ncls.paths import SOURCE_MATERIAL_ROOT
 from ncls.source_materials.identity import materialx_asset_sha256
+from ncls.source_materials.families.materialx import snapshot_from_materialx
+from ncls.core.identity import sha256_file
 
 from .base import BaseProvider, PROJECT_ROOT, assign_group_splits, implementation_hash
 from ..falcor import create_falcor_device, direction_rows, import_falcor, output_buffer, structured_buffer
@@ -257,9 +259,9 @@ class MaterialXProvider(BaseProvider):
         self.provider_config = config
         shader = PROJECT_ROOT / "shaders/ncls/data/reference_materialx.cs.slang"
         self.descriptor = ReferenceDescriptor(
-            "materialx.textured-surface@1",
+            "materialx.document@1.39.4",
             "ncls.materialx-polyhaven@1",
-            "ncls.materialx-source-material@1",
+            "ncls.materialx-document@1.39.4",
             query_contract="materialx-local-normal-peak",
             incident_domain="upper-hemisphere",
             position_kind=PositionKind.UV,
@@ -283,21 +285,40 @@ class MaterialXProvider(BaseProvider):
         for asset_id in selected:
             loaded = reference.load(asset_id, verify_files=True)
             runtime = _parse_surface(loaded.document_path, loaded.material)
-            payload = loaded.material.to_json().encode("utf-8")
             source_hash = materialx_asset_sha256(
                 loaded.document_path,
                 (runtime.base_color, runtime.roughness, runtime.metalness, runtime.normal, runtime.displacement),
             )
+            resource_hashes = {
+                path.relative_to(loaded.document_path.parent).as_posix(): sha256_file(path)
+                for path in (runtime.base_color, runtime.roughness, runtime.metalness, runtime.normal, runtime.displacement)
+                if path is not None
+            }
+            snapshot = snapshot_from_materialx(
+                loaded,
+                source_asset_sha256=source_hash,
+                resource_hashes=resource_hashes,
+                runtime_metadata={
+                    "resolved_inputs": runtime.inputs.tobytes(),
+                    "resource_paths": {
+                        name: str(path.resolve())
+                        for name, path in (
+                            ("base-color", runtime.base_color),
+                            ("roughness", runtime.roughness),
+                            ("metalness", runtime.metalness),
+                            ("normal", runtime.normal),
+                            ("displacement", runtime.displacement),
+                        )
+                        if path is not None
+                    },
+                },
+            )
             states.append(SourceState(
-                state_id=make_state_id(self.descriptor.family_id, self.descriptor.native_schema_id, payload, source_hash),
-                family_id=self.descriptor.family_id,
+                snapshot=snapshot,
                 reference_id=self.descriptor.reference_id,
                 asset_id=asset_id,
                 split_group_id=asset_id,
-                native_schema_id=self.descriptor.native_schema_id,
-                native_payload=payload,
                 source_uri=loaded.material.document_uri,
-                source_sha256=source_hash,
                 split=splits[asset_id],
                 structure_family_id=asset_id,
                 difficulty_class="unclassified",

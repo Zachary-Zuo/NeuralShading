@@ -17,7 +17,6 @@ from ncls.data.contract import (
     ReferenceDescriptor,
     SourceState,
     SurfaceSample,
-    make_state_id,
 )
 from ncls.data.directions import (
     equal_area_hemisphere,
@@ -35,6 +34,7 @@ from ncls.data.reference import (
     evaluate_reference_batched_fixed,
     evaluate_reference_fixed,
 )
+from ncls.source_materials.families.layer_stack import snapshot_from_layer_stack
 
 from .base import BaseProvider, PROJECT_ROOT, implementation_hash
 
@@ -152,22 +152,18 @@ class LayerStackProvider(BaseProvider):
                 )
                 payload = program.to_json().encode("utf-8")
                 source_hash = hashlib.sha256(payload).hexdigest()
+                snapshot = snapshot_from_layer_stack(
+                    stack,
+                    source_asset_sha256=source_hash,
+                    metadata=program.metadata,
+                )
                 states.append(
                     SourceState(
-                        state_id=make_state_id(
-                            self.descriptor.family_id,
-                            self.descriptor.native_schema_id,
-                            payload,
-                            source_hash,
-                        ),
-                        family_id=self.descriptor.family_id,
+                        snapshot=snapshot,
                         reference_id=self.descriptor.reference_id,
                         asset_id=group_id,
                         split_group_id=group_id,
-                        native_schema_id=self.descriptor.native_schema_id,
-                        native_payload=payload,
                         source_uri="",
-                        source_sha256=source_hash,
                         split=split,
                         structure_family_id=structure_family_id,
                         difficulty_class=difficulty,
