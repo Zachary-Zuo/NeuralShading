@@ -130,6 +130,9 @@ private:
     void resetCamera();
     Falcor::float3 cameraPosition() const;
     void scanBundles();
+    Falcor::ref<Falcor::ComputePass> createMethodPass(
+        const char* shaderPath,
+        const ncls::ViewerMethod& method);
     bool runParityProbe(const ncls::ViewerMethod& method, std::string& error);
     void selectMethod(int32_t methodIndex);
     void bindLighting(Falcor::ShaderVar root, const char* constantBufferName);
@@ -176,7 +179,8 @@ private:
     std::vector<ncls::BundleFailure> mBundleFailures;
     int32_t mSelectedMethod = -1;
     uint32_t mMethodUiValue = 0;
-    Falcor::ref<Falcor::Buffer> mpWeights;
+    Falcor::ref<Falcor::Buffer> mpSharedWeights;
+    Falcor::ref<Falcor::Buffer> mpCompiledMaterials;
     Falcor::ref<Falcor::Buffer> mpReferenceMaterialMetadata;
     Falcor::ref<Falcor::Buffer> mpReferenceNoiseStats;
     Falcor::ref<Falcor::Buffer> mpEnvironmentMarginalCdf;
@@ -190,7 +194,6 @@ private:
     Falcor::ref<Falcor::ComputePass> mpPreparePass;
     Falcor::ref<Falcor::ComputePass> mpApproximationPass;
     Falcor::ref<Falcor::ComputePass> mpCompositePass;
-    Falcor::ref<Falcor::ComputePass> mpParityPass;
 
     ncls::OpenPbrLuts mOpenPbrLuts;
     Falcor::ref<Falcor::Buffer> mpStates;

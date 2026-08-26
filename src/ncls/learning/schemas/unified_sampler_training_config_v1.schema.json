@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Unified sampler training config v1",
+  "type": "object",
+  "required": ["evaluator_pipeline", "evaluator_checkpoint", "sampler"],
+  "properties": {
+    "evaluator_pipeline": {"type": "string", "minLength": 1},
+    "evaluator_checkpoint": {"type": "string", "minLength": 1},
+    "sampler": {"enum": ["nvidia-diffuse-ggx9", "ltc-k2"]},
+    "steps": {"type": "integer", "minimum": 1},
+    "batch_size": {"type": "integer", "minimum": 1},
+    "learning_rate": {"type": "number", "exclusiveMinimum": 0},
+    "final_learning_rate_fraction": {"type": "number", "minimum": 0, "maximum": 1},
+    "weight_decay": {"type": "number", "minimum": 0},
+    "gradient_clip": {"type": "number", "exclusiveMinimum": 0},
+    "validation_interval": {"type": "integer", "minimum": 1},
+    "checkpoint_interval": {"type": "integer", "minimum": 1},
+    "seed": {"type": "integer", "minimum": 0},
+    "device": {"type": "string", "minLength": 1},
+    "deterministic": {"type": "boolean"},
+    "schema_name": {"const": "unified-sampler-training-config"},
+    "schema_version": {"const": 1}
+  },
+  "additionalProperties": false
+}

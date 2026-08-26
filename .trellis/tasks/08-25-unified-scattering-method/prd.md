@@ -39,7 +39,7 @@
 - 在进入实现前必须冻结首个具体方法的完整设计：evaluator 数学参数化、physical core 的职责、latent/`prepare`/逐方向 MLP 划分、learned proposal family、训练 loss、容量与精度、`CompiledMaterial`/`ScatteringState` 布局、offline cook、MethodBundle 导出及失败判据。设计必须吸收 `p1_audit.md`、`p1_v2_plan.md` 和现有 `lobe_residual` 中仍成立的机制证据，不能为了缩短实现路径选择已知表达能力不足的粗糙方法。
 - NVIDIA Real-Time Neural Appearance Models 的核心结构必须成为首个 matched baseline：two learned shading frames + direct BRDF MLP + neural head 预测的 tilted-cosine diffuse / non-centered anisotropic GGX specular 两项解析 proposal；训练复用 log-space L1、directional mollification 可行性、sampler 相对当前 evaluator 的 KL，以及 sampler loss 对 latent detach 的证据。
 - 目标 evaluator 冻结为 `core-frame-neural-v1`：在同样 learned-frame direct MLP 主体上增加 exact top-interface reflection core，并用必选的 positive neural residual 补全其余散射。sampler 以 NVIDIA 9 参数 proposal 和 K=2 LTC proposal 为 matched 配置轴；只有经过相同数据、预算、训练与统计协议比较后才选择部署 bundle，不能预设 LTC 必然更好。
-- 当前 Slang 2024.1.34 路径没有本项目可验证的 cooperative-vector 加速能力；这不妨碍论文 `64×64×64` evaluator 以普通 Slang 标量矩阵乘法导出 MethodBundle、由通用 viewer 加载并在 deferred/PT 中显示，只是不能把其成本登记为当前 `realtime` 部署结果。因此同时保留可显示、可测时的 paper-scale `diagnostic` baseline 与 `≤2k MAC` deployment-matched `realtime` baseline。目标方法必须相对 deployment-matched baseline 证明质量/时间/内存 Pareto 非劣；若自研 core/LTC 变体没有优势，首个部署方法就采用 baseline 变体，不为维护新颖性选择更差结果。
+- 当前 Slang 2024.1.34 路径没有本项目可验证的 cooperative-vector 加速能力；这不妨碍原规模 `64×64×64` evaluator 以普通 Slang 标量矩阵乘法导出 MethodBundle、由通用 viewer 加载并在 deferred/PT 中显示。原规模形态就是正式 baseline：其实际成本和 runtime class 如实登记，超过软线不构成复现失败，也不触发缩模替换。缩模只能在原规模复现完成后以独立方法身份研究，不能作为 baseline 验收前置。
 - 不修改锁定的 `external/` 上游源码；viewer 变更继续位于根仓库自有代码和既定 overlay 边界内。
 
 ## Constraints
@@ -61,8 +61,8 @@
 - [ ] 数据合同是否变更、哪些语料必须重采、哪些旧 shard/模型/产物不可继续使用，都有版本化结论和可执行迁移门槛；不能仅因引入 NVIDIA sampler/KL 就重采，也不能在没有数据证据时宣称现有离散点响应已忠实覆盖 directional mollification。
 - [ ] 旧实现、错误模型和失效数据的清理清单完整；版本化路径由任务内删除，未版本化大数据由用户按明确清单删除或重建，最终不存在静默 fallback。
 - [ ] LTC/VNDF/sample/PDF 公共数学原语只有一份 Falcor-free Slang 实现；目标 method、analytic control、GPU 测试和 viewer 不复制公式。
-- [ ] `nvidia-frame-two-lobe-v1` baseline 对论文结构的复用项与因 LayerStack、均匀 latent、固定 corpus、标量 Slang 预算而作的适配逐条登记；paper-scale diagnostic 与 deployment-matched baseline 都有真实运行结果，并能通过同一通用 MethodBundle/viewer 路径显示，UI/capture 不混淆 `diagnostic` 与 `realtime`。
-- [ ] evaluator 的 `{NVIDIA direct, exact-core positive residual}` 与 sampler 的 `{NVIDIA diffuse+GGX9, LTC-K2}` 形成 matched 2×2 对照；最终部署选择在质量、sampler 方差、时间和内存上不劣于 deployment-matched NVIDIA baseline，差异由 paired bootstrap 支撑。
+- [ ] `nvidia-frame-two-lobe-v1` baseline 对论文结构、训练和 sampler 的复用项与项目适配逐条登记；原规模实现正确、训练稳定收敛并通过同一通用 MethodBundle/viewer 路径显示。收敛后的绝对质量和是否满足软成本线都不决定复现成功。
+- [ ] evaluator 的 `{NVIDIA direct, exact-core positive residual}` 与 sampler 的 `{NVIDIA diffuse+GGX9, LTC-K2}` 形成 matched 2×2 对照；implementation/convergence 与 quality/cost comparison 分开报告，后者按材质结构分组并由 paired bootstrap 支撑，不设跨材质统一质量门，也不强制产出一个全局 winner。
 - [ ] `design.md` 在实现前给出首个方法的可执行数学设计与逐项成本自检，并逐条标注旧审计/计划中的证据是“复用、修正或淘汰”；不存在仅为 lifecycle smoke 而选择的降级方法。
 - [ ] Python、Slang、C++ loader、MethodBundle、viewer 与文档/测试的跨层合同一致，完成规定的质量检查与部署验证。
 

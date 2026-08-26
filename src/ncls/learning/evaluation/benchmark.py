@@ -10,7 +10,7 @@ import numpy as np
 import torch
 
 from ncls.learning.pipelines import create_pipeline
-from ncls.learning.training.checkpoint import load_checkpoint
+from ncls.learning.training.checkpoint import load_checkpoint, sha256_file
 from ncls.learning.training.config import TrainingConfig
 
 
@@ -134,6 +134,46 @@ def benchmark_checkpoint(
         packet, packet_prediction = _measure(
             lambda: operation(packet_size), device, warmup=warmup, iterations=iterations
         )
+        validation_states = np.asarray(
+            store.batch(indices, fields=("state_index",))["state_index"], dtype=np.int64
+        )
+        state_ids = list(map(str, store.state_strings("state_id").tolist()))
+        first_query_by_state = {
+            state_index: int(indices[np.flatnonzero(validation_states == state_index)[0]])
+            for state_index in range(store.state_count)
+            if np.any(validation_states == state_index)
+        }
+        if len(first_query_by_state) != store.state_count:
+            raise ValueError("benchmark requires a validation query for every state")
+        single_query_by_state: dict[str, Any] = {}
+        single_query_time_microseconds_by_state: dict[str, float] = {}
+        for state_index, query_index in first_query_by_state.items():
+            state_raw = store.batch(np.asarray([query_index], dtype=np.int64))
+            state_tensor = torch.as_tensor(
+                state_raw["state_index"], dtype=torch.long, device=device
+            )
+            state_wo = torch.as_tensor(state_raw["wo"], dtype=torch.float32, device=device)
+            state_wi = torch.as_tensor(
+                state_raw["wi"][:, :1], dtype=torch.float32, device=device
+            )
+
+            def state_operation() -> torch.Tensor:
+                batch = {"state_index": state_tensor, "wo": state_wo, "wi": state_wi}
+                return pipeline.predict_f(model, batch, store, device)
+
+            timing, state_prediction = _measure(
+                state_operation, device, warmup=warmup, iterations=iterations
+            )
+            if not torch.all(torch.isfinite(state_prediction)).item():
+                raise ValueError("benchmark encountered a non-finite per-state prediction")
+            selected_timing = timing.get(
+                "device_execution_ms", timing["synchronized_wall_ms"]
+            )
+            state_id = state_ids[state_index]
+            single_query_by_state[state_id] = timing
+            single_query_time_microseconds_by_state[state_id] = (
+                1000.0 * float(selected_timing["median"])
+            )
         packet_median = (
             packet.get("device_execution_ms", packet["synchronized_wall_ms"])["median"]
         )
@@ -141,6 +181,7 @@ def benchmark_checkpoint(
             "schema": {"name": "p1-query-benchmark", "version": 1},
             "data_id": store.data_id,
             "checkpoint": str(Path(checkpoint_path)),
+            "checkpoint_sha256": sha256_file(checkpoint_path),
             "checkpoint_step": int(checkpoint["step"]),
             "pipeline": pipeline.descriptor.name,
             "pipeline_sha256": pipeline.descriptor.sha256,
@@ -151,6 +192,10 @@ def benchmark_checkpoint(
             "warmup": warmup,
             "iterations": iterations,
             "single_query": {"directions": 1, **single},
+            "single_query_by_state": single_query_by_state,
+            "single_query_time_microseconds_by_state": (
+                single_query_time_microseconds_by_state
+            ),
             "coherent_packet": {
                 "directions": packet_size,
                 **packet,

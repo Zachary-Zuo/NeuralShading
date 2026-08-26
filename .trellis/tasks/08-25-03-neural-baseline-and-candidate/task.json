@@ -3,7 +3,7 @@
   "name": "03-neural-baseline-and-candidate",
   "title": "03 Neural Baseline 与候选选择",
   "description": "实现 NVIDIA baseline、exact-core residual 候选及 matched 2x2 方法选择",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -27,6 +27,7 @@
     "continuous_authorized": "true",
     "authorization_parent": "08-25-unified-scattering-method",
     "sequence": "03",
-    "commit_policy": "preauthorized-scoped-local-no-push"
+    "commit_policy": "preauthorized-scoped-local-no-push",
+    "requirements_revision": "baseline-correctness-and-stable-convergence-2026-08-26"
   }
 }

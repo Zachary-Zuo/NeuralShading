@@ -21,6 +21,10 @@ class TrainingConfig:
     learning_rate: float = 3e-4
     learning_rate_schedule: str = "cosine"
     final_learning_rate_fraction: float = 0.05
+    optimizer: str = "adamw"
+    adam_beta1: float = 0.9
+    adam_beta2: float = 0.999
+    adam_epsilon: float = 1e-8
     weight_decay: float = 1e-5
     gradient_clip: float = 5.0
     validation_interval: int = 250
@@ -42,6 +46,12 @@ class TrainingConfig:
             raise ValueError("training config requires pipeline and stage")
         if self.learning_rate_schedule not in {"constant", "cosine"}:
             raise ValueError("unsupported learning rate schedule")
+        if self.optimizer not in {"adam", "adamw"}:
+            raise ValueError("unsupported optimizer")
+        if not 0.0 <= self.adam_beta1 < 1.0 or not 0.0 <= self.adam_beta2 < 1.0:
+            raise ValueError("Adam beta values must lie in [0, 1)")
+        if self.adam_epsilon <= 0.0:
+            raise ValueError("Adam epsilon must be positive")
         if not 0.0 <= self.final_learning_rate_fraction <= 1.0:
             raise ValueError("final learning-rate fraction must lie in [0, 1]")
         if not isinstance(self.model, Mapping) or not isinstance(self.dataset_selection, Mapping):
@@ -80,6 +90,16 @@ class TrainingConfig:
         value["dataset_selection"] = {
             name: list(values) for name, values in self.dataset_selection.items()
         }
+        if (
+            value["optimizer"] == "adamw"
+            and value["adam_beta1"] == 0.9
+            and value["adam_beta2"] == 0.999
+            and value["adam_epsilon"] == 1e-8
+        ):
+            del value["optimizer"]
+            del value["adam_beta1"]
+            del value["adam_beta2"]
+            del value["adam_epsilon"]
         return value
 
     def to_json(self) -> str:

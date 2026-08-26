@@ -43,6 +43,6 @@ paths:
 
 - [ ] Python 与 Slang 的枚举 / 布局数值都来自同一份 `abi/*.json`，没有手写副本。
 - [ ] 不支持的操作 / 版本 / capability 返回明确错误，没有"套用相近实现"的静默 fallback。
-- [ ] 合同测试（`tests/unit/test_material_program.py`、`test_scattering_contract.py`、`test_film_m1_bundle.py`）与 GPU 编译冒烟（`tests/gpu/kernels/*.cs.slang`）覆盖了改动。
+- [ ] 合同测试（`tests/unit/test_material_program.py`、`test_scattering_contract.py` 与各 backend/bundle 测试）和 GPU 编译冒烟（`tests/gpu/kernels/*.cs.slang`）覆盖了改动。
 - [ ] 改公共方向分布时，GPU oracle 直接包含生产 Slang，并同时覆盖独立固定公式值、PDF quadrature、sample histogram、`sample.pdf == pdf(direction)` 与 null mass；不能只让 sample 与同源 PDF 互相自证。
 - [ ] `docs/contracts/` 的描述与代码命名一致（`p1_v2_plan.md` D4.6 列出的已知不一致要一并修）。

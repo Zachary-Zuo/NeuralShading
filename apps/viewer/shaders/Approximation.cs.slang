@@ -1,8 +1,8 @@
-#include "ViewerCommon.slang"
-#include "../../../shaders/ncls/backends/film_m1/film_m1.slang"
+#include "MethodBackend.slang"
 
-StructuredBuffer<NclsFilmM1State> gStates;
-StructuredBuffer<float> gWeights;
+StructuredBuffer<NclsMethodPackedState> gStates;
+StructuredBuffer<uint> gSharedWeights;
+StructuredBuffer<NclsMethodCompiledMaterial> gCompiledMaterials;
 Texture2D<float4> gPositionDepth;
 Texture2D<float4> gNormal;
 Texture2D<float4> gTangent;
@@ -36,17 +36,26 @@ cbuffer ApproximationCB
     float _padding2;
     uint gEnvironmentQueryBudget;
     uint gRectangleQueryBudget;
+    uint gCompiledMaterialIndex;
 };
 
 float3 nclsApproximationDirection(
-    NclsFilmM1State state,
-    float3 woLocal,
+    NclsMethodPackedState packedState,
+    NclsScatteringContext context,
     float3 wiWorld,
-    float3 normal,
-    float3 tangent)
+    uint seed)
 {
-    const float3 wiLocal = nclsViewerToLocal(normalize(wiWorld), normal, tangent);
-    return nclsFilmM1ResponseCos(state, woLocal, wiLocal, gWeights);
+    const NclsMethodState state = nclsUnpackMethodState(
+        context,
+        gCompiledMaterials[gCompiledMaterialIndex],
+        packedState,
+        gSharedWeights);
+    NclsViewerSampleGenerator sampleGenerator = {seed};
+    const float3 direction = normalize(wiWorld);
+    return nclsScatteringEvalToResponseCos(
+        state.evaluate(direction, sampleGenerator),
+        context.surface.shadingFrame,
+        direction);
 }
 
 float3 nclsEnvironment(float3 direction)
@@ -69,20 +78,21 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
     const uint index = pixel.y * gFrameDim.x + pixel.x;
-    const NclsFilmM1State state = gStates[index];
+    const NclsMethodPackedState state = gStates[index];
     const float3 position = positionDepth.xyz;
     const float3 normal = normalize(gNormal[pixel].xyz);
     const float3 tangent = normalize(gTangent[pixel].xyz);
-    const float3 woLocal = nclsViewerToLocal(viewWorld, normal, tangent);
+    const NclsScatteringContext context = nclsViewerMethodContext(
+        position, normal, tangent, viewWorld, 0u);
     float3 radiance = float3(0.0f);
     if (gUseSun != 0u)
-        radiance += nclsApproximationDirection(state, woLocal, normalize(gSunDirection), normal, tangent)
+        radiance += nclsApproximationDirection(state, context, normalize(gSunDirection), index + 1u)
             * gSunColor * gSunIntensity;
     if (gUsePoint != 0u)
     {
         const float3 toLight = gPointPosition - position;
         const float distanceSquared = max(dot(toLight, toLight), 1e-4f);
-        radiance += nclsApproximationDirection(state, woLocal, toLight, normal, tangent)
+        radiance += nclsApproximationDirection(state, context, toLight, index + 2u)
             * gPointColor * (gPointIntensity / distanceSquared);
     }
     if (gUseRectangle != 0u)
@@ -100,7 +110,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
             const float distanceSquared = max(dot(toLight, toLight), 1e-4f);
             const float3 wiWorld = normalize(toLight);
             const float lightCosine = max(dot(lightNormal, -wiWorld), 0.0f);
-            radiance += nclsApproximationDirection(state, woLocal, wiWorld, normal, tangent)
+            radiance += nclsApproximationDirection(
+                state, context, wiWorld, index + 17u * sampleIndex + 3u)
                 * gRectangleColor * gRectangleIntensity
                 * (area * lightCosine / (distanceSquared * float(gRectangleQueryBudget)));
         }
@@ -115,7 +126,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         {
             const float2 u = nclsViewerHammersley(sampleIndex, gEnvironmentQueryBudget);
             const float3 wiWorld = nclsViewerToWorld(nclsViewerUniformHemisphere(u), normal, tangent);
-            environmentIntegral += nclsApproximationDirection(state, woLocal, wiWorld, normal, tangent)
+            environmentIntegral += nclsApproximationDirection(
+                state, context, wiWorld, index + 31u * sampleIndex + 5u)
                 * nclsEnvironment(wiWorld);
         }
         radiance += environmentIntegral * (2.0f * NCLS_VIEWER_PI / float(gEnvironmentQueryBudget));

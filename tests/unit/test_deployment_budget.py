@@ -38,7 +38,10 @@ def test_every_pipeline_declares_deployment_candidacy() -> None:
 
 def test_deployment_candidates_fit_soft_budget() -> None:
     candidates = [item for item in pipeline_descriptors() if item.deployment_candidate]
-    assert {item.name for item in candidates} == {"lobe-residual-k2-v1"}
+    assert {item.name for item in candidates} == {
+        "lobe-residual-k2-v1",
+        "core-frame-neural-v1",
+    }
     for descriptor in candidates:
         costs = dict(create_pipeline(descriptor.name).parameter_costs(None))
         assert set(SOFT_BUDGET) <= set(costs), descriptor.name

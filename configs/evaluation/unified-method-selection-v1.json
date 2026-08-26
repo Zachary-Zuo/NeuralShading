@@ -1,0 +1,31 @@
+{
+  "schema": {"name": "unified-method-selection", "version": 1},
+  "name": "unified-method-selection-v1",
+  "seed": 20260824,
+  "bootstrap_iterations": 1000,
+  "cells": {
+    "A": {"evaluator": "nvidia-frame-two-lobe-paper-v1", "sampler": "nvidia-diffuse-ggx9", "baseline": true},
+    "B": {"evaluator": "nvidia-frame-two-lobe-paper-v1", "sampler": "ltc-k2", "baseline": false},
+    "C": {"evaluator": "core-frame-neural-v1", "sampler": "nvidia-diffuse-ggx9", "baseline": false},
+    "D": {"evaluator": "core-frame-neural-v1", "sampler": "ltc-k2", "baseline": false}
+  },
+  "rules": {
+    "require_implementation_correctness": true,
+    "require_evaluator_convergence": true,
+    "require_sampler_convergence": true,
+    "require_sampler_correctness": true,
+    "require_checkpoint_parity": true,
+    "credible_interval": 0.95,
+    "credible_improvement_requires_upper_below_zero": true,
+    "credible_regression_requires_lower_above_zero": true,
+    "fallback_cell": "A",
+    "candidate_tiebreak": [
+      "credible_improvement_axis_count_descending",
+      "single_query_time_median_ascending",
+      "total_static_bytes_ascending",
+      "cell_id_ascending"
+    ],
+    "baseline_ineligible_local_pair": ["C", "D"],
+    "baseline_ineligible_priority": ["B", "C", "D"]
+  }
+}

@@ -23,6 +23,24 @@ Directional mollification 由 `MollificationCurriculumStore` 读取冻结的 `mo
 
 `parametric-v1` 使用 source split 与同名 query role 的交集；`target-visible-v1` 只按 query role 切分，允许 encoder 或 bounded refinement 读取 source-test state 的 train response；`workflow-v1` 用于资产式族的固定工作流批量评测。三者必须在候选 descriptor 中明确选择。
 
+## 统一散射 evaluator 与 sampler（03）
+
+03 的生产前向只有 `shaders/ncls/backends/unified_neural/unified_neural_core.slang` 一份。`UnifiedNeuralModel` 只持有 FP32 master 参数并把 `prepare/evaluate/pdf` 调到 SlangPy；Torch 负责 loss、optimizer 和独立数值 oracle，不提供生产前向 fallback。参数打包从实际 model 反射出连续 FP16 offset manifest，材质 record 的 128 B ABI 则由 [`unified_neural_layout_v1.json`](../src/ncls/learning/abi/unified_neural_layout_v1.json) 生成 Slang layout，不能在 Python/Slang 两侧各写一套 offset。
+
+三个 evaluator 共用 learned-frame 与方向 feature 合同：
+
+- `nvidia-frame-two-lobe-realtime-v1` 是 `C_eval≤2,000 MAC` 的 deployment-matched direct baseline；
+- `core-frame-neural-v1` 把 01 的 exact top-interface 作为固定物理项，只学习非负 residual，不做 prediction clamp、correction-none 或 lobe-only 回退；
+- `nvidia-frame-two-lobe-paper-v1` 使用论文规模 64-wide 三隐层 evaluator，只是同数据、同 25k 预算的 `diagnostic`，不参加 realtime 2×2 选择。
+
+正式训练唯一接受 `artifacts/corpus/layer-stack-p1-mollification-training-v1.json`（entry `47ef2013…5a89`）。step `1…17,500` 读取冻结的 mollified reference，step `17,501…25,000` 读取 base-v5；early stopping 的有效 floor 固定为 step 20,000，保证任何正式 run 都经历 base 段。validation/test 始终来自 base-v5，训练 manifest 记录各 target source 的实际计数。
+
+evaluator 冻结后，`nvidia-diffuse-ggx9` 与 `ltc-k2` head 各自训练 10k step。shared trunk、latent 与 evaluator 参数全部 detach，两个 sampler head 使用独立的 Slang callable identity，避免 SlangPy 首次 active-gradient mask 被预热顺序污染。常驻 warm-order 回归同时要求 head/PDF 有梯度、目标 head 梯度 finite 且非零、所有冻结参数 `grad is None`。
+
+sampler 正确性不是用自己的 `sample/pdf` 自证：正式协议对 30 state × 4 个含 grazing 的 view 使用独立 CPU quadrature/PDF oracle，并检查 normalization/null、sample→pdf、histogram和相对冻结 evaluator 的 MC 无偏性。packed checkpoint 还要在 SlangPy 与 Falcor 执行完整 evaluator+PDF parity；FP32 双编译阈值为 `rtol≤2e-5`，FP16-packed 对 FP32 evaluator 为 `rtol≤2e-3`。
+
+realtime 选择固定为 NVIDIA direct/core evaluator × GGX9/LTC 两种 sampler 的 A–D 四格。配置和 best checkpoint 冻结后，只运行一次含 test/adversarial/dense 的 P1 audit；Q1 再从该带哈希报告机械提取，不重复读取 test。Q1 要求 test directional state median/p95 `≤0.045/0.10`、15 个单层 state 各 `≤0.013`、四个冻结尾部 state 各 `≤0.15`。只有 Q1、sampler correctness 和 checkpoint parity 全过的格才可选；质量、signed energy、sampler variance 与实际单-query 时间按同一 30 state 做配对 bootstrap，若候选没有可信 Pareto 改善则选择 baseline A。
+
 ## 固定四层 quality-v1
 
 候选只返回线性 RGB `f`。harness 在指标内部乘一次 `|cos θi|`，与 HDF5 的 response measure 对齐；candidate 不能替换 metric suite。报告以可读名称 `quality-v1` 和 [`quality-v1.json`](../configs/evaluation/quality-v1.json) 的 SHA-256 共同标识协议，比较器会拒绝 suite hash 不一致的报告。
@@ -38,7 +56,7 @@ reciprocity 使用语料中落盘的 reciprocal paired response，比较“模�
 
 每份 checkpoint report 另记录 `B_asset`、`B_shared`、`C_prepare`、`C_eval`、state bytes 和参数数目。成本用于 Pareto，并按 `docs/research/experiment_framework.md` §0.1 的部署软线在注册表标注是否为部署候选；超线 run 不淘汰，但不能成为默认配置。
 
-PyTorch 研究端另提供一致的 query benchmark：`single_query` 测一个 `(state, wo, wi)` 的串行延迟，`coherent_packet` 在同一 `(state, wo)` 下批量求多个 `wi`，把一次 `prepare` 的成本摊薄后报告每方向时间。它用于 P1 的相对成本曲线；阶段收尾仍需用 Slang backend 重测，不能把 PyTorch kernel 时间冒充最终 viewer 时间。
+研究端 query benchmark 通过 Torch CUDA event 计时，但实际 forward 仍执行同一 SlangPy core；`single_query` 测一个 `(state, wo, wi)` 的串行延迟并额外落盘 30-state matched timing，`coherent_packet` 在同一 `(state, wo)` 下批量求多个 `wi`，把一次 `prepare` 的成本摊薄后报告每方向时间。它用于当前硬件上的相对成本曲线；最终 viewer 时间仍由 05 的部署轨道负责，不能拿研究进程的调度开销代替 viewer 结论。
 
 ## 命令
 

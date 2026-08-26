@@ -114,7 +114,7 @@ shaders/ncls/backends/<name>/
 
 - **训练与评测**：SlangPy 加载 core，反射 `Params` 布局，`torch.autograd.Function` 包装 `bwd_diff`；loss 与 optimizer 留在 Torch，`training/runner.py` 只把 `pipeline.predict_f` 换成 Slang 调用。`create_model` 返回只持有 params 与 latent 张量的薄 `nn.Module`，**无 Torch 前向**。
 - **GPU 测试**：Falcor Python 与 SlangPy 同时编译同一 core，evaluate 数值 `rtol 2e-5`（`p1_v2_plan.md` P2.7）；任一编译器失败即阻止提交。`ISampleGenerator` 测试实现见 `tests/gpu/kernels/legacy_ltc_k2.cs.slang`。
-- **viewer**：`#include` 同一文件；`Prepare / Approximation / Parity` pass 通过 `INclsScatteringBackend` 泛型调用，由 bundle 声明的 module 路径与类型名 specialization（V4.3 目标；当前 `film_m1` 直接调 `nclsFilmM1*` 自由函数绕过合同，是待迁移债务）。
+- **viewer**：`#include` bundle 声明的 backend module；`Prepare / Approximation / Parity` pass 只通过 `INclsScatteringBackend` 与统一 `NclsMethod*` 类型别名泛型调用。bundle loader 负责一次性验证 module、defines、共享权重和 compiled-material 布局并绑定资源；不得在 pass 或 C++ loader 中增加方法名分支。
 - **权重布局**：由 Slang `Params` 反射生成，Slang 内不写偏移常量；bundle 只存张量与反射出的 layout，删除手写 exporter。
 - **Torch 的角色**：`src/ncls/core/representations/legacy_ltc_k2/torch_eval.py` 只作 evaluate / pdf 的 parity oracle；不再新增 Torch 生产前向。
 
@@ -127,7 +127,7 @@ Falcor 8.0 锁定 Slang 2024.1.34；SlangPy（`environment.yml` 固定 `slangpy=
 SlangPy `0.43.1` 的 Torch wrapper 会按公开 callable 身份缓存首次调用观察到的可微参数掩码。一个 callable 若先由全冻结参数与 detach 输入调用，之后即使用 `requires_grad=True` 的权重调用，输出也可能没有 `grad_fn`。因此：
 
 - “每个方法一份 Slang”指唯一数学源码，不要求不同训练角色共用同一公开函数名；相同算术可以由角色专属 wrapper 转调同一基础函数。
-- active-gradient mask 不同的 prepare、evaluator、sampler head，以及 diagnostic 中重复的同宽层，必须使用不同 callable 身份；不得只因矩阵宽度相同就复用名称。
+- active-gradient mask 不同的 prepare、evaluator、sampler head、state join / composition helper，以及 diagnostic 中重复的同宽层，必须使用不同 callable 身份；不得只因算术或矩阵宽度相同就复用名称。
 - 回归测试必须先 warm 冻结的 deployment/evaluator 路径，再进入 sampler-only 或其他分阶段训练，并断言目标输出进入 autograd graph、只有目标参数获得有限非零梯度。
 - 新入口若要复用 callable，必须以 cold / warm 两种调用顺序证明可微参数集合不受首次调用污染；没有该证据时按角色拆分身份。
 

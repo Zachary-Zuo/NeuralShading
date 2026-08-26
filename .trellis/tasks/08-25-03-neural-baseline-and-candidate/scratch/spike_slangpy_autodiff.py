@@ -15,7 +15,7 @@ from typing import Any
 import numpy as np
 import torch
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from spike_slangpy_checks import (  # noqa: E402
     benchmark,
@@ -26,9 +26,10 @@ from spike_slangpy_checks import (  # noqa: E402
 
 # 候选写法按可能性排序；哪一个能编译就是「slangpy 携带的 slang」接受的写法，写入输出 JSON。
 WEIGHT_CANDIDATES = (
+    ("DiffTensor<float, 1>", "weights.get({ int(index) })"),
+    ("DiffTensor<float, 1>", "weights.load(int(index))"),
     ("GradOutTensor<float, 1>", "weights.get({ int(index) })"),
     ("GradInOutTensor<float, 1>", "weights.get({ int(index) })"),
-    ("DiffTensor<float, 1>", "weights.get({ int(index) })"),
     ("GradOutTensor<float, 1>", "weights[{ int(index) }]"),
 )
 
@@ -50,9 +51,11 @@ def version_info(spy: Any) -> dict[str, Any]:
 def load_module(spy: Any, device: Any, scratch: Path) -> tuple[Any, dict[str, Any]]:
     template = Path(__file__).with_suffix(".slang").read_text(encoding="utf-8")
     attempts: list[dict[str, Any]] = []
-    for tensor_type, read in WEIGHT_CANDIDATES:
+    for index, (tensor_type, read) in enumerate(WEIGHT_CANDIDATES):
         source = template.replace("@WEIGHT_TENSOR@", tensor_type).replace("@WEIGHT_READ@", read)
-        path = scratch / "spike_slangpy_autodiff.slang"
+        # SlangPy caches modules by path. A unique name is required so a failed
+        # first syntax candidate cannot poison all later attempts.
+        path = scratch / f"spike_slangpy_autodiff_candidate_{index}.slang"
         path.write_text(source, encoding="utf-8")
         try:
             module = spy.Module.load_from_file(device, str(path))

@@ -1,1 +1,11 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/project/index.md","reason":"跨层质量门、中文稳定文档、repository policy和external cleanliness"}
+{"file":".trellis/spec/project/method-constraints.md","reason":"审计所有deployment_candidate的机械预算、单一Slang和有界执行"}
+{"file":".trellis/spec/project/coding-conventions.md","reason":"Python/Slang/schema/config/测试命名、错误处理与hash回归"}
+{"file":".trellis/spec/core/shared-slang-backend.md","reason":"检查无Torch生产前向、双编译、反射layout和FP16 parity"}
+{"file":".trellis/spec/core/index.md","reason":"检查sample/pdf/evaluate一致性、null质量、full support与三态"}
+{"file":".trellis/spec/data/reference-and-corpus.md","reason":"检查entry到curriculum data flow、.875 base回退和no directory fallback"}
+{"file":".trellis/spec/learning/pipeline-and-evaluation.md","reason":"检查train-only拟合、test只读、tail guard、bootstrap和正式run identity"}
+{"file":".trellis/tasks/08-25-03-neural-baseline-and-candidate/design.md","reason":"核对baseline忠实性、positive residual、matched 2x2、implementation/convergence与rollback"}
+{"file":".trellis/tasks/08-25-03-neural-baseline-and-candidate/research/nvidia-method-correspondence.md","reason":"核对frame、输入输出、sampler、joint lifecycle与项目适配没有漂移"}
+{"file":".trellis/tasks/08-25-03-neural-baseline-and-candidate/research/planning-evidence.md","reason":"核对实现没有复活旧lobe-only/Torch fallback或偏离前序identity"}
+{"file":"docs/research/experiment_framework.md","reason":"完整质量/成本/统计/结论强度与实验登记审计"}

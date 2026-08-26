@@ -27,7 +27,7 @@
 执行中遵守以下父任务不变量：
 
 - 公共运行语义始终是同一 `prepare/evaluate/sample/pdf` 合同；deferred 和 PT 不得各自维护旁路。
-- NVIDIA paper-scale baseline 可作为 `diagnostic` 通过通用 viewer 显示，但不能冒充当前 Slang 标量路径的 realtime；部署比较使用 matched `≤2k MAC` baseline。
+- NVIDIA 论文报告的最大原规模 baseline 是03正式复现对象，必须通过通用 viewer 显示；标量 Slang 上的真实成本/runtime class如实记录但不触发缩模替换。缩模只能在复现完成后使用独立方法身份。
 - `02` 必须在结果产生前冻结 directional-mollification adequacy 协议；若现有 v5 不足，必须完成版本化新 corpus 后才能进入 `03`。
 - `03` 必须忠实建立 NVIDIA baseline，并完成 evaluator × sampler matched 2×2；自研候选没有可信 Pareto 优势时选择 baseline。
 - `04/05` 只能使用通用 MethodBundle Slang specialization，不得按 method ID 硬编码。

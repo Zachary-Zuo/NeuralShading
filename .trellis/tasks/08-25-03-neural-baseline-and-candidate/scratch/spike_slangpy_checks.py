@@ -1,4 +1,4 @@
-"""P1.0 spike 的检查函数：lobe/MLP 梯度对照与吞吐基准。由 spike_slangpy_autodiff.py 调用。"""
+"""03 spike 的检查函数：lobe/MLP 梯度对照与吞吐基准。"""
 from __future__ import annotations
 
 import time
@@ -80,17 +80,22 @@ def check_mlp_gradients(spy: Any, module: Any, device: Any, rng: np.random.Gener
     loss_weight = rng.uniform(0.5, 1.5, (groups, directions, 3)).astype(np.float32)
     x_batch = np.ascontiguousarray(np.broadcast_to(x[:, None, :], (groups, directions, INPUT)))
     wi_batch = np.ascontiguousarray(np.broadcast_to(wi, (groups, directions, 3)))
-    weight_tensor = spy.Tensor.from_numpy(device, weights).with_grads()
-    result = spy.Tensor.from_numpy(device, np.zeros((groups, directions, 3), np.float32)).with_grads()
-    args = (weight_tensor, *(x_batch[..., 4 * i:4 * i + 4] for i in range(4)), wi_batch)
-    module.spikeEvaluate(*args, _result=result)
-    result.grad_in = spy.Tensor.from_numpy(device, loss_weight)
-    module.spikeEvaluate.bwds(*args, _result=result)
-    gradient = weight_tensor.grad_out.to_numpy().reshape(-1)
+    weight_tensor = torch.tensor(weights, device="cuda", requires_grad=True)
+    w0 = weight_tensor[W0:B0].reshape(WIDTH, INPUT)
+    b0 = weight_tensor[B0:W1]
+    w1 = weight_tensor[W1:B1].reshape(RAW, WIDTH)
+    b1 = weight_tensor[B1:]
+    x_tensor = torch.tensor(x_batch, device="cuda")
+    hidden = module.spikeLinear0(w0, b0, x_tensor)
+    hidden = module.spikeActivate(hidden)
+    raw = module.spikeLinear1(w1, b1, hidden)
+    result = module.spikeDecodeEvaluate(raw, torch.tensor(wi_batch, device="cuda"))
+    (result * torch.tensor(loss_weight, device="cuda")).sum().backward()
+    gradient = weight_tensor.grad.detach().cpu().numpy().reshape(-1)
 
     w64, x64, wi64 = (torch.tensor(v, dtype=torch.float64) for v in (weights, x, wi))
     lw64 = torch.tensor(loss_weight, dtype=torch.float64)
-    forward_error = relative_error(result.to_numpy(), mirror_response(w64, x64, wi64).numpy())
+    forward_error = relative_error(result.detach().cpu().numpy(), mirror_response(w64, x64, wi64).numpy())
 
     def loss(w: torch.Tensor) -> float:
         return float((mirror_response(w, x64, wi64) * lw64).sum())
@@ -105,6 +110,9 @@ def check_mlp_gradients(spy: Any, module: Any, device: Any, rng: np.random.Gener
     return {
         "probed_weights": int(probes), "forward_error": forward_error,
         "finite_difference_error": error, "pass": max(error, forward_error) <= 1e-3,
+        "indices": indices.tolist(),
+        "slang_gradient": gradient[indices].tolist(),
+        "finite_difference": finite.tolist(),
     }
 
 
@@ -132,7 +140,11 @@ def probe_struct_params(spy: Any, module: Any, device: Any, rng: np.random.Gener
 def benchmark(spy: Any, module: Any, device: Any, rng: np.random.Generator, groups: int, directions: int, iterations: int) -> dict[str, Any]:
     weight_tensor = spy.Tensor.from_numpy(device, (rng.standard_normal(PARAMETER_COUNT) * 0.2).astype(np.float32)).with_grads()
     x_batch = rng.standard_normal((groups, directions, INPUT)).astype(np.float32)
-    args = (weight_tensor, *(x_batch[..., 4 * i:4 * i + 4] for i in range(4)), hemisphere(rng, (groups, directions)))
+    args = (
+        weight_tensor,
+        *(np.ascontiguousarray(x_batch[..., 4 * i:4 * i + 4]) for i in range(4)),
+        hemisphere(rng, (groups, directions)),
+    )
     result = spy.Tensor.from_numpy(device, np.zeros((groups, directions, 3), np.float32)).with_grads()
     result.grad_in = spy.Tensor.from_numpy(device, np.ones((groups, directions, 3), np.float32))
 

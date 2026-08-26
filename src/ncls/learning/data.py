@@ -67,17 +67,34 @@ class MollificationCurriculumStore:
         if not manifest_path.is_absolute():
             manifest_path = PROJECT_ROOT / manifest_path
         self.manifest = validate_mollification_supplement(manifest_path)
-        self._streams: dict[str, h5py.File] = {}
-        try:
-            for shard in self.manifest["shards"]:
-                state_id = str(shard["state_id"])
-                path = Path(str(shard["uri"]))
-                if not path.is_absolute():
-                    path = PROJECT_ROOT / path
-                self._streams[state_id] = h5py.File(path, "r")
-        except Exception:
-            self.close()
-            raise
+        state_ids: list[str] = []
+        wo: list[np.ndarray] = []
+        wi: list[np.ndarray] = []
+        source_response: list[np.ndarray] = []
+        mollified_response: list[np.ndarray] = []
+        for shard in self.manifest["shards"]:
+            state_id = str(shard["state_id"])
+            path = Path(str(shard["uri"]))
+            if not path.is_absolute():
+                path = PROJECT_ROOT / path
+            with h5py.File(path, "r") as stream:
+                state_ids.append(state_id)
+                wo.append(np.asarray(stream["anchors/wo"][...], dtype=np.float32))
+                wi.append(np.asarray(stream["anchors/wi"][...], dtype=np.float32))
+                source_response.append(np.asarray(
+                    stream["anchors/source_response"][...], dtype=np.float32
+                ))
+                mollified_response.append(np.asarray(
+                    stream["responses/mean"][...], dtype=np.float32
+                ))
+        self._state_ids = tuple(state_ids)
+        self._state_index = {
+            state_id: index for index, state_id in enumerate(self._state_ids)
+        }
+        self._wo = np.stack(wo)
+        self._wi = np.stack(wi)
+        self._source_response = np.stack(source_response)
+        self._mollified_response = np.stack(mollified_response)
         self._progress = np.asarray(
             self.entry["curriculum"]["stored_progress"], dtype=np.float64
         )
@@ -94,12 +111,19 @@ class MollificationCurriculumStore:
 
     @property
     def state_count(self) -> int:
-        return len(self._streams)
+        return len(self._state_ids)
+
+    @property
+    def state_ids(self) -> tuple[str, ...]:
+        return self._state_ids
 
     def close(self) -> None:
-        for stream in self._streams.values():
-            stream.close()
-        self._streams.clear()
+        self._state_ids = ()
+        self._state_index = {}
+        self._wo = np.empty((0, 8, 3), dtype=np.float32)
+        self._wi = np.empty((0, 8, 64, 3), dtype=np.float32)
+        self._source_response = np.empty((0, 8, 64, 3), dtype=np.float32)
+        self._mollified_response = np.empty((0, 8, 4, 64, 3), dtype=np.float32)
 
     def __enter__(self) -> "MollificationCurriculumStore":
         return self
@@ -132,25 +156,23 @@ class MollificationCurriculumStore:
             raise ValueError("mollification batch must be non-empty")
         if np.any((views < 0) | (views >= 8)) or np.any((lights < 0) | (lights >= 64)):
             raise ValueError("mollification batch indices are outside the frozen 8x64 layout")
-        unknown = set(requested_states) - set(self._streams)
+        unknown = set(requested_states) - set(self._state_index)
         if unknown:
             raise ValueError(f"mollification batch contains unknown states: {sorted(unknown)}")
         target = self.select_target(training_progress)
-        response = np.empty((len(views), 3), dtype=np.float32)
-        wo = np.empty_like(response)
-        wi = np.empty_like(response)
-        for index, (state_id, view_index, light_index) in enumerate(
-            zip(requested_states, views.tolist(), lights.tolist(), strict=True)
-        ):
-            stream = self._streams[state_id]
-            wo[index] = stream["anchors/wo"][view_index]
-            wi[index] = stream["anchors/wi"][view_index, light_index]
-            if target["level_index"] is None:
-                response[index] = stream["anchors/source_response"][view_index, light_index]
-            else:
-                response[index] = stream["responses/mean"][
-                    view_index, int(target["level_index"]), light_index
-                ]
+        states = np.fromiter(
+            (self._state_index[state_id] for state_id in requested_states),
+            dtype=np.int64,
+            count=len(requested_states),
+        )
+        wo = self._wo[states, views].copy()
+        wi = self._wi[states, views, lights].copy()
+        if target["level_index"] is None:
+            response = self._source_response[states, views, lights].copy()
+        else:
+            response = self._mollified_response[
+                states, views, int(target["level_index"]), lights
+            ].copy()
         return {
             "state_id": np.asarray(requested_states, dtype=object),
             "view_index": views,
@@ -168,6 +190,230 @@ class MollificationCurriculumStore:
             "target_source": np.full(
                 len(views), target["target_source"], dtype=object
             ),
+        }
+
+
+class UnifiedScatteringTrainingStore:
+    """03唯一数据入口：train可走冻结curriculum，其余角色始终委托base v5。"""
+
+    ENTRY_ID = "47ef20138007703f2d1b644bcb4ca4b084001da4ec975f1b712587d3e7e35a89"
+    BASE_CORPUS_ID = "0513d0c837b109f74cbf6fd4f811e05c6bc68c02226bd6d443f3225ef5dd64b7"
+    SUPPLEMENT_CORPUS_ID = "f6931474890ab7642f244b84df2736e2a5fc1f9e169b5f7a620494184d99e4f3"
+    CURRICULUM_STEPS = 20_000
+    BASE_TARGET_START_STEP = 17_501
+    _BASE_TRAINING_FIELDS = (
+        "state_index", "wo", "wi", "mean", "solid_angle_weight"
+    )
+
+    def __init__(self, data_entry_path: Path | str) -> None:
+        self.data_entry_path = Path(data_entry_path)
+        self.entry = load_mollification_training_data_entry(self.data_entry_path)
+        if self.entry["entry_id"] != self.ENTRY_ID:
+            raise ValueError("unified training requires the frozen 03 data entry")
+        if self.entry["base_corpus_id"] != self.BASE_CORPUS_ID:
+            raise ValueError("unified training base corpus identity mismatch")
+        if self.entry.get("supplement_corpus_id") != self.SUPPLEMENT_CORPUS_ID:
+            raise ValueError("unified training supplement corpus identity mismatch")
+        base_path = Path(str(self.entry["base_corpus_uri"]))
+        if not base_path.is_absolute():
+            base_path = PROJECT_ROOT / base_path
+        self.base = ReferenceCorpusStore(base_path)
+        if self.base.data_id != self.BASE_CORPUS_ID:
+            self.base.close()
+            raise ValueError("unified training resolved a different base corpus")
+        try:
+            self.curriculum = MollificationCurriculumStore(self.data_entry_path)
+        except Exception:
+            self.base.close()
+            raise
+        self._state_ids = tuple(map(str, self.base.state_strings("state_id").tolist()))
+        self._state_index = {state_id: index for index, state_id in enumerate(self._state_ids)}
+        self._base_training_references: np.ndarray | None = None
+        self._base_training_cache: dict[
+            int, tuple[np.ndarray, dict[str, np.ndarray]]
+        ] = {}
+        if set(self.curriculum.state_ids) != set(self._state_ids):
+            self.close()
+            raise ValueError("unified curriculum and base state identities disagree")
+
+    @property
+    def data_id(self) -> str:
+        return self.ENTRY_ID
+
+    @property
+    def state_count(self) -> int:
+        return self.base.state_count
+
+    @property
+    def state_splits(self) -> np.ndarray:
+        return self.base.state_splits
+
+    def state_strings(self, field: str) -> np.ndarray:
+        return self.base.state_strings(field)
+
+    def state_payload(self, index: int) -> bytes:
+        return self.base.state_payload(index)
+
+    def sanity_checks(self) -> dict[str, bool]:
+        return {
+            **self.base.sanity_checks(),
+            "training_entry_identity": True,
+            "validation_test_base_v5": True,
+        }
+
+    def training_lifecycle_contract(self, total_steps: int) -> dict[str, Any]:
+        """返回entry冻结的训练阶段，供runner约束早停并写入run identity证据。"""
+
+        if total_steps < 1:
+            raise ValueError("training lifecycle requires a positive step budget")
+        return {
+            "contract": "ncls.unified-scattering-curriculum@1",
+            "curriculum_steps": self.CURRICULUM_STEPS,
+            "base_target_start_step": self.BASE_TARGET_START_STEP,
+            "post_curriculum_base_start_step": self.CURRICULUM_STEPS + 1,
+            "early_stopping_floor_step": min(self.CURRICULUM_STEPS, total_steps),
+            "total_steps": total_steps,
+        }
+
+    def close(self) -> None:
+        self._base_training_references = None
+        self._base_training_cache.clear()
+        self.curriculum.close()
+        self.base.close()
+
+    def __enter__(self) -> "UnifiedScatteringTrainingStore":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    def partition_indices(self, policy_id: str, lifecycle_role: str) -> np.ndarray:
+        return self.base.partition_indices(policy_id, lifecycle_role)
+
+    def indices_for_query_role(self, role: str) -> np.ndarray:
+        return self.base.indices_for_query_role(role)
+
+    def select_indices(self, indices: np.ndarray, selection: Mapping[str, Any]) -> np.ndarray:
+        return self.base.select_indices(indices, selection)
+
+    def sample_batch_indices(
+        self, candidates: np.ndarray, batch_size: int, rng: np.random.Generator
+    ) -> np.ndarray:
+        return self.base.sample_batch_indices(candidates, batch_size, rng)
+
+    def batch(
+        self,
+        query_references: np.ndarray,
+        *,
+        fields: tuple[str, ...] | None = None,
+    ) -> dict[str, np.ndarray]:
+        return self.base.batch(query_references, fields=fields)
+
+    def iter_batches(
+        self,
+        query_references: np.ndarray,
+        batch_size: int,
+        *,
+        fields: tuple[str, ...] | None = None,
+    ) -> Iterator[dict[str, np.ndarray]]:
+        return self.base.iter_batches(query_references, batch_size, fields=fields)
+
+    def query_state_indices(self, query_references: np.ndarray) -> np.ndarray:
+        return self.base.query_state_indices(query_references)
+
+    def prepare_training_partition(self, train_indices: np.ndarray) -> None:
+        """把冻结 train 分区驻留内存，避免优化循环逐条随机读取 HDF5。"""
+
+        requested = np.asarray(train_indices, dtype=np.int64)
+        if requested.ndim != 2 or requested.shape[1] != 2 or not len(requested):
+            raise ValueError("training cache requires nonempty [shard, group] references")
+        if self._base_training_references is not None:
+            if not np.array_equal(requested, self._base_training_references):
+                raise ValueError("training cache cannot change its frozen query partition")
+            return
+        cache: dict[int, tuple[np.ndarray, dict[str, np.ndarray]]] = {}
+        for shard_index in sorted(set(map(int, requested[:, 0].tolist()))):
+            local_indices = np.unique(requested[requested[:, 0] == shard_index, 1])
+            references = np.column_stack((
+                np.full(len(local_indices), shard_index, dtype=np.int64),
+                local_indices,
+            ))
+            cache[shard_index] = (
+                local_indices,
+                self.base.batch(references, fields=self._BASE_TRAINING_FIELDS),
+            )
+        self._base_training_references = requested.copy()
+        self._base_training_cache = cache
+
+    def _cached_base_training_batch(
+        self, selected: np.ndarray
+    ) -> dict[str, np.ndarray]:
+        requested = np.asarray(selected, dtype=np.int64)
+        if requested.ndim != 2 or requested.shape[1] != 2 or not len(requested):
+            raise ValueError("cached training batch requires [shard, group] references")
+        shard_ids = np.unique(requested[:, 0])
+        if len(shard_ids) != 1:
+            raise ValueError("one cached training batch may only select one shard")
+        shard_index = int(shard_ids[0])
+        try:
+            local_indices, cached = self._base_training_cache[shard_index]
+        except KeyError as error:
+            raise ValueError("cached training batch selected an uncached shard") from error
+        positions = np.searchsorted(local_indices, requested[:, 1])
+        if (
+            np.any(positions >= len(local_indices))
+            or not np.array_equal(local_indices[positions], requested[:, 1])
+        ):
+            raise ValueError("cached training batch selected outside the frozen train partition")
+        return {name: values[positions].copy() for name, values in cached.items()}
+
+    def base_training_batch(
+        self,
+        train_indices: np.ndarray,
+        batch_size: int,
+        rng: np.random.Generator,
+    ) -> dict[str, np.ndarray]:
+        self.prepare_training_partition(train_indices)
+        selected = self.base.sample_batch_indices(train_indices, batch_size, rng)
+        return self._cached_base_training_batch(selected)
+
+    def training_batch(
+        self,
+        train_indices: np.ndarray,
+        batch_size: int,
+        rng: np.random.Generator,
+        *,
+        step: int,
+        total_steps: int,
+    ) -> dict[str, np.ndarray]:
+        del total_steps
+        if step > self.CURRICULUM_STEPS:
+            raw = self.base_training_batch(train_indices, batch_size, rng)
+            raw["target_source"] = np.full(batch_size, "base-v5", dtype=object)
+            raw["mollification_progress"] = np.ones(batch_size, dtype=np.float32)
+            return raw
+        progress = (step - 1) / max(self.CURRICULUM_STEPS - 1, 1)
+        state_ids = rng.choice(np.asarray(self._state_ids, dtype=object), size=batch_size, replace=True)
+        view_indices = rng.integers(0, 8, size=batch_size, dtype=np.int64)
+        light_indices = np.tile(np.arange(64, dtype=np.int64), batch_size)
+        flat_states = np.repeat(state_ids, 64)
+        flat_views = np.repeat(view_indices, 64)
+        raw = self.curriculum.batch(
+            flat_states.tolist(),
+            flat_views,
+            light_indices,
+            training_progress=progress,
+        )
+        state_index = np.asarray([self._state_index[str(value)] for value in state_ids], dtype=np.int64)
+        return {
+            "state_index": state_index,
+            "wo": raw["wo"].reshape(batch_size, 64, 3)[:, 0],
+            "wi": raw["wi"].reshape(batch_size, 64, 3),
+            "mean": raw["response"].reshape(batch_size, 64, 3),
+            "solid_angle_weight": np.full((batch_size, 64), 2.0 * math.pi / 64.0, dtype=np.float32),
+            "target_source": raw["target_source"].reshape(batch_size, 64)[:, 0],
+            "mollification_progress": raw["mollification_progress"].reshape(batch_size, 64)[:, 0],
+            "mollification_radius_degrees": raw["mollification_radius_degrees"].reshape(batch_size, 64)[:, 0],
         }
 
 

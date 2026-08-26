@@ -1,0 +1,10 @@
+{
+  "schema": {"name": "convergence-protocol", "version": 1},
+  "name": "validation-relative-convergence-v1",
+  "bootstrap_iterations": 2000,
+  "bootstrap_seed": 20260824,
+  "confidence": 0.95,
+  "late_window_fraction": 0.25,
+  "minimum_late_validation_records": 8,
+  "required_seeds": [20260824]
+}

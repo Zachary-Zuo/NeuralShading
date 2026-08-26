@@ -8,7 +8,7 @@
 
 | 判定项 | 门 | 依据 |
 |---|---|---|
-| Q1 质量 | test directional L1 state-median ≤ `0.045`（M1-M 水平）且 p95 ≤ `0.10`；15 个单层 state ≤ `0.013`；M2 失效的 4 个多层 state（`bd6de2…/6fff05…/4ebd92…/179606…`）各 ≤ `0.15` | `experiment_log.md` P1 v1；`p1_audit.md` §4.2 |
+| R1 复现 | 方法结构/方向/输出/loss 与对应一手定义或已登记 adaptation 一致；训练全程有限、validation 相对初始化改善、后期无可信发散，checkpoint 可恢复；最终绝对质量只报告 | `08-25-03-neural-baseline-and-candidate` PRD 与 method correspondence |
 | Q2 尾部诚实 | 报告附 bootstrap CI、leave-one-state-out、最差 state 清单、signed 能量比、`E_core/E_ref` | framework §7、`p1_audit.md` §7 |
 | C1 成本 | `C_eval ≤ 2e3` MAC、`C_prepare ≤ 1e4`、state ≤ 64 B、`B_asset ≤ 512 B`、evaluate 权重 ≤ 32 KB；由单元测试机械判定 | framework §0.1 |
 | C2 实测 | RTX 4090、640×360 benchmark preset 下 prepare + lighting ≤ 1 ms；1080p 单灯 ≤ 2 ms | §0.1 工况 |
@@ -16,7 +16,7 @@
 | E1 单一源 | 训练（SlangPy）、GPU 测试（Falcor Python）、viewer 三处 `#include` 同一份 `lobe_residual_core.slang`；不写第二套模型前向，现有 `torch_eval.py` 只作 parity oracle | `p1_audit.md` §6.2 |
 | V1 对照 | viewer 新增「PT + 源材质 vs PT + method material」比较模式，4 个失效 state 与 `6324e3…` 各出一张 capture | `p1_audit.md` §5.4 |
 
-**非目标**：P2 全语料、spatial latent texture、cooperative vector、MERL/OpenPBR 族、`integrate_*` 专用积分器。这些等 P1 v2 通过 Q1/C1 后按 framework §6 推进。
+**非目标**：P2 全语料、spatial latent texture、cooperative vector、MERL/OpenPBR 族、`integrate_*` 专用积分器。这些等 P1 v2 完成方法正确性、稳定收敛与 C1 后按 framework §6 推进。
 
 ## 1. 候选定义：`lobe-residual`（注册名 `lobe-residual-k2-v1`，family `m2b`）
 
@@ -89,9 +89,9 @@ f(wo, wi) = [ f_top(wo, wi; IR_0) + Σ_k A_k · D_k(wi; θ_k) / cos θ_i ] · ex
 | P2.6 | state/params 打包：`pack_state`（64 B）用 SlangPy 反射布局；测试只做往返 | `src/ncls/core/representations/lobe_residual/state.py`（新）、`tests/unit/test_lobe_residual_layout.py` | 往返一致 |
 | P2.7 | 双编译探针：GPU 测试同时用 Falcor（`falcor.ComputePass`）与 SlangPy 编译 core，evaluate 数值一致 | `tests/gpu/kernels/lobe_residual.cs.slang`、`tests/gpu/test_lobe_residual_gpu.py` | `rtol 2e-5`；任一编译器失败即阻止提交 |
 | P2.8 | **框架接入（纯 Python，无 Slang 依赖，可最先做）**：部署预算单元门 `tests/unit/test_deployment_budget.py`（遍历注册表，`deployment_candidate=True` 的 pipeline 必须满足 §0.1；M1/M2 七个标 `False`），descriptor 增 `runtime.deployment_candidate` 需同步 `schemas/learning_pipeline_v1.schema.json` 与 `base.py:36-59` 的精确字段集校验；tail guard：`TrainingConfig.checkpoint_selection ∈ {"median_then_p95","tail_guard"}`（默认旧值，同步 `training_config_v1.schema.json`）、`runner.py:277` 的 `(median, p95)` 元组按策略分支（`tail_guard` = 先剔除 validation p95 > 该 run 至今最小 p95 × 1.25 的 checkpoint 再取 median 最小）、`configs/evaluation/quality-v2.json` 只改 `checkpoint_selection` 块、`quality.py:49-53` 接受 v1/v2；`p1_audit.py:540-560` 的 `is_m2` 改为探测 pipeline 可选方法 `core_f(model, batch, store, device)` 与属性 `has_signed_residual`；配置 `lobe-residual-k2-v1`（`none`，部署候选）、`lobe-residual-k2-log32-v1`、`lobe-residual-k3-log32-v1`（研究，`deployment_candidate=False`）、`smoke/lobe-residual-k2-p1-smoke`，调度沿用 S 档（bs 16、lr 3e-4、25k、minimum 4000、patience 6、seed 20260824）+ `tail_guard` | `training/{config,runner}.py`、`evaluation/{quality,p1_audit}.py`、`configs/learning/`、`configs/evaluation/` | `tests/unit` 全绿；用 P1 v1 M2-S 的 validation history 回放断言 tail guard 选 step 7500 而非 4500 |
-| P2.9 | 远程：三个配置各跑 seed `20260824`；`evaluate` test/adversarial/dense；`audit-p1`；`compare` 对 M1-M | 远程 | Q1 判定。`none` 未达 p95 ≤ 0.10 而 `log32` 达到 → 修正项保留；都未达 → 按最差 state 的 `E_core/E_ref` 与 lobe 承担能量归因，决定 K=3 或 lobe 型别扩展 |
+| P2.9 | 远程：三个配置按冻结 seed 集运行；先生成 implementation/convergence report，再读取一次 test/adversarial/dense；`audit-p1`；`compare` 对 M1-M | 远程 | 复现状态与质量比较分开。实现正确且稳定收敛后登记全部质量；按最差 state 的 `E_core/E_ref` 与 lobe 承担能量做结构归因，不以某个绝对 p95 决定是否复现 |
 
-Phase 2 出口：Q1 与 S1 通过或明确归因；一份 core 源同时被 SlangPy、Falcor 测试编译；注册表登记三个 run。
+Phase 2 出口：R1 与 S1 通过或明确归因；一份 core 源同时被 SlangPy、Falcor 测试编译；注册表登记全部正式 run。
 
 ### Phase 3 — 已并入 Phase 2
 
@@ -112,7 +112,7 @@ Phase 2 出口：Q1 与 S1 通过或明确归因；一份 core 源同时被 Slan
 
 | # | 任务 | 验收 |
 |---|---|---|
-| 5.1 | 注册表：`lobe-residual-k2-{none,log32}`、`k3` 三行 + Slang/viewer 实测行；结论列写明部署候选与 Q1/C2 判定 | `experiment_log.md` |
+| 5.1 | 注册表：`lobe-residual-k2-{none,log32}`、`k3` 三行 + Slang/viewer 实测行；结论列分开写implementation/convergence、质量比较与C2成本分类 | `experiment_log.md` |
 | 5.2 | `model_candidates.md` §3 M2 改写为 `lobe-residual` 的正式定义（§1.1），删除 signed-residual 描述；§1.5 增「部署档」定义 | 文档 |
 | 5.3 | `p1_audit.md` §7 关闭已完成项；`experiment_framework.md` §6 表 P1 行更新主要候选 | 文档 |
 | 5.4 | 记忆/TESTING：`TESTING.md` 增本计划各期命令（unit / gpu / slangpy / viewer benchmark） | 远程按 TESTING.md 复核 |
@@ -120,7 +120,7 @@ Phase 2 出口：Q1 与 S1 通过或明确归因；一份 core 源同时被 Slan
 ## 4. 依赖关系与并行性
 
 ```text
-P1.0 spike (远程) ──► S2.1–S2.4 core/合同 ──► P2.5 SlangPy 接入 ──► P2.9 训练 (远程) ──► Q1
+P1.0 spike (远程) ──► S2.1–S2.4 core/合同 ──► P2.5 SlangPy 接入 ──► P2.9 训练 (远程) ──► R1 implementation/convergence
                         │                          ▲
 P2.8 框架接入 (本地, 无依赖) ───────────────────────┘
 S2.1 ──► P2.7 双编译探针 / S2.3 sampler 测试 (远程)
@@ -136,12 +136,12 @@ S2.4 ──► P4.1 exporter ──► V4.2 loader ──► V4.3 泛型 pass �
 | 风险 | 影响 | 应对 |
 |---|---|---|
 | SlangPy 携带的 slang 与 Falcor 8.0 的 2024.1.34 语法不兼容，或 Torch 互操作/吞吐不可接受 | E1 单一源无法同时训练与部署 | P1.0 spike 先行；core 只用 2024.1.34 已验证的写法（固定数组、`typedef` 绑定 associated type、`[unroll]`）；P2.7 双编译探针常驻；失败则启用 P1.1 备选并登记 |
-| 质量信号要等 SlangPy 接入后才有 | Q1 判定晚于 Torch-first 方案 | 接受：避免写一套会被扔掉的 Torch 模型；P2.8 框架部分先行，接入后立即可跑 |
-| LTC 型 lobe 表达不了 M2 失效的 4 个 state（coat 下 base 的多次散射形态） | Q1 p95 不达标 | 用 `E_core/E_ref` 与 lobe 承担能量分解失败原因；备选：lobe 型别扩展为 GGX-VNDF 型（`interfaces.slang` 三件套直接可用）或 K=3 研究档 |
+| 质量信号要等 SlangPy 接入后才有 | implementation/convergence 证据晚于 Torch-first 方案 | 接受：避免写一套会被扔掉的 Torch 模型；P2.8 框架部分先行，接入后立即可跑 |
+| LTC 型 lobe 表达不了 M2 失效的 4 个 state（coat 下 base 的多次散射形态） | 某些材质结构上的quality较低 | 用 `E_core/E_ref` 与 lobe 承担能量分解失败原因；备选：lobe 型别扩展为 GGX-VNDF 型（`interfaces.slang` 三件套直接可用）或 K=3 研究档；不把低quality写成复现失败 |
 | 64 B state 在 `log32` 下刚好卡线，half 打包引入精度误差 | parity 容差 | parity 用 half 打包后的 state，容差按 half 量级单列；`none` 配置 48 B 留余量 |
 | viewer 改造范围大，容易把 film-m1 diagnostic 路径改坏 | 回归 | V4.2 保留 film-m1 表项，加载测试双 bundle；泛型 pass 先在 film-m1 上验证再切新后端 |
 | PT + method 的第二累积链把左右噪声关联/去关联处理错 | 差图误判 | 左右独立 seed 流、相同 spp；capture manifest 记录两侧 `estimated_mean_relative_standard_error` |
-| 30-state 上的 p95 本身不稳定（framework §7） | Q1 判定过拟合到 P1 子集 | 报告 CI 与 leave-one-out；p95 门只作 P1 selection 判定，P2 用 ≥ 50 state 重判 |
+| 30-state 上的 p95 本身不稳定（framework §7） | 单一汇总会掩盖材质结构差异 | 报告分组CI与leave-one-out；p95只作描述，P2扩大state后重新比较，不作跨材质复现门 |
 
 ## 6. 已定事项（2026-08-25）
 

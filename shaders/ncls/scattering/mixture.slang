@@ -17,13 +17,20 @@ float3 nclsNormalizeMixture3(float3 weights)
     return isfinite(sum) && sum > 0.0f ? weights / sum : float3(0.0f);
 }
 
-float2 nclsStableSoftmax2(float2 logits)
+[Differentiable]
+float2 nclsStableSoftmax2Unchecked(float2 logits)
 {
-    if (!nclsIsFiniteFloat2(logits)) return float2(0.0f);
     const float maximum = max(logits.x, logits.y);
     const float2 exponentials = exp(logits - maximum);
     const float sum = exponentials.x + exponentials.y;
-    return isfinite(sum) && sum > 0.0f ? exponentials / sum : float2(0.0f);
+    return exponentials / sum;
+}
+
+float2 nclsStableSoftmax2(float2 logits)
+{
+    if (!nclsIsFiniteFloat2(logits)) return float2(0.0f);
+    const float2 result = nclsStableSoftmax2Unchecked(logits);
+    return nclsIsFiniteFloat2(result) ? result : float2(0.0f);
 }
 
 NclsMixture3Selection nclsSelectMixture3(float3 weights, float u)
@@ -54,13 +61,20 @@ NclsMixture3Selection nclsSelectMixture3(float3 weights, float u)
     return result;
 }
 
+[Differentiable]
+float nclsMixture3PdfUnchecked(float3 weights, float3 componentPdfs)
+{
+    const float sum = weights.x + weights.y + weights.z;
+    return dot(weights / sum, componentPdfs);
+}
+
 float nclsMixture3Pdf(float3 weights, float3 componentPdfs)
 {
     weights = nclsNormalizeMixture3(weights);
     if (weights.x + weights.y + weights.z <= 0.0f
         || !nclsIsFiniteFloat3(componentPdfs) || any(componentPdfs < 0.0f))
         return 0.0f;
-    const float value = dot(weights, componentPdfs);
+    const float value = nclsMixture3PdfUnchecked(weights, componentPdfs);
     return isfinite(value) && value >= 0.0f ? value : 0.0f;
 }
 

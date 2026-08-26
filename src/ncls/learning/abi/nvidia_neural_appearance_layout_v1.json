@@ -1,0 +1,43 @@
+{
+  "schema": {"name": "nvidia-neural-appearance-layout", "version": 1},
+  "compiled_material": {
+    "alignment_bytes": 16,
+    "latent_count": 8,
+    "total_bytes": 32,
+    "fields": {
+      "latent": {"offset": 0, "count": 8, "dtype": "float16"},
+      "layout_version": {"offset": 16, "dtype": "uint32"},
+      "flags": {"offset": 20, "dtype": "uint32"},
+      "reserved": {"offset": 24, "size": 8}
+    }
+  },
+  "state": {
+    "latent_half_count": 8,
+    "frame_half_count": 18,
+    "projected_view_half_count": 6,
+    "sampler_raw_half_count": 9,
+    "payload_half_count": 41,
+    "stride_bytes": 96
+  },
+  "evaluator": {
+    "frame_input": 8,
+    "frame_output": 12,
+    "input": 20,
+    "width": 64,
+    "hidden_layers": 3,
+    "output": 3,
+    "frame_macs": 96,
+    "evaluate_macs": 9664
+  },
+  "sampler": {
+    "input": 11,
+    "width": 32,
+    "hidden_layers": 3,
+    "output": 9,
+    "prepare_macs": 2688,
+    "safety_weight": 0.03125
+  },
+  "response_adapter": {
+    "minimum_cosine": 0.000001
+  }
+}

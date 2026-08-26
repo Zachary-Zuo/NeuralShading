@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
-from ncls.learning.training import TrainingConfig
+from ncls.learning.training import SamplerTrainingConfig, TrainingConfig
 from ncls.learning.training.selection import select_checkpoint
 
 
@@ -75,6 +76,11 @@ def test_all_versioned_learning_configs_parse() -> None:
     paths = sorted(Path("configs/learning").rglob("*.json"))
     assert len(paths) >= 14
     for path in paths:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if "evaluator_checkpoint" in raw:
+            sampler_config = SamplerTrainingConfig.load(path)
+            assert sampler_config.steps in {2, 10_000}
+            continue
         config = TrainingConfig.load(path)
         assert config.stage == "P1"
         if path.stem.startswith("lobe-residual"):

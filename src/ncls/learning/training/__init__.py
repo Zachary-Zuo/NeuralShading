@@ -1,4 +1,5 @@
 from .config import TrainingConfig
+from .sampler_config import SamplerTrainingConfig
 
 
 def train(*args, **kwargs):
@@ -6,4 +7,10 @@ def train(*args, **kwargs):
 
     return run(*args, **kwargs)
 
-__all__ = ["TrainingConfig", "train"]
+
+def train_sampler(*args, **kwargs):
+    from .sampler_runner import train_sampler as run
+
+    return run(*args, **kwargs)
+
+__all__ = ["SamplerTrainingConfig", "TrainingConfig", "train", "train_sampler"]

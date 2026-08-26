@@ -36,4 +36,5 @@ pythonpath = ["src"]
 addopts = "-ra"
 markers = [
   "falcor: requires the built Falcor Python module and a D3D12 GPU",
+  "slangpy: requires SlangPy with CUDA interop and a supported GPU",
 ]

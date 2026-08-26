@@ -10,7 +10,7 @@ from typing import Any, Callable, Mapping, Sequence
 import numpy as np
 import torch
 
-from ncls.learning.data import open_reference_store
+from ncls.learning.data import UnifiedScatteringTrainingStore, open_reference_store
 from ncls.learning.pipelines import create_pipeline
 from ncls.learning.training.checkpoint import load_checkpoint, sha256_file
 from ncls.learning.training.config import TrainingConfig
@@ -517,6 +517,9 @@ def _pipeline_core_probe(pipeline: Any) -> tuple[Callable[..., torch.Tensor] | N
     `E_core/E_ref`）；`has_signed_residual` 为真时才做 `clamp(core + Δ, 0)` 死区诊断。"""
 
     core_f = getattr(pipeline, "core_f", None)
+    spec = getattr(pipeline, "spec", None)
+    if hasattr(spec, "runtime_class") and getattr(spec, "evaluator", None) != "core-frame-neural-v1":
+        core_f = None
     return (core_f if callable(core_f) else None), bool(getattr(pipeline, "has_signed_residual", False))
 
 
@@ -545,7 +548,10 @@ def _audit_checkpoint_role(
     tags = [json.loads(value) for value in store.state_strings("difficulty_tags_json")]
     accumulators = [_empty_state_accumulator() for _ in state_ids]
     core_f, has_signed_residual = _pipeline_core_probe(pipeline)
-    output_scale = np.asarray(fitted_state["output_scale"], dtype=np.float64)
+    output_scale = np.asarray(
+        fitted_state.get("output_scale", fitted_state.get("response_scale")),
+        dtype=np.float64,
+    )
     model.eval()
     for raw in store.iter_batches(indices, config.batch_size, fields=_MODEL_FIELDS):
         batch = {
@@ -801,10 +807,20 @@ def run_p1_audit(
     if not checkpoints or len(set(checkpoints)) != len(checkpoints):
         raise ValueError("P1 audit checkpoint labels must be nonempty and unique")
     data_file = Path(data_path).resolve()
-    corpus_document = json.loads(data_file.read_text(encoding="utf-8"))
+    data_document = json.loads(data_file.read_text(encoding="utf-8"))
+    is_unified_entry = data_document.get("entry_id") == UnifiedScatteringTrainingStore.ENTRY_ID
+    if is_unified_entry:
+        base_path = Path(str(data_document["base_corpus_uri"]))
+        if not base_path.is_absolute():
+            base_path = Path(__file__).resolve().parents[4] / base_path
+        corpus_document = json.loads(base_path.read_text(encoding="utf-8"))
+        store_context = UnifiedScatteringTrainingStore(data_file)
+    else:
+        corpus_document = data_document
+        store_context = open_reference_store(data_file)
     device = torch.device(device_name or ("cuda" if torch.cuda.is_available() else "cpu"))
     module_path = Path(__file__).resolve()
-    with open_reference_store(data_file) as store:
+    with store_context as store:
         reference_noise: dict[str, Any] = {}
         for role in selected_roles:
             if progress:
@@ -846,6 +862,7 @@ def run_p1_audit(
                     "training_config_sha256": config.resolved_sha256,
                     "seed": int(config.seed),
                     "capacity": config.capacity,
+                    "implementation_identity": checkpoint.get("implementation_identity"),
                 },
                 "cost": dict(pipeline.parameter_costs(model)),
                 "roles": roles_report,
@@ -857,7 +874,11 @@ def run_p1_audit(
             "format_name": P1_AUDIT_FORMAT_NAME,
             "format_version": P1_AUDIT_FORMAT_VERSION,
             "scope": {
-                "kind": "retrospective-p1-v1-diagnostic",
+                "kind": (
+                    "unified-scattering-03-formal-evaluation"
+                    if is_unified_entry
+                    else "retrospective-p1-v1-diagnostic"
+                ),
                 "causal_claims": False,
                 "quality_v1_unchanged": True,
             },

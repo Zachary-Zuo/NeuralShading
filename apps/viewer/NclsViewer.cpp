@@ -234,9 +234,12 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
     mFallbackSourceGpu = createFallbackSourceGpuResources();
     mSourceGpu = createSourceGpuResources(mReferenceSource);
     mOpenPbrLuts = ncls::OpenPbrLuts::create(getDevice());
-    const float zero = 0.f;
-    mpWeights = getDevice()->createStructuredBuffer(
-        sizeof(float), 1, ResourceBindFlags::ShaderResource, MemoryType::DeviceLocal, &zero);
+    const uint32_t zero = 0u;
+    mpSharedWeights = getDevice()->createStructuredBuffer(
+        sizeof(uint32_t), 1, ResourceBindFlags::ShaderResource, MemoryType::DeviceLocal, &zero);
+    const uint4 zeroMaterial(0u);
+    mpCompiledMaterials = getDevice()->createStructuredBuffer(
+        sizeof(uint4), 1, ResourceBindFlags::ShaderResource, MemoryType::DeviceLocal, &zeroMaterial);
     const std::array<uint32_t, 2> zeroNoiseStats{};
     mpReferenceNoiseStats = getDevice()->createStructuredBuffer(
         sizeof(uint32_t), static_cast<uint32_t>(zeroNoiseStats.size()),
@@ -288,8 +291,8 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
     }
     if (mOptions.evaluatorPreviewLighting)
     {
-        // M1-M 直接 evaluator 每个方向都执行完整 MLP。首屏只保留一个方向光，
-        // 让视觉比较隔离局部 evaluator，同时避免把环境积分 query 数隐藏在启动延迟里。
+        // 首屏只保留一个方向光，让视觉比较隔离局部 evaluator，
+        // 同时避免把环境积分 query 数隐藏在启动延迟里。
         mLighting.useEnvironment = false;
         mLighting.usePoint = false;
         mLighting.useRectangle = false;
@@ -320,10 +323,7 @@ void NclsViewer::createPasses()
 {
     mpVisibilityClearPass = ComputePass::create(getDevice(), "NclsViewer/shaders/ClearVisibility.cs.slang");
     mpDenoisePass = ComputePass::create(getDevice(), "NclsViewer/shaders/Denoise.cs.slang");
-    mpPreparePass = ComputePass::create(getDevice(), "NclsViewer/shaders/Prepare.cs.slang");
-    mpApproximationPass = ComputePass::create(getDevice(), "NclsViewer/shaders/Approximation.cs.slang");
     mpCompositePass = ComputePass::create(getDevice(), "NclsViewer/shaders/Composite.cs.slang");
-    mpParityPass = ComputePass::create(getDevice(), "NclsViewer/shaders/Parity.cs.slang");
 }
 
 void NclsViewer::createDefaultEnvironment()
@@ -839,13 +839,31 @@ void NclsViewer::scanBundles()
     selectMethod(selection >= 0 && allMaterialsSupportedBy(mMethods[selection]) ? selection : -1);
 }
 
+ref<ComputePass> NclsViewer::createMethodPass(
+    const char* shaderPath,
+    const ncls::ViewerMethod& method)
+{
+    ProgramDesc program;
+    program.addShaderLibrary(shaderPath).csEntry("main");
+    DefineList defines;
+    defines.add(
+        "NCLS_METHOD_BACKEND_HEADER",
+        "\"../../../shaders/" + method.shaderModule + "\"");
+    for (const auto& [name, value] : method.shaderDefines) defines.add(name, value);
+    return ComputePass::create(getDevice(), program, defines, true);
+}
+
 bool NclsViewer::runParityProbe(const ncls::ViewerMethod& method, std::string& error)
 {
     try
     {
         const auto flags = ResourceBindFlags::ShaderResource;
         auto weights = getDevice()->createStructuredBuffer(
-            sizeof(float), static_cast<uint32_t>(method.weights.size()), flags, MemoryType::DeviceLocal, method.weights.data());
+            sizeof(uint32_t), static_cast<uint32_t>(method.sharedWeightWords.size()),
+            flags, MemoryType::DeviceLocal, method.sharedWeightWords.data());
+        auto compiledMaterials = getDevice()->createStructuredBuffer(
+            method.compiledMaterialBytes, method.compiledMaterialCount,
+            flags, MemoryType::DeviceLocal, method.compiledMaterials.data());
         const float4 view(method.parity.view[0], method.parity.view[1], method.parity.view[2], 0.f);
         std::vector<float4> lights;
         for (const auto& item : method.parity.lights) lights.emplace_back(item[0], item[1], item[2], 0.f);
@@ -856,13 +874,16 @@ bool NclsViewer::runParityProbe(const ncls::ViewerMethod& method, std::string& e
             sizeof(float4),
             static_cast<uint32_t>(lights.size()),
             ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess);
-        auto root = mpParityPass->getRootVar();
-        root["gWeights"] = weights;
+        auto parityPass = createMethodPass("NclsViewer/shaders/Parity.cs.slang", method);
+        auto root = parityPass->getRootVar();
+        root["gSharedWeights"] = weights;
+        root["gCompiledMaterials"] = compiledMaterials;
         root["gViews"] = viewBuffer;
         root["gLights"] = lightBuffer;
         root["gOutput"] = output;
         root["gLightCount"] = static_cast<uint32_t>(lights.size());
-        mpParityPass->execute(getRenderContext(), static_cast<uint32_t>(lights.size()), 1, 1);
+        root["gCompiledMaterialIndex"] = method.compiledMaterialIndex;
+        parityPass->execute(getRenderContext(), static_cast<uint32_t>(lights.size()), 1, 1);
         std::vector<float4> actual(lights.size());
         output->getBlob(actual.data(), 0, actual.size() * sizeof(float4));
         for (size_t light = 0; light < actual.size(); ++light)
@@ -892,27 +913,49 @@ bool NclsViewer::runParityProbe(const ncls::ViewerMethod& method, std::string& e
 void NclsViewer::selectMethod(int32_t methodIndex)
 {
     const bool previouslyActive = hasActiveMethod();
+    const uint32_t previousStateStride = previouslyActive
+        ? mMethods[mSelectedMethod].stateBytesPerPixel : 0u;
     mSelectedMethod = methodIndex >= 0 && methodIndex < static_cast<int32_t>(mMethods.size()) ? methodIndex : -1;
     if (mSelectedMethod >= 0 && !allMaterialsSupportedBy(mMethods[mSelectedMethod])) mSelectedMethod = -1;
     mMethodUiValue = mSelectedMethod >= 0 ? static_cast<uint32_t>(mSelectedMethod + 1) : 0u;
     if (mSelectedMethod >= 0)
     {
         const auto& method = mMethods[mSelectedMethod];
-        mpWeights = getDevice()->createStructuredBuffer(
-            sizeof(float),
-            static_cast<uint32_t>(method.weights.size()),
+        auto sharedWeights = getDevice()->createStructuredBuffer(
+            sizeof(uint32_t),
+            static_cast<uint32_t>(method.sharedWeightWords.size()),
             ResourceBindFlags::ShaderResource,
             MemoryType::DeviceLocal,
-            method.weights.data());
+            method.sharedWeightWords.data());
+        auto compiledMaterials = getDevice()->createStructuredBuffer(
+            method.compiledMaterialBytes,
+            method.compiledMaterialCount,
+            ResourceBindFlags::ShaderResource,
+            MemoryType::DeviceLocal,
+            method.compiledMaterials.data());
+        auto preparePass = createMethodPass("NclsViewer/shaders/Prepare.cs.slang", method);
+        auto approximationPass = createMethodPass("NclsViewer/shaders/Approximation.cs.slang", method);
+        mpSharedWeights = std::move(sharedWeights);
+        mpCompiledMaterials = std::move(compiledMaterials);
+        mpPreparePass = std::move(preparePass);
+        mpApproximationPass = std::move(approximationPass);
     }
     else
     {
-        const float zero = 0.f;
-        mpWeights = getDevice()->createStructuredBuffer(
-            sizeof(float), 1, ResourceBindFlags::ShaderResource, MemoryType::DeviceLocal, &zero);
+        const uint32_t zero = 0u;
+        mpSharedWeights = getDevice()->createStructuredBuffer(
+            sizeof(uint32_t), 1, ResourceBindFlags::ShaderResource, MemoryType::DeviceLocal, &zero);
+        const uint4 zeroMaterial(0u);
+        mpCompiledMaterials = getDevice()->createStructuredBuffer(
+            sizeof(uint4), 1, ResourceBindFlags::ShaderResource, MemoryType::DeviceLocal, &zeroMaterial);
+        mpPreparePass.reset();
+        mpApproximationPass.reset();
     }
     mPrepareDirty = true;
-    if (previouslyActive != hasActiveMethod() && mOutputWidth > 0u && mOutputHeight > 0u)
+    const uint32_t currentStateStride = hasActiveMethod()
+        ? mMethods[mSelectedMethod].stateBytesPerPixel : 0u;
+    if ((previouslyActive != hasActiveMethod() || previousStateStride != currentStateStride)
+        && mOutputWidth > 0u && mOutputHeight > 0u)
         resizeResources(mOutputWidth, mOutputHeight);
 }
 
@@ -1081,7 +1124,8 @@ void NclsViewer::renderDenoisedReference(RenderContext* pRenderContext)
 void NclsViewer::renderPrepare(RenderContext* pRenderContext)
 {
     auto root = mpPreparePass->getRootVar();
-    root["gWeights"] = mpWeights;
+    root["gSharedWeights"] = mpSharedWeights;
+    root["gCompiledMaterials"] = mpCompiledMaterials;
     root["gPositionDepth"] = mpPositionDepth;
     root["gNormal"] = mpNormal;
     root["gTangent"] = mpTangent;
@@ -1091,6 +1135,7 @@ void NclsViewer::renderPrepare(RenderContext* pRenderContext)
     auto constants = root["PrepareCB"];
     constants["gFrameDim"] = uint2(mViewWidth, mOutputHeight);
     constants["gUseScene"] = uint32_t(mpScene != nullptr);
+    constants["gCompiledMaterialIndex"] = mMethods[mSelectedMethod].compiledMaterialIndex;
     auto executeMaterial = [&](uint32_t materialId) {
         constants["gTargetMaterialId"] = materialId;
         mpPreparePass->execute(pRenderContext, mViewWidth, mOutputHeight);
@@ -1114,7 +1159,8 @@ void NclsViewer::renderApproximation(RenderContext* pRenderContext)
 {
     auto root = mpApproximationPass->getRootVar();
     root["gStates"] = mpStates;
-    root["gWeights"] = mpWeights;
+    root["gSharedWeights"] = mpSharedWeights;
+    root["gCompiledMaterials"] = mpCompiledMaterials;
     root["gPositionDepth"] = mpPositionDepth;
     root["gNormal"] = mpNormal;
     root["gTangent"] = mpTangent;
@@ -1123,6 +1169,7 @@ void NclsViewer::renderApproximation(RenderContext* pRenderContext)
     root["gLinearSampler"] = mpLinearSampler;
     root["gApproximation"] = mpApproximation;
     root["ApproximationCB"]["gFrameDim"] = uint2(mViewWidth, mOutputHeight);
+    root["ApproximationCB"]["gCompiledMaterialIndex"] = mMethods[mSelectedMethod].compiledMaterialIndex;
     root["ApproximationCB"]["gEnvironmentQueryBudget"] = mMethods[mSelectedMethod].environmentQueryBudget;
     root["ApproximationCB"]["gRectangleQueryBudget"] = mMethods[mSelectedMethod].rectangleQueryBudget;
     bindLighting(root, "ApproximationCB");
@@ -1730,7 +1777,7 @@ void NclsViewer::onGuiRender(Gui* pGui)
     }
 
     {
-        Gui::Group group = window.group("Neural evaluator method", false);
+        Gui::Group group = window.group("Neural material method", false);
         if (group)
         {
             Gui::DropdownList methodList = {{0, "None (reference only)"}};
@@ -1751,11 +1798,13 @@ void NclsViewer::onGuiRender(Gui* pGui)
             {
                 const auto& method = mMethods[mSelectedMethod];
                 group.text("method: " + shortId(method.methodId)
-                    + " / diagnostic backend v" + std::to_string(method.backendVersion));
+                    + " / " + method.runtimeClass + " backend v" + std::to_string(method.backendVersion));
                 group.text("Parameters: " + std::to_string(method.parameterCount)
                     + ", state: " + std::to_string(method.stateBytesPerPixel) + " B/pixel");
                 group.text("Frozen corpus state: " + shortId(method.compiledStateId));
-                group.text("Evaluator-only：无 matched sample/pdf，不进入 realtime 排名。");
+                group.text((method.capabilities & (4u | 8u)) == (4u | 8u)
+                    ? "标准接口：prepare/evaluate/sample/pdf 均由 bundle backend 提供。"
+                    : "标准接口：当前 bundle 只声明 prepare/evaluate。" );
                 group.text("Difference includes material approximation and transport differences.");
             }
             if (!mBundleFailures.empty())

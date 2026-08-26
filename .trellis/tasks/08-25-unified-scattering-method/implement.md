@@ -6,7 +6,7 @@
 - 六个带数字前缀的子任务严格按依赖顺序执行。每个子任务必须独立 planning、检查、提交和归档；后一个任务不能把前一个未通过的 gate 当成 TODO 带过。
 - 现在只冻结各子任务的职责、依赖和验收边界；每个子任务启动前，必须根据前序真实产物完整更新并审阅自己的 `prd.md`、`design.md`、`implement.md` 和 context manifests。父任务本身不 `start`，直到六个子任务归档后才执行最终验收。
 - 本任务树已获得用户的连续执行授权。上述子任务细化只要保持在父任务冻结边界内，完成 planning gate 后立即 `start`，质量 gate 通过后自动创建 scoped local commits 并归档，不设置人工停点；所有 commit 排除不相关 dirty files且不 push。范围扩大、未经授权的不可恢复删除、外部权限或真实 blocker 仍须暂停。
-- NVIDIA paper-scale / deployment-matched baseline 与 `core-frame-neural-v1` 的 matched 比较未通过前，不进入 bundle/viewer 部署收口；sample/PDF 数学 gate 未通过前，不进入 method PT。
+- NVIDIA 原规模 baseline 与 `core-frame-neural-v1` 的 implementation/convergence 证据未完成前，不进入 bundle/viewer 收口；sample/PDF 数学 gate 未通过前，不进入 method PT。quality 低但实现正确且稳定收敛不阻止 viewer 证据。
 - 所有 Python/pytest 命令使用 `conda run -n neural-shading`；Falcor Python 经 `scripts/run_falcor_python.ps1`；viewer 只经 `scripts/build_viewer.ps1`。
 - 旧实现先迁移仍有价值的数学原语，再删除身份和调用路径；全程不增加 fallback。
 
@@ -93,7 +93,7 @@ Rollback：现有数据不足但新 schema/corpus 尚未完整生成和验证时
 完成项：
 
 - [ ] 实现 `nvidia-frame-two-lobe-v1`：two learned frames + direct positive BRDF MLP + 9 参数 tilted-diffuse/non-centered-GGX sampler；逐项登记论文忠实项与本项目适配。
-- [ ] 实现 paper-scale diagnostic（论文 `64×64×64` evaluator、`32×32×32→9` sampler）和相同结构的 `≤2k MAC` deployment-matched baseline；两者使用同一 Slang backend ABI，前者登记为 `runtime_class=diagnostic`，不冒充当前 realtime，并在 `04/05` 中进入同一 MethodBundle/viewer 路径。
+- [ ] 忠实实现原规模 baseline（论文 `64×64×64` evaluator、`32×32×32→9` sampler），使用同一 Slang backend ABI 并在 `04/05` 中进入同一 MethodBundle/viewer 路径；实际 runtime class 如实登记，不另做缩模替身作为前置。
 - [ ] 实现 `core-frame-neural-v1`：相同 learned-frame MLP 主体 + exact top core + positive residual；不使用 prediction clamp。
 - [ ] sampler 分别实现 `nvidia-diffuse-ggx9` 与 `ltc-k2`；两者都加固定 full-support cosine safety component，并通过同一 sample/PDF 合同。
 - [ ] `prepare` 使用共同的 bounded trunk 与 evaluator/sampler projections；最大 deployment payload 为 27×FP16、state ≤64 B，各组合报告实际有效 bytes。
@@ -108,11 +108,11 @@ Rollback：现有数据不足但新 schema/corpus 尚未完整生成和验证时
 Gate：
 
 - [ ] `C_prepare ≤ 10,000`、`C_eval ≤ 2,000`、state `≤64 B`、compiled material `≤512 B`、evaluate weights `≤32 KB`，按实际部署 bytes/MAC 机械检查。
-- [ ] Q1：median ≤ `0.045`、p95 ≤ `0.10`、15 个单层 state 各 ≤ `0.013`、4 个旧尾部 state 各 ≤ `0.15`。
+- [ ] 复现门：method correspondence/独立 oracle 完整，loss/梯度/权重有限，validation 相对初始化改善、后期无可信发散，多 seed 结论一致，checkpoint 可恢复复算；不限制最终绝对质量。
 - [ ] bootstrap CI、leave-one-state-out、signed energy、`E_core/E_ref` 与最差 state 清单齐全。
 - [ ] 同 evaluator 的 deterministic integration 与 sampler MC 估计在预设 CI 内一致。
 - [ ] learned sampler 在冻结场景集上相对 cosine 的方差结论有 matched bootstrap 支撑；不显著时继续方法迭代，不虚报收益。
-- [ ] 最终部署选择相对 deployment-matched NVIDIA baseline 在 evaluator quality 与 sampler variance 上非劣，并至少在质量、时间或内存一项形成 paired-bootstrap 支撑的 Pareto 改善；否则部署 baseline 本身。
+- [ ] 质量—时间—内存比较按材质结构给出 paired-bootstrap Pareto 证据；implementation/convergence 与 comparison outcome 分栏，若没有全局 winner 则保留条件性/非支配结果，不机械选择 baseline。
 - [ ] SlangPy 与 Falcor 双编译、half-packed state parity 和有限差分梯度通过。
 
 建议验证：
@@ -124,7 +124,7 @@ conda run -n neural-shading python -m ncls learn train --config <frozen-config>
 conda run -n neural-shading python -m ncls learn evaluate --config <frozen-config> --suite configs/evaluation/quality-v1.json
 ```
 
-Rollback：Q1 未过时只允许在冻结预算内修改 frame/warp、loss、latent 或网络特征，并重新形成 matched 证据；自研变体不优于 baseline 时选择 baseline，不启用旧 lobe-only 或超预算 Film fallback。
+Rollback：method correspondence 失败时回到原方法语义，convergence 失败时回到梯度/optimizer/data 生命周期；实现正确且稳定收敛但 quality 较低时登记结果并停止复现循环。不启用旧 lobe-only 或 Film fallback。
 
 ### 04. `04-generic-method-bundle-runtime`
 
@@ -203,7 +203,7 @@ Rollback：method PT 与 deferred 不能共用 backend specialization 时停止 
 
 Gate：
 
-- [ ] 生产入口只保留最终选中的 neural realtime method 与 analytic control；paper-scale/未胜出的 matched 变体只留实验注册与 provenance，不进入默认 viewer 方法列表；无静默 fallback。
+- [ ] viewer 方法列表可加载原规模 NVIDIA baseline、保留的 neural 候选与 analytic control；UI 显示真实 runtime class/cost，未胜出不等于隐藏或替换，且无静默 fallback。最终默认项可由后续部署策略决定。
 - [ ] 全部 unit/GPU/viewer/capture 回归通过。
 - [ ] root repo policy、reference registry、data manifest 和 MethodBundle provenance 一致。
 - [ ] 清理后从 source program offline cook 到两个 viewer 模式可全新重建。

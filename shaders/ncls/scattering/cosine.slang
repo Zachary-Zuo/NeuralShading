@@ -26,14 +26,20 @@ NclsDirectionalSample nclsSampleCosineDirection(float2 u)
     return nclsContinuousDirectionalSample(direction, nclsCosineHemispherePdf(direction));
 }
 
+[Differentiable]
+float nclsTiltedCosinePdfUnchecked(no_diff float3 direction, float2 slope)
+{
+    const float inverseLength = rsqrt(1.0f + dot(slope, slope));
+    const float3 normal = float3(-slope.x, -slope.y, 1.0f) * inverseLength;
+    return max(dot(direction, normal), 0.0f) * NCLS_INV_PI;
+}
+
 float nclsTiltedCosinePdf(float3 direction, float2 slope)
 {
     if (!nclsIsFiniteFloat2(slope) || !nclsIsFiniteFloat3(direction)
         || direction.z <= NCLS_MIN_COS)
         return 0.0f;
-    const NclsDirectionalFrame frame = nclsDirectionalFrameFromSlope(slope);
-    const float localCosine = dot(direction, frame.normal);
-    return localCosine > 0.0f ? localCosine * NCLS_INV_PI : 0.0f;
+    return nclsTiltedCosinePdfUnchecked(direction, slope);
 }
 
 NclsDirectionalSample nclsSampleTiltedCosine(float2 slope, float2 u)

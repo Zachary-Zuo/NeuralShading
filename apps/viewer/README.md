@@ -8,9 +8,9 @@
 
 默认勾选的去噪结果只用于观看。raw reference 始终单独累计并作为 comparison、difference、噪声估计和 `*-reference.exr` 的权威输入；a-trous cross-bilateral 去噪预览写入 `*-reference-denoised.exr`，manifest 明确标记它有偏且不具权威性。
 
-右侧只有在用户显式选择通过完整性检查与 GPU parity 的 `MethodBundle` 后才出现。当前接入的是 P1 最佳 M1-M 的 frozen-state diagnostic bundle：每个可见像素由 `prepare` 形成 256-float view-conditioned state，lighting query 再用六个 residual block 的 Slang MLP 直接执行 `evaluate(wo, wi)`。它只接受 bundle 声明的精确 corpus state；任意材质不得错误映射到这个 latent。旧 `legacy-ltc-k2` 已从 viewer 部署路径移除。
+右侧只有在用户显式选择通过完整性检查与 GPU parity 的 `MethodBundle` 后才出现。viewer 不识别具体方法名：bundle 声明 shader module、反射生成的权重 offset、`CompiledMaterial` stride 与私有 state stride；通用 pass 通过 `INclsScatteringBackend` 调用 `prepare/evaluate/sample/pdf`。初始化只负责读取和绑定这些资源，不包含 method-specific renderer 分支。
 
-M1-M 尚无任意材质 compiler 和 matched `sample/pdf`，因此 UI 明确标为 evaluator-only diagnostic，不进入 realtime 排名。普通模式的左右差图会同时包含材质表示、实时积分和全局传输差异；`--evaluator-preview-lighting` 改用单方向光并令 scene bounce cap 为 0，用于更直接观察局部 evaluator 外观，但仍不能替代方向响应数据集指标。
+当前 03 部署轨道可同时加载原规模 NVIDIA paper baseline 与 core-frame candidate。两者都保留完整 matched GGX9 sampler；baseline 按真实成本标为 `diagnostic`，candidate 标为 `realtime`，均未缩小训练或部署形态。它们只接受 bundle 声明的精确 corpus state，任意材质不会被错误映射到这个 latent。普通模式的左右差图会同时包含材质表示、实时积分和全局传输差异；`--evaluator-preview-lighting` 改用单方向光并令 scene bounce cap 为 0，用于更直接观察局部 evaluator 外观，但仍不能替代方向响应数据集指标。
 
 viewer 不是当前 neural 模型结构的搜索工具。先在完整 `wo × wi` 监督上确定单材质 evaluator、共享 decoder/latent 和 compiler，再导出 Slang MethodBundle 进入这里做 GPU 与系统验证；matched sampler 和环境积分同样在 evaluator 成形后接入。
 
@@ -33,12 +33,14 @@ viewer 不是当前 neural 模型结构的搜索工具。先在完整 `wo × wi`
 .\scripts\build_viewer.ps1 -Configuration Release
 .\scripts\build_viewer.ps1 -Configuration Release -Run --bundle-root artifacts\exports
 
-conda run -n neural-shading python -m ncls.cli bundle export-film-m1 `
-  --data artifacts\corpus\layer-stack-p1-v1.json `
-  --checkpoint artifacts\runs\p1-film-m-seed-20260824\checkpoints\best.pt `
-  --output artifacts\exports\p1-film-m-best
+conda run -n neural-shading python -m ncls.cli bundle export-compiled-set `
+  --compiled-set artifacts\compiled-materials\example `
+  --preview-material artifacts\inputs\preview-material.json `
+  --parity artifacts\inputs\parity.json `
+  --output artifacts\exports\example `
+  --display-name "Example method" --state-id <SHA256>
 
-$bundle = "artifacts\exports\p1-film-m-best"
+$bundle = "artifacts\exports\example"
 $method = (Get-Content -LiteralPath "$bundle\manifest.json" -Encoding UTF8 -Raw | ConvertFrom-Json).method_id
 .\scripts\build_viewer.ps1 -Configuration Release -Run `
   --bundle-root $bundle `

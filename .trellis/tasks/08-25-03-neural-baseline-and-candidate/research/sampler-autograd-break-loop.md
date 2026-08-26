@@ -32,15 +32,17 @@
 3. sampler-only 训练必须断言：shared、latent、evaluator 参数冻结；目标 sampler head 输出和 PDF 需要梯度；backward 后只有目标 head 获得有限非零梯度。
 4. 回归测试同时覆盖 cold order 与真实 warm order：先执行冻结的 deployment/evaluator 路径，再执行 sampler-only 路径。只测“可训练调用恰好最先发生”会漏掉本问题。
 
+初次按 dense 层角色拆分后，四格 warm-order 回归又定位到 `nclsUnifiedJoinNvidiaState` 的相同污染：它先在 evaluator-only 路径以冻结 sampler 输入调用，随后也不会为 sampler 输入建立梯度。最终合同因此覆盖所有可微公开 callable，而不只覆盖 MLP 层；evaluator-only、NVIDIA join 与 LTC join 也使用独立身份。修复后 `{GGX, LTC} × {cold, evaluator-first warm}` 四格均通过（`4 passed`，`46.22s`）。
+
 ## 系统性扩展检查
 
 需检查所有 SlangPy Torch 可微入口，而不只修当前 GGX head：
 
 - realtime prepare 与 evaluator 的同宽层；
 - NVIDIA GGX9 与 LTC-K2 两个 sampler head；
+- evaluator-only、NVIDIA sampler、LTC sampler 的 state join / composition helper；
 - paper diagnostic 中连续三个 64-wide 层；
 - evaluator 训练切换 sampler 训练时的同进程调用顺序；
 - 新候选若在不同阶段改变同一 callable 的可训练参数集合，也必须采用角色级身份或显式证明 bridge 不受首次调用影响。
 
 本规则只约束 SlangPy 训练桥接；Falcor/viewer 的生产推理仍 include 同一 core，不因此产生第二份数学前向。
-

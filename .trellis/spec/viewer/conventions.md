@@ -31,9 +31,75 @@ Parity.cs.slang：bundle 加载期 Python/Slang 固定方向 parity probe
 ## MethodBundle loader（`MethodBundle.{h,cpp}`）
 
 - 加载顺序固定：manifest schema + 全文件 hash → 平台 / Slang / shader model / 散射合同版本 → IR 支持 → shader variant → `CompiledMaterial` → descriptor 声明的状态资源 → parity probe → 才进右侧方法列表。失败进 `BundleScanResult.failures` 并显示具体原因，不退回相近方法。
-- 当前只接受 `diagnostic` 的 `film-m1-direct-neural@1`，backend 字符串、entry 名、`architecture_id` 硬编码在 `MethodBundle.cpp`；`Prepare / Approximation / Parity` 直接调 `nclsFilmM1*` 自由函数。目标（`p1_v2_plan.md` V4.2–V4.3）：按 `backend_id` 查表的 `BackendRegistry`（shader 路径、入口、state stride、layout 格式），pass 改为 `#include NCLS_METHOD_BACKEND_HEADER` + `typedef NclsMethodBackend` 经 `INclsScatteringBackend` 调用，`realtime` 时按硬线校验 `cost_claims`。新代码按目标结构写，不再往硬编码上叠。
+- loader 同时接受 `diagnostic` 与 `realtime`，不按 `backend_id`、entry 名或 architecture 写分支。bundle 的 `runtime.shader_specialization` 声明 module、反射生成的宏、compiled material/state stride 与 table index；`Prepare / Approximation / Parity` 用 `#include NCLS_METHOD_BACKEND_HEADER` 和公共 `NclsMethod*` alias，经 `INclsScatteringBackend` 编译期 specialization 调用。bundle 的 module 内容必须与当前 viewer runtime 逐字节同 hash。
 - `kRequiredCapabilities`：deferred 为 `Prepare|Evaluate|AnisotropicFrame`；启用 PT + method 模式再要求 `Sample|Pdf`。
 - viewer 需要分别计时 `prepare` 与 `evaluate`；只在 prepare 输出固定 closure 的基线不能称为验证了 direct neural evaluator。
+
+### 通用 backend 初始化合同
+
+#### 1. Scope / Trigger
+
+当一个冻结 compiled set 要进入 MethodBundle/viewer，或方法的权重布局、`CompiledMaterial`、state packing 发生变化时触发。标准散射接口统一调用语义，但不统一方法私有布局；因此仍需一次资源初始化和编译期 specialization。
+
+#### 2. Signatures
+
+```text
+ncls bundle export-compiled-set
+  --compiled-set <dir> --preview-material <json> --parity <json>
+  --output <new-dir> --display-name <text> --state-id <sha256>
+
+runtime_adapter = {
+  shader_module, shader_defines,
+  compiled_material_stride, packed_state_stride,
+  shared_weight_storage="float16-little-endian",
+  backend_descriptor
+}
+```
+
+方法 module 必须公开 `NclsMethodBackend / NclsMethodCompiledMaterial / NclsMethodPackedState / NclsMethodState`，以及 `nclsCreateMethodBackend / nclsPackMethodState / nclsUnpackMethodState`；前三个 pass 只使用这些公共名字。
+
+#### 3. Contracts
+
+- offset 必须来自 exporter 对实际参数布局的反射结果，作为十进制宏值写入 bundle；shader 内不得维护第二份 offset 表。
+- viewer 把共享 FP16 权重绑定为 `StructuredBuffer<uint>`，把 compiled material table 按声明 stride 原样上传，不解释字段。
+- `NCLS_METHOD_BACKEND_HEADER` 只允许 POSIX 相对 module；viewer 对 bundle 内 module 与自身 runtime copy 做 SHA-256 一致性检查。
+- `prepare()` 返回的 transient State 可以持有 context/resource handle；per-pixel 只保存 `NclsMethodPackedState`，其 stride 必须等于 descriptor。
+- runtime class 只描述成本分类，不改变同一 checkpoint/compiled set 的方法语义，也不得触发缩模替换。
+
+#### 4. Validation & Error Matrix
+
+| 条件 | loader 行为 |
+|---|---|
+| bundle 文件缺失、hash 不一致或 URI 越界 | 拒绝并记录具体文件/URI |
+| module 与 viewer runtime hash 不同 | 拒绝并要求重建 viewer/bundle |
+| define 名非大写数字下划线、值非十进制整数 | 拒绝，不能进入 shader 编译 |
+| weight bytes 非完整 `uint`、material table 不能整除 stride、index 越界 | 拒绝资源初始化 |
+| descriptor/state/material stride 不一致 | 拒绝，不猜测相近布局 |
+| parity 编译或数值检查失败 | bundle 不进入方法列表；不得回退到另一 backend |
+
+#### 5. Good / Base / Bad Cases
+
+- Good：两个网络形态只靠不同 module/defines/stride 接入，同一 C++ 和 pass 源码加载；UI 如实显示各自 runtime class。
+- Base：同一 module 的另一份 checkpoint 只改变权重、material table、内容 hash 与 method ID，不改 viewer。
+- Bad：在 `MethodBundle.cpp` 加 `if (backendId == ...)`，或让 viewer 读取裸 `.pt` 并自行解释张量名。
+
+#### 6. Tests Required
+
+- unit：adapter 的 descriptor、反射 offset、material/state stride 与 capability；bundle 内容 hash 篡改必须失败。
+- Falcor load-time：每个正式 bundle 编译 `Parity.cs.slang`，固定方向输出在独立测得的跨编译器 envelope 内。
+- viewer headless：锁定 method ID 启动后 capture 断言 `approximation_available=true`、method/runtime class 一致。
+- build：只经 `scripts/build_viewer.ps1`，结束后 `external/Falcor` 必须干净。
+
+#### 7. Wrong vs Correct
+
+```cpp
+// 错：标准接口外再按方法解释资源。
+if (method.backendId == "paper") uploadPaperWeights(method);
+
+// 对：资源形状来自 bundle，调用语义来自公共接口。
+createStructuredBuffer(method.compiledMaterialBytes, method.compiledMaterialCount, ...);
+createMethodPass("Prepare.cs.slang", method.shaderModule, method.shaderDefines);
+```
 
 ## capture v3 与 viewer-scene sidecar（`docs/contracts/viewer_scene.md`）
 

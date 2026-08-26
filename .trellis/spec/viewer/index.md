@@ -29,7 +29,7 @@ paths:
 ## 开发前检查清单
 
 - [ ] 我改的是 viewer 私有实现，还是公共核心的合同？后者去 `core/`。
-- [ ] 新 backend 通过 `INclsScatteringBackend` 接入，不在 pass 里直接调 backend 自由函数、不在 `MethodBundle.cpp` 硬编码 backend 字符串（现有 `film_m1` 硬编码是待迁移债务）。
+- [ ] 新 backend 通过 `INclsScatteringBackend` 与统一 `NclsMethod*` 类型别名接入，不在 pass 里直接调 backend 自由函数，也不在 `MethodBundle.cpp` 硬编码 backend 字符串或 architecture。
 - [ ] 新 shader 已加进 `apps/viewer/CMakeLists.txt`。
 - [ ] 改 capture / viewer-scene 字段时同步 `docs/contracts/viewer_scene.md` 与 `docs/viewer_spec.md`。
 - [ ] 不改 `external/Falcor`；需要改上游先写 `patches/` 并在 `AGENTS.md` 说明。

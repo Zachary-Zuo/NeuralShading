@@ -1,1 +1,13 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/project/index.md","reason":"03跨core/data/learning边界、稳定中文文档、仓库政策和开发前总入口"}
+{"file":".trellis/spec/project/dev-environment.md","reason":"SlangPy训练、Falcor GPU、正式训练和环境证据要求"}
+{"file":".trellis/spec/project/method-constraints.md","reason":"新候选注册前的单一Slang、prepare/evaluate、成本和有界执行合同"}
+{"file":".trellis/spec/project/code-organization.md","reason":"method core、learning pipeline、schema、task scratch和artifact所有权"}
+{"file":".trellis/spec/core/shared-slang-backend.md","reason":"SlangPy/Falcor共用一份core、反射layout、autodiff和双编译门"}
+{"file":".trellis/spec/core/index.md","reason":"prepare/evaluate/sample/pdf、三态sample、measure与公共/私有state合同入口"}
+{"file":".trellis/spec/data/reference-and-corpus.md","reason":"base v5、mollification composite、training entry、reader fail-stop与response measure"}
+{"file":".trellis/spec/learning/index.md","reason":"pipeline注册、training/evaluation生命周期与数据层边界"}
+{"file":".trellis/spec/learning/pipeline-and-evaluation.md","reason":"train-only统计、checkpoint、quality、bootstrap与experiment log规则"}
+{"file":".trellis/tasks/08-25-03-neural-baseline-and-candidate/research/planning-evidence.md","reason":"前序真实identity、当前代码缺口、历史决策和旧资料取舍"}
+{"file":".trellis/tasks/08-25-03-neural-baseline-and-candidate/research/nvidia-method-correspondence.md","reason":"一手论文/supplemental到原规模baseline、公共ABI适配和joint训练的逐项合同"}
+{"file":".trellis/tasks/08-25-unified-scattering-method/design.md","reason":"父任务冻结的NVIDIA baseline、exact-core residual、sampler轴、预算和选择规则"}
+{"file":"docs/research/experiment_framework.md","reason":"正式训练预算、分组统计/cost记录与matched对照协议；质量参考线不是复现kill gate"}

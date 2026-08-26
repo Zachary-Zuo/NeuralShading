@@ -19,12 +19,21 @@ target_sources(NclsViewer PRIVATE
     shaders/ClearVisibility.cs.slang
     shaders/Composite.cs.slang
     shaders/Denoise.cs.slang
+    shaders/MethodBackend.slang
     shaders/SceneVisibility.3d.slang
     shaders/Parity.cs.slang
     shaders/Prepare.cs.slang
     shaders/ReferencePathTracer.cs.slang
     shaders/ViewerCommon.slang
-    "${NCLS_PROJECT_ROOT}/shaders/ncls/backends/film_m1/film_m1.slang"
+    "${NCLS_PROJECT_ROOT}/shaders/ncls/backends/nvidia_neural_appearance/nvidia_neural_appearance.slang"
+    "${NCLS_PROJECT_ROOT}/shaders/ncls/backends/nvidia_neural_appearance/nvidia_neural_appearance_core.slang"
+    "${NCLS_PROJECT_ROOT}/shaders/ncls/backends/nvidia_neural_appearance/nvidia_neural_appearance_layout.slang"
+    "${NCLS_PROJECT_ROOT}/shaders/ncls/backends/nvidia_neural_appearance/nvidia_neural_appearance_mlp.slang"
+    "${NCLS_PROJECT_ROOT}/shaders/ncls/backends/nvidia_neural_appearance/nvidia_neural_appearance_pack.slang"
+    "${NCLS_PROJECT_ROOT}/shaders/ncls/backends/unified_neural/unified_neural.slang"
+    "${NCLS_PROJECT_ROOT}/shaders/ncls/backends/unified_neural/unified_neural_core.slang"
+    "${NCLS_PROJECT_ROOT}/shaders/ncls/backends/unified_neural/unified_neural_layout.slang"
+    "${NCLS_PROJECT_ROOT}/shaders/ncls/backends/unified_neural/unified_neural_pack.slang"
     "${NCLS_PROJECT_ROOT}/shaders/ncls/backends/ltc_k2_analytic_control/ltc_k2_analytic_control_core.slang"
     "${NCLS_PROJECT_ROOT}/shaders/ncls/contracts/layer_stack_ir.slang"
     "${NCLS_PROJECT_ROOT}/shaders/ncls/contracts/response_measure.slang"

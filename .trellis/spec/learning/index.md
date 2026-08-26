@@ -33,6 +33,7 @@ configs/learning/<name>.json（training-config-v1）
 代码：`src/ncls/learning/{data,pipelines,training,evaluation,direct_fit,source_adapters}/`、`src/ncls/bundle/`。研究路线与判据在 `docs/research/experiment_framework.md`，候选设计在 `model_candidates.md`，当前计划在 `p1_v2_plan.md`。
 
 详细规则见 `pipeline-and-evaluation.md`；方法约束见 `project/method-constraints.md`。
+其中「Baseline 复现状态与方法比较必须分离」是 prior-art baseline 的验收入口：implementation/convergence/correctness/parity 决定复现状态，绝对quality只报告并按材质结构做relative comparison。
 
 ## 开发前检查清单
 
@@ -49,5 +50,6 @@ configs/learning/<name>.json（training-config-v1）
 - [ ] checkpoint 选择走 `training/selection.py` 的策略（新配置用 `tail_guard`）。
 - [ ] 报告含成本字段（`B_asset`、`B_shared`、`C_prepare`、`C_eval`、state bytes、参数量）与 signed 能量比等诊断。
 - [ ] 结论用 `learn compare` 的 paired bootstrap 支撑，CI 跨零记"无显著差异"。
+- [ ] baseline 的复现状态没有读取test quality阈值；缩模或接口适配使用独立identity，原规模超软线只改变成本分类。
 - [ ] 正式 run 在 `docs/research/experiment_log.md` 登记一行并标注是否部署候选；快速档 smoke 不入表。
 - [ ] 导出的 bundle 通过 `ncls bundle validate` 与 Python/Slang parity；`runtime_class` 如实标注。

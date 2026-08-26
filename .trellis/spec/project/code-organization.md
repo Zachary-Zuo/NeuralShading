@@ -39,7 +39,7 @@ paths:
 - 实现者在改动中发现 alias、`legacy` / `old` 命名、兼容 fallback 或重复实现时，必须在报告里列出「待迁移清单」并提醒用户决定；不得默默保留。
 - 已登记待迁移：
   - `src/ncls/core/representations/legacy_ltc_k2/`：作 `sample/pdf` parity oracle 与 `INclsScatteringBackend` 合同范例保留到 `lobe_residual` 接入完成，之后删除；
-  - `film_m1` 的四处实现（`src/ncls/learning/models/p1_evaluator.py`、`shaders/ncls/backends/film_m1/`、`src/ncls/bundle/film_m1.py`、`apps/viewer/MethodBundle.cpp` 硬编码）：`p1_v2_plan.md` Phase 4 泛型 pass 与通用 exporter 落地后删除。
+  - viewer 与 bundle 已完成从旧的单方法专用途径到 `INclsScatteringBackend` 泛型 pass、bundle 声明 module/defines 和通用 compiled-set exporter 的迁移；后续方法不得恢复方法专用 loader、pass 或 exporter。
 - 命名不含时间、作者或 `new` / `v2` 式相对词；版本进 schema、descriptor 或 `@N` 后缀。
 
 ## 产物与仓库边界

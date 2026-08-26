@@ -31,7 +31,7 @@
 - LTC 的 `exp/softplus/tanh` 有界参数化；
 - `K=2` 的部署成本结论；
 - SlangPy、Falcor GPU 测试和 viewer 共用一份 Slang 源；
-- Q1 质量门、signed energy、core coverage、tail guard 和 bootstrap 诊断。
+- method correspondence、稳定收敛、signed energy、core coverage、tail guard 和 bootstrap 诊断；绝对质量只报告，不作复现门。
 
 需要修正：
 
@@ -58,7 +58,7 @@
 baseline 标识为 `nvidia-frame-two-lobe-v1`；目标 evaluator 标识为 `core-frame-neural-v1`，sampler 后缀由 matched 结果选择：
 
 ```text
-NVIDIA deployment-matched baseline
+NVIDIA 原规模 baseline
   learned frames + direct EvaluateMLP
   + epsilon cosine safety component
   + tilted-cosine diffuse / non-centered anisotropic GGX specular
@@ -76,9 +76,9 @@ Analytic control
   exact top + K2 LTC evaluator lobes（不是 neural target）
 ```
 
-四个 matched 组合为 evaluator `{NVIDIA direct, core positive residual}` × sampler `{NVIDIA GGX9, LTC-K2}`。最终 bundle 选择必须在 evaluator quality、sampler 方差、runtime 和 memory 上不劣于 deployment-matched baseline；如果自研变体没有优势，就部署 baseline，而不是为了保留新方法身份选择更差结果。
+四个 matched 组合为 evaluator `{NVIDIA direct, core positive residual}` × sampler `{NVIDIA GGX9, LTC-K2}`。implementation/convergence 与 quality/cost comparison 分开；后者按材质结构报告 evaluator quality、sampler 方差、runtime 和 memory 的 Pareto，允许保留多个条件性非支配结果，不把比较失利写成复现失败。
 
-当前 Falcor 8.0 / Slang 2024.1.34 没有 cooperative vector。论文 `64×64×64` evaluator 与 `32×32×32→9` sampler 需要作为 paper-scale diagnostic 记录，不冒充 `≤2k MAC` 标量部署候选；公平部署结论使用同一标量预算下的结构 baseline。
+当前 Falcor 8.0 / Slang 2024.1.34 没有 cooperative vector。论文 `64×64×64` evaluator 与 `32×32×32→9` sampler 仍作为原规模正式 baseline 在标量 Slang 上实现、导出、显示和测时；超过软线只改变runtime class。缩模不是复现前置，若以后研究必须使用独立身份。
 
 ## 数据结论
 

@@ -435,6 +435,7 @@ def test_curriculum_reader_routes_stored_levels_and_base_v5(
     monkeypatch.setattr(learning_data, "validate_mollification_supplement", lambda _: manifest)
     with MollificationCurriculumStore(tmp_path / "entry.json") as store:
         assert store.state_count == 1
+        shard_path.unlink()
         mollified = store.batch(
             [state_id], [2], [3], training_progress=0.3
         )

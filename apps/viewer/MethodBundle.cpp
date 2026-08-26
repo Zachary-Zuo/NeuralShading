@@ -5,8 +5,10 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <set>
 #include <stdexcept>
 
@@ -28,18 +30,18 @@ json readJson(const std::filesystem::path& path)
     return json::parse(stream);
 }
 
-std::filesystem::path safeBundlePath(const std::filesystem::path& root, const std::string& uri)
+std::filesystem::path safeRelativePath(const std::filesystem::path& root, const std::string& uri)
 {
-    require(!uri.empty() && uri.find('\\') == std::string::npos, "bundle URI must be POSIX-relative");
+    require(!uri.empty() && uri.find('\\') == std::string::npos, "URI must be POSIX-relative");
     const std::filesystem::path relative(uri);
-    require(!relative.is_absolute(), "bundle URI must be relative");
-    for (const auto& part : relative) require(part != "..", "bundle URI cannot contain '..'");
+    require(!relative.is_absolute(), "URI must be relative");
+    for (const auto& part : relative) require(part != "..", "URI cannot contain '..'");
     const auto canonicalRoot = std::filesystem::weakly_canonical(root);
     const auto target = std::filesystem::weakly_canonical(root / relative);
     auto rootIterator = canonicalRoot.begin();
     auto targetIterator = target.begin();
     for (; rootIterator != canonicalRoot.end(); ++rootIterator, ++targetIterator)
-        require(targetIterator != target.end() && *rootIterator == *targetIterator, "bundle URI escapes its root");
+        require(targetIterator != target.end() && *rootIterator == *targetIterator, "URI escapes its root");
     return target;
 }
 
@@ -61,40 +63,50 @@ bool supportsIr(const json& values, const char* id)
     return values.is_array() && std::any_of(values.begin(), values.end(), [id](const json& value) { return value == id; });
 }
 
+bool validDefineName(const std::string& value)
+{
+    return !value.empty() && std::all_of(value.begin(), value.end(), [](unsigned char character) {
+        return std::isupper(character) || std::isdigit(character) || character == '_';
+    });
+}
+
+bool validDefineValue(const std::string& value)
+{
+    return !value.empty() && std::all_of(value.begin(), value.end(), [](unsigned char character) {
+        return std::isdigit(character);
+    });
+}
+
 ViewerMethod loadBundle(
     const std::filesystem::path& root,
-    const std::filesystem::path& runtimeShaderDirectory
-)
+    const std::filesystem::path& runtimeShaderDirectory)
 {
     const json manifest = readJson(root / "manifest.json");
     require(manifest.value("format_name", "") == "ncls.method-bundle", "unsupported MethodBundle format_name");
     require(manifest.value("format_version", 0u) == 1u, "unsupported MethodBundle format_version");
-    require(manifest.value("runtime_class", "") == "diagnostic",
-        "current viewer neural path accepts diagnostic evaluator bundles only");
+    const std::string runtimeClass = manifest.value("runtime_class", "");
+    require(runtimeClass == "diagnostic" || runtimeClass == "realtime", "unsupported MethodBundle runtime_class");
     require(manifest.value("scattering_contract_version", 0u) == 1u, "unsupported scattering contract");
-    require(supportsIr(manifest.at("supported_ir_ids"), "ncls.layer-stack-ir@1"), "bundle does not support LayerStackIR v1");
-    require(manifest.value("backend_id", "") == "film-m1-direct-neural",
-        "current viewer build does not contain this backend variant");
+    require(supportsIr(manifest.at("supported_ir_ids"), "ncls.layer-stack-ir@1"),
+        "bundle does not support LayerStackIR v1");
 
     const auto& descriptor = manifest.at("backend_descriptor");
-    require(descriptor.value("bounded_execution", false), "diagnostic evaluator backend must have bounded execution");
+    require(descriptor.value("backend_id", "") == manifest.value("backend_id", ""),
+        "backend descriptor identity disagrees with manifest");
+    require(descriptor.value("backend_version", 0u) == manifest.value("backend_version", 0u),
+        "backend descriptor version disagrees with manifest");
+    require(descriptor.value("bounded_execution", false), "viewer backend must have bounded execution");
     constexpr uint32_t kRequiredCapabilities = 1u | 2u | 16u;
     require((descriptor.value("capabilities", 0u) & kRequiredCapabilities) == kRequiredCapabilities,
         "backend is missing prepare/evaluate/anisotropic-frame capabilities required by the viewer");
-    require(descriptor.at("shader_entry_points").value("prepare", "") == "nclsFilmM1Prepare",
-        "bundle prepare entry does not match the compiled Film M1 runtime");
-    require(descriptor.at("shader_entry_points").value("evaluate", "") == "nclsFilmM1EvaluateF",
-        "bundle evaluate entry does not match the compiled Film M1 runtime");
     const auto& compiler = manifest.at("compiler");
-    require(compiler.value("kind", "") == "direct-neural", "unsupported compiler kind");
     require(compiler.value("runtime_implementation", "") == "slang", "viewer does not load Python inference");
-    require(compiler.value("architecture_id", "") == "film-prepare-evaluate-calibrated-softplus-v2@m1-m",
-        "unsupported Film M1 architecture version");
-    require(compiler.value("compile_mode", "") == "frozen-corpus-autodecoder-state",
-        "viewer requires an exact frozen-state M1 bundle");
+    require(!compiler.value("compile_mode", "").empty(), "bundle compiler must declare its compile mode");
     const auto& runtime = manifest.at("runtime");
     require(runtime.value("platform", "") == "windows-x86_64", "bundle targets another platform");
     require(runtime.value("graphics_api", "") == "d3d12", "bundle targets another graphics API");
+    require(runtime.value("shader_model", "") == "6.5", "bundle targets another shader model");
+    require(runtime.value("slang_version", "") == "2024.1.34", "bundle targets another Slang version");
 
     const auto& files = manifest.at("files");
     const auto& hashes = manifest.at("content_hashes");
@@ -102,49 +114,71 @@ ViewerMethod loadBundle(
     std::set<std::string> fileUris;
     for (auto iterator = files.begin(); iterator != files.end(); ++iterator)
         fileUris.insert(iterator.value().get<std::string>());
+    require(fileUris.size() == files.size(), "bundle logical files must have unique URIs");
     std::set<std::string> hashUris;
     for (auto iterator = hashes.begin(); iterator != hashes.end(); ++iterator) hashUris.insert(iterator.key());
     require(fileUris == hashUris, "content_hashes must cover bundle files exactly");
     for (const auto& uri : fileUris)
     {
-        const auto path = safeBundlePath(root, uri);
+        const auto path = safeRelativePath(root, uri);
         require(std::filesystem::is_regular_file(path), "bundle file is missing: " + uri);
         require(sha256FileHex(path) == hashes.at(uri).get<std::string>(), "content hash mismatch: " + uri);
     }
-
     const auto logicalPath = [&](const char* name) {
         require(files.contains(name), std::string("bundle is missing logical file: ") + name);
-        return safeBundlePath(root, files.at(name).get<std::string>());
+        return safeRelativePath(root, files.at(name).get<std::string>());
     };
-    const auto backendShader = logicalPath("backend_shader");
-    const auto runtimeBackend = runtimeShaderDirectory / "ncls/backends/film_m1/film_m1.slang";
-    require(std::filesystem::is_regular_file(runtimeBackend), "viewer Film M1 runtime shader copy is incomplete");
-    require(sha256FileHex(backendShader) == sha256FileHex(runtimeBackend),
-        "bundle backend differs from this viewer build; rebuild viewer for that shader variant");
 
-    const json layout = readJson(logicalPath("weight_layout"));
-    require(layout.value("format_name", "") == "ncls.film-m1-weights", "unsupported weight layout");
-    require(layout.value("format_version", 0u) == 1u, "unsupported weight layout version");
-    require(layout.value("dtype", "") == "float32-little-endian", "unsupported inference precision/layout");
-    const uint32_t width = layout.at("width").get<uint32_t>();
-    const uint32_t parameterCount = layout.at("total_floats").get<uint32_t>();
-    require(width == 256u && layout.value("prepare_blocks", 0u) == 3u
-            && layout.value("evaluate_blocks", 0u) == 6u
-            && layout.value("fourier_bands", 0u) == 5u
-            && layout.value("direction_feature_count", 0u) == 38u
-            && layout.value("condition_count", 0u) == 4864u
-            && layout.value("state_float_count", 0u) == 256u
-            && parameterCount == 1338118u,
-        "Film M1 layout differs from the compiled M1-M runtime");
-    const auto weightBytes = readBytes(logicalPath("weights"));
-    require(weightBytes.size() == static_cast<size_t>(parameterCount) * sizeof(float), "weight binary length disagrees with layout");
-    std::vector<float> weights(parameterCount);
-    std::memcpy(weights.data(), weightBytes.data(), weightBytes.size());
+    const auto& specialization = runtime.at("shader_specialization");
+    const std::string shaderModule = specialization.at("module").get<std::string>();
+    const auto runtimeBackend = safeRelativePath(runtimeShaderDirectory, shaderModule);
+    require(std::filesystem::is_regular_file(runtimeBackend), "viewer runtime shader module is missing: " + shaderModule);
+    require(sha256FileHex(logicalPath("backend_shader")) == sha256FileHex(runtimeBackend),
+        "bundle backend differs from this viewer build; rebuild viewer for that shader variant");
+    require(specialization.value("shared_weight_storage", "") == "float16-little-endian",
+        "unsupported shared weight storage");
+
+    const uint32_t compiledMaterialStride = specialization.at("compiled_material_stride").get<uint32_t>();
+    const uint32_t stateStride = specialization.at("packed_state_stride").get<uint32_t>();
+    const uint32_t compiledMaterialIndex = specialization.at("compiled_material_index").get<uint32_t>();
+    require(compiledMaterialStride > 0u && compiledMaterialStride % 16u == 0u,
+        "compiled material stride must be positive and 16-byte aligned");
+    require(stateStride == descriptor.at("state_stride").get<uint32_t>(),
+        "shader specialization state stride disagrees with backend descriptor");
+    require(compiledMaterialStride == descriptor.at("cost_model").at("compiled_material_bytes").get<uint32_t>(),
+        "shader specialization material stride disagrees with backend descriptor");
+
+    std::map<std::string, std::string> shaderDefines;
+    const auto& defines = specialization.at("defines");
+    require(defines.is_object() && !defines.empty(), "shader specialization defines must be a nonempty object");
+    for (auto iterator = defines.begin(); iterator != defines.end(); ++iterator)
+    {
+        const std::string name = iterator.key();
+        const std::string value = iterator.value().get<std::string>();
+        require(validDefineName(name) && validDefineValue(value), "unsafe shader specialization define");
+        shaderDefines.emplace(name, value);
+    }
+
+    const auto weightBytes = readBytes(logicalPath("shared_weights"));
+    require(!weightBytes.empty() && weightBytes.size() % sizeof(uint32_t) == 0u,
+        "packed shared weights must contain complete uint words");
+    std::vector<uint32_t> sharedWeightWords(weightBytes.size() / sizeof(uint32_t));
+    std::memcpy(sharedWeightWords.data(), weightBytes.data(), weightBytes.size());
+    auto compiledMaterials = readBytes(logicalPath("compiled_materials"));
+    require(!compiledMaterials.empty() && compiledMaterials.size() % compiledMaterialStride == 0u,
+        "compiled material table length disagrees with its stride");
+    const size_t materialCount64 = compiledMaterials.size() / compiledMaterialStride;
+    require(materialCount64 <= std::numeric_limits<uint32_t>::max(), "compiled material table is too large");
+    const uint32_t compiledMaterialCount = static_cast<uint32_t>(materialCount64);
+    require(compiledMaterialIndex < compiledMaterialCount, "compiled material index is outside its table");
 
     const json parity = readJson(logicalPath("parity"));
     require(parity.value("format_name", "") == "ncls.backend-parity-probe", "unsupported parity probe");
-    require(parity.value("architecture_id", "") == compiler.value("architecture_id", ""), "parity architecture mismatch");
-    require(parity.value("weight_total_floats", 0u) == parameterCount, "parity weight layout mismatch");
+    require(parity.value("format_version", 0u) == 1u, "unsupported parity probe version");
+    require(parity.value("architecture_id", "") == compiler.value("architecture_id", ""),
+        "parity architecture mismatch");
+    require(parity.value("compiled_set_id", "") == compiler.value("compiled_set_id", ""),
+        "parity compiled set mismatch");
     require(parity.value("compiled_state_id", "") == compiler.value("compiled_state_id", ""),
         "parity compiled state mismatch");
     ParityProbe probe{};
@@ -161,8 +195,8 @@ ViewerMethod loadBundle(
         probe.lights.push_back({lights[item][0].get<float>(), lights[item][1].get<float>(), lights[item][2].get<float>()});
         probe.expectedResponseCos.push_back({expected[item][0].get<float>(), expected[item][1].get<float>(), expected[item][2].get<float>()});
     }
-    probe.relativeTolerance = parity.at("tolerance").value("rtol", 4e-5f);
-    probe.absoluteTolerance = parity.at("tolerance").value("atol", 4e-6f);
+    probe.relativeTolerance = parity.at("tolerance").at("rtol").get<float>();
+    probe.absoluteTolerance = parity.at("tolerance").at("atol").get<float>();
 
     ViewerMethod method{};
     method.root = root;
@@ -171,25 +205,28 @@ ViewerMethod loadBundle(
     method.sourceGitCommit = manifest.at("source_git_commit").get<std::string>();
     method.backendId = manifest.at("backend_id").get<std::string>();
     method.backendVersion = manifest.at("backend_version").get<uint32_t>();
-    method.runtimeClass = manifest.at("runtime_class").get<std::string>();
+    method.runtimeClass = runtimeClass;
     method.architectureId = compiler.at("architecture_id").get<std::string>();
     method.compiledStateId = compiler.at("compiled_state_id").get<std::string>();
     method.compiledMaterialIrSha256 = compiler.at("compiled_material_ir_sha256").get<std::string>();
     method.previewMaterial = logicalPath("preview_material");
-    for (const auto& value : manifest.at("supported_ir_ids"))
-        method.supportedIrIds.push_back(value.get<std::string>());
-    method.width = width;
-    method.parameterCount = parameterCount;
-    method.stateBytesPerPixel = descriptor.at("state_stride").get<uint32_t>();
-    method.compiledMaterialBytes = descriptor.at("cost_model").at("compiled_material_bytes").get<uint32_t>();
+    for (const auto& value : manifest.at("supported_ir_ids")) method.supportedIrIds.push_back(value.get<std::string>());
+    method.shaderModule = shaderModule;
+    method.shaderDefines = std::move(shaderDefines);
+    method.parameterCount = static_cast<uint32_t>(weightBytes.size() / sizeof(uint16_t));
+    method.capabilities = descriptor.at("capabilities").get<uint32_t>();
+    method.stateBytesPerPixel = stateStride;
+    method.compiledMaterialBytes = compiledMaterialStride;
+    method.compiledMaterialCount = compiledMaterialCount;
+    method.compiledMaterialIndex = compiledMaterialIndex;
     method.environmentQueryBudget = runtime.value("environment_query_budget", 1u);
     method.rectangleQueryBudget = runtime.value("rectangle_query_budget", 1u);
-    method.weights = std::move(weights);
+    method.sharedWeightWords = std::move(sharedWeightWords);
+    method.compiledMaterials = std::move(compiledMaterials);
     method.parity = std::move(probe);
     require(method.methodId.size() == 64, "method_id is not SHA-256 sized");
     require(method.compiledStateId.size() == 64, "compiled state id is not SHA-256 sized");
     require(method.compiledMaterialIrSha256.size() == 64, "compiled material IR hash is not SHA-256 sized");
-    require(method.stateBytesPerPixel == 1024u, "Film M1 state stride must be 1024 bytes");
     require(method.environmentQueryBudget >= 1u && method.environmentQueryBudget <= 8u,
         "environment query budget is outside viewer bounds");
     require(method.rectangleQueryBudget >= 1u && method.rectangleQueryBudget <= 8u,

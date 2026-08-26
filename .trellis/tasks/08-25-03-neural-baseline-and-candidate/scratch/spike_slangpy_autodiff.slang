@@ -1,4 +1,4 @@
-// P1.0 spike：最小 [Differentiable] 核，只由 scripts/spike_slangpy_autodiff.py 经 SlangPy 编译。
+// 03 spike：最小 [Differentiable] 核，只由同目录 spike_slangpy_autodiff.py 经 SlangPy 编译。
 // 形态：16 维输入 → 64 宽 SiLU → 9 个 raw → 解码为一个 LTC lobe → 按
 // legacy_ltc_k2.slang:40 nclsLegacyLtcK2LobeResponseCos 的形式求 f·cos。
 // @WEIGHT_TENSOR@ / @WEIGHT_READ@ 由 Python 按候选写法替换，用来探测 slangpy 携带的 slang 语法。
@@ -92,6 +92,49 @@ float spikeStructProbe(SpikeParams params, float x)
 }
 
 // 权重梯度探针：Python 端用 float64 有限差分对照。
+[Differentiable]
+float[SPIKE_WIDTH] spikeLinear0(float weights[SPIKE_WIDTH][SPIKE_INPUT], float bias[SPIKE_WIDTH], float input[SPIKE_INPUT])
+{
+    float result[SPIKE_WIDTH];
+    for (uint row = 0u; row < SPIKE_WIDTH; ++row)
+    {
+        float value = bias[row];
+        for (uint column = 0u; column < SPIKE_INPUT; ++column)
+            value += weights[row][column] * input[column];
+        result[row] = value;
+    }
+    return result;
+}
+
+[Differentiable]
+float[SPIKE_WIDTH] spikeActivate(float input[SPIKE_WIDTH])
+{
+    float result[SPIKE_WIDTH];
+    for (uint index = 0u; index < SPIKE_WIDTH; ++index)
+        result[index] = spikeSilu(input[index]);
+    return result;
+}
+
+[Differentiable]
+float[SPIKE_RAW] spikeLinear1(float weights[SPIKE_RAW][SPIKE_WIDTH], float bias[SPIKE_RAW], float input[SPIKE_WIDTH])
+{
+    float result[SPIKE_RAW];
+    for (uint row = 0u; row < SPIKE_RAW; ++row)
+    {
+        float value = bias[row];
+        for (uint column = 0u; column < SPIKE_WIDTH; ++column)
+            value += weights[row][column] * input[column];
+        result[row] = value;
+    }
+    return result;
+}
+
+[Differentiable]
+float3 spikeDecodeEvaluate(float raw[SPIKE_RAW], no_diff float3 wi)
+{
+    return spikeLobeResponseCos(spikeDecode(raw), wi);
+}
+
 [Differentiable]
 float3 spikeEvaluate(SpikeWeights weights, float4 x0, float4 x1, float4 x2, float4 x3, no_diff float3 wi)
 {

@@ -1,0 +1,43 @@
+{
+  "schema": {"name": "unified-neural-layout", "version": 1},
+  "compiled_material": {
+    "alignment_bytes": 16,
+    "latent_count": 16,
+    "top_interface_bytes": 64,
+    "total_bytes": 128,
+    "fields": {
+      "top_interface": {"offset": 0, "size": 64},
+      "latent": {"offset": 64, "count": 16, "dtype": "float16"},
+      "response_scale": {"offset": 96, "count": 3, "dtype": "float32"},
+      "layout_version": {"offset": 108, "dtype": "uint32"},
+      "flags": {"offset": 112, "dtype": "uint32"},
+      "reserved": {"offset": 116, "size": 12}
+    }
+  },
+  "state": {
+    "payload_half_count": 27,
+    "stride_bytes": 64
+  },
+  "realtime": {
+    "prepare_input": 23,
+    "prepare_width": 64,
+    "prepare_output": 27,
+    "evaluate_input": 17,
+    "evaluate_width": 32,
+    "evaluate_output": 3,
+    "prepare_macs": 7296,
+    "evaluate_macs": 1664
+  },
+  "paper": {
+    "evaluate_input": 17,
+    "evaluate_width": 64,
+    "evaluate_hidden_layers": 3,
+    "evaluate_output": 3,
+    "evaluate_macs": 9600
+  },
+  "sampler": {
+    "safety_weight": 0.03125,
+    "nvidia_raw_count": 9,
+    "ltc_raw_count": 13
+  }
+}

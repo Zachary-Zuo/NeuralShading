@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Unified method selection manifest v1",
+  "type": "object",
+  "required": [
+    "format_name", "format_version", "selection_id", "protocol_sha256",
+    "data_id", "source_git_commit", "cells", "selected_cell", "reason"
+  ],
+  "properties": {
+    "format_name": {"const": "unified-method-selection"},
+    "format_version": {"const": 1},
+    "selection_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "protocol_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "data_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source_git_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "cells": {
+      "type": "object",
+      "required": ["A", "B", "C", "D"],
+      "additionalProperties": false,
+      "properties": {
+        "A": {"$ref": "#/$defs/cell"},
+        "B": {"$ref": "#/$defs/cell"},
+        "C": {"$ref": "#/$defs/cell"},
+        "D": {"$ref": "#/$defs/cell"}
+      }
+    },
+    "selected_cell": {"enum": ["A", "B", "C", "D"]},
+    "reason": {"type": "string", "minLength": 1}
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "required": ["uri", "sha256"],
+      "properties": {
+        "uri": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": true
+    },
+    "cell": {
+      "type": "object",
+      "required": [
+        "evaluator", "sampler", "evaluator_checkpoint", "sampler_checkpoint",
+        "compiled_set", "implementation_correctness", "evaluator_convergence",
+        "sampler_convergence", "sampler_correctness", "metrics",
+        "checkpoint_parity", "cost", "slang_implementation_sha256",
+        "layout_sha256", "eligible"
+      ],
+      "properties": {
+        "evaluator": {"type": "string"},
+        "sampler": {"type": "string"},
+        "evaluator_checkpoint": {"$ref": "#/$defs/artifact"},
+        "sampler_checkpoint": {"$ref": "#/$defs/artifact"},
+        "compiled_set": {"$ref": "#/$defs/artifact"},
+        "implementation_correctness": {"type": "object"},
+        "evaluator_convergence": {"type": "object"},
+        "sampler_convergence": {"type": "object"},
+        "slang_implementation_sha256": {
+          "type": "string", "pattern": "^[0-9a-f]{64}$"
+        },
+        "layout_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "sampler_correctness": {"type": "object"},
+        "checkpoint_parity": {"type": "object"},
+        "metrics": {
+          "type": "object",
+          "required": [
+            "directional_l1_by_state", "signed_energy_absolute_error_by_state",
+            "cosine_relative_variance_by_state",
+            "single_query_time_microseconds_by_state"
+          ]
+        },
+        "cost": {
+          "type": "object",
+          "required": ["B_asset", "B_shared"]
+        },
+        "eligible": {"type": "boolean"}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

@@ -39,6 +39,87 @@ paths:
 - 当前参考线（可随证据修订）：state-median ≤ 0.05 且 p95 ≤ 0.15，能量 median ≤ 0.03；这是"值得进下一阶段"的参考，不是单指标 kill gate。
 - `quality-v2` 与 v1 只差 `checkpoint_selection` 块；比较器接受两者。
 
+## Baseline 复现状态与方法比较必须分离
+
+### 1. Scope / Trigger
+
+注册或复现 prior-art baseline、生成 `unified-method-selection` 证据、或把 quality 数值用于任务验收时触发。该合同防止把某个旧 run 的 observed metric 提升成跨材质硬门，并防止为了满足成本线先改小原方法后仍沿用 baseline 身份。
+
+### 2. Signatures
+
+正式比较入口：
+
+```text
+ncls learn select-unified-method \
+  --inputs <unified-selection-inputs-v1.json> \
+  --output <unified-method-selection-v1.json> \
+  --source-git-commit <40-hex>
+```
+
+`configs/evaluation/unified-method-selection-v1.json` 只冻结 cell identity、bootstrap 和 relative Pareto 规则，不含 directional/energy 的绝对阈值。每个 input cell 提供：
+
+```text
+audit + checkpoint_label
+implementation_correctness
+evaluator_convergence
+sampler_convergence
+sampler_correctness
+benchmark + compiled + parity
+```
+
+### 3. Contracts
+
+- `implementation_correctness.passed`：method correspondence、独立 oracle 与声明的 adaptation 完整；不能由 quality 数值推导。
+- `evaluator_convergence.passed` / `sampler_convergence.passed`：训练全程有限、validation 相对初始化改善、后期无可信发散、checkpoint 可恢复；只读 train/validation evidence，不读 test。
+- `sampler_correctness.passed`：PDF/null/sample 数学门通过。
+- `checkpoint_parity.passed`：SlangPy、Falcor 与 packed asset 是同一实现。
+- cell `eligible` 只由上述四类证据合取；quality、time、memory 进入 `metrics/cost` 做 relative comparison，不改变复现状态。
+- top-level 只要求四格共享 `data_id` 与 test protocol；每个 cell 分别保存 `slang_implementation_sha256` 与 `layout_sha256`。不同方法不得靠 padding 或共享假 hash 伪造相同私有 state/网络布局。
+- 原规模 baseline 超过研究软成本线时写 `deployment_candidate=false` / 真实 runtime class，但仍可导出和在 viewer 显示。缩模必须使用独立 pipeline/config/checkpoint identity。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+|---|---|
+| implementation / convergence evidence 缺失、hash 错或 identity 不匹配 | selection 输入失败，不生成 manifest |
+| 数学 correctness 或 checkpoint parity `passed=false` | cell `eligible=false`；保留证据，不解释为低quality |
+| quality 很差但四类复现证据通过 | cell 仍 eligible；报告 observed quality，不触发重训 |
+| 四格 `data_id` 不同 | 拒绝 matched comparison |
+| 四格 Slang/layout hash 不同 | 允许；在各 cell 内分别验证 compiled/parity identity |
+| baseline 超软成本线 | 改成本分类，不改变 implementation/convergence status |
+| test 被 convergence/checkpoint 选择读取 | convergence evidence 无效，必须重跑无泄漏流程 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：原方法逐项对应、多个 seed 稳定收敛；某些 LayerStack 结构 quality 较低。登记“复现成功 + 当前结构上的质量限制”，并继续 viewer 证据。
+- Base：baseline 与 candidate 都 eligible，分组 paired CI 在不同结构上给出不同 Pareto；保留多个条件性非支配结果。
+- Bad：拿旧 run 的 median/p95 数值写进 `require_q1`，未过就修改网络/seed反复训练；或把缩小网络仍命名为原 baseline。
+
+### 6. Tests Required
+
+- protocol loader 断言不存在 `q1` / absolute quality threshold，baseline cell 指向原规模 pipeline。
+- selection unit 用任意高的绝对 error 仍能在 implementation/convergence/correctness/parity 全通过时保持 eligible；relative paired evidence仍可工作。
+- 任一 gate `passed=false` 时对应 cell ineligible；不得由更好 quality 覆盖。
+- artifacts assembly 拒绝 data/checkpoint/pipeline/hash 篡改，允许 baseline 与 candidate 使用不同 Slang/layout identity。
+- pipeline registry 不再暴露被淘汰的缩模 baseline 正式入口；若以后增加缩模，测试要求新 ID。
+
+### 7. Wrong vs Correct
+
+```python
+# 错：用某次历史run的误差决定“是否复现”，并强制所有方法共享布局。
+eligible = directional_p95 <= 0.10 and cell.layout_sha256 == baseline.layout_sha256
+
+# 对：复现证据与质量比较分离，layout只在各自方法产物链内保持一致。
+eligible = all((
+    implementation.passed,
+    evaluator_convergence.passed,
+    sampler_convergence.passed,
+    sampler_correctness.passed,
+    checkpoint_parity.passed,
+))
+quality_comparison = paired_state_bootstrap(baseline.metrics, candidate.metrics)
+```
+
 ## compare（`evaluation/comparison.py`）
 
 - 只接受 `valid=True`、`evaluation_role=test`、hash 自洽的 quality 报告；baseline 与 candidate 必须同 `data_id`、完全相同的 test state，≥ 20 个 matched state，≥ 1,000 次 95% state-block paired bootstrap。
@@ -54,7 +135,7 @@ paths:
 
 - 从不可变 checkpoint 导出全新 bundle，计算全部内容哈希，记录源 run / checkpoint；bundle 只含推理必需内容与验证证据，不含 optimizer / TensorBoard。
 - `runtime_class=realtime` 需要 descriptor `is_complete_realtime_backend`（`Prepare|Evaluate|Sample|Pdf|AnisotropicFrame`）且 `cost_claims` 满足硬线；否则 `diagnostic`。
-- 通用 exporter（`bundle/exporter.py`，`p1_v2_plan.md` P4.1）抽 manifest 组装、写文件、hash、parity probe；各方法只提供 descriptor、params/layout、`compiled_materials/` 与 `cost_claims`。当前 `bundle/film_m1.py` 的手写序列化是待迁移债务。
+- 通用 exporter（`bundle/compiled_set.py` 与共享 manifest/hash 工具）负责 manifest 组装、写文件、hash 与 parity probe；各方法只提供 descriptor、反射得到的 params/layout、`compiled_materials/` 与 `cost_claims`。不得为单个方法新增手写 bundle 序列化路径。
 
 ## 反例
 

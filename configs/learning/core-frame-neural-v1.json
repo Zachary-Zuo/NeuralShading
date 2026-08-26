@@ -1,0 +1,21 @@
+{
+  "pipeline": "core-frame-neural-v1",
+  "stage": "P1",
+  "capacity": "realtime",
+  "model": {"state_count": 30, "sampler": "nvidia-diffuse-ggx9"},
+  "steps": 25000,
+  "batch_size": 16,
+  "learning_rate": 0.0003,
+  "learning_rate_schedule": "cosine",
+  "final_learning_rate_fraction": 0.05,
+  "weight_decay": 0.00001,
+  "gradient_clip": 5.0,
+  "validation_interval": 250,
+  "checkpoint_interval": 250,
+  "minimum_steps": 20000,
+  "early_stopping_patience": 6,
+  "seed": 20260824,
+  "device": "cuda",
+  "deterministic": true,
+  "checkpoint_selection": "tail_guard"
+}

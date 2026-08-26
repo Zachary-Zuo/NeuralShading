@@ -168,3 +168,37 @@ class LearningPipeline(ABC):
         batch: Mapping[str, torch.Tensor],
     ) -> torch.Tensor:
         raise NotImplementedError
+
+    def auxiliary_training_batch(
+        self,
+        store: ReferenceQueryStore,
+        train_indices: np.ndarray,
+        batch_size: int,
+        rng: np.random.Generator,
+        *,
+        step: int,
+        total_steps: int,
+    ) -> Mapping[str, np.ndarray] | None:
+        del store, train_indices, batch_size, rng, step, total_steps
+        return None
+
+    def training_objective(
+        self,
+        model: nn.Module,
+        batch: Mapping[str, torch.Tensor],
+        auxiliary_batch: Mapping[str, torch.Tensor] | None,
+        store: ReferenceQueryStore,
+        device: torch.device,
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        Mapping[str, torch.Tensor | float],
+    ]:
+        del auxiliary_batch
+        prediction = self.predict_f(model, batch, store, device)
+        loss = self.training_loss(prediction, batch)
+        return prediction, loss, {"evaluator": loss.detach()}
+
+    def gradient_evidence(self, model: nn.Module) -> Mapping[str, Any]:
+        del model
+        return {}

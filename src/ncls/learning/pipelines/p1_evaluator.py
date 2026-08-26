@@ -39,7 +39,7 @@ CAPACITY_DEFAULTS: dict[str, dict[str, int]] = {
 }
 
 
-def _fit_scales(
+def fit_p1_scales(
     store: Any,
     train_indices: np.ndarray,
     direct_top: Mapping[str, Any] | None = None,
@@ -169,7 +169,7 @@ class P1EvaluatorPipeline(LearningPipeline):
         train_indices: np.ndarray,
     ) -> Mapping[str, Any]:
         direct_top = fit_direct_top_state(store) if self.spec.family == "m2" else None
-        result = _fit_scales(store, train_indices, direct_top)
+        result = fit_p1_scales(store, train_indices, direct_top)
         if self.spec.family == "m2":
             result["direct_top"] = direct_top
         return result

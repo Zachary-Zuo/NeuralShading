@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ncls.local/schemas/convergence_protocol_v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "name",
+    "bootstrap_iterations",
+    "bootstrap_seed",
+    "confidence",
+    "late_window_fraction",
+    "minimum_late_validation_records",
+    "required_seeds"
+  ],
+  "properties": {
+    "schema": {
+      "const": {"name": "convergence-protocol", "version": 1}
+    },
+    "name": {"const": "validation-relative-convergence-v1"},
+    "bootstrap_iterations": {"type": "integer", "minimum": 1000},
+    "bootstrap_seed": {"type": "integer", "minimum": 0},
+    "confidence": {"type": "number", "exclusiveMinimum": 0.5, "exclusiveMaximum": 1.0},
+    "late_window_fraction": {"type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0},
+    "minimum_late_validation_records": {"type": "integer", "minimum": 3},
+    "required_seeds": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "integer", "minimum": 0}
+    }
+  }
+}

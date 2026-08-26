@@ -158,20 +158,20 @@ manifest 中的 `cost_claims` 是静态声明，至少包含：
 | 环境光 / 面光 | 声明 `PrefilteredEnvironmentIntegration` / `AnalyticPolygonIntegration`，或固定 query 预算 ≤ 4 次 `evaluate`/像素 |
 | 执行 | `bounded_execution=true`；`prepare/evaluate` 无数据相关循环、无 > 64 元素的函数级数组 |
 
-依据工况（RTX 4090 级、1080p、材质着色 2 ms/帧、每像素 1 次 `prepare` + ≤ 4 次 `evaluate`）见 `docs/research/experiment_framework.md` §0.1。当前 viewer（`apps/viewer/MethodBundle.cpp`）只接受 `diagnostic` bundle，尚未实现这组校验；`film-m1-direct-neural@1` 的 1 KB state、19.5 KB compiled material 与 5.3 MB 共享权重按此表属于 `diagnostic`。
+依据工况（RTX 4090 级、1080p、材质着色 2 ms/帧、每像素 1 次 `prepare` + ≤ 4 次 `evaluate`）见 `docs/research/experiment_framework.md` §0.1。viewer 同时接受 `diagnostic` 与 `realtime`，并按 descriptor 分配私有 state/compiled material 资源；runtime class 不改变方法实现身份。
 
 viewer benchmark 记录实测 prepare、1/8/32 等灯数下的 lighting scaling、环境/面光积分、总帧时间和显存。实测数据不回写 bundle 本体，而以 `(method_id, benchmark_scene_id, device_id)` 保存到运行报告。
 
 ## 当前 neural evaluator 部署记录
 
-当前 viewer 部署路径只接受 `film-m1-direct-neural@1`。它从 P1 最佳 M1-M checkpoint 导出共享 evaluator 权重，并把一个真实 corpus state 的 condition 与 output scale 作为 frozen compiled material：
+viewer 的方法 pass 已泛型化。compiled set 在导出时提供 `runtime_adapter`，MethodBundle 固化 shader module、反射生成的 offset、共享 FP16 权重、`CompiledMaterial` table、私有 state stride 与 parity probe：
 
 - bundle 同时保存精确源 `MaterialProgram`、state ID 与 LayerStackIR hash；viewer 只有在 reference 材质 hash 完全一致时才允许选择；
-- `prepare` 保存 256-float view-conditioned state，`evaluate` 在 Slang 中直接执行方向特征、六个 FiLM residual block 与线性 RGB `f` head；
-- bundle 加载时必须通过 Python float32 与 Slang float32 的固定方向 GPU parity；
-- 旧 `legacy-ltc-k2` 已从 viewer loader、shader pass 和构建依赖中移除，不再是可选部署方法。
+- viewer 不解释 `CompiledMaterial` 或 state 字段，只按 descriptor 分配资源；
+- 方法 module 用公共 alias 绑定 associated types，并通过 `INclsScatteringBackend` 提供 `prepare/evaluate/sample/pdf`；
+- bundle 加载时必须通过同一 compiled set 的固定方向 GPU parity。
 
-该 bundle 没有任意材质 compiler，也没有与 evaluator 匹配的 `sample/pdf`，所以 `runtime_class=diagnostic`。它用于确认“训练 checkpoint → MethodBundle → Slang evaluator → viewer”的外观与成本，不得写入 realtime Pareto。这里的 `realtime` 仍只表示运行时完整、有界并满足所声明的完整能力；方法质量由独立 validation 和 Pareto 报告决定。
+当前 03 轨道的原规模 NVIDIA paper baseline 与 core-frame candidate 都包含完整 matched GGX9 sampler。baseline 因真实运行成本标为 `diagnostic`，candidate 标为 `realtime`；分类不靠缩模，也不使用收敛后质量数值决定复现是否成功。
 
 ## 训练 run 与 bundle 的边界
 

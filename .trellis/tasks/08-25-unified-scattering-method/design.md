@@ -35,7 +35,7 @@ LayerStack MaterialProgram
 - training：BRDF 使用 log-space L1，窄峰使用 directional mollification curriculum；sampler PDF 相对当前 learned BRDF 做 KL，且 sampler KL 不回传到 latent；
 - runtime：sample 与 PDF 使用同一 9 参数 proposal。
 
-论文规模的 `64×64×64` evaluator 与 `32×32×32→9` sampler 作为 paper-scale diagnostic。当前锁定 Slang 2024.1.34 路径没有本项目可验证的 cooperative-vector 加速能力，但普通 Slang 标量循环仍能表达同一个网络：它可以导出、加载、在 viewer 的 deferred/PT 路径中显示和测量，只是预计超过当前标量 realtime 预算，必须标为 `runtime_class=diagnostic`，不得参与 `≤2k MAC` realtime 声明。另实现相同结构、与目标共享标量预算的 deployment-matched baseline；它才是部署 Pareto 的 matched 对照。所有“优于 baseline”结论只在 matched data/bytes/time 下成立。
+原规模 `64×64×64` evaluator 与 `32×32×32→9` sampler 是唯一正式 NVIDIA baseline。当前锁定 Slang 2024.1.34 路径没有本项目可验证的 cooperative-vector 加速能力，但普通 Slang 标量循环仍能表达同一个网络：它必须导出、加载并在 viewer 的 deferred/PT 路径中显示和测量。预计超出当前软预算时如实标记 runtime class；分类只影响成本声明和排序，不允许拒绝加载或替换成缩模。所有“优于 baseline”结论只在 matched data/role/evaluation 下成立，架构 bytes/time 是被比较的结果，不要求预先相同。
 
 目标 evaluator ID 为 `core-frame-neural-v1`：保留 baseline 的 learned-frame direct MLP 主体，增加 exact top core，并让 MLP 预测 positive residual。sampler 配置轴为 `nvidia-diffuse-ggx9` 与 `ltc-k2`。最终 bundle identity 由 evaluator/sampler 组合和内容 hash 决定。
 
@@ -105,7 +105,7 @@ view-conditioned code 5
 
 EvaluateMLP 采用 `17→32→32→3`，约 `1,664 MAC`；加 top core 和 frame 变换后仍需在 `2,000` 标量路径硬线内逐项记账。共享 FP16 evaluate 权重约 3.5 KB。
 
-这个参数化保留 exact top core 的价值，又不要求多层 residual 能被两个解析 lobe 表达。若 Q1 未通过，不能删除逐方向 MLP或退回 lobe-only；必须在同一预算内根据最差 state 诊断 learned frame、输入 warp、loss 或 latent 表达。
+这个参数化保留 exact top core 的价值，又不要求多层 residual 能被两个解析 lobe 表达。它必须证明实现对应设计且训练稳定收敛；收敛后质量较低时记录结构归因，不删除逐方向 MLP、退回 lobe-only，也不围绕某个绝对误差线反复重跑。
 
 ### 2.4 learned tractable sampler 轴
 
@@ -175,9 +175,9 @@ NVIDIA 还使用 directional mollification 让窄峰从宽到窄进入训练。�
 - signed energy ratio、`E_core/E_ref`、最差 state、bootstrap CI 和 leave-one-state-out；
 - target-visible P1 回归，以及“shared decoder 未见该 state、但通过 reference queries direct-fit latent”的 offline cook 工作流测试。
 
-进入部署轨道前的 Q1 继续采用旧计划中较严格的门：state-median directional L1 ≤ `0.045`、p95 ≤ `0.10`、15 个单层 state 各 ≤ `0.013`、已知 4 个多层尾部 state 各 ≤ `0.15`。未通过时任务回到方法设计/训练诊断，不允许用 bundle/viewer smoke 代替质量完成。
+进入部署轨道前分别检查：method correspondence/独立 oracle、训练稳定收敛、SlangPy/Falcor/packed parity、sampler 数学正确性。quality suite 的 sanity 仍拒绝非有限、负值或合同错误，但 directional/energy 的绝对数值只报告，不作复现 kill gate。
 
-此外执行 evaluator `{NVIDIA direct, exact-core positive residual}` × sampler `{NVIDIA diffuse+GGX9, LTC-K2}` 的 2×2 matched 对照。最终部署选择至少在 evaluator quality 与 sampler variance 上对 deployment-matched NVIDIA baseline 非劣，并在质量、时间或内存中至少一项形成可信 Pareto 改善；若没有，自研变体不进入默认 bundle，baseline 本身成为首个部署方法。
+此外执行 evaluator `{NVIDIA direct, exact-core positive residual}` × sampler `{NVIDIA diffuse+GGX9, LTC-K2}` 的 2×2 matched 对照。比较按材质结构报告 evaluator quality、sampler variance、时间和内存的 paired evidence；不同结构组出现不同 Pareto 结论时保留多个非支配方法，不机械回退到 baseline，也不把比较失利写成复现失败。
 
 ## 3. 可复用 Slang 数学层
 
@@ -232,7 +232,7 @@ method PT 不是 source family dispatch 分支。source reference 仍按各族 a
 ## 8. 失败与回退规则
 
 - sample/PDF 任一归一化、histogram、re-evaluation 或有限值测试失败：禁止进入 PT；修复公共数学原语。
-- evaluator 未过 Q1：禁止导出 realtime 候选和 viewer 收口；在预算内修正方法，不能启用 lobe-only fallback。
+- evaluator 实现或 convergence 未通过：禁止把该 run 写成复现成功；先修 method correspondence、梯度或训练生命周期。实现正确且稳定收敛但质量较低时保留结果并继续导出/viewer 证据，不围绕绝对质量线反复修正。
 - sampler 数学正确但方差不优于 cosine：PT 仍无偏，但方法不能宣称 learned sampler 有效；继续改 proposal head/family后再收口。
 - SlangPy 与 Falcor 2024.1.34 无法编译同一源：任务阻塞在单一源 gate，不维护第二套生产前向。
 - viewer bundle 不兼容：明确报错；不回退 Film、旧 lobe-residual 或 analytic control。
@@ -244,7 +244,7 @@ method PT 不是 source family dispatch 分支。source reference 仍按各族 a
 | exact top core | 复用 | evaluator physical core、control |
 | signed residual + final clamp | 淘汰 | 改为 nonnegative residual，无 final clamp |
 | K=2 LTC 部署预算 | 修正复用 | sampler matched 候选与 analytic control，不限制 evaluator |
-| NVIDIA learned frames / two-lobe sampler | 提升为必做 baseline | paper-scale diagnostic + deployment-matched baseline + 2×2 对照 |
+| NVIDIA learned frames / two-lobe sampler | 提升为必做 baseline | 原规模忠实复现 + convergence 证据 + 2×2 分组对照；缩模不是前置 |
 | `f *= exp(Delta)` | 淘汰 | 不修改 exact core；逐方向 MLP直接预测 residual |
 | `correction=none` 默认 | 淘汰 | 目标方法的 EvaluateMLP 必选 |
 | learned/physical direction frame | 复用并加强 | 两个 learned evaluator frames |

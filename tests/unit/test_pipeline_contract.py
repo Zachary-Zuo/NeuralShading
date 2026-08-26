@@ -10,7 +10,7 @@ from ncls.learning.pipelines import (
     create_pipeline,
     pipeline_descriptors,
 )
-from ncls.learning.pipelines.p1_evaluator import _fit_scales
+from ncls.learning.pipelines.p1_evaluator import fit_p1_scales
 
 
 def _descriptor() -> LearningPipelineDescriptor:
@@ -63,6 +63,8 @@ def test_pipeline_identity_is_readable_structured_and_hash_exact() -> None:
         "lobe-residual-k2-v1",
         "lobe-residual-k2-log32-v1",
         "lobe-residual-k3-log32-v1",
+        "core-frame-neural-v1",
+        "nvidia-frame-two-lobe-paper-v1",
     }
 
 
@@ -148,7 +150,7 @@ def test_p1_output_scale_is_fitted_in_linear_f_space() -> None:
                 "mean": np.full((1, 2, 3), 0.1, dtype=np.float32),
             }
 
-    fitted = _fit_scales(Store(), np.asarray([0], dtype=np.int64))
+    fitted = fit_p1_scales(Store(), np.asarray([0], dtype=np.int64))
     assert fitted["contract"] == "ncls.p1-output-scale@3"
     np.testing.assert_allclose(fitted["target_scale"], [[0.1, 0.1, 0.1]], rtol=1e-6)
     assert np.all(np.asarray(fitted["output_scale"]) > 0.19)
@@ -185,7 +187,7 @@ def test_p1_residual_scale_scan_requests_wo(monkeypatch: pytest.MonkeyPatch) -> 
         "direct_top_bsdf",
         lambda direct_top, state_index, wo, wi: torch.zeros_like(wi),
     )
-    fitted = _fit_scales(
+    fitted = fit_p1_scales(
         Store(),
         np.asarray([0], dtype=np.int64),
         direct_top={"contract": "test"},
