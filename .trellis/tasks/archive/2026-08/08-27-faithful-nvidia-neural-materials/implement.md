@@ -131,8 +131,8 @@ conda run -n neural-shading python -m ncls learn export <checkpoint.pt> <source.
 - [x] 运行 scoped unit/GPU后再跑全量 pytest；Release viewer/headless dual-slot capture；package tamper matrix；`git diff --check`。
 - [x] 检查 `external/Falcor` 与其他锁定上游全部干净；检查根仓库无被误加入的 `artifacts/data/build/reports`。
 - [x] 使用 `trellis-check`做 spec/cross-layer/data-flow/reuse/一致性审查并修复问题。
-- [ ] 更新 correspondence/experiment log/任务 checklist，运行 `trellis-finish-work`，归档任务。
-- [ ] 只 stage 本任务识别文件，按逻辑批次创建本地 commit；不 amend、不 push、不夹带用户原有 dirty files。
+- [x] 更新 correspondence/experiment log/任务 checklist，运行 `trellis-finish-work`，归档任务。
+- [x] 只 stage 本任务识别文件，按逻辑批次创建本地 commit；不 amend、不 push、不夹带用户原有 dirty files。
 
 最终质量命令：
 
