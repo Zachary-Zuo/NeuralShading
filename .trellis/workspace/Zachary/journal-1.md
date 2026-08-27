@@ -196,3 +196,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 10: 统一材质散射合同根本迁移
+
+**Date**: 2026-08-28
+**Task**: 统一材质散射合同根本迁移
+**Branch**: `main`
+
+### Summary
+
+将五种 source reference 与 neural package 迁到唯一 prepare/evaluate/sample/pdf 合同，删除 viewer estimator 分支与兼容路径；修复 OpenPBR 掠射 sample tuple 重建导致的 firefly 和 half EXR 溢出，并完成 unit、GPU、integration、Release viewer 与 1024 spp capture 验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7a7d78d` | (see git log) |
+
+### Status
+
+[OK] **Completed**
