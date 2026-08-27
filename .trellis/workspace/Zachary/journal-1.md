@@ -69,3 +69,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 4: 忠实复现 NVIDIA Neural Materials
+
+**Date**: 2026-08-27
+**Task**: 忠实复现 NVIDIA Neural Materials
+**Branch**: `main`
+
+### Summary
+
+补齐 NVIDIA RTA 2024 functional reproduction 的 encoder、hierarchical latent、双 65k online training、matched sampler、packed FP16 package 与真实 neural PT；按用户决定冻结并登记 step 200k 结果，完成全量验证、报告与归档。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5e013d3d616dea14f3192fe8293f06ef72e880ca` | (see git log) |
+
+### Status
+
+[OK] **Completed**
