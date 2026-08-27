@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 4
+- **Total Sessions**: 5
 - **Last Active**: 2026-08-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~92 | Active |
+| `journal-1.md` | ~113 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 5 | 2026-08-27 | 修复 Viewer PT 空间材质 footprint | `b23c3f6` | `main` |
 | 4 | 2026-08-27 | 忠实复现 NVIDIA Neural Materials | `5e013d3d616dea14f3192fe8293f06ef72e880ca` | `main` |
 | 3 | 2026-08-27 | 统一 Pipeline 架构重整 | `7a10a5f`, `d5b8016` | `main` |
 | 2 | 2026-08-26 | 完成 02 Directional Mollification 数据充分性 | `123a94b` | `main` |

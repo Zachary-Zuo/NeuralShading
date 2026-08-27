@@ -90,3 +90,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: 修复 Viewer PT 空间材质 footprint
+
+**Date**: 2026-08-27
+**Task**: 修复 Viewer PT 空间材质 footprint
+**Branch**: `main`
+
+### Summary
+
+用 raw UV/LOD probe 定位 Falcor camera basis 共同尺度导致 ray cone 放大约一万倍；抽取共享 PathSurface，修复 source/neural PT 纹理与 latent 过滤，补 GPU oracle、walnut/denim 与 PT/deferred 证据，并完成全量测试和 Release 构建。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b23c3f6` | (see git log) |
+
+### Status
+
+[OK] **Completed**
