@@ -175,3 +175,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 9: MDL reference viewer 与 firefly 根因修复
+
+**Date**: 2026-08-28
+**Task**: MDL reference viewer 与 firefly 根因修复
+**Branch**: `main`
+
+### Summary
+
+将六种 vMaterials 的 MDL SDK compiled artifact 接入当前 Falcor 8 viewer；修复 car paint/ceramic 因 fixed-GGX 与 MDL PDF 错配产生的 firefly，改用同 target code matched sample/pdf 与正确 MIS，并通过 unit、GPU、Release build 和 1024 spp capture。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `234bb0a` | (see git log) |
+
+### Status
+
+[OK] **Completed**
