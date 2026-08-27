@@ -1,0 +1,33 @@
+{
+  "id": "faithful-nvidia-neural-materials",
+  "name": "faithful-nvidia-neural-materials",
+  "title": "忠实复现 NVIDIA Neural Materials",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "Zachary",
+  "assignee": "Zachary",
+  "createdAt": "2026-08-27",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "execution_mode": "continuous",
+    "continuous_authorized": "true",
+    "authorization_parent": "08-27-faithful-nvidia-neural-materials",
+    "commit_policy": "preauthorized-scoped-local-no-push",
+    "stop_policy": "scope-expansion-destructive-external-blocker-only",
+    "authorization_scope": "faithful-nvidia-full-method-unified-pipeline-and-neural-pt"
+  }
+}

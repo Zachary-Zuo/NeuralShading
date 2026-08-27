@@ -55,8 +55,23 @@ from .directions import (
     stratified_view_directions,
 )
 from .statistics import ReplicaMoments, combine_replica_moments
-from .batch_sources import BatchSource, LiveReferenceBatchSource, OfflineBatchSource
-from .training_batch import TrainingBatch
+from .batch_sources import (
+    BatchSource,
+    LiveReferenceBatchSource,
+    MaterialXLiveReferenceBatchSource,
+    OfflineBatchSource,
+)
+from .native_features import (
+    DenseNativeFeaturePyramid,
+    MaterialXNativeFeaturePyramid,
+    NativeFeatureField,
+    NativeFeatureLayout,
+    NativeFeaturePyramid,
+    encode_layer_stack_native_features,
+    layer_stack_native_feature_layout,
+    materialx_native_feature_layout,
+)
+from .training_batch import TrainingBatch, TrainingRouteRequest
 from .stores import ReferenceCorpusStore, ReferenceQueryStore, open_reference_store
 
 __all__ = [
@@ -99,8 +114,18 @@ __all__ = [
     "grazing_anchored_view_directions",
     "BatchSource",
     "LiveReferenceBatchSource",
+    "MaterialXLiveReferenceBatchSource",
     "OfflineBatchSource",
     "TrainingBatch",
+    "TrainingRouteRequest",
+    "NativeFeatureField",
+    "NativeFeatureLayout",
+    "NativeFeaturePyramid",
+    "DenseNativeFeaturePyramid",
+    "MaterialXNativeFeaturePyramid",
+    "encode_layer_stack_native_features",
+    "layer_stack_native_feature_layout",
+    "materialx_native_feature_layout",
     "ReferenceCorpusStore",
     "ReferenceQueryStore",
     "open_reference_store",

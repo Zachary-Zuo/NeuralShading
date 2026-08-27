@@ -123,11 +123,14 @@ class ScatteringContext:
     wo_world: Vec3
     transport_mode: TransportMode = TransportMode.RADIANCE
     component_mask: ScatteringEvent = ScatteringEvent.REFLECTION | ScatteringEvent.TRANSMISSION
+    filter_random: float = 0.5
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "wo_world", _unit("wo_world", self.wo_world))
         object.__setattr__(self, "transport_mode", TransportMode(self.transport_mode))
         object.__setattr__(self, "component_mask", ScatteringEvent(self.component_mask))
+        if not math.isfinite(self.filter_random) or not 0.0 <= self.filter_random < 1.0:
+            raise ValueError("filter_random must lie in [0, 1)")
 
 
 @dataclass(frozen=True)

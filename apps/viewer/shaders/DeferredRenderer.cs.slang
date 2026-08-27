@@ -1,12 +1,12 @@
 #include "PackageBackend.slang"
 
-StructuredBuffer<NclsMethodPackedState> gStates;
-StructuredBuffer<uint> gSharedWeights;
-StructuredBuffer<NclsMethodCompiledMaterial> gCompiledMaterials;
 Texture2D<float4> gPositionDepth;
 Texture2D<float4> gNormal;
 Texture2D<float4> gTangent;
 Texture2D<float4> gViewDirection;
+Texture2D<float4> gTexCoord;
+Texture2D<float4> gTexCoordGrad;
+Texture2D<uint> gMaterialId;
 Texture2D<float4> gEnvironment;
 SamplerState gLinearSampler;
 RWTexture2D<float4> gApproximation;
@@ -40,16 +40,11 @@ cbuffer ApproximationCB
 };
 
 float3 nclsApproximationDirection(
-    NclsMethodPackedState packedState,
+    NclsPackageState state,
     NclsScatteringContext context,
     float3 wiWorld,
     uint seed)
 {
-    const NclsMethodState state = nclsUnpackMethodState(
-        context,
-        gCompiledMaterials[gCompiledMaterialIndex],
-        packedState,
-        gSharedWeights);
     NclsViewerSampleGenerator sampleGenerator = {seed};
     const float3 direction = normalize(wiWorld);
     return nclsScatteringEvalToResponseCos(
@@ -78,12 +73,18 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
     const uint index = pixel.y * gFrameDim.x + pixel.x;
-    const NclsMethodPackedState state = gStates[index];
     const float3 position = positionDepth.xyz;
     const float3 normal = normalize(gNormal[pixel].xyz);
     const float3 tangent = normalize(gTangent[pixel].xyz);
+    const float2 uv = gTexCoord[pixel].xy;
+    const float4 uvGrad = gTexCoordGrad[pixel];
     const NclsScatteringContext context = nclsViewerMethodContext(
-        position, normal, tangent, viewWorld, 0u);
+        position, normal, tangent, viewWorld,
+        uv, uvGrad.xy, uvGrad.zw,
+        nclsViewerHashFloat(index), gMaterialId[pixel]);
+    const NclsPackageBackend backend = nclsCreatePackageBackend();
+    const NclsPackageState state = backend.prepare(
+        context, nclsLoadPackageMaterial(gCompiledMaterialIndex));
     float3 radiance = float3(0.0f);
     if (gUseSun != 0u)
         radiance += nclsApproximationDirection(state, context, normalize(gSunDirection), index + 1u)
@@ -134,4 +135,3 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
     gApproximation[pixel] = float4(max(radiance, 0.0f), 1.0f);
 }
-

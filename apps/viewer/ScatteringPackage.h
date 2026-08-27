@@ -19,6 +19,16 @@ struct ParityProbe
     float absoluteTolerance = 4e-6f;
 };
 
+struct ViewerTypedResource
+{
+    std::filesystem::path path;
+    std::string dtype;
+    std::vector<uint32_t> shape;
+    uint32_t stride = 1;
+    uint32_t alignment = 1;
+    std::string usage;
+};
+
 struct ViewerProgram
 {
     std::filesystem::path root;
@@ -26,6 +36,8 @@ struct ViewerProgram
     std::string programRuntimeId;
     std::string materialAssetId;
     std::string sourceSnapshotId;
+    std::string sourceFamilyId;
+    std::string sourceAssetSha256;
     std::string displayName;
     std::string sourceGitCommit;
     std::string backendId;
@@ -48,6 +60,7 @@ struct ViewerProgram
     uint32_t rectangleQueryBudget = 1;
     std::vector<uint32_t> sharedWeightWords;
     std::vector<std::byte> compiledMaterials;
+    std::vector<ViewerTypedResource> resources;
     ParityProbe parity;
 };
 

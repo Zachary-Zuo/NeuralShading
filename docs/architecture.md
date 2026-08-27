@@ -13,8 +13,8 @@ LayerStack、OpenPBR、MERL 与 MaterialX 保留各自原生语义和 reference�
 
 `SourceSnapshot` 是 source state 唯一真相。编辑器只消费 `SourceParameterView@1` 并提交 `SourceEditPatch@1`；方法通过 `SourceAdaptationContract` 返回 `unchanged/runtime-patch/recompile/unsupported`。
 
-offline 与 live producer 都输出同一 `TrainingBatch@1`。live target 在 Falcor shared buffer 与 CUDA tensor 间传递，不落 HDF5、不经过 CPU/NumPy。
+offline 与 live producer 都输出同一 `TrainingBatch@1`。一个 step 可包含多个独立命名 route；公共 runner不解释 evaluator/sampler语义。live target 在 Falcor shared buffer 与 CUDA tensor 间传递，不落 HDF5、不经过 CPU/NumPy response readback。
 
-`ScatteringPackage@1` 同时承载 reference 和 neural program，分别计算 `program_runtime_id`、`material_asset_id` 与 `package_id`。viewer 只加载 package，不依赖 Python、PyTorch 或训练目录。
+`ScatteringPackage@1` 可承载 reference 或 neural program，分别计算 `program_runtime_id`、`material_asset_id` 与 `package_id`。typed resource descriptor 可绑定 buffer、RGBA16F DDS mip texture 与 sampler；所有 resource bytes 参与 material/package identity。当前 viewer 对已编译方法只加载 package，不依赖 Python、PyTorch 或训练目录；`source-reference` 是显式保留的内建权威 source transport 请求，不是伪装成 package id 的磁盘包。
 
-viewer 包含两个对称 `ComparisonSlot`。每侧独立选择 package 与 PT/deferred mode；固定宽度为 `floor(W/2)`，奇数像素留作 divider，失败只改变本 slot 状态。
+viewer 包含两个对称 `ComparisonSlot`。每侧独立选择已验证 package 或 `source-reference`，并选择其 capability支持的 PT/deferred mode；固定宽度为 `floor(W/2)`，奇数像素留作 divider，失败只改变本 slot 状态。package PT命中点与 deferred G-buffer 都构造同一 scattering context（含 UV footprint），neural transport实际调用 package `prepare/sample/pdf/evaluate`。source reference仍调用对应 source family的权威实现，capture会把它记录为特殊请求而不虚构 runtime/material/package身份。

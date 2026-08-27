@@ -1,0 +1,7 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核对 source→runtime、identity、失败传播与跨层闭环"}
+{"file":".trellis/spec/project/research-execution.md","reason":"核对 formal evidence 没有被 smoke 或 observed quality 替代"}
+{"file":".trellis/spec/data/reference-and-corpus.md","reason":"核对 MaterialX authoritative live GT 与 GPU 数据流"}
+{"file":".trellis/spec/learning/pipeline-and-evaluation.md","reason":"核对 route、lifecycle、恢复、FP16 package 与报告 identity"}
+{"file":".trellis/spec/viewer/conventions.md","reason":"核对 neural PT/deferred 双 slot、capture 和单 slot 失败隔离"}
+{"file":".trellis/tasks/08-27-faithful-nvidia-neural-materials/research/current-fidelity-audit.md","reason":"回查任务开始时识别的每项不忠实偏差"}
+{"file":".trellis/tasks/08-27-faithful-nvidia-neural-materials/research/fp16-runtime-parity-calibration.md","reason":"核对 formal 前冻结的部署 parity oracle 与容差"}

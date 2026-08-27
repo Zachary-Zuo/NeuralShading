@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
+import time
 from typing import Any
 
 import torch
@@ -15,7 +17,12 @@ from ncls.core.material import (
     physical_material_hash,
     validate_material_program,
 )
-from ncls.data.batch_sources import LiveReferenceBatchSource, OfflineBatchSource
+from ncls.data.batch_sources import (
+    LiveReferenceBatchSource,
+    MaterialXLiveReferenceBatchSource,
+    OfflineBatchSource,
+)
+from ncls.data.training_batch import TrainingRouteRequest
 from ncls.learning.methods import get_method, method_descriptors
 from ncls.learning.training import TrainingConfig, TrainingRunner, load_checkpoint, save_checkpoint
 from ncls.source_materials.families.layer_stack import snapshot_from_layer_stack
@@ -115,17 +122,50 @@ def _batch_source(config: TrainingConfig):
         store = open_reference_store(Path(str(options["path"])))
         candidates = store.partition_indices(str(options["partition_policy"]), str(options["lifecycle_role"]))
         return OfflineBatchSource(store, candidates, device=config.device, seed=config.seed)
-    required = {"material_programs", "light_count", "samples_per_replica", "max_depth"}
-    if set(options) != required:
-        raise ValueError(f"live batch source options must be exactly {sorted(required)}")
-    programs = tuple(_load_program(Path(str(path))) for path in options["material_programs"])
-    stacks = tuple(canonicalize_layer_stack(program) for program in programs)
-    snapshots = tuple(snapshot_from_layer_stack(stack, metadata=program.metadata) for stack, program in zip(stacks, programs, strict=True))
-    return LiveReferenceBatchSource(
-        stacks, tuple(snapshot.snapshot_id for snapshot in snapshots),
-        light_count=int(options["light_count"]), samples_per_replica=int(options["samples_per_replica"]),
-        max_depth=int(options["max_depth"]), max_batch_size=config.batch_size,
-        seed=config.seed, device=config.device,
+    layer_stack_fields = {
+        "material_programs", "light_count", "samples_per_replica", "max_depth"
+    }
+    if set(options) == layer_stack_fields:
+        programs = tuple(_load_program(Path(str(path))) for path in options["material_programs"])
+        stacks = tuple(canonicalize_layer_stack(program) for program in programs)
+        snapshots = tuple(
+            snapshot_from_layer_stack(stack, metadata=program.metadata)
+            for stack, program in zip(stacks, programs, strict=True)
+        )
+        return LiveReferenceBatchSource(
+            stacks, tuple(snapshot.snapshot_id for snapshot in snapshots),
+            light_count=int(options["light_count"]),
+            samples_per_replica=int(options["samples_per_replica"]),
+            max_depth=int(options["max_depth"]),
+            max_batch_size=max(route.batch_size for route in config.routes),
+            seed=config.seed, device=config.device,
+        )
+    materialx_fields = {"materialx_asset_id", "query_tile_size"}
+    if set(options) == materialx_fields:
+        from ncls.data import CollectionConfig
+        from ncls.data.providers import MaterialXProvider, MaterialXProviderConfig
+
+        provider = MaterialXProvider(
+            CollectionConfig(
+                name="nvidia-neural-training", view_count=1, light_count=1,
+                spatial_sample_count=1, proposal="uniform", seed=config.seed,
+            ),
+            MaterialXProviderConfig(asset_ids=(str(options["materialx_asset_id"]),)),
+        )
+        states = tuple(provider.source_states())
+        if len(states) != 1:
+            provider.close()
+            raise RuntimeError("NVIDIA MaterialX training requires exactly one source snapshot")
+        return MaterialXLiveReferenceBatchSource(
+            provider,
+            states[0],
+            max_batch_size=max(route.batch_size for route in config.routes),
+            query_tile_size=int(options["query_tile_size"]),
+            seed=config.seed,
+            device=config.device,
+        )
+    raise ValueError(
+        "live batch source options must select the exact LayerStack or MaterialX contract"
     )
 
 
@@ -135,14 +175,88 @@ def _learn_list() -> int:
     return 0
 
 
-def _learn_train(config_path: Path, output: Path) -> int:
+def _learn_train(config_path: Path, output: Path, resume_path: Path | None) -> int:
     config = TrainingConfig.load(config_path)
     definition = get_method(config.method_key)
     source = _batch_source(config)
+    metrics_path = output.with_name(f"{output.stem}.metrics.jsonl")
+    summary_path = output.with_name(f"{output.stem}.summary.json")
+    metric_count = 0
+    started = time.perf_counter()
     try:
-        result = TrainingRunner(definition, source, config).run()
+        resume = (
+            load_checkpoint(resume_path, descriptor=definition.descriptor, map_location=config.device)
+            if resume_path is not None else None
+        )
+        retained_metric_lines: list[str] = []
+        if resume is not None and metrics_path.is_file():
+            for line in metrics_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                value = json.loads(line)
+                if float(value.get("step", -1)) <= resume.step:
+                    retained_metric_lines.append(
+                        json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+                    )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        metric_stream = metrics_path.open("w", encoding="utf-8", newline="\n")
+        for line in retained_metric_lines:
+            metric_stream.write(line + "\n")
+        metric_count = len(retained_metric_lines)
+
+        def record_metric(row) -> None:
+            nonlocal metric_count
+            payload = {
+                "record_kind": "validation" if "validation/loss" in row else "training",
+                "training_config_sha256": config.sha256,
+                **row,
+            }
+            metric_stream.write(
+                json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
+            )
+            metric_count += 1
+            if metric_count % 256 == 0:
+                metric_stream.flush()
+
+        def save_periodic(checkpoint) -> None:
+            metric_stream.flush()
+            path = output.with_name(
+                f"{output.stem}.step{checkpoint.step:08d}{output.suffix}"
+            )
+            save_checkpoint(path, checkpoint)
+
+        result = TrainingRunner(
+            definition,
+            source,
+            config,
+            checkpoint_callback=save_periodic,
+            metric_callback=record_metric,
+        ).run(resume=resume)
         digest = save_checkpoint(output, result.checkpoint)
+        metric_stream.flush()
+        metric_stream.close()
+        summary_path.write_text(
+            json.dumps(
+                {
+                    "schema_name": "ncls.training-run-summary",
+                    "schema_version": 1,
+                    "training_config_sha256": config.sha256,
+                    "checkpoint_sha256": digest,
+                    "checkpoint": output.name,
+                    "metrics": metrics_path.name,
+                    "metric_records": metric_count,
+                    "final_step": result.checkpoint.step,
+                    "elapsed_seconds": time.perf_counter() - started,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
     finally:
+        if "metric_stream" in locals() and not metric_stream.closed:
+            metric_stream.close()
         source.close()
     print(f"TrainingCheckpoint@2 {digest}: {output}")
     return 0
@@ -157,16 +271,31 @@ def _learn_evaluate(config_path: Path, checkpoint_path: Path, batches: int) -> i
     try:
         model = definition.create_trainable(config.model_context).to(source.device)
         definition.restore_training_state(model, checkpoint.model_state)
-        definition.configure_phase(model, "evaluator")
+        definition.configure_lifecycle(model, checkpoint.lifecycle_state)
         model.eval()
         with torch.no_grad():
-            for _ in range(batches):
-                batch = source.next_batch(config.batch_size)
+            for index in range(batches):
+                route_batches = {}
                 try:
-                    loss, _ = definition.training_objective(model, batch, "evaluator")
+                    for route in config.routes:
+                        request = TrainingRouteRequest(
+                            f"evaluation:{route.name}", route.batch_size,
+                            route.direction_count, checkpoint.step, route.query_role,
+                            config.seed + route.seed_offset + index, {
+                                **dict(route.options),
+                                "filtering": dict(config.filtering),
+                                "mollification": dict(config.mollification),
+                                "validation": True,
+                            },
+                        )
+                        route_batches[route.name] = source.next_batch(request)
+                    loss, _ = definition.training_objective(
+                        model, route_batches, checkpoint.lifecycle_state
+                    )
                     losses.append(float(loss))
                 finally:
-                    batch.release()
+                    for batch in reversed(tuple(route_batches.values())):
+                        batch.release()
     finally:
         source.close()
     print(f"Evaluation batches={batches} mean_loss={sum(losses) / len(losses):.9g}")
@@ -177,10 +306,53 @@ def _learn_export(checkpoint_path: Path, source_path: Path, output: Path) -> int
     checkpoint = load_checkpoint(checkpoint_path)
     definition = get_method(checkpoint.method_key)
     checkpoint.validate_method(definition.descriptor)
-    program = _load_program(source_path)
-    snapshot = snapshot_from_layer_stack(canonicalize_layer_stack(program), metadata=program.metadata)
+    source_family = str(checkpoint.source_contracts[0].get("family_id", ""))
+    provider = None
+    if source_family == "ncls.layer-stack@1":
+        program = _load_program(source_path)
+        snapshot = snapshot_from_layer_stack(
+            canonicalize_layer_stack(program), metadata=program.metadata
+        )
+    elif source_family == "materialx.document@1.39.4":
+        from ncls.data import CollectionConfig
+        from ncls.data.providers import MaterialXProvider, MaterialXProviderConfig
+
+        options = checkpoint.training_config.get("batch_source", {}).get("options", {})
+        asset_id = str(options.get("materialx_asset_id", ""))
+        if not asset_id:
+            raise ValueError("MaterialX checkpoint has no materialx_asset_id provenance")
+        provider = MaterialXProvider(
+            CollectionConfig(
+                name="nvidia-neural-export", view_count=1, light_count=1,
+                spatial_sample_count=1, proposal="uniform",
+                seed=int(checkpoint.training_config.get("seed", 0)),
+            ),
+            MaterialXProviderConfig(asset_ids=(asset_id,)),
+        )
+        states = tuple(provider.source_states())
+        if len(states) != 1:
+            provider.close()
+            raise RuntimeError("MaterialX export requires exactly one source snapshot")
+        snapshot = states[0].snapshot
+        runtime_source = (
+            provider.provider_config.asset_root
+            / states[0].runtime_state.source.document_uri
+        ).resolve()
+        if source_path.resolve() != runtime_source:
+            provider.close()
+            raise ValueError(
+                f"MaterialX export source must be the trained document: {runtime_source}"
+            )
+    else:
+        raise ValueError(f"unsupported checkpoint source family for export: {source_family}")
+    if snapshot.snapshot_id not in checkpoint.source_state_ids:
+        if provider is not None:
+            provider.close()
+        raise ValueError("export source snapshot does not occur in the checkpoint")
     runtime = definition.compile_runtime(checkpoint.to_payload())
     material = definition.compile_material(snapshot, checkpoint.to_payload())
+    validation = dict(definition.package_validation(snapshot, checkpoint.to_payload()))
+    validation["checkpoint_step"] = checkpoint.step
     manifest = write_scattering_package(
         output,
         program_kind="method", program_key=definition.descriptor.method_key,
@@ -188,9 +360,11 @@ def _learn_export(checkpoint_path: Path, source_path: Path, output: Path) -> int
         program_descriptor_sha256=definition.descriptor.descriptor_sha256,
         runtime_abi=definition.descriptor.runtime_abi,
         source=snapshot, runtime=runtime, material=material,
-        validation={"status": "unverified", "checkpoint_step": checkpoint.step},
+        validation=validation,
         provenance={"checkpoint_sha256": checkpoint_path.with_suffix(checkpoint_path.suffix + ".sha256").read_text(encoding="ascii").strip()},
     )
+    if provider is not None:
+        provider.close()
     print(f"ScatteringPackage@1 {manifest.package_id}: {output}")
     return 0
 
@@ -234,6 +408,7 @@ def build_parser() -> argparse.ArgumentParser:
     learn_commands.add_parser("list", help="列出产品 MethodDefinition")
     train = learn_commands.add_parser("train", help="运行统一 TrainingRunner")
     train.add_argument("config", type=Path); train.add_argument("output", type=Path)
+    train.add_argument("--resume", type=Path)
     evaluate = learn_commands.add_parser("evaluate", help="评测 TrainingCheckpoint@2")
     evaluate.add_argument("config", type=Path); evaluate.add_argument("checkpoint", type=Path); evaluate.add_argument("--batches", type=int, default=8)
     export = learn_commands.add_parser("export", help="把 checkpoint 编译为 ScatteringPackage@1")
@@ -257,7 +432,7 @@ def main(argv: list[str] | None = None) -> int:
         ("data", "validate-corpus"): lambda: _data_validate_corpus(args.path),
         ("data", "audit-dense"): lambda: _data_audit_dense(args.path, args.output),
         ("learn", "list"): _learn_list,
-        ("learn", "train"): lambda: _learn_train(args.config, args.output),
+        ("learn", "train"): lambda: _learn_train(args.config, args.output, args.resume),
         ("learn", "evaluate"): lambda: _learn_evaluate(args.config, args.checkpoint, args.batches),
         ("learn", "export"): lambda: _learn_export(args.checkpoint, args.source, args.output),
         ("package", "validate"): lambda: _package_validate(args.path),

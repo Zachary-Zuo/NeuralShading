@@ -1,0 +1,10 @@
+{"file":".trellis/spec/project/index.md","reason":"项目级开发入口与分层检查清单"}
+{"file":".trellis/spec/project/unified-pipeline.md","reason":"统一 source、batch、method、checkpoint、package、viewer 数据流合同"}
+{"file":".trellis/spec/project/research-execution.md","reason":"prior-art functional reproduction 的 formal freeze、长跑与结果边界"}
+{"file":".trellis/spec/project/method-constraints.md","reason":"方法运行成本与统一 MethodDefinition 接入约束"}
+{"file":".trellis/spec/data/reference-and-corpus.md","reason":"live reference、source-native spatial payload 与 GT 语义"}
+{"file":".trellis/spec/learning/index.md","reason":"learning 层开发前与质量检查清单"}
+{"file":".trellis/spec/learning/pipeline-and-evaluation.md","reason":"NVIDIA lifecycle、checkpoint 与 package 部署规则"}
+{"file":".trellis/spec/viewer/index.md","reason":"viewer 层开发前与质量检查清单"}
+{"file":".trellis/spec/viewer/conventions.md","reason":"ComparisonSlot、PT/deferred 与 capture 合同"}
+{"file":".trellis/tasks/08-27-faithful-nvidia-neural-materials/research/correspondence.md","reason":"论文到实现、测试与 adaptation 的逐项对应"}

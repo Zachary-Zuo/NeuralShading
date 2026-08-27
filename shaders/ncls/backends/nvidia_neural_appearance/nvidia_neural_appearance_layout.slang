@@ -1,4 +1,4 @@
-// Generated from src/ncls/learning/abi/nvidia_neural_appearance_layout_v1.json; do not edit.
+// Generated from src/ncls/learning/abi/nvidia_neural_appearance_layout_v2.json; do not edit.
 #ifndef NCLS_NVIDIA_NEURAL_APPEARANCE_LAYOUT_SLANG
 #define NCLS_NVIDIA_NEURAL_APPEARANCE_LAYOUT_SLANG
 

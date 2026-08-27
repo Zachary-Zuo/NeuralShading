@@ -22,16 +22,12 @@ target_sources(NclsViewer PRIVATE
     shaders/Composite.cs.slang
     shaders/Denoise.cs.slang
     shaders/PackageBackend.slang
+    shaders/PackagePathTracer.cs.slang
     shaders/SceneVisibility.3d.slang
     shaders/PackageParity.cs.slang
     shaders/Prepare.cs.slang
     shaders/ReferencePathTracer.cs.slang
     shaders/ViewerCommon.slang
-    "${NCLS_PROJECT_ROOT}/shaders/ncls/backends/nvidia_neural_appearance/nvidia_neural_appearance.slang"
-    "${NCLS_PROJECT_ROOT}/shaders/ncls/backends/nvidia_neural_appearance/nvidia_neural_appearance_core.slang"
-    "${NCLS_PROJECT_ROOT}/shaders/ncls/backends/nvidia_neural_appearance/nvidia_neural_appearance_layout.slang"
-    "${NCLS_PROJECT_ROOT}/shaders/ncls/backends/nvidia_neural_appearance/nvidia_neural_appearance_mlp.slang"
-    "${NCLS_PROJECT_ROOT}/shaders/ncls/backends/nvidia_neural_appearance/nvidia_neural_appearance_pack.slang"
     "${NCLS_PROJECT_ROOT}/shaders/ncls/contracts/layer_stack_ir.slang"
     "${NCLS_PROJECT_ROOT}/shaders/ncls/contracts/response_measure.slang"
     "${NCLS_PROJECT_ROOT}/shaders/ncls/contracts/scattering_backend.slang"

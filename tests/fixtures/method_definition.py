@@ -28,8 +28,14 @@ class ContractFixtureMethod(MethodDefinition):
         del context
         return torch.nn.Linear(3, 3)
 
-    def training_objective(self, model: torch.nn.Module, batch: TrainingBatch, phase: str):
-        del phase
+    def training_objective(
+        self,
+        model: torch.nn.Module,
+        batches: Mapping[str, TrainingBatch],
+        lifecycle: Mapping[str, Any],
+    ):
+        del lifecycle
+        batch = next(iter(batches.values()))
         prediction = model(batch.tensors["wi"])
         loss = torch.mean(torch.abs(prediction - batch.tensors["target"]))
         return loss, {"l1": loss.detach()}

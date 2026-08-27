@@ -9,6 +9,7 @@ from ncls.core.scattering import MaterialPayload, RuntimePayload
 from ncls.core.source import SourceSnapshot
 
 from .manifest import FORMAT_NAME, FORMAT_VERSION, ScatteringPackageManifest
+from .typed_texture import validate_typed_resource
 
 
 def _typed_descriptor(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -75,6 +76,7 @@ def write_scattering_package(
             "dtype": "uint8", "shape": [len(payload)], "stride": 1,
             "alignment": 1, "usage": "source-resource",
         })
+        validate_typed_resource(payload, descriptor)
         material_resources[logical] = _typed_descriptor(descriptor)
     documents = (
         ("provenance/source", "provenance/source.json", source.to_identity_dict()),

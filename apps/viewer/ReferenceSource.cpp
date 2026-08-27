@@ -646,7 +646,7 @@ const char* ReferenceSource::familyId() const
     case ReferenceFamily::LayerStack: return "ncls.layer-stack@1";
     case ReferenceFamily::Merl: return "merl.measured-brdf@1";
     case ReferenceFamily::OpenPbr: return "openpbr.surface@1.1.1";
-    case ReferenceFamily::MaterialX: return "materialx.textured-surface@1";
+    case ReferenceFamily::MaterialX: return "materialx.document@1.39.4";
     }
     return "unknown";
 }
@@ -812,12 +812,12 @@ ReferenceSource deserializeReferenceSourceState(
         else throw std::runtime_error("viewer scene OpenPBR color space is unsupported: " + colorSpace);
         applyOpenPbrParameterValues(source, document.at("parameters"));
     }
-    else if (familyId == "materialx.textured-surface@1" || familyId == "merl.measured-brdf@1")
+    else if (familyId == "materialx.document@1.39.4" || familyId == "merl.measured-brdf@1")
     {
         if (sourcePath.empty() || !std::filesystem::is_regular_file(sourcePath))
             throw std::runtime_error("viewer scene resource-backed source is missing: " + sourcePath.string());
         source = loadReferenceSource(sourcePath);
-        const ReferenceFamily expectedFamily = familyId == "materialx.textured-surface@1"
+        const ReferenceFamily expectedFamily = familyId == "materialx.document@1.39.4"
             ? ReferenceFamily::MaterialX : ReferenceFamily::Merl;
         if (source.family != expectedFamily)
             throw std::runtime_error("viewer scene source URI resolved to another family: " + sourcePath.string());

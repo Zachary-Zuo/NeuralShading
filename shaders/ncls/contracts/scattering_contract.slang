@@ -66,6 +66,7 @@ struct NclsScatteringContext
     float3 woWorld;
     uint transportMode;
     uint componentMask;
+    float filterRandom;
 };
 
 struct NclsScatteringPdf

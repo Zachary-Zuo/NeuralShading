@@ -10,6 +10,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 from PIL import Image
 import pyexr
+import torch
 
 from ncls.data.collector import CollectionConfig
 from ncls.data.contract import EvaluatedBlock, PositionKind, QueryPlan, QueryRole, ReferenceDescriptor, SourceState, SurfaceSample
@@ -41,6 +42,132 @@ class _MaterialXRuntimeState:
     metalness: Path | None
     normal: Path | None
     displacement: Path | None
+
+
+@dataclass
+class _MaterialXGpuQuerySlot:
+    views: object
+    lights: object
+    uv: object
+    gradients: object
+    output: object
+    output_tensor: torch.Tensor
+
+
+class MaterialXGpuQueryRuntime:
+    """MaterialX flat query runtime；output以Falcor/CUDA shared tensor交给训练。"""
+
+    def __init__(
+        self,
+        provider: "MaterialXProvider",
+        state: SourceState,
+        *,
+        query_capacity: int,
+        slot_count: int = 2,
+    ) -> None:
+        if query_capacity < 1 or slot_count < 2:
+            raise ValueError("MaterialX GPU runtime requires positive capacity and at least two slots")
+        self.provider = provider
+        self.state = state
+        self.query_capacity = int(query_capacity)
+        self.falcor, self.device, self.compute = provider._runtime()
+        runtime: _MaterialXRuntimeState = state.runtime_state
+        self.inputs = structured_buffer(self.device, self.falcor, runtime.inputs, 4)
+        self.textures = (
+            provider._texture(runtime.base_color, "base-color"),
+            provider._texture(runtime.roughness, "roughness"),
+            provider._texture(runtime.metalness, "metalness"),
+            provider._texture(runtime.normal, "normal"),
+        )
+        self.sampler = self.device.create_sampler(max_anisotropy=16)
+        self.slots = tuple(self._slot() for _ in range(slot_count))
+
+    def _buffer(self, *, writable: bool = False):
+        flags = (
+            self.falcor.ResourceBindFlags.ShaderResource
+            | self.falcor.ResourceBindFlags.Shared
+        )
+        if writable:
+            flags |= self.falcor.ResourceBindFlags.UnorderedAccess
+        return self.device.create_structured_buffer(
+            struct_size=16,
+            element_count=self.query_capacity,
+            bind_flags=flags,
+        )
+
+    def _slot(self) -> _MaterialXGpuQuerySlot:
+        views = self._buffer()
+        lights = self._buffer()
+        uv = self._buffer()
+        gradients = self._buffer()
+        output = self._buffer(writable=True)
+        shape = [self.query_capacity, 4]
+        return _MaterialXGpuQuerySlot(
+            views,
+            lights,
+            uv,
+            gradients,
+            output,
+            output.to_torch(shape, self.falcor.float32),
+        )
+
+    @staticmethod
+    def _query_input(
+        values: torch.Tensor | np.ndarray,
+        count: int,
+        channels: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        source = torch.as_tensor(
+            values, dtype=torch.float32, device=device
+        )
+        if source.ndim != 2 or source.shape != (count, channels):
+            raise ValueError("MaterialX query input shape exceeds runtime capacity")
+        result = torch.zeros((count, 4), dtype=torch.float32, device=device)
+        result[:, :channels].copy_(source)
+        return result
+
+    def evaluate_torch(
+        self,
+        slot_index: int,
+        views: torch.Tensor | np.ndarray,
+        lights: torch.Tensor | np.ndarray,
+        uv: torch.Tensor | np.ndarray,
+        gradients: torch.Tensor | np.ndarray,
+    ) -> torch.Tensor:
+        count = len(views)
+        if not 1 <= count <= self.query_capacity or any(
+            len(values) != count for values in (lights, uv, gradients)
+        ):
+            raise ValueError("MaterialX flat query arrays must be nonempty and aligned")
+        slot = self.slots[slot_index]
+        device = slot.output_tensor.device
+        slot.views.from_torch(self._query_input(views, count, 3, device))
+        slot.lights.from_torch(self._query_input(lights, count, 3, device))
+        slot.uv.from_torch(self._query_input(uv, count, 2, device))
+        slot.gradients.from_torch(self._query_input(gradients, count, 4, device))
+        self.device.render_context.wait_for_cuda()
+        self.compute.globals.gInputs = self.inputs
+        (
+            self.compute.globals.gBaseColor,
+            self.compute.globals.gRoughness,
+            self.compute.globals.gMetalness,
+            self.compute.globals.gNormalMap,
+        ) = self.textures
+        self.compute.globals.gMaterialSampler = self.sampler
+        self.compute.globals.gViews = slot.views
+        self.compute.globals.gLights = slot.lights
+        self.compute.globals.gUv = slot.uv
+        self.compute.globals.gUvGrad = slot.gradients
+        self.compute.globals.gOutput = slot.output
+        self.compute.globals.gQueryCount = count
+        self.compute.execute(threads_x=count)
+        self.device.render_context.wait_for_falcor()
+        return slot.output_tensor[:count, :3]
+
+    def close(self) -> None:
+        self.slots = ()
+        self.textures = ()
 
 
 def _value3(text: str) -> tuple[float, float, float]:

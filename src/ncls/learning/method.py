@@ -11,6 +11,7 @@ from ncls.core.identity import require_sha256, sha256_json
 from ncls.core.scattering import MaterialPayload, RuntimePayload
 from ncls.core.source import SourceEditResult, SourceSnapshot
 from ncls.data.training_batch import TrainingBatch
+from ncls.data.native_features import NativeFeaturePyramid
 
 
 AdaptationAction = Literal["unchanged", "runtime-patch", "recompile", "unsupported"]
@@ -145,8 +146,8 @@ class MethodDefinition(ABC):
     def training_objective(
         self,
         model: nn.Module,
-        batch: TrainingBatch,
-        phase: str,
+        batches: Mapping[str, TrainingBatch],
+        lifecycle: Mapping[str, Any],
     ) -> tuple[torch.Tensor, Mapping[str, torch.Tensor | float]]:
         raise NotImplementedError
 
@@ -170,11 +171,31 @@ class MethodDefinition(ABC):
     ) -> MaterialPayload:
         raise NotImplementedError
 
+    def package_validation(
+        self,
+        snapshot: SourceSnapshot,
+        checkpoint: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        """返回随包冻结、供部署端执行的方法专属验证合同。"""
+
+        del snapshot, checkpoint
+        return {"status": "unverified"}
+
     def classify_edit(self, snapshot: SourceSnapshot, edit: SourceEditResult) -> AdaptationAction:
         return self.descriptor.adaptation_contract(snapshot).classify(edit)
 
-    def configure_phase(self, model: nn.Module, phase: str) -> None:
-        if phase not in {"evaluator", "joint", "sampler"}:
-            raise ValueError(f"unsupported training phase {phase!r}")
+    def validate_training_config(self, config: Mapping[str, Any]) -> None:
+        del config
+
+    def configure_lifecycle(self, model: nn.Module, lifecycle: Mapping[str, Any]) -> None:
+        del lifecycle
         for parameter in model.parameters():
             parameter.requires_grad_(True)
+
+    def materialize_latent(
+        self,
+        model: nn.Module,
+        native_feature_pyramid: NativeFeaturePyramid,
+    ) -> None:
+        del model, native_feature_pyramid
+        raise RuntimeError("method does not implement a latent materialization transition")

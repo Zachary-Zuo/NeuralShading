@@ -251,11 +251,24 @@ float nclsNvidiaNeuralSamplerPdf(
 NclsDirectionalSample nclsSampleNvidiaNeuralSampler(
     float raw[NCLS_NVIDIA_NEURAL_SAMPLER_RAW_COUNT],
     float3 projectWo,
-    float3 u,
+    float2 u,
     out uint component)
 {
     return nclsSampleNvidiaProposal(
         nclsDecodeNvidiaProposal(raw), projectWo, u, component);
+}
+
+float4 nclsNvidiaNeuralSamplerSample(
+    float raw[NCLS_NVIDIA_NEURAL_SAMPLER_RAW_COUNT],
+    float3 projectWo,
+    float2 u)
+{
+    uint component;
+    const NclsDirectionalSample sample = nclsSampleNvidiaNeuralSampler(
+        raw, projectWo, u, component);
+    return sample.valid != 0u && sample.nullEvent == 0u
+        ? float4(sample.direction, 1.0f)
+        : float4(0.0f, 0.0f, 1.0f, 0.0f);
 }
 
 [Differentiable]
@@ -346,7 +359,7 @@ float nclsNvidiaNeuralPreparedPdf(
 NclsDirectionalSample nclsSampleNvidiaNeuralPrepared(
     NclsNvidiaNeuralPrepared prepared,
     float3 projectWo,
-    float3 u,
+    float2 u,
     out uint component)
 {
     return nclsSampleNvidiaNeuralSampler(

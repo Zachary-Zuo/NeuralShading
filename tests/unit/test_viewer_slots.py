@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from ncls.viewer import ComparisonSlot, SlotMode, SlotStatus, panel_extents
 
 
@@ -18,3 +20,17 @@ def test_slot_failure_never_changes_peer_or_extent():
     )
     assert failed.status == SlotStatus.UNSUPPORTED and peer.status == SlotStatus.EMPTY
     assert panel_extents(801, 600)[0][2:] == panel_extents(801, 600)[1][2:]
+
+
+def test_package_path_tracer_uses_package_prepare_evaluate_pdf_and_sample() -> None:
+    source = Path("apps/viewer/shaders/PackagePathTracer.cs.slang").read_text(
+        encoding="utf-8"
+    )
+    for call in (
+        "backend.prepare(context, material)",
+        "state.evaluate(wiWorld, sampleGenerator)",
+        "state.pdf(lightWorld)",
+        "state.sample(scatter, sampleGenerator)",
+    ):
+        assert call in source
+    assert "ReferencePathTracer.cs.slang" not in source

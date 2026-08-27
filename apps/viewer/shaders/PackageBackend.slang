@@ -26,6 +26,10 @@ NclsScatteringContext nclsViewerMethodContext(
     float3 normal,
     float3 tangent,
     float3 woWorld,
+    float2 uv,
+    float2 uvDx,
+    float2 uvDy,
+    float filterRandom,
     uint materialId)
 {
     NclsScatteringContext result = {};
@@ -34,13 +38,16 @@ NclsScatteringContext nclsViewerMethodContext(
     result.surface.shadingFrame.normal = normal;
     result.surface.shadingFrame.tangent = tangent;
     result.surface.shadingFrame.bitangent = cross(normal, tangent);
+    result.surface.uv = uv;
+    result.surface.uvDx = uvDx;
+    result.surface.uvDy = uvDy;
     result.surface.materialInstanceId = materialId;
     result.surface.frontFacing = 1u;
     result.woWorld = woWorld;
     result.transportMode = (uint)NclsTransportMode::Radiance;
     result.componentMask = (uint)NclsScatteringEvent::Reflection;
+    result.filterRandom = filterRandom;
     return result;
 }
 
 #endif
-

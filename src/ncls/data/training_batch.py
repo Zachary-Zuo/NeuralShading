@@ -19,6 +19,26 @@ REQUIRED_TRAINING_TENSORS = (
 )
 
 
+@dataclass(frozen=True)
+class TrainingRouteRequest:
+    """一次命名训练 query stream 请求；runner 与 producer 都不解释方法名称。"""
+
+    name: str
+    batch_size: int
+    direction_count: int
+    global_step: int
+    query_role: int
+    seed: int
+    options: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.name or self.batch_size < 1 or self.direction_count < 1:
+            raise ValueError("training route identity and sizes must be positive")
+        if self.global_step < 0 or self.query_role < 0 or self.seed < 0:
+            raise ValueError("training route step, role and seed must be nonnegative")
+        object.__setattr__(self, "options", dict(self.options))
+
+
 class BatchLease(Protocol):
     def release(self) -> None: ...
 
@@ -69,13 +89,46 @@ class TrainingBatch:
                 raise ValueError(f"TrainingBatch {name} must have shape {tuple(scalar_shape)}")
         if tensors["query_role"].shape != (batch_size,):
             raise ValueError("TrainingBatch query_role must have shape [batch]")
+        spatial_shapes = {
+            "uv": (batch_size, 2),
+            "uv_dx": (batch_size, 2),
+            "uv_dy": (batch_size, 2),
+            "mip_level": (batch_size,),
+        }
+        for name, shape in spatial_shapes.items():
+            if name in tensors and tensors[name].shape != shape:
+                raise ValueError(f"TrainingBatch {name} must have shape {shape}")
+        if "native_features" in tensors:
+            native_features = tensors["native_features"]
+            if native_features.ndim != 2 or native_features.shape[0] != batch_size:
+                raise ValueError("TrainingBatch native_features must have shape [batch, feature]")
+            if not isinstance(self.provenance.get("native_feature_layout_id"), str):
+                raise ValueError("TrainingBatch native features require a layout identity in provenance")
+        if "sample_u" in tensors and tensors["sample_u"].shape != (batch_size, 2):
+            raise ValueError("TrainingBatch sample_u must have shape [batch, 2]")
         floating = ("wo", "wi", "target", "solid_angle_weight", "reference_pdf")
-        if any(not bool(torch.isfinite(tensors[name]).all()) for name in floating):
-            raise ValueError("TrainingBatch floating tensors must be finite")
-        if torch.any(tensors["reference_pdf"] < 0) or torch.any(tensors["solid_angle_weight"] < 0):
-            raise ValueError("TrainingBatch weights and PDF must be nonnegative")
-        if torch.any(tensors["sample_count"] < 1):
-            raise ValueError("TrainingBatch sample_count must be positive")
+        optional_floating = tuple(
+            name for name in ("uv", "uv_dx", "uv_dy", "mip_level", "native_features", "sample_u")
+            if name in tensors
+        )
+        value_checks = torch.stack(
+            tuple(
+                torch.isfinite(tensors[name]).all()
+                for name in floating + optional_floating
+            )
+            + (
+                torch.all(tensors["reference_pdf"] >= 0),
+                torch.all(tensors["solid_angle_weight"] >= 0),
+                torch.all(tensors["sample_count"] >= 1),
+            )
+        ).all()
+        if value_checks.device.type == "cuda":
+            # live producer的数值不回读host；shape/dtype/device仍在CPU同步拒绝。
+            torch._assert_async(value_checks)
+        elif not bool(value_checks):
+            raise ValueError(
+                "TrainingBatch floating values, weights, PDF or sample counts are invalid"
+            )
         object.__setattr__(self, "source_state_ids", tuple(self.source_state_ids))
         object.__setattr__(self, "tensors", tensors)
         object.__setattr__(self, "provenance", dict(self.provenance))

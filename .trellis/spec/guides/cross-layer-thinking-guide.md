@@ -121,6 +121,16 @@ After implementation:
 - [ ] Checked that derived state points back to the source event identifier
       (`seq`, `id`, `version`) instead of inventing a second cursor
 
+## External GPU Runtime Boundary
+
+当一个 logical batch 跨越 PyTorch/CUDA 与 Falcor/D3D12 时，同步 fence 只解决读写顺序，不能替代 runtime 的 frame 生命周期：
+
+- 先画出 `CUDA producer → wait_for_cuda → Falcor dispatch → wait_for_falcor → CUDA consumer`，并标明 buffer 所有权和 lease 释放点。
+- 使用 runtime 官方支持的传输入口，不把可映射 shared memory 等同于可无限期原地覆写的稳定 API。
+- 把 `end_frame()` 放在全部 route lease 释放后的 iteration 边界；tiled dispatch 是同一 frame 内的实现细节。
+- 除数值 parity 外，增加跨越多个 iteration 的完整 forward/backward/optimizer soak；单 kernel 或少量 dispatch 只能证明局部互操作。
+- 长跑若在 semaphore/command-buffer 交接点失败，先检查 frame rotation、deferred release、transient heap 与 shared-buffer transfer path，再把它归因于模型或上游驱动。
+
 ---
 
 ## Cross-Platform Template Consistency

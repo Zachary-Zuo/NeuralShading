@@ -7,6 +7,7 @@ from typing import Any
 from ncls.core.identity import sha256_file
 
 from .manifest import ScatteringPackageManifest
+from .typed_texture import validate_typed_resource
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,9 @@ class ScatteringPackage:
                 raise ValueError(f"ScatteringPackage content is missing: {uri}")
             if verify_hashes and sha256_file(target) != expected:
                 raise ValueError(f"ScatteringPackage content hash mismatch: {uri}")
+        for logical_name, descriptor in manifest.material["resources"].items():
+            resource_path = path / manifest.files[logical_name]
+            validate_typed_resource(resource_path.read_bytes(), descriptor)
         return cls(path, manifest)
 
     def file(self, logical_name: str) -> Path:

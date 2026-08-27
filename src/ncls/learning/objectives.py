@@ -1,37 +1,26 @@
 from __future__ import annotations
 
-import math
-
 import torch
 
 
-def sampler_cross_entropy(
-    evaluator_f: torch.Tensor,
-    wi: torch.Tensor,
-    solid_angle_weight: torch.Tensor,
+def sampler_forward_kl_score(
+    evaluator_response_cos: torch.Tensor,
     proposal_pdf: torch.Tensor,
+    valid: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """对 evaluator 能量分布计算 matched sampler 的 cross entropy。"""
+    """论文 sampler 自采样的 forward-KL score-function Monte Carlo estimator。"""
 
-    cosine = torch.clamp(wi[..., 2], min=0.0)
     luminance = (
-        0.2126 * evaluator_f[..., 0]
-        + 0.7152 * evaluator_f[..., 1]
-        + 0.0722 * evaluator_f[..., 2]
+        0.2126 * evaluator_response_cos[..., 0]
+        + 0.7152 * evaluator_response_cos[..., 1]
+        + 0.0722 * evaluator_response_cos[..., 2]
     )
-    energy = torch.clamp(luminance * cosine, min=0.0)
-    weighted_mass = energy * solid_angle_weight
-    normalization = weighted_mass.sum(dim=1, keepdim=True)
-    cosine_mass = cosine / math.pi * solid_angle_weight
-    cosine_mass = cosine_mass / torch.clamp(cosine_mass.sum(dim=1, keepdim=True), min=1e-12)
-    target_mass = torch.where(
-        normalization > 1e-12,
-        weighted_mass / torch.clamp(normalization, min=1e-12),
-        cosine_mass,
-    ).detach()
-    cross_entropy = -(target_mass * torch.log(torch.clamp(proposal_pdf, min=1e-12))).sum(dim=1)
-    target_entropy = -(target_mass * torch.log(torch.clamp(target_mass, min=1e-12))).sum(dim=1)
-    return cross_entropy.mean(), (cross_entropy - target_entropy).mean()
+    safe_pdf = torch.clamp(proposal_pdf, min=1e-12)
+    target = torch.clamp(luminance, min=0.0).detach()
+    integrand = -target * torch.log(safe_pdf) / safe_pdf.detach()
+    finite = valid & torch.isfinite(integrand) & (proposal_pdf > 0.0)
+    loss = torch.where(finite, integrand, torch.zeros_like(integrand)).mean()
+    return loss, finite.to(torch.float32).mean()
 
 
-__all__ = ["sampler_cross_entropy"]
+__all__ = ["sampler_forward_kl_score"]

@@ -7,6 +7,8 @@ Texture2D<float4> gNormal;
 Texture2D<float4> gTangent;
 Texture2D<float4> gViewDirection;
 Texture2D<uint> gMaterialId;
+Texture2D<float4> gTexCoord;
+Texture2D<float4> gTexCoordGrad;
 RWStructuredBuffer<NclsMethodPackedState> gStates;
 
 cbuffer PrepareCB
@@ -31,9 +33,13 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         const float3 normal = normalize(gNormal[pixel].xyz);
         const float3 tangent = normalize(gTangent[pixel].xyz);
         const float3 woWorld = normalize(gViewDirection[pixel].xyz);
+        const float2 uv = gTexCoord[pixel].xy;
+        const float4 uvGrad = gTexCoordGrad[pixel];
         const NclsScatteringContext context = nclsViewerMethodContext(
-            position, normal, tangent, woWorld, gTargetMaterialId);
-        const NclsPackageBackend backend = nclsCreatePackageBackend(gSharedWeights);
+            position, normal, tangent, woWorld,
+            uv, uvGrad.xy, uvGrad.zw, nclsViewerHashFloat(index),
+            gTargetMaterialId);
+        const NclsPackageBackend backend = nclsCreatePackageBackend();
         state = nclsPackMethodState(backend.prepare(
             context, gCompiledMaterials[gCompiledMaterialIndex]));
     }

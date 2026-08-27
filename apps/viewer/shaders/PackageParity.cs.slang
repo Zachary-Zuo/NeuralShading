@@ -1,7 +1,5 @@
 #include "PackageBackend.slang"
 
-StructuredBuffer<uint> gSharedWeights;
-StructuredBuffer<NclsMethodCompiledMaterial> gCompiledMaterials;
 StructuredBuffer<float4> gViews;
 StructuredBuffer<float4> gLights;
 RWStructuredBuffer<float4> gOutput;
@@ -17,12 +15,13 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     const float3 light = normalize(gLights[index].xyz);
     const NclsScatteringContext context = nclsViewerMethodContext(
         float3(0.0f), float3(0.0f, 0.0f, 1.0f),
-        float3(1.0f, 0.0f, 0.0f), view, 0u);
-    const NclsPackageBackend backend = nclsCreatePackageBackend(gSharedWeights);
-    const NclsMethodState state = backend.prepare(
-        context, gCompiledMaterials[gCompiledMaterialIndex]);
+        float3(1.0f, 0.0f, 0.0f), view,
+        float2(0.0f), float2(0.0f), float2(0.0f),
+        nclsViewerHashFloat(index + 1u), 0u);
+    const NclsPackageBackend backend = nclsCreatePackageBackend();
+    const NclsPackageState state = backend.prepare(
+        context, nclsLoadPackageMaterial(gCompiledMaterialIndex));
     NclsViewerSampleGenerator sampleGenerator = {index + 1u};
     gOutput[index] = float4(nclsScatteringEvalToResponseCos(
         state.evaluate(light, sampleGenerator), context.surface.shadingFrame, light), 1.0f);
 }
-

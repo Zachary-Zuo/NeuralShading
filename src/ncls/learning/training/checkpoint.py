@@ -29,6 +29,9 @@ class TrainingCheckpoint:
     scheduler_state: Mapping[str, Any] = field(default_factory=dict)
     scaler_state: Mapping[str, Any] = field(default_factory=dict)
     rng_state: Mapping[str, Any] = field(default_factory=dict)
+    lifecycle_state: Mapping[str, Any] = field(default_factory=dict)
+    batch_source_state: Mapping[str, Any] = field(default_factory=dict)
+    validation_state: Mapping[str, Any] = field(default_factory=dict)
     format_name: str = "ncls.training-checkpoint"
     format_version: int = 2
 
@@ -41,7 +44,7 @@ class TrainingCheckpoint:
         require_sha256("training_config_sha256", self.training_config_sha256)
         if sha256_json(self.training_config) != self.training_config_sha256:
             raise ValueError("TrainingCheckpoint training config hash mismatch")
-        if self.step < 0 or self.phase not in {"evaluator", "joint", "sampler", "complete"}:
+        if self.step < 0 or self.phase not in {"bootstrap", "finetune", "complete"}:
             raise ValueError("TrainingCheckpoint step or phase is invalid")
         if not self.source_contracts or not self.source_state_ids:
             raise ValueError("TrainingCheckpoint source contracts and state IDs are required")
@@ -61,6 +64,9 @@ class TrainingCheckpoint:
         object.__setattr__(self, "scheduler_state", dict(self.scheduler_state))
         object.__setattr__(self, "scaler_state", dict(self.scaler_state))
         object.__setattr__(self, "rng_state", dict(self.rng_state))
+        object.__setattr__(self, "lifecycle_state", dict(self.lifecycle_state))
+        object.__setattr__(self, "batch_source_state", dict(self.batch_source_state))
+        object.__setattr__(self, "validation_state", dict(self.validation_state))
 
     def validate_method(self, descriptor: MethodDescriptor) -> None:
         if descriptor.method_key != self.method_key or descriptor.descriptor_sha256 != self.method_descriptor_sha256:
@@ -95,6 +101,9 @@ class TrainingCheckpoint:
             "selection_evidence": dict(self.selection_evidence), "model_state": dict(self.model_state),
             "optimizer_state": dict(self.optimizer_state), "scheduler_state": dict(self.scheduler_state),
             "scaler_state": dict(self.scaler_state), "rng_state": dict(self.rng_state),
+            "lifecycle_state": dict(self.lifecycle_state),
+            "batch_source_state": dict(self.batch_source_state),
+            "validation_state": dict(self.validation_state),
         }
 
     @classmethod
@@ -104,7 +113,8 @@ class TrainingCheckpoint:
             "implementation_identity", "training_config", "training_config_sha256",
             "data_source_identity", "source_contracts", "source_state_ids", "step", "phase",
             "selection_evidence", "model_state", "optimizer_state", "scheduler_state",
-            "scaler_state", "rng_state",
+            "scaler_state", "rng_state", "lifecycle_state", "batch_source_state",
+            "validation_state",
         }
         if set(value) != required:
             raise ValueError(f"TrainingCheckpoint fields must be exactly {sorted(required)}")
@@ -115,6 +125,7 @@ class TrainingCheckpoint:
             tuple(value["source_contracts"]), tuple(str(item) for item in value["source_state_ids"]),
             int(value["step"]), str(value["phase"]), value["selection_evidence"], value["model_state"],
             value["optimizer_state"], value["scheduler_state"], value["scaler_state"], value["rng_state"],
+            value["lifecycle_state"], value["batch_source_state"], value["validation_state"],
             str(value["format_name"]), int(value["format_version"]),
         )
 

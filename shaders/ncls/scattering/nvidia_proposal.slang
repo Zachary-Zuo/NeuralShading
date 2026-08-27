@@ -6,7 +6,6 @@
 #include "mixture.slang"
 
 static const uint NCLS_NVIDIA_PROPOSAL_RAW_COUNT = 9u;
-static const float NCLS_NVIDIA_PROPOSAL_SAFETY_WEIGHT = 0.03125f;
 static const float NCLS_NVIDIA_PROPOSAL_MAX_ABS_RHO = 0.999999f;
 
 struct NclsNvidiaProposalParams
@@ -90,15 +89,6 @@ NclsNvidiaProposalParams nclsDecodeNvidiaProposal(
     return params;
 }
 
-float3 nclsNvidiaProposalMixtureWeights(NclsNvidiaProposalParams params)
-{
-    const float learnedMass = 1.0f - NCLS_NVIDIA_PROPOSAL_SAFETY_WEIGHT;
-    return float3(
-        NCLS_NVIDIA_PROPOSAL_SAFETY_WEIGHT,
-        learnedMass * params.learnedWeights.x,
-        learnedMass * params.learnedWeights.y);
-}
-
 float nclsNvidiaProposalPdf(
     NclsNvidiaProposalParams params,
     float3 wo,
@@ -125,45 +115,43 @@ float nclsNvidiaProposalPdfUnchecked(
 {
     const NclsNoncenteredGgxParams specular = {
         params.alpha, params.rho, params.specularSlope};
-    const float3 weights = float3(
-        NCLS_NVIDIA_PROPOSAL_SAFETY_WEIGHT,
-        (1.0f - NCLS_NVIDIA_PROPOSAL_SAFETY_WEIGHT) * params.learnedWeights.x,
-        (1.0f - NCLS_NVIDIA_PROPOSAL_SAFETY_WEIGHT) * params.learnedWeights.y);
-    const float3 componentPdfs = float3(
-        no_diff(nclsCosineHemispherePdf(wi)),
+    const float2 componentPdfs = float2(
         nclsNoncenteredGgxPdfUnchecked(specular, wo, wi),
         nclsTiltedCosinePdfUnchecked(wi, params.diffuseSlope));
-    return nclsMixture3PdfUnchecked(weights, componentPdfs);
+    return dot(params.learnedWeights, componentPdfs);
 }
 
 NclsDirectionalSample nclsSampleNvidiaProposal(
     NclsNvidiaProposalParams params,
     float3 wo,
-    float3 u,
+    float2 u,
     out uint component)
 {
     component = 0u;
     if (params.valid == 0u || !nclsIsFiniteFloat3(wo) || wo.z <= NCLS_MIN_COS
-        || !nclsIsUnitRandom(u.x) || !nclsIsUnitRandom(u.y) || !nclsIsUnitRandom(u.z))
+        || !nclsIsUnitRandom(u.x) || !nclsIsUnitRandom(u.y))
         return nclsInvalidDirectionalSample();
-    const float3 weights = nclsNvidiaProposalMixtureWeights(params);
-    const NclsMixture3Selection selection = nclsSelectMixture3(weights, u.x);
-    if (selection.valid == 0u) return nclsInvalidDirectionalSample();
-    component = selection.component;
-
-    // u.x 只选择分量，独立的 u.yz 驱动二维方向采样；remapped 供复用同一维随机数的调用者使用。
-
+    const float weightSpecular = params.learnedWeights.x;
     NclsDirectionalSample result;
-    if (component == 0u)
-        result = nclsSampleCosineDirection(u.yz);
-    else if (component == 1u)
+    if (u.x < weightSpecular)
     {
+        if (weightSpecular <= 0.0f) return nclsInvalidDirectionalSample();
+        component = 0u;
+        const float2 remapped = float2(
+            nclsClampUnitRandom(u.x / weightSpecular), u.y);
         const NclsNoncenteredGgxParams specular = {
             params.alpha, params.rho, params.specularSlope};
-        result = nclsSampleNoncenteredGgx(specular, wo, u.yz);
+        result = nclsSampleNoncenteredGgx(specular, wo, remapped);
     }
     else
-        result = nclsSampleTiltedCosine(params.diffuseSlope, u.yz);
+    {
+        const float weightDiffuse = params.learnedWeights.y;
+        if (weightDiffuse <= 0.0f) return nclsInvalidDirectionalSample();
+        component = 1u;
+        const float2 remapped = float2(
+            nclsClampUnitRandom((u.x - weightSpecular) / weightDiffuse), u.y);
+        result = nclsSampleTiltedCosine(params.diffuseSlope, remapped);
+    }
 
     if (result.valid == 0u || result.nullEvent != 0u) return result;
     result.pdf = nclsNvidiaProposalPdf(params, wo, result.direction);

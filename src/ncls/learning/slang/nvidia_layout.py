@@ -9,7 +9,7 @@ from typing import Any
 _LAYOUT_PATH = (
     Path(__file__).resolve().parents[1]
     / "abi"
-    / "nvidia_neural_appearance_layout_v1.json"
+    / "nvidia_neural_appearance_layout_v2.json"
 )
 
 
@@ -17,7 +17,7 @@ def _load_layout() -> dict[str, Any]:
     value = json.loads(_LAYOUT_PATH.read_text(encoding="utf-8"))
     if value.get("schema") != {
         "name": "nvidia-neural-appearance-layout",
-        "version": 1,
+        "version": 2,
     }:
         raise ValueError("unsupported NVIDIA neural appearance layout")
     return value
@@ -33,7 +33,7 @@ def render_nvidia_neural_appearance_layout_slang() -> str:
     evaluator = layout["evaluator"]
     sampler = layout["sampler"]
     values = (
-        ("NCLS_NVIDIA_NEURAL_LATENT_COUNT", layout["compiled_material"]["latent_count"]),
+        ("NCLS_NVIDIA_NEURAL_LATENT_COUNT", layout["latent_count"]),
         ("NCLS_NVIDIA_NEURAL_FRAME_RAW_COUNT", evaluator["frame_output"]),
         ("NCLS_NVIDIA_NEURAL_EVALUATE_INPUT", evaluator["input"]),
         ("NCLS_NVIDIA_NEURAL_EVALUATE_WIDTH", evaluator["width"]),
@@ -50,7 +50,7 @@ def render_nvidia_neural_appearance_layout_slang() -> str:
     )
     return (
         "// Generated from src/ncls/learning/abi/"
-        "nvidia_neural_appearance_layout_v1.json; do not edit.\n"
+        "nvidia_neural_appearance_layout_v2.json; do not edit.\n"
         "#ifndef NCLS_NVIDIA_NEURAL_APPEARANCE_LAYOUT_SLANG\n"
         "#define NCLS_NVIDIA_NEURAL_APPEARANCE_LAYOUT_SLANG\n\n"
         f"{constants}\n"

@@ -1,15 +1,17 @@
 #ifndef NCLS_NVIDIA_NEURAL_APPEARANCE_PACK_SLANG
 #define NCLS_NVIDIA_NEURAL_APPEARANCE_PACK_SLANG
 
-// NVIDIA baseline 的 32 B CompiledMaterial 与 96 B prepare state；数值以 half 成对打包。
+// NVIDIA functional reproduction 的 32 B texture record 与 96 B prepare state。
 #include "nvidia_neural_appearance_core.slang"
 
 struct NclsNvidiaNeuralCompiledMaterial
 {
-    uint latentBits[4];
+    uint width;
+    uint height;
+    uint mipCount;
     uint layoutVersion;
     uint flags;
-    uint reserved[2];
+    uint reserved[3];
 };
 
 struct NclsNvidiaNeuralState
@@ -27,17 +29,27 @@ float2 nclsNvidiaNeuralUnpackHalf2(uint bits)
     return float2(f16tof32(bits & 0xffffu), f16tof32(bits >> 16u));
 }
 
-void nclsNvidiaNeuralCompiledLatent(
+void nclsNvidiaNeuralFetchLatent(
     NclsNvidiaNeuralCompiledMaterial material,
+    Texture2D<float4> latent0,
+    Texture2D<float4> latent1,
+    SamplerState latentSampler,
+    float2 uv,
+    float2 uvDx,
+    float2 uvDy,
+    float filterRandom,
     out float latent[NCLS_NVIDIA_NEURAL_LATENT_COUNT])
 {
-    [unroll]
-    for (uint word = 0u; word < 4u; ++word)
-    {
-        const float2 pair = nclsNvidiaNeuralUnpackHalf2(material.latentBits[word]);
-        latent[2u * word + 0u] = pair.x;
-        latent[2u * word + 1u] = pair.y;
-    }
+    const float footprint = max(length(uvDx) * length(uvDy), 1e-30f);
+    float lod = 0.5f * log2(footprint);
+    lod += 0.5f * log2(float(material.width) * float(material.height));
+    const float baseMip = floor(lod);
+    int mip = frac(lod) < filterRandom ? int(baseMip) : int(baseMip) + 1;
+    mip = clamp(mip, 0, int(material.mipCount) - 1);
+    const float4 first = latent0.SampleLevel(latentSampler, uv, float(mip));
+    const float4 second = latent1.SampleLevel(latentSampler, uv, float(mip));
+    latent[0] = first.x; latent[1] = first.y; latent[2] = first.z; latent[3] = first.w;
+    latent[4] = second.x; latent[5] = second.y; latent[6] = second.z; latent[7] = second.w;
 }
 
 NclsNvidiaNeuralState nclsNvidiaNeuralPackPrepared(
@@ -111,12 +123,10 @@ NclsNvidiaNeuralPrepared nclsNvidiaNeuralUnpackPrepared(
 }
 
 NclsNvidiaNeuralState nclsNvidiaNeuralPreparePacked(
-    NclsNvidiaNeuralCompiledMaterial material,
+    float latent[NCLS_NVIDIA_NEURAL_LATENT_COUNT],
     float3 projectWo,
     NclsNvidiaNeuralParams params)
 {
-    float latent[NCLS_NVIDIA_NEURAL_LATENT_COUNT];
-    nclsNvidiaNeuralCompiledLatent(material, latent);
     return nclsNvidiaNeuralPackPrepared(
         nclsNvidiaNeuralPrepare(latent, projectWo, params));
 }

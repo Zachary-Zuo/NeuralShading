@@ -1,0 +1,75 @@
+{
+  "format_name": "ncls.training-config",
+  "format_version": 2,
+  "method_key": "nvidia-neural-appearance",
+  "run_class": "smoke",
+  "correspondence_id": "nvidia-rta2024-functional@1",
+  "recipe_id": "nvidia-rta2024-materialx-smoke-2step@1",
+  "source_adaptation_id": "materialx-standard-surface-spatial@1",
+  "batch_source": {
+    "kind": "live",
+    "options": {
+      "materialx_asset_id": "american_walnut_veneer",
+      "query_tile_size": 64
+    }
+  },
+  "model_context": {
+    "native_feature_count": 38,
+    "latent_width": 4096,
+    "latent_height": 4096,
+    "latent_mip_count": 13
+  },
+  "lifecycle": {"total_steps": 2, "materialization_step": 1},
+  "routes": [
+    {
+      "name": "evaluator",
+      "batch_size": 4,
+      "direction_count": 1,
+      "query_role": 0,
+      "seed_offset": 0,
+      "options": {
+        "direction_proposal": "uniform-half-difference@1",
+        "target_estimator": "reference",
+        "mip_exponential_scale": 1.0,
+        "spatial_samples_per_texel_area": 0.25,
+        "maximum_spatial_samples": 2
+      }
+    },
+    {
+      "name": "sampler",
+      "batch_size": 4,
+      "direction_count": 1,
+      "query_role": 1,
+      "seed_offset": 1,
+      "options": {
+        "direction_proposal": "uniform-hemisphere-conditioning@1",
+        "target_estimator": "learned-sampler",
+        "mip_exponential_scale": 1.0,
+        "spatial_samples_per_texel_area": 0.25,
+        "maximum_spatial_samples": 2
+      }
+    }
+  ],
+  "seed": 20260827,
+  "device": "cuda:0",
+  "optimizer": {
+    "kind": "adam",
+    "betas": [0.9, 0.999],
+    "epsilon": 1e-7,
+    "weight_decay": 0.0
+  },
+  "schedule": {"kind": "cosine", "start": 0.001, "end": 0.0001, "total_steps": 2},
+  "mollification": {"steps": 1, "start_degrees": 10.0, "samples": 2},
+  "filtering": {
+    "latent_fetch": "discrete-mip-bilinear-wrap@1",
+    "mip_distribution": "truncated-exponential-scale-1@1",
+    "spatial_filter": "gaussian-area-proportional-cap-2-smoke@1",
+    "normal_filter": "lean-first-second-moments@1"
+  },
+  "loss": {
+    "evaluator": "log1p-l1@1",
+    "sampler": "learned-sampler-forward-kl-score@1"
+  },
+  "validation": {"interval": 2, "batches": 1},
+  "checkpoint_selection": "tail_guard"
+}

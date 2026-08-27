@@ -12,6 +12,7 @@ float nclsNvidiaNeuralReadPackedWeight(StructuredBuffer<uint> weights, uint inde
 }
 
 #include "nvidia_neural_appearance_pack.slang"
+#include "nvidia_neural_appearance_fp16.slang"
 #include "../../contracts/scattering_backend.slang"
 
 #ifndef NCLS_NVIDIA_FRAME_WEIGHT_OFFSET
@@ -102,10 +103,10 @@ struct NclsNvidiaNeuralContractState : INclsScatteringState
         const float3 wo = nclsFrameToLocal(context.surface.shadingFrame, context.woWorld);
         const float3 wi = nclsFrameToLocal(context.surface.shadingFrame, wiWorld);
         if (wo.z <= NCLS_MIN_COS || wi.z <= NCLS_MIN_COS) return result;
-        result.f = nclsNvidiaNeuralEvaluateF(prepared, wi, params);
+        result.f = nclsNvidiaNeuralEvaluateFFp16(prepared, wi, params);
         result.pdf.forward = nclsNvidiaNeuralPreparedPdf(prepared, wo, wi);
-        const NclsNvidiaNeuralPrepared reverse = nclsNvidiaNeuralUnpackPrepared(
-            nclsNvidiaNeuralPreparePacked(material, wi, params));
+        const NclsNvidiaNeuralPrepared reverse = nclsNvidiaNeuralPrepareFp16(
+            prepared.latent, wi, params);
         result.pdf.reverse = nclsNvidiaNeuralPreparedPdf(reverse, wi, wo);
         result.eventFlags = (uint)NclsScatteringEvent::Reflection | (uint)NclsScatteringEvent::Glossy;
         result.valid = all(isfinite(result.f)) && result.pdf.forward >= 0.0f
@@ -119,7 +120,7 @@ struct NclsNvidiaNeuralContractState : INclsScatteringState
         const float3 wo = nclsFrameToLocal(context.surface.shadingFrame, context.woWorld);
         uint component = 0u;
         const NclsDirectionalSample directional = nclsSampleNvidiaNeuralPrepared(
-            prepared, wo, sampleNext3D(sampleGenerator), component);
+            prepared, wo, sampleNext2D(sampleGenerator), component);
         if (directional.valid == 0u) return false;
         if (directional.nullEvent != 0u)
         {
@@ -144,8 +145,8 @@ struct NclsNvidiaNeuralContractState : INclsScatteringState
         NclsScatteringPdf result = {};
         if (wo.z <= NCLS_MIN_COS || wi.z <= NCLS_MIN_COS) return result;
         result.forward = nclsNvidiaNeuralPreparedPdf(prepared, wo, wi);
-        const NclsNvidiaNeuralPrepared reverse = nclsNvidiaNeuralUnpackPrepared(
-            nclsNvidiaNeuralPreparePacked(material, wi, params));
+        const NclsNvidiaNeuralPrepared reverse = nclsNvidiaNeuralPrepareFp16(
+            prepared.latent, wi, params);
         result.reverse = nclsNvidiaNeuralPreparedPdf(reverse, wi, wo);
         return result;
     }
@@ -156,13 +157,20 @@ struct NclsNvidiaNeuralBackend : INclsScatteringBackend
     typedef NclsNvidiaNeuralCompiledMaterial CompiledMaterial;
     typedef NclsNvidiaNeuralContractState State;
     StructuredBuffer<uint> weights;
+    Texture2D<float4> latent0;
+    Texture2D<float4> latent1;
+    SamplerState latentSampler;
 
     State prepare(NclsScatteringContext context, CompiledMaterial material)
     {
         const NclsNvidiaNeuralParams params = nclsNvidiaNeuralParams(weights);
         const float3 wo = nclsFrameToLocal(context.surface.shadingFrame, context.woWorld);
-        return {context, material, nclsNvidiaNeuralUnpackPrepared(
-            nclsNvidiaNeuralPreparePacked(material, wo, params)), params};
+        float latent[NCLS_NVIDIA_NEURAL_LATENT_COUNT];
+        nclsNvidiaNeuralFetchLatent(
+            material, latent0, latent1, latentSampler,
+            context.surface.uv, context.surface.uvDx, context.surface.uvDy,
+            context.filterRandom, latent);
+        return {context, material, nclsNvidiaNeuralPrepareFp16(latent, wo, params), params};
     }
 };
 
@@ -171,7 +179,14 @@ typedef NclsNvidiaNeuralCompiledMaterial NclsMethodCompiledMaterial;
 typedef NclsNvidiaNeuralState NclsMethodPackedState;
 typedef NclsNvidiaNeuralContractState NclsMethodState;
 
-NclsMethodBackend nclsCreateMethodBackend(StructuredBuffer<uint> weights) { return {weights}; }
+NclsMethodBackend nclsCreateMethodBackend(
+    StructuredBuffer<uint> weights,
+    Texture2D<float4> latent0,
+    Texture2D<float4> latent1,
+    SamplerState latentSampler)
+{
+    return {weights, latent0, latent1, latentSampler};
+}
 NclsMethodPackedState nclsPackMethodState(NclsMethodState state)
 {
     return nclsNvidiaNeuralPackPrepared(state.prepared);
@@ -189,10 +204,21 @@ NclsMethodState nclsUnpackMethodState(
 // ScatteringPackage@1 的稳定 host 绑定面；viewer 不解释 NVIDIA 私有布局。
 StructuredBuffer<uint> gNclsRuntimeWeights;
 StructuredBuffer<NclsNvidiaNeuralCompiledMaterial> gNclsCompiledMaterials;
+Texture2D<float4> gNclsNvidiaLatent0;
+Texture2D<float4> gNclsNvidiaLatent1;
+SamplerState gNclsNvidiaLatentSampler;
 typedef NclsNvidiaNeuralBackend NclsPackageBackend;
 typedef NclsNvidiaNeuralCompiledMaterial NclsPackageCompiledMaterial;
 typedef NclsNvidiaNeuralContractState NclsPackageState;
-NclsPackageBackend nclsCreatePackageBackend() { return {gNclsRuntimeWeights}; }
+NclsPackageBackend nclsCreatePackageBackend()
+{
+    return {
+        gNclsRuntimeWeights,
+        gNclsNvidiaLatent0,
+        gNclsNvidiaLatent1,
+        gNclsNvidiaLatentSampler,
+    };
+}
 NclsPackageCompiledMaterial nclsLoadPackageMaterial(uint index) { return gNclsCompiledMaterials[index]; }
 
 #endif

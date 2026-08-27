@@ -1,14 +1,16 @@
 {
-  "schema": {"name": "nvidia-neural-appearance-layout", "version": 1},
+  "schema": {"name": "nvidia-neural-appearance-layout", "version": 2},
+  "latent_count": 8,
   "compiled_material": {
     "alignment_bytes": 16,
-    "latent_count": 8,
     "total_bytes": 32,
     "fields": {
-      "latent": {"offset": 0, "count": 8, "dtype": "float16"},
-      "layout_version": {"offset": 16, "dtype": "uint32"},
-      "flags": {"offset": 20, "dtype": "uint32"},
-      "reserved": {"offset": 24, "size": 8}
+      "width": {"offset": 0, "dtype": "uint32"},
+      "height": {"offset": 4, "dtype": "uint32"},
+      "mip_count": {"offset": 8, "dtype": "uint32"},
+      "layout_version": {"offset": 12, "dtype": "uint32"},
+      "flags": {"offset": 16, "dtype": "uint32"},
+      "reserved": {"offset": 20, "size": 12}
     }
   },
   "state": {
@@ -34,10 +36,7 @@
     "width": 32,
     "hidden_layers": 3,
     "output": 9,
-    "prepare_macs": 2688,
-    "safety_weight": 0.03125
+    "prepare_macs": 2688
   },
-  "response_adapter": {
-    "minimum_cosine": 0.000001
-  }
+  "response_adapter": {"minimum_cosine": 0.000001}
 }

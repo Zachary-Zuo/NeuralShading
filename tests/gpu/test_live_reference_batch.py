@@ -10,6 +10,7 @@ pytest.importorskip("falcor")
 
 from ncls.core.material import DiffuseInterface, LayerStackIR
 from ncls.data.batch_sources import LiveReferenceBatchSource
+from ncls.data.training_batch import TrainingRouteRequest
 from ncls.source_materials.families.layer_stack import snapshot_from_layer_stack
 
 
@@ -21,8 +22,10 @@ def test_live_reference_batch_stays_on_cuda_and_enforces_lease():
     snapshot = snapshot_from_layer_stack(stack)
     source = LiveReferenceBatchSource((stack,), (snapshot.snapshot_id,), light_count=8,
                                       samples_per_replica=2, max_batch_size=2, seed=17)
+    def request(name: str, batch_size: int) -> TrainingRouteRequest:
+        return TrainingRouteRequest(name, batch_size, 8, 0, 0, 17)
     try:
-        batch = source.next_batch(2)
+        batch = source.next_batch(request("evaluator", 2))
         assert batch.device.type == "cuda"
         assert all(value.is_cuda for value in batch.tensors.values())
         assert batch.provenance["host_readback"] is False
@@ -30,8 +33,11 @@ def test_live_reference_batch_stays_on_cuda_and_enforces_lease():
         torch.nn.functional.mse_loss(parameter, batch.tensors["target"]).backward()
         assert parameter.grad is not None and torch.isfinite(parameter.grad).all()
         with pytest.raises(RuntimeError):
-            source.next_batch(1)
+            source.next_batch(request("evaluator", 1))
         batch.release()
-        source.next_batch(1).release()
+        source.next_batch(request("evaluator", 1)).release()
+        sampler = source.next_batch(request("sampler", 1))
+        assert sampler.provenance["route_name"] == "sampler"
+        sampler.release()
     finally:
         source.close()

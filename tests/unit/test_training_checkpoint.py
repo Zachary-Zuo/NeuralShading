@@ -11,7 +11,7 @@ def test_checkpoint_v2_roundtrip_and_tensor_schema(tmp_path):
     checkpoint = TrainingCheckpoint(
         descriptor.method_key, descriptor.descriptor_sha256, descriptor.implementation_sha256,
         config, sha256_json(config), "offline:test", tuple(x.to_dict() for x in descriptor.supported_sources),
-        ("a" * 64,), 7, "evaluator", {"metric": 1.0},
+        ("a" * 64,), 7, "bootstrap", {"metric": 1.0},
         {"fixture.scale": torch.ones(3), "fixture.bias": torch.zeros(3)},
     )
     path = tmp_path / "checkpoint.pt"
