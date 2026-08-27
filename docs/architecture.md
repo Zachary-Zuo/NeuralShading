@@ -9,7 +9,7 @@ SourceFamilyDefinition → SourceSnapshot → ReferenceQueryStream
   → ScatteringPackage@1 → ScatteringBinding → ComparisonSlot[2]
 ```
 
-LayerStack、OpenPBR、MERL 与 MaterialX 保留各自原生语义和 reference；pbrt 仅是仓库外部交叉验证边界。产品方法 registry 当前只包含 NVIDIA neural appearance。测试方法只在 `tests/fixtures/` 注入。
+LayerStack、OpenPBR、MERL、MaterialX 与 MDL 保留各自原生语义和 reference；pbrt 仅是仓库外部交叉验证边界。产品方法 registry 当前只包含 NVIDIA neural appearance。测试方法只在 `tests/fixtures/` 注入。
 
 `SourceSnapshot` 是 source state 唯一真相。编辑器只消费 `SourceParameterView@1` 并提交 `SourceEditPatch@1`；方法通过 `SourceAdaptationContract` 返回 `unchanged/runtime-patch/recompile/unsupported`。
 

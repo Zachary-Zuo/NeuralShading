@@ -87,7 +87,7 @@
         "source_adapter": "ready",
         "native_reference": "ready",
         "falcor_runtime": "ready",
-        "viewer_integration": "pending",
+        "viewer_integration": "ready",
         "numerical_parity": "ready",
         "image_parity": "pending"
       }

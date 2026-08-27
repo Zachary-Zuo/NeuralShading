@@ -43,7 +43,72 @@ const Gui::DropdownList kReferenceFamilies = {
     {1, "MERL measured BRDF"},
     {2, "OpenPBR 1.1.1"},
     {3, "MaterialX standard_surface"},
+    {4, "MDL / vMaterials 2"},
 };
+
+std::vector<uint8_t> readBinaryFile(const std::filesystem::path& path)
+{
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) throw std::runtime_error("cannot open file: " + path.string());
+    stream.seekg(0, std::ios::end);
+    const auto size = stream.tellg();
+    if (size < 0) throw std::runtime_error("cannot query file size: " + path.string());
+    std::vector<uint8_t> result(static_cast<size_t>(size));
+    stream.seekg(0, std::ios::beg);
+    if (!result.empty()) stream.read(reinterpret_cast<char*>(result.data()), result.size());
+    if (!stream && !stream.eof()) throw std::runtime_error("cannot read file: " + path.string());
+    return result;
+}
+
+std::string readUtf8File(const std::filesystem::path& path)
+{
+    const auto bytes = readBinaryFile(path);
+    return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+}
+
+ref<Texture> createMdlTexture2D(
+    const ref<Device>& device,
+    const ncls::MdlTextureResource& descriptor)
+{
+    auto source = readBinaryFile(descriptor.dataPath);
+    const uint32_t channels = descriptor.pixelType == "Sint8" ? 1u
+        : descriptor.pixelType == "Rgb" ? 3u : descriptor.pixelType == "Rgba" ? 4u : 0u;
+    if (channels == 0u) throw std::runtime_error("unsupported MDL 2D texture pixel type");
+    const size_t rowBytes = size_t(descriptor.width) * channels;
+    if (descriptor.dataOrigin == "lower_left")
+    {
+        std::vector<uint8_t> flipped(source.size());
+        for (uint32_t row = 0u; row < descriptor.height; ++row)
+            std::copy_n(
+                source.data() + size_t(descriptor.height - 1u - row) * rowBytes,
+                rowBytes,
+                flipped.data() + size_t(row) * rowBytes);
+        source = std::move(flipped);
+    }
+    if (channels == 1u)
+        return device->createTexture2D(
+            descriptor.width, descriptor.height, ResourceFormat::R8Unorm,
+            1, 1, source.data(), ResourceBindFlags::ShaderResource);
+    std::vector<uint8_t> rgba(size_t(descriptor.width) * descriptor.height * 4u, 255u);
+    for (size_t pixel = 0u; pixel < size_t(descriptor.width) * descriptor.height; ++pixel)
+        for (uint32_t channel = 0u; channel < channels; ++channel)
+            rgba[4u * pixel + channel] = source[channels * pixel + channel];
+    const auto format = descriptor.gamma == "srgb"
+        ? ResourceFormat::RGBA8UnormSrgb : ResourceFormat::RGBA8Unorm;
+    return device->createTexture2D(
+        descriptor.width, descriptor.height, format,
+        1, 1, rgba.data(), ResourceBindFlags::ShaderResource);
+}
+
+ref<Texture> createMdlTexture3D(
+    const ref<Device>& device,
+    const ncls::MdlTextureResource& descriptor)
+{
+    const auto payload = readBinaryFile(descriptor.dataPath);
+    return device->createTexture3D(
+        descriptor.width, descriptor.height, descriptor.depth,
+        ResourceFormat::R32Float, 1, payload.data(), ResourceBindFlags::ShaderResource);
+}
 
 float3 normalizedOr(float3 value, float3 fallback)
 {
@@ -470,6 +535,24 @@ NclsViewer::SourceGpuResources NclsViewer::createFallbackSourceGpuResources()
         1, 1, ResourceFormat::RGBA32Float, 1, 1, &metalness, shaderResource);
     resources.pMaterialXNormalMap = getDevice()->createTexture2D(
         1, 1, ResourceFormat::RGBA32Float, 1, 1, &normal, shaderResource);
+    const float4 zeroMdl(0.f);
+    resources.pMdlArgumentBlock = getDevice()->createStructuredBuffer(
+        sizeof(float4), 1, shaderResource, MemoryType::DeviceLocal, &zeroMdl);
+    resources.pMdlRoData = getDevice()->createStructuredBuffer(
+        sizeof(float4), 1, shaderResource, MemoryType::DeviceLocal, &zeroMdl);
+    const float zeroScalar = 0.f;
+    const auto fallback2D = getDevice()->createTexture2D(
+        1, 1, ResourceFormat::RGBA32Float, 1, 1, &zeroMdl, shaderResource);
+    const auto fallback3D = getDevice()->createTexture3D(
+        1, 1, 1, ResourceFormat::R32Float, 1, &zeroScalar, shaderResource);
+    resources.pMdlTexture2D.fill(fallback2D);
+    resources.pMdlTexture3D.fill(fallback3D);
+    Sampler::Desc mdlSampler;
+    mdlSampler
+        .setFilterMode(TextureFilteringMode::Linear, TextureFilteringMode::Linear, TextureFilteringMode::Linear)
+        .setMaxAnisotropy(1)
+        .setAddressingMode(TextureAddressingMode::Wrap, TextureAddressingMode::Wrap, TextureAddressingMode::Wrap);
+    resources.pMdlSampler = getDevice()->createSampler(mdlSampler);
     return resources;
 }
 
@@ -488,6 +571,30 @@ NclsViewer::SourceGpuResources NclsViewer::createSourceGpuResources(const ncls::
         resources.pOpenPbrInputs = getDevice()->createStructuredBuffer(
             sizeof(float), static_cast<uint32_t>(source.openPbrInputs.size()),
             shaderResource, MemoryType::DeviceLocal, source.openPbrInputs.data());
+    else if (source.family == ncls::ReferenceFamily::Mdl)
+    {
+        if (!source.mdlArtifact)
+            throw std::runtime_error("MDL source has no validated compiled artifact");
+        const auto structuredPayload = [&](const std::vector<uint8_t>& bytes) {
+            const size_t paddedSize = std::max<size_t>(16u, (bytes.size() + 15u) & ~size_t(15u));
+            std::vector<uint8_t> padded(paddedSize, 0u);
+            std::copy(bytes.begin(), bytes.end(), padded.begin());
+            return getDevice()->createStructuredBuffer(
+                sizeof(float4), static_cast<uint32_t>(padded.size() / sizeof(float4)),
+                shaderResource, MemoryType::DeviceLocal, padded.data());
+        };
+        resources.pMdlArgumentBlock = structuredPayload(source.mdlArtifact->argumentBlock);
+        resources.pMdlRoData = structuredPayload(source.mdlArtifact->roData);
+        for (const auto& texture : source.mdlArtifact->textures)
+        {
+            if (texture.index == 0u || texture.index > resources.pMdlTexture2D.size())
+                throw std::runtime_error("MDL texture binding exceeds the V1 static limit");
+            if (texture.shape == "2d")
+                resources.pMdlTexture2D[texture.index - 1u] = createMdlTexture2D(getDevice(), texture);
+            else
+                resources.pMdlTexture3D[texture.index - 1u] = createMdlTexture3D(getDevice(), texture);
+        }
+    }
     else if (source.family != ncls::ReferenceFamily::MaterialX)
         throw std::runtime_error("unsupported reference source family");
 
@@ -629,13 +736,44 @@ void NclsViewer::createSceneReferencePass()
     }
     ProgramDesc program;
     program.addShaderModules(mpScene->getShaderModules());
+    uint32_t familyMask = 1u << static_cast<uint32_t>(mReferenceSource.family);
+    for (const auto& [materialId, binding] : mInactiveSceneMaterials)
+        familyMask |= 1u << static_cast<uint32_t>(binding.source.family);
+
+    const ncls::ReferenceSource* mdlSource = nullptr;
+    const auto registerMdl = [&](const ncls::ReferenceSource& source) {
+        if (source.family != ncls::ReferenceFamily::Mdl) return;
+        if (!source.mdlArtifact) throw std::runtime_error("MDL scene source has no compiled artifact");
+        if (mdlSource && mdlSource->mdlArtifact->artifactSha256 != source.mdlArtifact->artifactSha256)
+            throw std::runtime_error("MDL viewer V1 supports one material-specific generated program at a time");
+        mdlSource = &source;
+    };
+    registerMdl(mReferenceSource);
+    for (const auto& [materialId, binding] : mInactiveSceneMaterials) registerMdl(binding.source);
+    if (mdlSource)
+    {
+        std::filesystem::path adapterPath;
+        if (!findFileInShaderDirectories("NclsViewer/shaders/MdlViewerAdapter.slang", adapterPath))
+            throw std::runtime_error("MDL viewer adapter shader is missing from the Falcor runtime");
+        const auto& artifact = *mdlSource->mdlArtifact;
+        const std::string generatedModule =
+            "#define MDL_NUM_TEXTURE_RESULTS 16\n"
+            "#define MDL_DF_HANDLE_SLOT_MODE -1\n"
+            "struct NclsMdlRendererState { float3 view_direction; };\n"
+            "#define RENDERER_STATE_TYPE NclsMdlRendererState\n"
+            "#define NCLS_MDL_TEXTURE_COUNT "
+            + std::to_string(std::max<size_t>(1u, artifact.textures.size())) + "\n"
+            + readUtf8File(mdlSource->mdlCatalog.targetCodeTypesPath) + "\n"
+            + readUtf8File(mdlSource->mdlCatalog.rendererRuntimePath) + "\n"
+            + artifact.generatedCode + "\n"
+            + readUtf8File(adapterPath);
+        program.addShaderModule("NclsMdlGenerated").addString(
+            generatedModule, artifact.root / "ncls_mdl_viewer_generated.slang");
+    }
     program.addShaderLibrary("NclsViewer/shaders/ReferencePathTracer.cs.slang").csEntry("main");
     program.addTypeConformances(mpScene->getTypeConformances());
     DefineList defines = mpScene->getSceneDefines();
     defines.add("NCLS_MAX_SCENE_MATERIALS", std::to_string(mpScene->getMaterialCount()));
-    uint32_t familyMask = 1u << static_cast<uint32_t>(mReferenceSource.family);
-    for (const auto& [materialId, binding] : mInactiveSceneMaterials)
-        familyMask |= 1u << static_cast<uint32_t>(binding.source.family);
     defines.add("NCLS_REFERENCE_FAMILY_MASK", std::to_string(familyMask));
     mpReferencePathPass = ComputePass::create(getDevice(), program, defines, true);
 }
@@ -764,6 +902,7 @@ void NclsViewer::updateReferenceSourceBuffer()
             mReferenceSource.materialXInputs.data(), 0, sizeof(mReferenceSource.materialXInputs));
         break;
     case ncls::ReferenceFamily::Merl:
+    case ncls::ReferenceFamily::Mdl:
         return;
     }
     resetReference(false);
@@ -1240,6 +1379,32 @@ void NclsViewer::renderReference(RenderContext* pRenderContext, ComparisonSlotRu
         for (const auto& [materialId, binding] : mInactiveSceneMaterials)
             bindSource(materialId, binding.gpu);
 
+        const SourceGpuResources* mdlGpu = mReferenceSource.family == ncls::ReferenceFamily::Mdl
+            ? &mSourceGpu : nullptr;
+        const ncls::ReferenceSource* mdlSource = mReferenceSource.family == ncls::ReferenceFamily::Mdl
+            ? &mReferenceSource : nullptr;
+        if (!mdlGpu)
+            for (const auto& [materialId, binding] : mInactiveSceneMaterials)
+                if (binding.source.family == ncls::ReferenceFamily::Mdl)
+                {
+                    mdlGpu = &binding.gpu;
+                    mdlSource = &binding.source;
+                    break;
+                }
+        if (mdlGpu)
+        {
+            root["gMdlArgumentBlock"] = mdlGpu->pMdlArgumentBlock;
+            root["gMdlRoData"] = mdlGpu->pMdlRoData;
+            root["gMdlTextureSampler"] = mdlGpu->pMdlSampler;
+            const uint32_t textureCount = static_cast<uint32_t>(
+                std::max<size_t>(1u, mdlSource->mdlArtifact->textures.size()));
+            for (uint32_t index = 0u; index < textureCount; ++index)
+            {
+                root[fmt::format("gMdlTexture2D{}", index)] = mdlGpu->pMdlTexture2D[index];
+                root[fmt::format("gMdlTexture3D{}", index)] = mdlGpu->pMdlTexture3D[index];
+            }
+        }
+
         auto constants = root["ReferencePathTracerCB"];
         constants["gFrameDim"] = uint2(mViewWidth, mOutputHeight);
         constants["gFrameIndex"] = mFrameIndex;
@@ -1595,6 +1760,7 @@ void NclsViewer::renderMaterialUi(Gui::Widgets& widgets)
         }
         if (mReferenceSource.family == ncls::ReferenceFamily::OpenPbr) renderOpenPbrUi(widgets);
         else if (mReferenceSource.family == ncls::ReferenceFamily::MaterialX) renderMaterialXUi(widgets);
+        else if (mReferenceSource.family == ncls::ReferenceFamily::Mdl) renderMdlUi(widgets);
         else widgets.text("MERL is a measured BRDF table with no continuous native controls; select another measurement to switch material.");
         widgets.text("This source material retains its native representation; no compatible approximation compiler is available yet.");
         return;
@@ -1711,6 +1877,43 @@ void NclsViewer::renderMaterialUi(Gui::Widgets& widgets)
     widgets.text("Scene-state SHA-256: " + shortId(ncls::referenceSourceStateHash(mReferenceSource)));
 }
 
+void NclsViewer::renderMdlUi(Gui::Widgets& widgets)
+{
+    if (!mReferenceSource.mdlArtifact
+        || mReferenceSource.mdlCatalogIndex >= mReferenceSource.mdlCatalog.entries.size())
+    {
+        widgets.text("MDL source has no validated compiled artifact.");
+        return;
+    }
+    Gui::DropdownList presets;
+    for (uint32_t index = 0u; index < mReferenceSource.mdlCatalog.entries.size(); ++index)
+        presets.push_back({index, mReferenceSource.mdlCatalog.entries[index].displayName});
+    uint32_t selected = mReferenceSource.mdlCatalogIndex;
+    if (widgets.dropdown("vMaterials preset", presets, selected)
+        && selected != mReferenceSource.mdlCatalogIndex)
+    {
+        try
+        {
+            auto candidate = ncls::selectMdlCatalogEntry(mReferenceSource, selected);
+            installReferenceSource(std::move(candidate), mReferenceSource.mdlCatalog.sourcePath);
+            mFreezeReference = false;
+            mStatus = "Loaded formal MDL artifact in current Falcor 8: " + mReferenceSource.displayName;
+        }
+        catch (const std::exception& error)
+        {
+            mStatus = "MDL preset switch failed; previous material preserved: " + std::string(error.what());
+        }
+    }
+    const auto& entry = mReferenceSource.mdlCatalog.entries[mReferenceSource.mdlCatalogIndex];
+    widgets.text("Asset id: " + entry.assetId);
+    widgets.text("Source snapshot: " + shortId(entry.sourceSnapshotId));
+    widgets.text("Compiled artifact: " + shortId(mReferenceSource.mdlArtifact->artifactSha256));
+    widgets.text("MDL SDK: " + mReferenceSource.mdlArtifact->mdlSdk);
+    widgets.text("Compiler bridge: " + shortId(mReferenceSource.mdlArtifact->compilerBridgeSha256));
+    widgets.text("Filtering: ExplicitLod(0); UV derivatives are not consumed in V1");
+    widgets.text("Path transport: matched MDL target-code sample/pdf (viewer-internal capability)");
+}
+
 void NclsViewer::onGuiRender(Gui* pGui)
 {
     Gui::Window window(pGui, "NeuralShading Viewer", {460, 850}, {12, 12});
@@ -1807,7 +2010,9 @@ void NclsViewer::onGuiRender(Gui* pGui)
                         ? FileDialogFilterVec{{"binary", "MERL BRDF table"}}
                         : family == ncls::ReferenceFamily::OpenPbr
                             ? FileDialogFilterVec{{"json", "OpenPBR resolved adapter"}}
-                            : FileDialogFilterVec{{"mtlx", "MaterialX document"}};
+                            : family == ncls::ReferenceFamily::Mdl
+                                ? FileDialogFilterVec{{"json", "MDL viewer catalog"}}
+                                : FileDialogFilterVec{{"mtlx", "MaterialX document"}};
                     if (openFileDialog(filters, path)) loadMaterial(path);
                     else mStatus = "Family switch cancelled; resource-backed families require a native source asset.";
                 }
@@ -2044,6 +2249,11 @@ void NclsViewer::loadMaterial(const std::filesystem::path& path)
             mStatus = "Loaded MaterialX standard_surface and connected source textures into the scene reference path: "
                 + path.string();
         }
+        else if (mReferenceSource.family == ncls::ReferenceFamily::Mdl)
+        {
+            mStatus = "Loaded validated MDL target code into the current Falcor 8 scene reference path: "
+                + mReferenceSource.displayName;
+        }
     }
     catch (const std::exception& error)
     {
@@ -2055,14 +2265,33 @@ void NclsViewer::loadMaterial(const std::filesystem::path& path)
 void NclsViewer::installReferenceSource(ncls::ReferenceSource source, const std::filesystem::path& path)
 {
     auto gpu = createSourceGpuResources(source);
+    const auto previousSource = mReferenceSource;
+    const auto previousGpu = mSourceGpu;
+    const auto previousDisplayName = mMaterialDisplayName;
+    const auto previousPath = mMaterialPath;
+    const auto previousMetadata = mpReferenceMaterialMetadata;
+    const auto previousPass = mpReferencePathPass;
     mReferenceSource = std::move(source);
     mSourceGpu = std::move(gpu);
     mMaterialDisplayName = mReferenceSource.displayName;
     mMaterialPath = path.empty() ? mReferenceSource.sourcePath : path;
-    if (mpScene)
+    try
     {
-        rebuildReferenceMaterialMetadata();
-        createSceneReferencePass();
+        if (mpScene)
+        {
+            rebuildReferenceMaterialMetadata();
+            createSceneReferencePass();
+        }
+    }
+    catch (...)
+    {
+        mReferenceSource = previousSource;
+        mSourceGpu = previousGpu;
+        mMaterialDisplayName = previousDisplayName;
+        mMaterialPath = previousPath;
+        mpReferenceMaterialMetadata = previousMetadata;
+        mpReferencePathPass = previousPass;
+        throw;
     }
     if (mReferenceSource.family == ncls::ReferenceFamily::LayerStack) updateMaterialBuffer();
     else resetReference(mReferenceSource.family == ncls::ReferenceFamily::MaterialX);
@@ -2449,6 +2678,11 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
                 ? ncls::layerStackHash(source.layerStack) : source.sourceSha256},
             {"source_state_sha256", ncls::referenceSourceStateHash(source)},
             {"source_path", source.sourcePath.string()},
+            {"mdl_asset_id", source.family == ncls::ReferenceFamily::Mdl
+                && source.mdlCatalogIndex < source.mdlCatalog.entries.size()
+                    ? source.mdlCatalog.entries[source.mdlCatalogIndex].assetId : std::string()},
+            {"mdl_compiled_artifact_sha256", source.family == ncls::ReferenceFamily::Mdl
+                && source.mdlArtifact ? source.mdlArtifact->artifactSha256 : std::string()},
         });
     };
     if (mpScene)
@@ -2499,6 +2733,16 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         {"source_material_sha256", mReferenceSource.sourceSha256},
         {"source_material_state_sha256", ncls::referenceSourceStateHash(mReferenceSource)},
         {"source_material_asset_sha256", mReferenceSource.sourceSha256},
+        {"mdl_asset_id", mReferenceSource.family == ncls::ReferenceFamily::Mdl
+            && mReferenceSource.mdlCatalogIndex < mReferenceSource.mdlCatalog.entries.size()
+                ? mReferenceSource.mdlCatalog.entries[mReferenceSource.mdlCatalogIndex].assetId : std::string()},
+        {"mdl_compiled_artifact_sha256", mReferenceSource.family == ncls::ReferenceFamily::Mdl
+            && mReferenceSource.mdlArtifact ? mReferenceSource.mdlArtifact->artifactSha256 : std::string()},
+        {"mdl_sdk", mReferenceSource.family == ncls::ReferenceFamily::Mdl
+            && mReferenceSource.mdlArtifact ? mReferenceSource.mdlArtifact->mdlSdk : std::string()},
+        {"mdl_texture_filtering", mReferenceSource.family == ncls::ReferenceFamily::Mdl
+            ? "explicit-lod0" : std::string()},
+        {"mdl_uv_derivatives_consumed", false},
         {"source_material", mReferenceSource.family == ncls::ReferenceFamily::LayerStack
             ? materialPath.filename().string()
             : mReferenceSource.sourcePath.string()},

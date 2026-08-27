@@ -36,4 +36,4 @@ manifest 的 `path_root` 只有三种稳定映射：`project` 指项目根，`ex
 
 当前 active package 包括：LayerStack 随机游走、pbrt coated 独立交叉验证、OpenPBR 1.1.1、MERL 100 个测量 BRDF、8 个 MaterialX/Poly Haven 高分辨率纹理材质，以及原生 MDL/vMaterials 2.4.0。它们分别保留层模型、纯数学参数、测量表、原生图/纹理或 MDL program/资源，不共享内部 GT 表示。
 
-MDL 正式路径由项目 bridge 直接调用锁定 MDL SDK，再由当前 Falcor 8 执行 SDK 生成的 HLSL；falcor2 只在隔离进程中作为数值验证 oracle，不能成为 provider、collector、live batch 或产品 CLI 的 fallback。MDL V1 当前固定 `ExplicitLod(0)`，已有逐方向 numerical parity，但 viewer 与 image parity 尚未登记为 ready。
+MDL 正式路径由项目 bridge 直接调用锁定 MDL SDK，再由当前 Falcor 8 执行 SDK 生成的 HLSL；falcor2 只在隔离进程中作为数值验证 oracle，不能成为 provider、collector、live batch 或产品 CLI 的 fallback。MDL V1 当前固定 `ExplicitLod(0)`，已有逐方向 numerical parity；viewer 直接验证并加载同一 compiled artifact，可切换六种 vMaterials。独立 renderer image oracle 尚未建立，因此 `image_parity` 仍保持 pending。

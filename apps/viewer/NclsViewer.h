@@ -106,6 +106,11 @@ private:
         Falcor::ref<Falcor::Texture> pMaterialXRoughness;
         Falcor::ref<Falcor::Texture> pMaterialXMetalness;
         Falcor::ref<Falcor::Texture> pMaterialXNormalMap;
+        Falcor::ref<Falcor::Buffer> pMdlArgumentBlock;
+        Falcor::ref<Falcor::Buffer> pMdlRoData;
+        std::array<Falcor::ref<Falcor::Texture>, 16> pMdlTexture2D;
+        std::array<Falcor::ref<Falcor::Texture>, 16> pMdlTexture3D;
+        Falcor::ref<Falcor::Sampler> pMdlSampler;
     };
 
     struct MaterialSlotBinding
@@ -190,6 +195,7 @@ private:
     void renderMaterialUi(Falcor::Gui::Widgets& widgets);
     void renderOpenPbrUi(Falcor::Gui::Widgets& widgets);
     void renderMaterialXUi(Falcor::Gui::Widgets& widgets);
+    void renderMdlUi(Falcor::Gui::Widgets& widgets);
     bool allMaterialsSupportedBy(const ncls::ViewerProgram& method) const;
     bool hasActiveProgram() const;
 

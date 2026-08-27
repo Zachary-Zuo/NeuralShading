@@ -43,4 +43,4 @@ typed editor 已覆盖标量、布尔、颜色/向量、enum、SDK hard/soft ran
 - `artifacts/reference-parity/mdl/native-fixtures-v2/report.json`：7 个 disjoint fixture query，response/PDF 最大相对误差分别为 `2.0645e-7` / `1.6723e-7`；
 - `artifacts/reference-parity/mdl/formal-stb-v6/report.json`：两种 vMaterials、264 个 query，全部通过冻结门槛，最大 response/PDF 相对误差不超过 `1.2201e-7`。
 
-正式纹理解码固定独立 `external/stb` commit `013ac3beddff3dbffafd5177e7972067cd2b5083`，`stb_image.h` SHA-256 为 `594c2fe35d49488b4382dbfaec8f98366defca819d916ac95becf3e75f4200b3`。这是项目 formal dependency；它不来自 falcor2，固定同一 decoder 语义是为了消除 JPEG 解码差异，而不是把 oracle 引入正式路径。viewer integration 与 image parity 仍保持 `pending`，不由逐方向 parity 代替。
+正式纹理解码固定独立 `external/stb` commit `013ac3beddff3dbffafd5177e7972067cd2b5083`，`stb_image.h` SHA-256 为 `594c2fe35d49488b4382dbfaec8f98366defca819d916ac95becf3e75f4200b3`。这是项目 formal dependency；它不来自 falcor2，固定同一 decoder 语义是为了消除 JPEG 解码差异，而不是把 oracle 引入正式路径。viewer 现在验证并消费相同 artifact、decoded texture 与 V1 capability，已登记为 ready；独立 renderer `image_parity` 仍保持 pending，不由逐方向 parity 或单边 capture 代替。

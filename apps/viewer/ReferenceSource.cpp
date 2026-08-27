@@ -647,6 +647,7 @@ const char* ReferenceSource::familyId() const
     case ReferenceFamily::Merl: return "merl.measured-brdf@1";
     case ReferenceFamily::OpenPbr: return "openpbr.surface@1.1.1";
     case ReferenceFamily::MaterialX: return "materialx.document@1.39.4";
+    case ReferenceFamily::Mdl: return "mdl.program@1";
     }
     return "unknown";
 }
@@ -690,6 +691,19 @@ ReferenceSource loadReferenceSource(const std::filesystem::path& path)
         if (!stream) throw std::runtime_error("cannot open source material: " + path.string());
         const json document = json::parse(stream);
         if (document.value("schema_name", "") == "ncls.openpbr-material") return loadOpenPbr(path, document);
+        if (document.value("schema_name", "") == "ncls.mdl-viewer-catalog")
+        {
+            ReferenceSource source;
+            source.family = ReferenceFamily::Mdl;
+            source.mdlCatalog = loadMdlViewerCatalog(path);
+            const auto found = std::find_if(
+                source.mdlCatalog.entries.begin(), source.mdlCatalog.entries.end(),
+                [&](const MdlCatalogEntry& entry) { return entry.assetId == source.mdlCatalog.defaultAssetId; });
+            if (found == source.mdlCatalog.entries.end())
+                throw std::runtime_error("MDL viewer catalog default asset is missing");
+            source.mdlCatalogIndex = static_cast<uint32_t>(found - source.mdlCatalog.entries.begin());
+            return selectMdlCatalogEntry(source, source.mdlCatalogIndex);
+        }
         ReferenceSource source;
         source.family = ReferenceFamily::LayerStack;
         source.layerStack = loadMaterialProgram(path, &source.displayName);
@@ -698,6 +712,20 @@ ReferenceSource loadReferenceSource(const std::filesystem::path& path)
         return source;
     }
     throw std::runtime_error("unsupported source material extension: " + extension);
+}
+
+ReferenceSource selectMdlCatalogEntry(const ReferenceSource& source, uint32_t index)
+{
+    if (source.family != ReferenceFamily::Mdl || index >= source.mdlCatalog.entries.size())
+        throw std::runtime_error("MDL catalog selection is out of range");
+    ReferenceSource result = source;
+    const auto& entry = result.mdlCatalog.entries[index];
+    result.mdlArtifact = loadMdlCompiledArtifact(entry);
+    result.mdlCatalogIndex = index;
+    result.sourcePath = result.mdlCatalog.sourcePath;
+    result.sourceSha256 = entry.sourceSnapshotId;
+    result.displayName = entry.displayName;
+    return result;
 }
 
 namespace
@@ -751,6 +779,14 @@ json referenceSourceStatePayload(const ReferenceSource& source)
         break;
     case ReferenceFamily::Merl:
         payload["source_sha256"] = source.sourceSha256;
+        break;
+    case ReferenceFamily::Mdl:
+        if (!source.mdlArtifact || source.mdlCatalogIndex >= source.mdlCatalog.entries.size())
+            throw std::runtime_error("MDL source has no validated compiled artifact");
+        payload["asset_id"] = source.mdlCatalog.entries[source.mdlCatalogIndex].assetId;
+        payload["source_snapshot_id"] = source.sourceSha256;
+        payload["compiled_artifact_sha256"] = source.mdlArtifact->artifactSha256;
+        payload["texture_filtering"] = "explicit-lod0";
         break;
     }
     return payload;
@@ -825,6 +861,27 @@ ReferenceSource deserializeReferenceSourceState(
             throw std::runtime_error("viewer scene source asset SHA-256 mismatch: " + sourcePath.string());
         if (source.family == ReferenceFamily::MaterialX)
             applyMaterialXParameterValues(source, document.at("parameters"));
+    }
+    else if (familyId == "mdl.program@1")
+    {
+        if (sourcePath.empty() || !std::filesystem::is_regular_file(sourcePath))
+            throw std::runtime_error("viewer scene MDL catalog is missing: " + sourcePath.string());
+        source = loadReferenceSource(sourcePath);
+        const std::string assetId = document.at("asset_id").get<std::string>();
+        const auto found = std::find_if(
+            source.mdlCatalog.entries.begin(), source.mdlCatalog.entries.end(),
+            [&](const MdlCatalogEntry& entry) { return entry.assetId == assetId; });
+        if (found == source.mdlCatalog.entries.end())
+            throw std::runtime_error("viewer scene MDL asset is not present in the catalog: " + assetId);
+        source = selectMdlCatalogEntry(
+            source, static_cast<uint32_t>(found - source.mdlCatalog.entries.begin()));
+        if (source.sourceSha256 != expectedSourceHash)
+            throw std::runtime_error("viewer scene MDL source snapshot mismatch");
+        if (!source.mdlArtifact
+            || source.mdlArtifact->artifactSha256 != document.at("compiled_artifact_sha256").get<std::string>())
+            throw std::runtime_error("viewer scene MDL compiled artifact mismatch");
+        if (document.value("texture_filtering", "") != "explicit-lod0")
+            throw std::runtime_error("viewer scene MDL filtering capability is unsupported");
     }
     else throw std::runtime_error("viewer scene contains unsupported source family: " + familyId);
 

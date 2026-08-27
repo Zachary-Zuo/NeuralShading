@@ -47,6 +47,28 @@ def test_reference_and_package_pt_share_the_path_surface_contract() -> None:
         assert "NCLS_PT_SURFACE_PROBE" not in source
 
 
+def test_mdl_reference_path_uses_dynamic_formal_module_and_matched_transport() -> None:
+    source = Path("apps/viewer/shaders/ReferencePathTracer.cs.slang").read_text(
+        encoding="utf-8"
+    )
+    adapter = Path("apps/viewer/shaders/MdlViewerAdapter.slang").read_text(
+        encoding="utf-8"
+    )
+    assert "import NclsMdlGenerated;" in source
+    assert "nclsMdlEvaluateSurface(" in source
+    assert "nclsMdlSampleSurface(" in source
+    assert "nclsMdlPdfSurface(" in source
+    assert "nclsViewerToWorld(viewLocal" in source
+    assert "surface_scattering_evaluate(data, state);" in adapter
+    assert "surface_scattering_sample(data, state);" in adapter
+    assert "surface_scattering_pdf(pdfData, state);" in adapter
+    assert "result.weight = sample.weight;" in source
+    assert "result.pdf = sample.pdf;" in source
+    assert "SampleLevel(gMdlTextureSampler, coordinate, 0.0)" in Path(
+        "shaders/ncls/reference_backends/mdl_runtime.slangh"
+    ).read_text(encoding="utf-8")
+
+
 def test_capture_uses_single_panel_difference_extent_and_fixed_spp() -> None:
     viewer = Path("apps/viewer/NclsViewer.cpp").read_text(encoding="utf-8")
     header = Path("apps/viewer/NclsViewer.h").read_text(encoding="utf-8")

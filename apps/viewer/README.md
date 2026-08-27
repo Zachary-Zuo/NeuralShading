@@ -4,6 +4,8 @@
 
 viewer 不解释 NVIDIA、LayerStack 或其他 program 的私有结构。C++ loader 校验 package 的三个 identity、module closure、typed buffer/texture/sampler descriptor 与 content hash，随后创建通用 `ScatteringBinding`。NVIDIA latent 的两张 RGBA16F DDS mip chain由 descriptor绑定，不需要把 method shader预编入 viewer。
 
+MDL source reference 是 source 侧的动态 program，不是 neural package。`scripts/prepare_mdl_viewer.ps1` 复用正式 MDL SDK bridge 生成六种 vMaterials 的 hashed compiled artifact/catalog；viewer 再验证 SDK/compiler identity、精确文件集合和 V1 capability，并把 target-code types、项目 renderer callback、material-specific HLSL 与 viewer adapter 组合成 Falcor 8 string module。falcor2 不在这条启动或运行路径中。
+
 ## 两条 renderer 路径
 
 package path tracer 在每个 scene hit构造完整 scattering context，包括 position、shading/geometric frame、outgoing direction、material instance、UV 与 ray-cone footprint。续路径直接调用当前 slot binding 的 `prepare/sample/pdf`，直接光调用同一 state 的 `evaluate/pdf`；因此 neural PT不是 source reference PT的显示别名。
@@ -19,6 +21,14 @@ deferred renderer从 G-buffer传入相同的 UV/gradient 与 frame，再调用�
 ```powershell
 .\scripts\build_viewer.ps1 -Configuration Release
 ```
+
+准备并启动 MDL viewer：
+
+```powershell
+.\scripts\launch_mdl_viewer.ps1 -Configuration Release
+```
+
+默认显示 shifting-flakes car paint；`Material` 面板的 `vMaterials preset` 可切换 patinated copper、scratched aluminum、glazed ceramic、velvet 与 pine mosaic。MDL V1 固定 `ExplicitLod(0)`；viewer 内部路径积分调用同一 target code 的 `surface_scattering_sample/pdf`，避免 flakes/coat 与固定 GGX 错配产生 firefly，但不把它登记为训练/provider 的公共 source matched-sampler capability。
 
 构建产物位于锁定 Falcor Release bin。交互式启动可直接指定 package root；`--method` 是 package ID：
 

@@ -6,6 +6,10 @@ import Utils.Geometry.GeometryHelpers;
 #define NCLS_REFERENCE_FAMILY_MASK 15
 #endif
 
+#if (NCLS_REFERENCE_FAMILY_MASK & 16) != 0
+import NclsMdlGenerated;
+#endif
+
 #include "ViewerCommon.slang"
 #include "PathSurface.slang"
 #include "../../../shaders/ncls/contracts/layer_stack_ir.slang"
@@ -104,6 +108,7 @@ struct NclsReferenceSample
     float3 directionLocal;
     float3 weight;
     float pdf;
+    uint transmission;
 };
 
 float nclsReferencePowerHeuristic(float firstPdf, float secondPdf)
@@ -222,6 +227,17 @@ float3 nclsEvalReferencePath(
     if (lightLocal.z <= 0.0f) return float3(0.0f);
     return nclsEvalMaterialXStandardSurface(
         gMaterialXInputs[surface.materialId], surface.materialX, viewLocal, lightLocal);
+    #elif NCLS_REFERENCE_FAMILY_MASK == 16
+    if (lightLocal.z <= 0.0f) return float3(0.0f);
+    float mdlPdf;
+    return nclsMdlEvaluateSurface(
+        surface.position,
+        surface.normal,
+        surface.tangent,
+        surface.texCoord,
+        nclsViewerToWorld(viewLocal, surface.normal, surface.tangent),
+        nclsViewerToWorld(lightLocal, surface.normal, surface.tangent),
+        mdlPdf);
     #else
     #if (NCLS_REFERENCE_FAMILY_MASK & 2) != 0
     if (surface.family == 1u)
@@ -237,6 +253,21 @@ float3 nclsEvalReferencePath(
         if (lightLocal.z <= 0.0f) return float3(0.0f);
         return nclsEvalMaterialXStandardSurface(
             gMaterialXInputs[surface.materialId], surface.materialX, viewLocal, lightLocal);
+    }
+    #endif
+    #if (NCLS_REFERENCE_FAMILY_MASK & 16) != 0
+    if (surface.family == 4u)
+    {
+        if (lightLocal.z <= 0.0f) return float3(0.0f);
+        float mdlPdf;
+        return nclsMdlEvaluateSurface(
+            surface.position,
+            surface.normal,
+            surface.tangent,
+            surface.texCoord,
+            nclsViewerToWorld(viewLocal, surface.normal, surface.tangent),
+            nclsViewerToWorld(lightLocal, surface.normal, surface.tangent),
+            mdlPdf);
     }
     #endif
     #if (NCLS_REFERENCE_FAMILY_MASK & 1) != 0
@@ -444,9 +475,38 @@ NclsReferenceSample nclsSampleOpenPbrPath(
     result.weight = openpbr_get_sum_of_diffuse_specular(weight);
     if (surface.openPbrColorSpace != 0u)
         result.weight = nclsOpenPbrAcesCgToLinearSrgbPath(result.weight);
+    result.transmission = result.directionLocal.z < 0.0f ? 1u : 0u;
     result.valid = result.pdf > 0.0f && isfinite(result.pdf)
         && all(isfinite(result.weight)) && any(result.weight > 0.0f)
         ? 1u : 0u;
+    return result;
+}
+#endif
+
+#if (NCLS_REFERENCE_FAMILY_MASK & 16) != 0
+NclsReferenceSample nclsSampleMdlPath(
+    const NclsReferenceSurface surface,
+    float3 viewLocal,
+    inout NclsRng rng)
+{
+    NclsReferenceSample result = {};
+    const float3 viewWorld = nclsViewerToWorld(
+        viewLocal, surface.normal, surface.tangent);
+    const float4 xi = float4(
+        rng.nextFloat(), rng.nextFloat(), rng.nextFloat(), rng.nextFloat());
+    const NclsMdlSample sample = nclsMdlSampleSurface(
+        surface.position,
+        surface.normal,
+        surface.tangent,
+        surface.texCoord,
+        viewWorld,
+        xi);
+    result.valid = sample.valid;
+    result.directionLocal = nclsViewerToLocal(
+        sample.directionWorld, surface.normal, surface.tangent);
+    result.weight = sample.weight;
+    result.pdf = sample.pdf;
+    result.transmission = sample.transmission;
     return result;
 }
 #endif
@@ -462,12 +522,17 @@ NclsReferenceSample nclsSampleReferencePath(
     return nclsSampleLayerStackPath(surface, viewLocal, rng);
     #elif NCLS_REFERENCE_FAMILY_MASK == 4
     return nclsSampleOpenPbrPath(surface, viewLocal, rng);
+    #elif NCLS_REFERENCE_FAMILY_MASK == 16
+    return nclsSampleMdlPath(surface, viewLocal, rng);
     #else
     #if (NCLS_REFERENCE_FAMILY_MASK & 1) != 0
     if (surface.family == 0u) return nclsSampleLayerStackPath(surface, viewLocal, rng);
     #endif
     #if (NCLS_REFERENCE_FAMILY_MASK & 4) != 0
     if (surface.family == 2u) return nclsSampleOpenPbrPath(surface, viewLocal, rng);
+    #endif
+    #if (NCLS_REFERENCE_FAMILY_MASK & 16) != 0
+    if (surface.family == 4u) return nclsSampleMdlPath(surface, viewLocal, rng);
     #endif
 
     float3 direction;
@@ -531,6 +596,14 @@ float nclsReferencePdfPath(
     const OpenPBR_PreparedBsdf prepared = nclsPrepareOpenPbrReference(
         gOpenPbrInputs[surface.materialId], viewLocal);
     return openpbr_pdf(prepared, lightLocal);
+    #elif NCLS_REFERENCE_FAMILY_MASK == 16
+    return nclsMdlPdfSurface(
+        surface.position,
+        surface.normal,
+        surface.tangent,
+        surface.texCoord,
+        nclsViewerToWorld(viewLocal, surface.normal, surface.tangent),
+        nclsViewerToWorld(lightLocal, surface.normal, surface.tangent));
     #elif NCLS_REFERENCE_FAMILY_MASK == 2 || NCLS_REFERENCE_FAMILY_MASK == 8
     return nclsReflectionProposalPdf(surface, viewLocal, lightLocal);
     #else
@@ -552,6 +625,16 @@ float nclsReferencePdfPath(
             ? layer.relativeIor : 1.0f;
         return nclsInterfacePdf(layer, viewLocal, lightLocal, 1.0f, etaT, NCLS_SAMPLE_REFLECTION);
     }
+    #endif
+    #if (NCLS_REFERENCE_FAMILY_MASK & 16) != 0
+    if (surface.family == 4u)
+        return nclsMdlPdfSurface(
+            surface.position,
+            surface.normal,
+            surface.tangent,
+            surface.texCoord,
+            nclsViewerToWorld(viewLocal, surface.normal, surface.tangent),
+            nclsViewerToWorld(lightLocal, surface.normal, surface.tangent));
     #endif
     return nclsReflectionProposalPdf(surface, viewLocal, lightLocal);
     #endif
@@ -856,7 +939,7 @@ float3 nclsTraceReferencePath(uint2 pixel, uint globalSample)
 
         const float3 directionWorld = normalize(nclsViewerToWorld(
             scatter.directionLocal, surface.normal, surface.tangent));
-        const bool transmission = scatter.directionLocal.z < 0.0f;
+        const bool transmission = scatter.transmission != 0u;
         const float3 nextOrigin = computeRayOrigin(
             surface.position, transmission ? -surface.faceNormal : surface.faceNormal);
         ray = Ray(nextOrigin, directionWorld);

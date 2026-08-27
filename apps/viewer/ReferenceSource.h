@@ -1,6 +1,7 @@
 #pragma once
 
 #include "MaterialProgram.h"
+#include "MdlReference.h"
 
 #include <array>
 #include <cstdint>
@@ -18,6 +19,7 @@ enum class ReferenceFamily : uint32_t
     Merl = 1,
     OpenPbr = 2,
     MaterialX = 3,
+    Mdl = 4,
 };
 
 struct ReferenceSource
@@ -35,6 +37,9 @@ struct ReferenceSource
     std::filesystem::path materialXMetalnessTexture;
     std::filesystem::path materialXNormalTexture;
     std::filesystem::path materialXDisplacementTexture;
+    MdlViewerCatalog mdlCatalog;
+    uint32_t mdlCatalogIndex = 0;
+    std::shared_ptr<const MdlCompiledArtifact> mdlArtifact;
     std::filesystem::path sourcePath;
     std::string displayName = "Default layered material";
     std::string sourceSha256;
@@ -45,6 +50,7 @@ struct ReferenceSource
 ReferenceSource makeDefaultReferenceSource();
 ReferenceSource makeDefaultReferenceSource(ReferenceFamily family);
 ReferenceSource loadReferenceSource(const std::filesystem::path& path);
+ReferenceSource selectMdlCatalogEntry(const ReferenceSource& source, uint32_t index);
 nlohmann::json serializeReferenceSourceState(
     const ReferenceSource& source,
     const std::filesystem::path& manifestDirectory);

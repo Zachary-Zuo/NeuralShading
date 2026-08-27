@@ -7,6 +7,8 @@ target_sources(NclsViewer PRIVATE
     Hash.h
     MaterialProgram.cpp
     MaterialProgram.h
+    MdlReference.cpp
+    MdlReference.h
     ScatteringPackage.cpp
     ScatteringPackage.h
     ComparisonSlot.cpp
@@ -30,6 +32,7 @@ target_sources(NclsViewer PRIVATE
     shaders/Prepare.cs.slang
     shaders/ReferencePathTracer.cs.slang
     shaders/ViewerCommon.slang
+    shaders/MdlViewerAdapter.slang
     "${NCLS_PROJECT_ROOT}/shaders/ncls/contracts/layer_stack_ir.slang"
     "${NCLS_PROJECT_ROOT}/shaders/ncls/contracts/response_measure.slang"
     "${NCLS_PROJECT_ROOT}/shaders/ncls/contracts/scattering_backend.slang"
