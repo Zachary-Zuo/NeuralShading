@@ -4,6 +4,7 @@ import Utils.Geometry.GeometryHelpers;
 
 #include "PackageBackend.slang"
 #include "PathSurface.slang"
+#include "PathSampleGenerator.slang"
 #include "../../../shaders/ncls/reference/sampling.slang"
 
 Texture2D<float4> gPreviousPackage;
@@ -48,6 +49,8 @@ cbuffer PackagePathTracerCB
     float _padding2;
 };
 
+#include "PathEnvironment.slang"
+
 struct NclsPackageSurface
 {
     float3 position;
@@ -60,13 +63,6 @@ struct NclsPackageSurface
     uint materialId;
     uint frontFacing;
 };
-
-float nclsPackagePowerHeuristic(float firstPdf, float secondPdf)
-{
-    const float firstSquared = firstPdf * firstPdf;
-    const float secondSquared = secondPdf * secondPdf;
-    return firstSquared / max(firstSquared + secondSquared, 1e-20f);
-}
 
 NclsPackageSurface nclsPreparePackageSurface(
     const VertexData vertex,
@@ -112,86 +108,6 @@ NclsScatteringContext nclsPackageContext(
     return context;
 }
 
-float3 nclsPackageEnvironment(float3 direction)
-{
-    return gEnvironment.SampleLevel(
-        gLinearSampler, nclsViewerLatLongUv(direction, gEnvironmentRotation), 0.0f).rgb
-        * gEnvironmentIntensity;
-}
-
-uint nclsPackageSearchMarginalCdf(float value)
-{
-    uint lower = 0u;
-    uint upper = gEnvironmentSamplingDimensions.y;
-    [loop]
-    while (lower + 1u < upper)
-    {
-        const uint middle = (lower + upper) >> 1u;
-        if (gEnvironmentMarginalCdf[middle] <= value) lower = middle;
-        else upper = middle;
-    }
-    return min(lower, gEnvironmentSamplingDimensions.y - 1u);
-}
-
-uint nclsPackageSearchConditionalCdf(uint row, float value)
-{
-    const uint width = gEnvironmentSamplingDimensions.x;
-    const uint offset = row * (width + 1u);
-    uint lower = 0u;
-    uint upper = width;
-    [loop]
-    while (lower + 1u < upper)
-    {
-        const uint middle = (lower + upper) >> 1u;
-        if (gEnvironmentConditionalCdf[offset + middle] <= value) lower = middle;
-        else upper = middle;
-    }
-    return min(lower, width - 1u);
-}
-
-float nclsPackageEnvironmentPdf(float3 direction)
-{
-    if (any(gEnvironmentSamplingDimensions == uint2(0u)))
-        return 1.0f / (4.0f * NCLS_VIEWER_PI);
-    const float2 uv = nclsViewerLatLongUv(direction, gEnvironmentRotation);
-    const uint width = gEnvironmentSamplingDimensions.x;
-    const uint height = gEnvironmentSamplingDimensions.y;
-    const uint column = min(uint(uv.x * float(width)), width - 1u);
-    const uint row = min(uint(uv.y * float(height)), height - 1u);
-    const float rowProbability = max(
-        gEnvironmentMarginalCdf[row + 1u] - gEnvironmentMarginalCdf[row], 0.0f);
-    const uint offset = row * (width + 1u);
-    const float columnProbability = max(
-        gEnvironmentConditionalCdf[offset + column + 1u]
-        - gEnvironmentConditionalCdf[offset + column], 0.0f);
-    const float sineTheta = max(sin(NCLS_VIEWER_PI * uv.y), 1e-7f);
-    return rowProbability * columnProbability * float(width * height)
-        / (2.0f * NCLS_VIEWER_PI * NCLS_VIEWER_PI * sineTheta);
-}
-
-void nclsPackageSampleEnvironment(inout NclsRng rng, out float3 direction, out float pdf)
-{
-    if (any(gEnvironmentSamplingDimensions == uint2(0u)))
-    {
-        const float2 u = rng.nextFloat2();
-        const float y = 2.0f * u.x - 1.0f;
-        const float radius = sqrt(max(1.0f - y * y, 0.0f));
-        const float longitude = 2.0f * NCLS_VIEWER_PI * u.y;
-        direction = float3(radius * cos(longitude), y, radius * sin(longitude));
-        pdf = 1.0f / (4.0f * NCLS_VIEWER_PI);
-        return;
-    }
-    const uint row = nclsPackageSearchMarginalCdf(rng.nextFloat());
-    const uint column = nclsPackageSearchConditionalCdf(row, rng.nextFloat());
-    const float2 uv = (float2(column, row) + rng.nextFloat2())
-        / float2(gEnvironmentSamplingDimensions);
-    const float theta = NCLS_VIEWER_PI * uv.y;
-    const float longitude = 2.0f * NCLS_VIEWER_PI * (uv.x - 0.5f) - gEnvironmentRotation;
-    const float sineTheta = sin(theta);
-    direction = float3(sineTheta * cos(longitude), cos(theta), sineTheta * sin(longitude));
-    pdf = nclsPackageEnvironmentPdf(direction);
-}
-
 bool nclsPackageVisible(SceneRayQuery<1> query, float3 origin, float3 direction, float maximumDistance)
 {
     return query.traceVisibilityRay(Ray(origin, direction, 0.0f, maximumDistance));
@@ -221,7 +137,9 @@ float3 nclsPackageDirectLighting(
     const NclsScatteringContext context,
     NclsPackageState state,
     uint globalSample,
+    uint2 pixel,
     uint depth,
+    bool includeEnvironmentBsdfSamples,
     inout NclsRng rng)
 {
     float3 radiance = float3(0.0f);
@@ -283,21 +201,50 @@ float3 nclsPackageDirectLighting(
         {
             float3 lightWorld;
             float lightPdf;
-            nclsPackageSampleEnvironment(rng, lightWorld, lightPdf);
+            nclsViewerSampleEnvironment(rng, lightWorld, lightPdf);
             if (nclsPackageVisible(
                 query, nclsPackageDirectOrigin(surface, lightWorld), lightWorld,
                 3.402823466e+38f))
             {
                 const NclsScatteringPdf bsdfPdf = state.pdf(lightWorld);
-                const float scaledLightPdf = lightPdf
-                    * float(NCLS_VIEWER_ENVIRONMENT_NEE_SAMPLE_COUNT);
-                const float misWeight = nclsPackagePowerHeuristic(
-                    scaledLightPdf, bsdfPdf.forward);
+                const float lightTechniquePdf = nclsViewerEnvironmentLightTechniquePdf(
+                    lightPdf);
+                const float misWeight = nclsViewerEnvironmentLightMisWeight(
+                    lightPdf, bsdfPdf.forward);
                 radiance += nclsPackageEvaluateResponse(
                     state, context, lightWorld,
                     nclsViewerHash(globalSample ^ depth ^ queryIndex++))
-                    * nclsPackageEnvironment(lightWorld)
-                    * (misWeight / max(scaledLightPdf, 1e-8f));
+                    * nclsViewerEnvironmentRadiance(lightWorld)
+                    * (misWeight / max(lightTechniquePdf, 1e-8f));
+            }
+        }
+
+        if (includeEnvironmentBsdfSamples)
+        {
+            [loop]
+            for (uint bsdfSample = 0u;
+                 bsdfSample < NCLS_VIEWER_ENVIRONMENT_BSDF_SAMPLE_COUNT;
+                 ++bsdfSample)
+            {
+                NclsViewerPathSampleGenerator sampleGenerator =
+                    nclsViewerCreatePathSampleGenerator(
+                        pixel,
+                        globalSample * NCLS_VIEWER_ENVIRONMENT_BSDF_SAMPLE_COUNT
+                            + bsdfSample,
+                        depth,
+                        0x243f6a88u);
+                NclsScatteringSample scatter = {};
+                if (!state.sample(scatter, sampleGenerator) || scatter.valid == 0u) continue;
+                const float3 directionWorld = normalize(scatter.wiWorld);
+                if (!nclsPackageVisible(
+                    query, nclsPackageDirectOrigin(surface, directionWorld), directionWorld,
+                    3.402823466e+38f)) continue;
+                const bool delta = (scatter.eventFlags & (uint)NclsScatteringEvent::Delta) != 0u;
+                const float lightPdf = nclsViewerEnvironmentPdf(directionWorld);
+                const float misWeight = nclsViewerEnvironmentBsdfMisWeight(
+                    scatter.pdf.forward, lightPdf, delta);
+                radiance += scatter.weight * nclsViewerEnvironmentRadiance(directionWorld)
+                    * (misWeight / float(NCLS_VIEWER_ENVIRONMENT_BSDF_SAMPLE_COUNT));
             }
         }
     }
@@ -330,42 +277,41 @@ Ray nclsPackagePrimaryRay(uint2 pixel, uint globalSample)
         gScene.camera.data.farZ * inverseCosine);
 }
 
-float3 nclsTracePackagePath(uint2 pixel, uint globalSample)
+float3 nclsTracePackageSuffix(
+    Ray ray,
+    float3 throughput,
+    float rayConeWidth,
+    float rayConeSpreadAngle,
+    uint2 pixel,
+    uint pathSampleIndex,
+    uint branchSeed,
+    float initialBsdfPdf,
+    bool initialDelta)
 {
-    const uint linearPixel = pixel.y * gFrameDim.x + pixel.x;
-    const uint seed = nclsViewerHash(linearPixel ^ nclsViewerHash(globalSample + 0x9e3779b9u));
-    NclsRng rng = NclsRng(uint2(seed, globalSample));
+    NclsRng rng = NclsRng(uint2(branchSeed, pathSampleIndex));
     SceneRayQuery<1> query;
-    Ray ray = nclsPackagePrimaryRay(pixel, globalSample);
-    float3 throughput = float3(1.0f);
     float3 radiance = float3(0.0f);
-    float previousBsdfPdf = 0.0f;
-    float previousEnvironmentPdf = 0.0f;
-    bool previousDelta = false;
-    float rayConeWidth = 0.0f;
-    const float rayConeSpreadAngle = nclsViewerPrimaryRayConeSpreadAngle(
-        gScene.camera.data.cameraV, gScene.camera.data.cameraW, gFrameDim.y);
     const NclsPackageBackend backend = nclsCreatePackageBackend();
     const NclsPackageCompiledMaterial material = nclsLoadPackageMaterial(gCompiledMaterialIndex);
 
     [loop]
-    for (uint depth = 0u; depth <= gMaxSceneBounces; ++depth)
+    for (uint depth = 1u; depth <= max(gMaxSceneBounces, 1u); ++depth)
     {
         float hitDistance;
         const HitInfo hit = query.traceRay(ray, hitDistance);
         if (!hit.isValid())
         {
-            if (gUseEnvironment != 0u)
+            if (depth == 1u && gUseEnvironment != 0u)
             {
-                float misWeight = 1.0f;
-                if (depth > 0u && !previousDelta && previousEnvironmentPdf > 0.0f)
-                    misWeight = nclsPackagePowerHeuristic(previousBsdfPdf, previousEnvironmentPdf);
-                radiance += throughput * nclsPackageEnvironment(ray.dir) * misWeight;
+                const float lightPdf = nclsViewerEnvironmentPdf(ray.dir);
+                const float misWeight = nclsViewerEnvironmentBsdfMisWeight(
+                    initialBsdfPdf, lightPdf, initialDelta);
+                radiance += throughput * nclsViewerEnvironmentRadiance(ray.dir)
+                    * misWeight;
             }
-            else if (depth == 0u)
-                radiance += throughput * float3(0.025f, 0.03f, 0.04f);
             break;
         }
+        if (depth > gMaxSceneBounces) break;
 
         VertexData vertex;
         uint materialId;
@@ -376,13 +322,15 @@ float3 nclsTracePackagePath(uint2 pixel, uint globalSample)
             vertex, materialId, viewWorld, ray.dir, rayConeWidth);
         const NclsScatteringContext context = nclsPackageContext(
             surface, viewWorld,
-            nclsViewerHashFloat(seed ^ nclsViewerHash(depth + 0x51ed270bu)));
+            nclsViewerHashFloat(branchSeed ^ nclsViewerHash(depth + 0x51ed270bu)));
         const NclsPackageState state = backend.prepare(context, material);
         radiance += throughput * nclsPackageDirectLighting(
-            query, surface, context, state, globalSample, depth, rng);
+            query, surface, context, state, pathSampleIndex, pixel, depth, true, rng);
         if (depth >= gMaxSceneBounces) break;
 
-        NclsViewerSampleGenerator sampleGenerator = {rng.nextUInt()};
+        NclsViewerPathSampleGenerator sampleGenerator =
+            nclsViewerCreatePathSampleGenerator(
+                pixel, pathSampleIndex, depth, 0x13198a2eu);
         NclsScatteringSample scatter = {};
         if (!state.sample(scatter, sampleGenerator) || scatter.valid == 0u) break;
         throughput *= scatter.weight;
@@ -398,10 +346,74 @@ float3 nclsTracePackagePath(uint2 pixel, uint globalSample)
         const float3 directionWorld = normalize(scatter.wiWorld);
         const float3 nextOrigin = nclsPackageDirectOrigin(surface, directionWorld);
         ray = Ray(nextOrigin, directionWorld);
-        previousBsdfPdf = scatter.pdf.forward;
-        previousEnvironmentPdf = float(NCLS_VIEWER_ENVIRONMENT_NEE_SAMPLE_COUNT)
-            * nclsPackageEnvironmentPdf(directionWorld);
-        previousDelta = (scatter.eventFlags & (uint)NclsScatteringEvent::Delta) != 0u;
+    }
+    return max(radiance, 0.0f);
+}
+
+float3 nclsTracePackagePath(uint2 pixel, uint globalSample)
+{
+    const uint linearPixel = pixel.y * gFrameDim.x + pixel.x;
+    const uint seed = nclsViewerHash(linearPixel ^ nclsViewerHash(globalSample + 0x9e3779b9u));
+    NclsRng rng = NclsRng(uint2(seed, globalSample));
+    SceneRayQuery<1> query;
+    const Ray primaryRay = nclsPackagePrimaryRay(pixel, globalSample);
+    float hitDistance;
+    const HitInfo hit = query.traceRay(primaryRay, hitDistance);
+    if (!hit.isValid())
+        return gUseEnvironment != 0u
+            ? nclsViewerEnvironmentRadiance(primaryRay.dir)
+            : float3(0.025f, 0.03f, 0.04f);
+
+    VertexData vertex;
+    uint materialId;
+    if (!nclsViewerLoadPathVertexData(hit, primaryRay, vertex, materialId))
+        return float3(0.0f);
+    const float rayConeSpreadAngle = nclsViewerPrimaryRayConeSpreadAngle(
+        gScene.camera.data.cameraV, gScene.camera.data.cameraW, gFrameDim.y);
+    const float rayConeWidth = rayConeSpreadAngle * hitDistance;
+    const float3 viewWorld = -primaryRay.dir;
+    const NclsPackageSurface surface = nclsPreparePackageSurface(
+        vertex, materialId, viewWorld, primaryRay.dir, rayConeWidth);
+    const NclsScatteringContext context = nclsPackageContext(
+        surface, viewWorld,
+        nclsViewerHashFloat(seed ^ nclsViewerHash(0x51ed270bu)));
+    const NclsPackageBackend backend = nclsCreatePackageBackend();
+    const NclsPackageCompiledMaterial material = nclsLoadPackageMaterial(gCompiledMaterialIndex);
+    const NclsPackageState state = backend.prepare(context, material);
+    float3 radiance = nclsPackageDirectLighting(
+        query, surface, context, state, globalSample, pixel, 0u, false, rng);
+
+    [loop]
+    for (uint bsdfSample = 0u;
+         bsdfSample < NCLS_VIEWER_PRIMARY_PATH_SAMPLE_COUNT;
+         ++bsdfSample)
+    {
+        const uint pathSampleIndex = globalSample
+            * NCLS_VIEWER_PRIMARY_PATH_SAMPLE_COUNT + bsdfSample;
+        NclsViewerPathSampleGenerator sampleGenerator =
+            nclsViewerCreatePathSampleGenerator(
+                pixel, pathSampleIndex, 0u, 0x243f6a88u);
+        NclsScatteringSample scatter = {};
+        if (!state.sample(scatter, sampleGenerator) || scatter.valid == 0u) continue;
+        const float3 throughput = scatter.weight
+            / float(NCLS_VIEWER_PRIMARY_PATH_SAMPLE_COUNT);
+        if (!all(isfinite(throughput)) || !any(throughput > 0.0f)) continue;
+        const float3 directionWorld = normalize(scatter.wiWorld);
+        const Ray ray = Ray(
+            nclsPackageDirectOrigin(surface, directionWorld), directionWorld);
+        const bool delta = (scatter.eventFlags & (uint)NclsScatteringEvent::Delta) != 0u;
+        const uint branchSeed = nclsViewerHash(
+            seed ^ nclsViewerHash(pathSampleIndex + 0xa4093822u));
+        radiance += nclsTracePackageSuffix(
+            ray,
+            throughput,
+            rayConeWidth,
+            rayConeSpreadAngle,
+            pixel,
+            pathSampleIndex,
+            branchSeed,
+            scatter.pdf.forward,
+            delta);
     }
     return max(radiance, 0.0f);
 }

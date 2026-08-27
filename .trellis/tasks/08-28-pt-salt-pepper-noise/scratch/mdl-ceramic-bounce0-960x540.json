@@ -1,0 +1,181 @@
+{
+  "approximation_available": false,
+  "bundle_root": "D:\\01_Workspace\\NeuralShading\\artifacts\\exports",
+  "camera": {
+    "distance": 4.373682022094727,
+    "pitch": 0.11999999731779099,
+    "target": [
+      -0.05485051870346069,
+      1.0478609800338745,
+      -0.06448951363563538
+    ],
+    "vertical_fov_degrees": 38.0,
+    "yaw": 0.44999998807907104
+  },
+  "comparison_semantics": "partial_slot_capture",
+  "difference_resolution": [
+    480,
+    540
+  ],
+  "display": {
+    "comparison_mode": 0,
+    "difference_scale": 8.0,
+    "exposure_ev": -0.5
+  },
+  "environment": "D:\\01_Workspace\\NeuralShading\\assets\\viewer\\environments\\polyhaven-1k\\studio_small_03_1k.exr",
+  "environment_sha256": "6c41a5f0c2d42c8dc6b4a5b698e952949b4660ecc2ed5158a20676cacd181c74",
+  "estimated_mean_relative_standard_error": 0.03412272036075592,
+  "files": {
+    "approximation_linear": "",
+    "comparison_linear": "capture-comparison.exr",
+    "difference_display": "",
+    "difference_linear": "",
+    "display": "capture-display.png",
+    "material_program": "",
+    "metrics_csv": "capture-metrics.csv",
+    "reference_linear": "capture-slot-0.exr",
+    "slot_0_linear": "capture-slot-0.exr",
+    "slot_1_linear": "",
+    "viewer_scene": "D:\\01_Workspace\\NeuralShading\\artifacts\\captures\\unified-scattering-contract\\mdl-ceramic-final\\capture-scene.json"
+  },
+  "format_name": "ncls.viewer-capture",
+  "format_version": 4,
+  "gpu_ms": {
+    "composite": 0.0051199999999999996,
+    "slot_0": 2.665472,
+    "slot_1": 0.0,
+    "visibility": 68.621312
+  },
+  "lighting": {
+    "environment_intensity": 0.800000011920929,
+    "environment_rotation": 0.0,
+    "point_color": [
+      0.550000011920929,
+      0.7200000286102295,
+      1.0
+    ],
+    "point_intensity": 7.0,
+    "point_position": [
+      -1.7999999523162842,
+      1.399999976158142,
+      2.0
+    ],
+    "rectangle_axis_u": [
+      0.6499999761581421,
+      0.0,
+      0.0
+    ],
+    "rectangle_axis_v": [
+      0.0,
+      0.0,
+      0.44999998807907104
+    ],
+    "rectangle_center": [
+      1.2999999523162842,
+      2.4000000953674316,
+      1.2000000476837158
+    ],
+    "rectangle_color": [
+      1.0,
+      0.7799999713897705,
+      0.5799999833106995
+    ],
+    "rectangle_intensity": 3.200000047683716,
+    "sun_color": [
+      1.0,
+      0.9200000166893005,
+      0.8199999928474426
+    ],
+    "sun_direction": [
+      -0.3499999940395355,
+      0.7799999713897705,
+      0.5199999809265137
+    ],
+    "sun_intensity": 1.5,
+    "use_environment": true,
+    "use_point": false,
+    "use_rectangle": false,
+    "use_sun": false
+  },
+  "material_ir_sha256": "",
+  "material_program": "",
+  "mdl_asset_id": "ceramic-tiles-glazed-versailles",
+  "mdl_compiled_artifact_sha256": "7f4606c31afd554c53d4073f927f9330199356aeaa828994c23af76e8c6da5b0",
+  "mdl_sdk": "2025.0.0-387700.1252",
+  "mdl_texture_filtering": "explicit-lod0",
+  "mdl_uv_derivatives_consumed": false,
+  "method_bundle": "",
+  "method_id": "none",
+  "method_runtime_class": "none",
+  "reference_estimator": {
+    "environment_sampling": "4_sample_luminance_sin_theta_importance_sampling_with_power_mis",
+    "finite_depth_transport": true,
+    "layer_walk_cap": 24,
+    "raw_accumulation": "arithmetic_mean_of_independent_monte_carlo_samples",
+    "raw_authoritative": true,
+    "scene_bounce_cap": 0
+  },
+  "reference_geometry": "D:\\01_Workspace\\NeuralShading\\assets\\viewer\\scenes\\studio-v1\\shaderball.glb",
+  "reference_geometry_sha256": "a47a52c37f6be60c963c766a6279d302d9940456b9d02972cc8a1bf9026a859a",
+  "reference_integrator": "ncls.scene-path-tracer@1",
+  "reference_layer_walk_max_depth": 24,
+  "reference_samples_per_frame": 16,
+  "reference_scene_max_bounces": 0,
+  "reference_spp": 1024,
+  "resolution": [
+    960,
+    540
+  ],
+  "scene_material_bindings": [
+    {
+      "active": true,
+      "material_id": 0,
+      "mdl_asset_id": "ceramic-tiles-glazed-versailles",
+      "mdl_compiled_artifact_sha256": "7f4606c31afd554c53d4073f927f9330199356aeaa828994c23af76e8c6da5b0",
+      "scene_material_name": "DefaultMaterial",
+      "source_family_id": "mdl.program@1",
+      "source_path": "D:\\01_Workspace\\NeuralShading\\build\\mdl-reference\\viewer\\catalog-ceramic.json",
+      "source_sha256": "53365cea53b0c37b51fc25400d2701d943e02c32702dfa81dce05c9223a818b5",
+      "source_state_sha256": "cbba9896c1a7ae446f4d08686552d530583449d88c44a52be405153c088d5b6e"
+    }
+  ],
+  "scene_material_bindings_replayable": true,
+  "slots": [
+    {
+      "diagnostic": "",
+      "gpu_ms": 2.665472,
+      "linear_output": "capture-slot-0.exr",
+      "material_asset_id": "",
+      "mode": "path-tracing",
+      "package_id": "source-reference",
+      "program_runtime_id": "ncls.scene-path-tracer@1",
+      "slot_index": 0,
+      "source_snapshot_id": "cbba9896c1a7ae446f4d08686552d530583449d88c44a52be405153c088d5b6e",
+      "spp": 1024,
+      "status": "ready"
+    },
+    {
+      "diagnostic": "",
+      "gpu_ms": 0.0,
+      "linear_output": "",
+      "material_asset_id": "",
+      "mode": "path-tracing",
+      "package_id": "",
+      "program_runtime_id": "",
+      "slot_index": 1,
+      "source_snapshot_id": "cbba9896c1a7ae446f4d08686552d530583449d88c44a52be405153c088d5b6e",
+      "spp": 0,
+      "status": "empty"
+    }
+  ],
+  "source_material": "D:\\01_Workspace\\NeuralShading\\build\\mdl-reference\\viewer\\catalog-ceramic.json",
+  "source_material_asset_sha256": "53365cea53b0c37b51fc25400d2701d943e02c32702dfa81dce05c9223a818b5",
+  "source_material_family_id": "mdl.program@1",
+  "source_material_sha256": "53365cea53b0c37b51fc25400d2701d943e02c32702dfa81dce05c9223a818b5",
+  "source_material_state_sha256": "cbba9896c1a7ae446f4d08686552d530583449d88c44a52be405153c088d5b6e",
+  "view_resolution": [
+    480,
+    540
+  ],
+  "viewer_scene": "D:\\01_Workspace\\NeuralShading\\artifacts\\captures\\unified-scattering-contract\\mdl-ceramic-final\\capture-scene.json"
+}

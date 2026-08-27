@@ -3,8 +3,14 @@
 
 static const float NCLS_VIEWER_PI = 3.14159265358979323846f;
 // 高动态环境的 path-tracing 对照统一使用多样本 MIS。reference 与
-// ScatteringPackage path tracer 必须共享这个数，避免 estimator 漂移。
+// ScatteringPackage path tracer 必须共享这两个数，避免 estimator 漂移。
 static const uint NCLS_VIEWER_ENVIRONMENT_NEE_SAMPLE_COUNT = 4u;
+static const uint NCLS_VIEWER_ENVIRONMENT_BSDF_SAMPLE_COUNT = 4u;
+// The primary BSDF pool owns both environment misses and geometry-hit path
+// suffixes. Keeping its count equal to the BSDF MIS count is a correctness
+// invariant for the primary environment light-strategy weights.
+static const uint NCLS_VIEWER_PRIMARY_PATH_SAMPLE_COUNT =
+    NCLS_VIEWER_ENVIRONMENT_BSDF_SAMPLE_COUNT;
 
 uint nclsViewerHash(uint value)
 {

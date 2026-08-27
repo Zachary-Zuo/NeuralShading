@@ -457,6 +457,42 @@ void NclsViewer::rebuildEnvironmentSampling(
 
     std::vector<float> marginal(height + 1u, 0.f);
     std::vector<float> conditional(size_t(height) * (width + 1u), 0.f);
+    std::vector<double> luminance(size_t(width) * height, 0.0);
+    for (uint32_t y = 0u; y < height; ++y)
+    {
+        for (uint32_t x = 0u; x < width; ++x)
+        {
+            const float4 pixel = pixels[size_t(y) * width + x];
+            luminance[size_t(y) * width + x] = 0.2126 * std::max(pixel.x, 0.f)
+                + 0.7152 * std::max(pixel.y, 0.f) + 0.0722 * std::max(pixel.z, 0.f);
+        }
+    }
+
+    // SampleLevel() maps normalized cell [x/W,(x+1)/W] to texel space with a
+    // half-texel offset. The integrated bilinear footprint of that cell is the
+    // separable [1/8, 3/4, 1/8] kernel. Build the CDF from the same reconstruction
+    // used for radiance lookup; otherwise a bright texel illuminates a neighboring
+    // dark cell while MIS still reports the dark cell's very small light PDF.
+    constexpr std::array<double, 3> kBilinearCellKernel{0.125, 0.75, 0.125};
+    const auto filteredLuminance = [&](uint32_t x, uint32_t y)
+    {
+        double value = 0.0;
+        for (int32_t dy = -1; dy <= 1; ++dy)
+        {
+            const int64_t sourceY = std::clamp<int64_t>(
+                int64_t(y) + dy, 0, int64_t(height) - 1);
+            for (int32_t dx = -1; dx <= 1; ++dx)
+            {
+                int64_t sourceX = (int64_t(x) + dx) % int64_t(width);
+                if (sourceX < 0) sourceX += width;
+                value += kBilinearCellKernel[size_t(dx + 1)]
+                    * kBilinearCellKernel[size_t(dy + 1)]
+                    * luminance[size_t(sourceY) * width + size_t(sourceX)];
+            }
+        }
+        return value;
+    };
+
     std::vector<double> rowWeights(height, 0.0);
     double totalWeight = 0.0;
     for (uint32_t y = 0u; y < height; ++y)
@@ -467,10 +503,7 @@ void NclsViewer::rebuildEnvironmentSampling(
         const size_t cdfBase = size_t(y) * (width + 1u);
         for (uint32_t x = 0u; x < width; ++x)
         {
-            const float4 pixel = pixels[size_t(y) * width + x];
-            const double luminance = 0.2126 * std::max(pixel.x, 0.f)
-                + 0.7152 * std::max(pixel.y, 0.f) + 0.0722 * std::max(pixel.z, 0.f);
-            rowWeight += luminance * solidAngleFactor;
+            rowWeight += filteredLuminance(x, y) * solidAngleFactor;
             conditional[cdfBase + x + 1u] = float(rowWeight);
         }
         rowWeights[y] = rowWeight;
@@ -2768,7 +2801,7 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         {"reference_estimator", {
             {"raw_authoritative", true},
             {"raw_accumulation", "arithmetic_mean_of_independent_monte_carlo_samples"},
-            {"environment_sampling", "4_sample_luminance_sin_theta_importance_sampling_with_power_mis"},
+            {"environment_sampling", "primary_4_light_4_bsdf_path_pool_secondary_4_light_4_bsdf_direct_bilinear_power_mis"},
             {"finite_depth_transport", true},
             {"scene_bounce_cap", mMaxSceneBounces},
             {"layer_walk_cap", mMaxLayerWalkDepth},

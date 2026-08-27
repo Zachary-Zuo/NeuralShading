@@ -155,10 +155,15 @@ backend.prepare → state.evaluate / state.sample / state.pdf → MIS / throughp
 - [ ] continuous sample 的实际方向分布、reported PDF、`evaluate` 与 `weight = f·|n_s·wi|/pdf` 是否来自同一 backend？
 - [ ] 上游 API 自带 eval/sample/pdf 时，是否把 direction/event/PDF/weight 当作不可拆分的 native sample tuple 验证？极窄掠射方向若因已舍入 `wi` 重建 half-vector而出现独立 query 漂移，是否保留 native tuple，并分别验证 independent evaluate↔pdf，而不是用后者重建 sample？
 - [ ] direct-light MIS 与 BSDF-hit MIS 是否调用同一 state PDF，并在 multiple-sample NEE 下使用相同的 `n·p_light`？
+- [ ] multiple-sample MIS 是否显式区分 `n_light·p_light` 与 `n_bsdf·p_bsdf`，并让两侧各自除以自己的 sample count？
+- [ ] direct BSDF pool 与 continuation 的所有权是否从路径空间检查？如果多个 downstream strategy 都继承一条上游 continuation，仅增加 downstream samples 不能消除共同的 throughput 尾部。
+- [ ] primary BSDF sample 是否同时拥有两种互斥结果：miss environment 是 direct strategy，hit geometry 是完整 path suffix？若另取一条 primary continuation，必须证明它没有重新引入单样本上游瓶颈或 direct 双计。
+- [ ] environment importance CDF 是否与真正的 GPU radiance filter 使用同一 reconstruction？point CDF 配 bilinear lookup 会让 PDF 与被积函数支持域错位。
 - [ ] renderer 是否完全不识别 source family/program key？heterogeneous composer 只能做 concrete canonical state dispatch，不能重写材质数学。
 - [ ] query/data capability 与 runtime scattering capability 是否分别命名？训练 batch 不传 sampler，不代表 runtime 可以私下绕开 canonical sampler。
 - [ ] invalid/null sample 是否终止路径？fallback、radiance clamp 与 throughput clamp 都会掩盖 estimator 所有权错误。
 - [ ] tail 诊断是否同时包含 sample→pdf/weight 数学门、HDR 环境峰值、空间邻域与随 spp 的 RSE？`finite` 或单张显示图不能区分真实窄高光与随机 firefly。
+- [ ] contribution AOV 是否按路径前缀与 strategy 两级拆分？整图 top residual 可能被合法连续高光污染；应先固定用户可见问题区域，再检查 downstream strategy 是否因共同上游 throughput 而相关。
 - [ ] ray-origin side 是否由实际 sampled direction 与 geometric normal 决定，而不是依赖可能与 smooth-shading 几何关系不同的 event label？
 
 具体 ABI、错误矩阵与测试入口见 `../core/shared-slang-backend.md` 和 `../viewer/conventions.md`。

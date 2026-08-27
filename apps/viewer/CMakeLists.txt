@@ -25,6 +25,9 @@ target_sources(NclsViewer PRIVATE
     shaders/Denoise.cs.slang
     shaders/PackageBackend.slang
     shaders/PackagePathTracer.cs.slang
+    shaders/PathEnvironment.slang
+    shaders/PathEnvironmentMath.slang
+    shaders/PathSampleGenerator.slang
     shaders/PathSurface.slang
     shaders/PathSurfaceMath.slang
     shaders/SceneVisibility.3d.slang

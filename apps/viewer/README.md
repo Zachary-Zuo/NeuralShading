@@ -10,7 +10,7 @@ MDL source reference 是 source 侧的动态 program，不是 neural package。`
 
 package path tracer 在每个 scene hit 构造完整 scattering context，包括 position、shading/geometric frame、outgoing direction、material instance、UV 与 ray-cone footprint。续路径直接调用当前 slot binding 的 `prepare/sample/pdf`，直接光调用同一 state 的 `evaluate/pdf`；source scene path tracer 也只调用各 source 自己的 canonical state。二者共享接口而不共享实现，因此 neural PT 不是 source reference PT 的显示别名。
 
-两个 path tracer 在每个 surface hit 固定做 4 个环境 NEE 样本；light-sampled 与 BSDF-hit 两侧的 power MIS 都使用 `4 * p_light`。续路径 ray origin 根据实际 sampled direction 相对 geometric normal 的符号选侧，不依赖 reflection/transmission event label。该实现不使用 radiance/throughput clamp。
+两个 path tracer 在 primary surface 固定做 4 个 environment-light 样本与 4 个 BSDF path samples；power MIS 两侧分别使用 `4 * p_light` 与 `4 * p_bsdf`。BSDF sample 直接 miss environment 时累计带 MIS 的 direct contribution，命中几何时继续追踪完整 path suffix，因此 first-continuation 积分不会再退化成单样本。secondary surface 仍使用 4+4 environment direct MIS 与一条独立 continuation，避免 path tree 随 bounce 指数增长。所有 path material sample 都由 Falcor `UniformSampleGenerator` 产生，再通过同一 `ISampleGenerator` 交给各 backend 自己的 `sample()`；native direction/event/PDF/weight tuple 不被重建。环境 CDF 由与 GPU 双线性 radiance lookup 相同的 cell-integrated reconstruction 构造，避免亮 texel 过滤到相邻 cell 后仍报告暗 cell PDF。续路径 ray origin 根据实际 sampled direction 相对 geometric normal 的符号选侧，不依赖 reflection/transmission event label。该实现不使用 radiance/throughput clamp。
 
 deferred renderer从 G-buffer传入相同的 UV/gradient 与 frame，再调用同一 package `prepare/evaluate`。两种 mode只改变 transport，不改变 package math或资源。
 

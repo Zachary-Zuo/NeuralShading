@@ -51,31 +51,69 @@ def test_path_tracers_share_unbiased_environment_mis_and_directional_origin() ->
     common = Path("apps/viewer/shaders/ViewerCommon.slang").read_text(
         encoding="utf-8"
     )
+    environment = Path("apps/viewer/shaders/PathEnvironmentMath.slang").read_text(
+        encoding="utf-8"
+    )
     assert "NCLS_VIEWER_ENVIRONMENT_NEE_SAMPLE_COUNT = 4u" in common
+    assert "NCLS_VIEWER_ENVIRONMENT_BSDF_SAMPLE_COUNT = 4u" in common
+    assert (
+        "NCLS_VIEWER_PRIMARY_PATH_SAMPLE_COUNT =\n"
+        "    NCLS_VIEWER_ENVIRONMENT_BSDF_SAMPLE_COUNT"
+    ) in common
+    assert "float(NCLS_VIEWER_ENVIRONMENT_NEE_SAMPLE_COUNT) * lightPdf" in environment
+    assert "float(NCLS_VIEWER_ENVIRONMENT_BSDF_SAMPLE_COUNT) * bsdfPdf" in environment
+    assert "nclsViewerEnvironmentPowerHeuristic" in environment
 
-    for shader, environment_pdf, direct_origin in (
+    for shader, direct_origin in (
         (
             "ReferencePathTracer.cs.slang",
-            "nclsEnvironmentPdfPath(directionWorld)",
             "nclsDirectRayOrigin(surface, directionWorld)",
         ),
         (
             "PackagePathTracer.cs.slang",
-            "nclsPackageEnvironmentPdf(directionWorld)",
             "nclsPackageDirectOrigin(surface, directionWorld)",
         ),
     ):
         source = Path("apps/viewer/shaders", shader).read_text(encoding="utf-8")
+        compact = "".join(source.split())
+        assert '#include "PathEnvironment.slang"' in source
         assert "environmentSample < NCLS_VIEWER_ENVIRONMENT_NEE_SAMPLE_COUNT" in source
-        assert "const float scaledLightPdf = lightPdf" in source
-        assert "* float(NCLS_VIEWER_ENVIRONMENT_NEE_SAMPLE_COUNT);" in source
-        assert (
-            "previousEnvironmentPdf = "
-            "float(NCLS_VIEWER_ENVIRONMENT_NEE_SAMPLE_COUNT)" in source
-        )
-        assert environment_pdf in source
+        assert "bsdfSample < NCLS_VIEWER_ENVIRONMENT_BSDF_SAMPLE_COUNT" in source
+        assert "bsdfSample < NCLS_VIEWER_PRIMARY_PATH_SAMPLE_COUNT" in source
+        assert "scatter.weight/float(NCLS_VIEWER_PRIMARY_PATH_SAMPLE_COUNT)" in compact
+        assert "depth==1u&&gUseEnvironment!=0u" in compact
+        assert "initialBsdfPdf" in source
+        assert "0u,false,rng" in compact
+        assert "depth,true,rng" in compact
+        assert "nclsViewerEnvironmentLightTechniquePdf(lightPdf)" in compact
+        assert "nclsViewerEnvironmentLightMisWeight(" in source
+        assert "nclsViewerEnvironmentBsdfMisWeight(" in source
+        assert "scatter.weight * nclsViewerEnvironmentRadiance(directionWorld)" in source
+        assert "nclsViewerEnvironmentBsdfMisWeight(" in source
+        assert "previousEnvironmentPdf" not in source
+        assert "previousBsdfPdf" not in source
         assert direct_origin in source
         assert "scatter.eventFlags & (uint)NclsScatteringEvent::Transmission" not in source
+
+
+def test_path_sample_generator_is_the_pinned_falcor_uniform_generator() -> None:
+    source = Path("apps/viewer/shaders/PathSampleGenerator.slang").read_text(
+        encoding="utf-8"
+    )
+    assert "import Utils.Sampling.UniformSampleGenerator;" in source
+    assert "UniformSampleGenerator generator;" in source
+    assert "UniformSampleGenerator(pixel, sequence)" in source
+    assert "struct NclsViewerPathSampleGenerator : ISampleGenerator" in source
+    assert "Cranley" not in source
+    assert "lattice" not in source.lower()
+
+
+def test_environment_cdf_matches_the_bilinear_radiance_reconstruction() -> None:
+    viewer = Path("apps/viewer/NclsViewer.cpp").read_text(encoding="utf-8")
+    assert "kBilinearCellKernel{0.125, 0.75, 0.125}" in viewer
+    assert "filteredLuminance(x, y) * solidAngleFactor" in viewer
+    assert "sourceX = (int64_t(x) + dx) % int64_t(width)" in viewer
+    assert "std::clamp<int64_t>(" in viewer
 
 
 def test_reference_path_uses_canonical_scene_backend_contract_only() -> None:
