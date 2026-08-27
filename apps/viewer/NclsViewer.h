@@ -39,7 +39,7 @@ struct ViewerOptions
     bool headless = false;
     bool verboseConsole = false;
     bool evaluatorPreviewLighting = false;
-    uint32_t frameCount = 256;
+    uint32_t frameCount = 1024;
     uint32_t width = 1280;
     uint32_t height = 720;
 };
@@ -237,6 +237,8 @@ private:
     Falcor::ref<Falcor::Texture> mpEmptySlot;
     Falcor::ref<Falcor::Texture> mpComparisonLinear;
     Falcor::ref<Falcor::Texture> mpDisplay;
+    Falcor::ref<Falcor::Texture> mpDifferenceLinear;
+    Falcor::ref<Falcor::Texture> mpDifferenceDisplay;
     Falcor::ref<Falcor::Texture> mpEnvironment;
     Falcor::ref<Falcor::Sampler> mpLinearSampler;
     Falcor::ref<Falcor::Sampler> mpMaterialXSampler;

@@ -45,3 +45,29 @@ def test_reference_and_package_pt_share_the_path_surface_contract() -> None:
         assert "nclsViewerLoadPathVertexData(" in source
         assert "getVertexDataRayCones(" not in source
         assert "NCLS_PT_SURFACE_PROBE" not in source
+
+
+def test_capture_uses_single_panel_difference_extent_and_fixed_spp() -> None:
+    viewer = Path("apps/viewer/NclsViewer.cpp").read_text(encoding="utf-8")
+    header = Path("apps/viewer/NclsViewer.h").read_text(encoding="utf-8")
+    composite = Path("apps/viewer/shaders/Composite.cs.slang").read_text(
+        encoding="utf-8"
+    )
+
+    assert "constexpr uint32_t kCapturePathTracingSpp = 1024;" in viewer
+    assert "options.frameCount = (kCapturePathTracingSpp + samples - 1u) / samples;" in viewer
+    assert '{"reference_spp", kCapturePathTracingSpp}' in viewer
+    assert "uint32_t frameCount = 1024;" in header
+    assert "slot.spp += samplesThisFrame;" in viewer
+    assert "slot.spp != kCapturePathTracingSpp" in viewer
+    assert "must reach exactly 1024 spp" in viewer
+    assert "mpDifferenceLinear = viewTexture();" in viewer
+    assert "mpDifferenceDisplay = viewTexture();" in viewer
+    assert "mpDifferenceLinear->captureToFile(" in viewer
+    assert "mpComparisonLinear->captureToFile(0, 0, differencePath" not in viewer
+    assert '{"difference_resolution", {mViewWidth, mOutputHeight}}' in viewer
+    assert "gDifferenceLinear[pixel]" in composite
+    assert "gDifferenceDisplay[pixel]" in composite
+    assert "gSlot0.SampleLevel(gLinearSampler, panelUv" in composite
+    assert "gSlot1.SampleLevel(gLinearSampler, panelUv" in composite
+    assert ": rightPanel ? pixel.x - panelWidth - dividerWidth : 0u;" in composite

@@ -30,7 +30,7 @@ external\Falcor\build\windows-vs2022\bin\Release\NclsViewer.exe `
 
 ## capture v4 与回放
 
-自动化比较使用 `ncls.viewer-capture@4`。manifest 的 `slots[2]` 分别记录 `package_id`、`mode`、status 与 runtime/material/source identity；输出图像固定为 `*-slot-0.exr` 与 `*-slot-1.exr`。`source-reference` 是内建的权威 source transport请求，其余值必须对应 `bundle_root` 下通过验证的 package。验证 neural mode 对称性时，可让两个 slot绑定同一 neural package并分别选择 PT/deferred。
+自动化比较使用 `ncls.viewer-capture@4`。稳定 capture harness 固定所有 ready 的 path-tracing slot 为 1024 spp；未达到该值时不得导出 EXR，deferred slot 为确定性单次求值，不虚构 spp。manifest 的 `slots[2]` 分别记录 `package_id`、`mode`、status 与 runtime/material/source identity；`*-slot-0.exr`、`*-slot-1.exr` 与 `*-difference.exr` 都固定为单 panel 的 `view_resolution`，difference 不复用双 panel composite 纹理。`source-reference` 是内建的权威 source transport请求，其余值必须对应 `bundle_root` 下通过验证的 package。验证 neural mode 对称性时，可让两个 slot绑定同一 neural package并分别选择 PT/deferred。
 
 最小 slot 片段如下：
 
@@ -44,9 +44,9 @@ external\Falcor\build\windows-vs2022\bin\Release\NclsViewer.exe `
     {"package_id": "source-reference", "mode": "path-tracing"},
     {"package_id": "<package-id>", "mode": "path-tracing"}
   ],
-  "resolution": [640, 360],
-  "reference_spp": 16,
-  "reference_samples_per_frame": 4
+  "resolution": [1280, 720],
+  "reference_spp": 1024,
+  "reference_samples_per_frame": 16
 }
 ```
 

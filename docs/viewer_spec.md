@@ -6,6 +6,8 @@ viewer 是 Windows/D3D12 部署验证工具。已编译方法从 `ScatteringPack
 
 `ComparisonSlot[2]` 在选择、状态、输出与生命周期上完全对称；每侧独立保存 binding请求、mode、capability、status、GPU resource、accumulation 与 timing。binding请求可以是已验证 package或特殊值 `source-reference`，mode 为 `path-tracing` 或 `deferred`。加载、hash、ABI、module 或 capability 失败只在对应 slot 显示错误。
 
+自动化 capture harness 对所有 ready 的 path-tracing slot 固定累计到 1024 spp 后才导出；最后一帧截断到剩余 sample，deferred slot 保持 0 spp。`slot-0.exr`、`slot-1.exr` 与 `difference.exr` 都使用单 panel 的 `view_resolution`，difference 由独立同尺寸纹理按 panel-local UV 计算；双 panel 的 `comparison.exr` 才使用总 `resolution`。因此旧 replay 中记录的任意 spp 不会改变新 capture 的 1024 spp 目标，也不得再次用全宽 composite 生成横向拉伸的 difference。
+
 panel 宽度恒为 `floor(outputWidth / 2)`，高度相同；奇数总宽度的一个像素是固定 divider。camera aspect 取 panel extent，与 slot 是否 ready 无关。composite 按 1:1 texel 映射，不提供可拖动分割线。
 
 ## renderer 与编辑

@@ -26,6 +26,7 @@ FALCOR_EXPORT_D3D12_AGILITY_SDK
 namespace
 {
 constexpr uint32_t kMaximumSceneMaterials = 64;
+constexpr uint32_t kCapturePathTracingSpp = 1024;
 const Gui::DropdownList kComparisonModes = {
     {0, "Reference / method split"},
     {1, "Linear absolute error"},
@@ -189,8 +190,8 @@ ViewerOptions parseOptions(int argc, char** argv)
         const auto resolution = replay.at("resolution");
         options.width = resolution.at(0).get<uint32_t>();
         options.height = resolution.at(1).get<uint32_t>();
-        const uint32_t samples = replay.value("reference_samples_per_frame", 1u);
-        options.frameCount = std::max(1u, (replay.value("reference_spp", 1u) + samples - 1u) / samples);
+        const uint32_t samples = std::clamp(replay.value("reference_samples_per_frame", 1u), 1u, 16u);
+        options.frameCount = (kCapturePathTracingSpp + samples - 1u) / samples;
         break;
     }
     auto value = [&](int& index, const char* name) -> std::string {
@@ -554,6 +555,8 @@ void NclsViewer::resizeResources(uint32_t width, uint32_t height)
         mOutputWidth, mOutputHeight, ResourceFormat::RGBA32Float, 1, 1, nullptr, shaderUav);
     mpDisplay = getDevice()->createTexture2D(
         mOutputWidth, mOutputHeight, ResourceFormat::RGBA32Float, 1, 1, nullptr, shaderUav);
+    mpDifferenceLinear = viewTexture();
+    mpDifferenceDisplay = viewTexture();
     rebuildSceneFbo();
     for (auto& slot : mComparisonSlots) resizeComparisonSlot(slot);
     resetReference(true);
@@ -1200,6 +1203,9 @@ void NclsViewer::renderVisibility(RenderContext* pRenderContext)
 
 void NclsViewer::renderReference(RenderContext* pRenderContext, ComparisonSlotRuntime& slot)
 {
+    const uint32_t samplesThisFrame = std::min(
+        mSamplesPerFrame, kCapturePathTracingSpp - std::min(slot.spp, kCapturePathTracingSpp));
+    if (samplesThisFrame == 0u) return;
     const uint32_t next = 1u - slot.ping;
     const bool accumulate = !mCameraDragging && !mPanDragging;
     beginTiming(slot.timing);
@@ -1239,7 +1245,7 @@ void NclsViewer::renderReference(RenderContext* pRenderContext, ComparisonSlotRu
         constants["gFrameIndex"] = mFrameIndex;
         constants["gMaterialCount"] = mpScene->getMaterialCount();
         constants["gReferenceSpp"] = slot.spp;
-        constants["gSamplesThisFrame"] = mSamplesPerFrame;
+        constants["gSamplesThisFrame"] = samplesThisFrame;
         constants["gMaxSceneBounces"] = mMaxSceneBounces;
         constants["gMaxLayerWalkDepth"] = mMaxLayerWalkDepth;
         constants["gResetAccumulation"] = uint32_t(slot.resetAccumulation);
@@ -1263,7 +1269,7 @@ void NclsViewer::renderReference(RenderContext* pRenderContext, ComparisonSlotRu
     slot.ping = next;
     if (accumulate)
     {
-        slot.spp += mSamplesPerFrame;
+        slot.spp += samplesThisFrame;
         mAccumulationSeconds += getFrameRate().getLastFrameTime();
     }
     else slot.spp = 0;
@@ -1300,6 +1306,9 @@ void NclsViewer::renderPackagePath(RenderContext* pRenderContext, ComparisonSlot
 {
     const auto* method = slotProgram(slot);
     if (!method || !slot.pPathPass) return;
+    const uint32_t samplesThisFrame = std::min(
+        mSamplesPerFrame, kCapturePathTracingSpp - std::min(slot.spp, kCapturePathTracingSpp));
+    if (samplesThisFrame == 0u) return;
     const uint32_t next = 1u - slot.ping;
     const bool accumulate = !mCameraDragging && !mPanDragging;
     auto root = slot.pPathPass->getRootVar();
@@ -1316,7 +1325,7 @@ void NclsViewer::renderPackagePath(RenderContext* pRenderContext, ComparisonSlot
     constants["gFrameDim"] = uint2(mViewWidth, mOutputHeight);
     constants["gFrameIndex"] = mFrameIndex;
     constants["gPackageSpp"] = slot.spp;
-    constants["gSamplesThisFrame"] = mSamplesPerFrame;
+    constants["gSamplesThisFrame"] = samplesThisFrame;
     constants["gMaxSceneBounces"] = mMaxSceneBounces;
     constants["gResetAccumulation"] = uint32_t(slot.resetAccumulation);
     constants["gAccumulate"] = uint32_t(accumulate);
@@ -1332,7 +1341,7 @@ void NclsViewer::renderPackagePath(RenderContext* pRenderContext, ComparisonSlot
     slot.pPathPass->execute(pRenderContext, mViewWidth, mOutputHeight);
     endTiming(slot.timing);
     slot.ping = next;
-    if (accumulate) slot.spp += mSamplesPerFrame;
+    if (accumulate) slot.spp += samplesThisFrame;
     else slot.spp = 0u;
     slot.resetAccumulation = false;
 }
@@ -1347,6 +1356,8 @@ void NclsViewer::renderComposite(RenderContext* pRenderContext)
     root["gLinearSampler"] = mpLinearSampler;
     root["gComparisonLinear"] = mpComparisonLinear;
     root["gDisplay"] = mpDisplay;
+    root["gDifferenceLinear"] = mpDifferenceLinear;
+    root["gDifferenceDisplay"] = mpDifferenceDisplay;
     auto constants = root["CompositeCB"];
     constants["gOutputDim"] = uint2(mOutputWidth, mOutputHeight);
     constants["gComparisonMode"] = mComparisonMode;
@@ -1379,7 +1390,12 @@ void NclsViewer::onFrameRender(RenderContext* pRenderContext, const ref<Fbo>& pT
     pRenderContext->blit(mpDisplay->getSRV(), pTargetFbo->getRenderTargetView(0));
     ++mFrameIndex;
 
-    if (mOptions.headless && ++mRenderedFrames >= mOptions.frameCount)
+    const bool captureSppReady = std::all_of(
+        mComparisonSlots.begin(), mComparisonSlots.end(), [](const ComparisonSlotRuntime& slot) {
+            return !slot.ready() || slot.contract.mode != ncls::SlotMode::PathTracing
+                || slot.spp == kCapturePathTracingSpp;
+        });
+    if (mOptions.headless && ++mRenderedFrames >= mOptions.frameCount && captureSppReady)
     {
         capture(mOptions.captureManifest);
         shutdown(0);
@@ -2352,6 +2368,18 @@ void NclsViewer::applyReplaySettings(const std::filesystem::path& path)
 void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
 {
     namespace fs = std::filesystem;
+    for (uint32_t slotIndex = 0u; slotIndex < mComparisonSlots.size(); ++slotIndex)
+    {
+        const auto& slot = mComparisonSlots[slotIndex];
+        if (slot.ready() && slot.contract.mode == ncls::SlotMode::PathTracing
+            && slot.spp != kCapturePathTracingSpp)
+        {
+            mStatus = "Capture blocked: path-tracing slot " + std::to_string(slotIndex)
+                + " must reach exactly 1024 spp.";
+            logWarning("{}", mStatus);
+            return;
+        }
+    }
     fs::path manifestPath = requestedManifestPath;
     if (manifestPath.extension() != ".json") manifestPath /= "capture.json";
     if (!manifestPath.parent_path().empty()) fs::create_directories(manifestPath.parent_path());
@@ -2395,17 +2423,10 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         0, 0, displayPath, Bitmap::FileFormat::PngFile, Bitmap::ExportFlags::None, false);
     if (bothSlotsReady)
     {
-        const uint32_t originalComparisonMode = mComparisonMode;
-        mComparisonMode = 1u;
-        renderComposite(getRenderContext());
-        getRenderContext()->blit(mpDisplay->getSRV(), getTargetFbo()->getRenderTargetView(0));
-        getDevice()->wait();
-        mpComparisonLinear->captureToFile(0, 0, differencePath, Bitmap::FileFormat::ExrFile, Bitmap::ExportFlags::None, false);
-        getTargetFbo()->getColorTexture(0)->captureToFile(
+        mpDifferenceLinear->captureToFile(
+            0, 0, differencePath, Bitmap::FileFormat::ExrFile, Bitmap::ExportFlags::None, false);
+        mpDifferenceDisplay->captureToFile(
             0, 0, differenceDisplayPath, Bitmap::FileFormat::PngFile, Bitmap::ExportFlags::None, false);
-        mComparisonMode = originalComparisonMode;
-        renderComposite(getRenderContext());
-        getRenderContext()->blit(mpDisplay->getSRV(), getTargetFbo()->getRenderTargetView(0));
     }
     const auto* rightProgram = slotProgram(mComparisonSlots[1]);
     const std::string packageId = rightProgram ? rightProgram->packageId
@@ -2493,7 +2514,8 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         {"scene_material_bindings_replayable", sceneMaterialBindingsReplayable},
         {"resolution", {mOutputWidth, mOutputHeight}},
         {"view_resolution", {mViewWidth, mOutputHeight}},
-        {"reference_spp", mComparisonSlots[0].spp},
+        {"difference_resolution", {mViewWidth, mOutputHeight}},
+        {"reference_spp", kCapturePathTracingSpp},
         {"reference_samples_per_frame", mSamplesPerFrame},
         {"reference_scene_max_bounces", mMaxSceneBounces},
         {"reference_layer_walk_max_depth", mMaxLayerWalkDepth},
