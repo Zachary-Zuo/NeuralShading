@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 7
+- **Total Sessions**: 8
 - **Last Active**: 2026-08-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~155 | Active |
+| `journal-1.md` | ~177 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 8 | 2026-08-27 | 原生 MDL Reference 与 falcor2 官方对照 | `5e69ba9`, `4f80300` | `main` |
 | 7 | 2026-08-27 | Fancy reference material 候选研究 | `cdc5fd9` | `main` |
 | 6 | 2026-08-27 | 固定 Viewer Capture Harness | `411ef6f` | `main` |
 | 5 | 2026-08-27 | 修复 Viewer PT 空间材质 footprint | `b23c3f6` | `main` |

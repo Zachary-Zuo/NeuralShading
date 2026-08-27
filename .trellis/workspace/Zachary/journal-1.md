@@ -153,3 +153,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 8: 原生 MDL Reference 与 falcor2 官方对照
+
+**Date**: 2026-08-27
+**Task**: 原生 MDL Reference 与 falcor2 官方对照
+**Branch**: `main`
+
+### Summary
+
+实现项目 MDL SDK bridge 到当前 Falcor 8 的唯一正式 reference 路径，接入 canonical source/editor、offline HDF5、CUDA live batch 与六种 vMaterials；falcor2 保持隔离 oracle。artifact identity、capability audit、native cross-check、formal parity、unit 与 MDL GPU gate 均已通过，并已归档任务。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5e69ba9` | (see git log) |
+| `4f80300` | (see git log) |
+
+### Status
+
+[OK] **Completed**
