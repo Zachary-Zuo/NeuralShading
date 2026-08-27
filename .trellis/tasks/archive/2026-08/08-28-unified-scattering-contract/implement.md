@@ -61,8 +61,8 @@
 - [x] G2. 更新正式中文文档与 viewer README，删除“MDL sample/pdf 只是 viewer-internal、公共 capability 仍 evaluate-only”的旧边界。
 - [x] G3. 用 `trellis-break-loop` 复核这次从 MDL 单点缺陷提升为架构防线后是否仍有同类入口。
 - [x] G4. 用 `trellis-check` 做最终 spec compliance、tests、build、diff、dead-path 与 upstream-clean 检查。
-- [ ] G5. 仅提交本任务 scoped files；不 amend、不 push。记录 commit hash、验证矩阵和未纳入的用户 dirty paths。
-- [ ] G6. 质量门通过后归档 `08-28-unified-scattering-contract` 并记录 journal。
+- [x] G5. 仅提交本任务 scoped files；不 amend、不 push。记录 commit hash、验证矩阵和未纳入的用户 dirty paths。
+- [x] G6. 质量门通过后归档 `08-28-unified-scattering-contract` 并记录 journal。
 
 ## 计划验证命令
 
