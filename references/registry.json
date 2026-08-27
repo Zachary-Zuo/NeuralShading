@@ -76,6 +76,21 @@
         "numerical_parity": "not-applicable",
         "image_parity": "ready"
       }
+    },
+    {
+      "reference_id": "ncls.mdl-vmaterials2@1",
+      "package": "mdl-vmaterials2-v1",
+      "role": "ground-truth",
+      "source_material_family_id": "mdl.program@1",
+      "status": "active",
+      "capabilities": {
+        "source_adapter": "ready",
+        "native_reference": "ready",
+        "falcor_runtime": "ready",
+        "viewer_integration": "pending",
+        "numerical_parity": "ready",
+        "image_parity": "pending"
+      }
     }
   ]
 }

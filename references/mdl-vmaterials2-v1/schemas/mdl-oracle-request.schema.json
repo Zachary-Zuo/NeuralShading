@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ncls.mdl-oracle-request@1",
+  "title": "Isolated falcor2 MDL oracle request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "source", "query"],
+  "properties": {
+    "schema_name": {"const": "ncls.mdl-oracle-request"},
+    "schema_version": {"const": 1},
+    "source": {
+      "type": "object",
+      "required": ["asset_id", "module_root", "module", "material", "exact_export", "arguments", "source_snapshot_id", "mdl_sdk", "compilation_mode"]
+    },
+    "query": {
+      "type": "object",
+      "required": ["frame", "state", "response_measure", "surfaces", "view_directions", "light_directions", "seed", "query_set"]
+    }
+  }
+}

@@ -59,6 +59,7 @@ from .batch_sources import (
     BatchSource,
     LiveReferenceBatchSource,
     MaterialXLiveReferenceBatchSource,
+    MdlLiveReferenceBatchSource,
     OfflineBatchSource,
 )
 from .native_features import (
@@ -115,6 +116,7 @@ __all__ = [
     "BatchSource",
     "LiveReferenceBatchSource",
     "MaterialXLiveReferenceBatchSource",
+    "MdlLiveReferenceBatchSource",
     "OfflineBatchSource",
     "TrainingBatch",
     "TrainingRouteRequest",

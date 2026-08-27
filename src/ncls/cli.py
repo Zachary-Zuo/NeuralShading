@@ -20,6 +20,7 @@ from ncls.core.material import (
 from ncls.data.batch_sources import (
     LiveReferenceBatchSource,
     MaterialXLiveReferenceBatchSource,
+    MdlLiveReferenceBatchSource,
     OfflineBatchSource,
 )
 from ncls.data.training_batch import TrainingRouteRequest
@@ -164,8 +165,36 @@ def _batch_source(config: TrainingConfig):
             seed=config.seed,
             device=config.device,
         )
+    mdl_fields = {"mdl_asset_id", "query_tile_size"}
+    if set(options) == mdl_fields:
+        from ncls.data import CollectionConfig
+        from ncls.data.providers import MdlProvider, MdlProviderConfig
+
+        provider = MdlProvider(
+            CollectionConfig(
+                name="mdl-neural-training",
+                view_count=1,
+                light_count=1,
+                spatial_sample_count=1,
+                proposal="uniform",
+                seed=config.seed,
+            ),
+            MdlProviderConfig.from_vmaterials2((str(options["mdl_asset_id"]),)),
+        )
+        states = tuple(provider.source_states())
+        if len(states) != 1:
+            provider.close()
+            raise RuntimeError("MDL live training requires exactly one source snapshot")
+        return MdlLiveReferenceBatchSource(
+            provider,
+            states[0],
+            max_batch_size=max(route.batch_size for route in config.routes),
+            query_tile_size=int(options["query_tile_size"]),
+            seed=config.seed,
+            device=config.device,
+        )
     raise ValueError(
-        "live batch source options must select the exact LayerStack or MaterialX contract"
+        "live batch source options must select the exact LayerStack, MaterialX, or MDL contract"
     )
 
 

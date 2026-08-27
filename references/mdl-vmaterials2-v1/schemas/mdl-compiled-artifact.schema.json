@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ncls.mdl-compiled-artifact@1",
+  "title": "Finalized MDL SDK compiled artifact",
+  "type": "object",
+  "required": ["schema", "mdl_sdk", "module", "material", "code", "capability_audit", "parameters", "argument_block", "ro_data", "textures", "compiler_identity", "files_sha256", "diagnostics"],
+  "properties": {
+    "schema": {"const": "ncls.mdl-compiled-artifact@1"},
+    "mdl_sdk": {"const": "2025.0.0-387700.1252"},
+    "module": {"type": "string", "pattern": "^::"},
+    "material": {"type": "string", "pattern": "^::"},
+    "code": {"type": "string", "minLength": 1},
+    "capability_audit": {
+      "const": {
+        "surface_bsdf_evaluate": true,
+        "emission": false,
+        "volume": false,
+        "displacement": false
+      }
+    },
+    "parameters": {"type": "array"},
+    "argument_block": {"type": ["object", "null"]},
+    "ro_data": {"type": "array"},
+    "textures": {"type": "array"},
+    "compiler_identity": {
+      "type": "object",
+      "required": ["mdl_sdk", "bridge_executable_sha256", "stb_commit", "stb_image_sha256", "codegen_options"]
+    },
+    "files_sha256": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    },
+    "diagnostics": {"type": "string", "maxLength": 0}
+  }
+}

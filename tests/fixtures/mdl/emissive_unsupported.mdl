@@ -1,0 +1,13 @@
+mdl 1.7;
+
+import ::df::*;
+
+export material emissive_unsupported() = material(
+    surface: material_surface(
+        scattering: df::diffuse_reflection_bsdf(tint: color(0.5)),
+        emission: material_emission(
+            emission: df::diffuse_edf(),
+            intensity: color(1.0)
+        )
+    )
+);

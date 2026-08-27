@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import math
 from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
@@ -20,6 +21,7 @@ from ncls.data.native_features import (
 )
 from ncls.data.contract import SourceState
 from ncls.data.providers.materialx import MaterialXGpuQueryRuntime, MaterialXProvider
+from ncls.data.providers.mdl import MdlGpuQueryRuntime, MdlProvider
 from ncls.data.providers.base import implementation_hash
 from ncls.data.training_batch import TrainingBatch, TrainingRouteRequest
 from ncls.data.stores import ReferenceCorpusStore, ReferenceQueryStore
@@ -899,5 +901,285 @@ class MaterialXLiveReferenceBatchSource:
     def close(self) -> None:
         if self._active_leases:
             raise RuntimeError("cannot close MaterialX source with active batch leases")
+        self._runtime.close()
+        self.provider.close()
+
+
+class MdlLiveReferenceBatchSource:
+    """原生 MDL online producer；正式 target 由 current Falcor shared buffers 产生。"""
+
+    def __init__(
+        self,
+        provider: MdlProvider,
+        state: SourceState,
+        *,
+        max_batch_size: int,
+        query_tile_size: int = 262_144,
+        seed: int = 0,
+        device: torch.device | str = "cuda:0",
+    ) -> None:
+        self.kind = "live"
+        self.provider = provider
+        self.state = state
+        self.device = torch.device(device)
+        if self.device.type != "cuda" or not torch.cuda.is_available():
+            raise RuntimeError("MDL live training requires a CUDA device")
+        if state.family_id != "mdl.program@1":
+            raise ValueError("MDL live training requires an mdl.program@1 source snapshot")
+        if max_batch_size < 1 or query_tile_size < 1:
+            raise ValueError("MDL live batch and query tile sizes must be positive")
+        self.max_batch_size = int(max_batch_size)
+        self.query_tile_size = int(query_tile_size)
+        self.seed = int(seed)
+        artifact = state.runtime_state.artifact
+        self._runtime = MdlGpuQueryRuntime(
+            artifact,
+            sdk_root=provider.provider_config.sdk_root,
+            query_capacity=self.query_tile_size,
+            slot_count=2,
+        )
+        self._feature_values, self._feature_fields = self._parameter_features(state)
+        self._feature_pyramid = DenseNativeFeaturePyramid(
+            (torch.as_tensor(self._feature_values[None, None, :], dtype=torch.float32),)
+        )
+        self._layout_id = sha256_json(
+            {
+                "family_id": state.family_id,
+                "source_contract_version": 1,
+                "fields": self._feature_fields,
+                "spatial": False,
+            }
+        )
+        self.source_state_ids = (state.state_id,)
+        self.source_contracts = (
+            {"family_id": state.family_id, "source_contract_version": 1},
+        )
+        self.identity = sha256_json(
+            {
+                "producer": "mdl-live-reference",
+                "source_state_id": state.state_id,
+                "native_feature_layout_id": self._layout_id,
+                "query_tile_size": self.query_tile_size,
+                "seed": self.seed,
+                "reference_implementation_sha256": provider.descriptor.implementation_sha256,
+                "training_producer_implementation_sha256": _LIVE_PRODUCER_IMPLEMENTATION_SHA256,
+            }
+        )
+        self._rng_by_route: dict[str, np.random.Generator] = {}
+        self._request_count: dict[str, int] = {}
+        self._active_leases: dict[str, _LiveBatchLease] = {}
+        self._free_slots = [0, 1]
+
+    @staticmethod
+    def _parameter_features(state: SourceState) -> tuple[np.ndarray, list[dict[str, Any]]]:
+        payload = json.loads(state.snapshot.native_payload.decode("utf-8"))
+        values = []
+        fields = []
+        for name, descriptor in sorted(payload.get("arguments", {}).items()):
+            value = descriptor.get("value")
+            if isinstance(value, bool):
+                components = [float(value)]
+            elif isinstance(value, (int, float)):
+                components = [float(value)]
+            elif isinstance(value, list) and all(isinstance(item, (int, float)) for item in value):
+                components = [float(item) for item in value]
+            elif isinstance(value, dict) and set(value) >= {"name", "value"}:
+                components = [float(value["value"])]
+            else:
+                continue
+            values.extend(components)
+            fields.append(
+                {
+                    "name": name,
+                    "mdl_type": str(descriptor["mdl_type"]),
+                    "channels": len(components),
+                    "filter_rule": "constant",
+                }
+            )
+        if not values:
+            values = [0.0]
+            fields = [{"name": "no-numeric-arguments", "channels": 1, "filter_rule": "constant"}]
+        result = np.asarray(values, dtype=np.float32)
+        if not np.all(np.isfinite(result)):
+            raise ValueError("MDL numeric source arguments must be finite")
+        return result, fields
+
+    def _rng(self, request: TrainingRouteRequest) -> np.random.Generator:
+        if request.name not in self._rng_by_route:
+            self._rng_by_route[request.name] = np.random.default_rng(
+                np.random.SeedSequence((self.seed, request.seed))
+            )
+        return self._rng_by_route[request.name]
+
+    def _release(self, lease: _LiveBatchLease) -> None:
+        if self._active_leases.get(lease.route_name) is not lease:
+            raise RuntimeError("MDL batch lease does not belong to the active dispatch")
+        del self._active_leases[lease.route_name]
+        if lease.slot_index >= 0:
+            self._free_slots.append(lease.slot_index)
+            self._free_slots.sort()
+        if not self._active_leases:
+            self._runtime._device.end_frame()
+
+    def next_batch(self, request: TrainingRouteRequest) -> TrainingBatch:
+        if request.name in self._active_leases:
+            raise RuntimeError("release the active route TrainingBatch before requesting another batch")
+        if request.batch_size > self.max_batch_size or request.direction_count != 1:
+            raise ValueError("MDL V1 live route requires batch within capacity and direction_count=1")
+        proposal = request.options.get("direction_proposal")
+        if proposal not in {
+            "uniform-half-difference@1",
+            "uniform-hemisphere-conditioning@1",
+        }:
+            raise ValueError("MDL live route has an unsupported direction proposal")
+        rng = self._rng(request)
+        generator, request_seed = MaterialXLiveReferenceBatchSource._request_generator(
+            rng, self.device
+        )
+        batch_size = request.batch_size
+        if proposal == "uniform-half-difference@1":
+            views, lights, proposal_pdf, solid_angle_weight = (
+                MaterialXLiveReferenceBatchSource._half_difference_directions_torch(
+                    batch_size, generator, self.device
+                )
+            )
+        else:
+            views = MaterialXLiveReferenceBatchSource._uniform_hemisphere(
+                batch_size, generator, self.device
+            )
+            lights = MaterialXLiveReferenceBatchSource._uniform_hemisphere(
+                batch_size, generator, self.device
+            )
+            proposal_pdf = torch.full(
+                (batch_size,),
+                1.0 / (2.0 * math.pi),
+                dtype=torch.float32,
+                device=self.device,
+            )
+            solid_angle_weight = torch.full(
+                (batch_size,),
+                2.0 * math.pi,
+                dtype=torch.float32,
+                device=self.device,
+            )
+        uv = torch.rand(
+            (batch_size, 2), dtype=torch.float32, device=self.device, generator=generator
+        )
+        # MDL V1 与冻结的 falcor2 oracle 都采用 ExplicitLod(0)。这些字段
+        # 仍保留在统一 TrainingBatch 合同中，但不能伪装成 reference 已消费
+        # 的 footprint/mip 输入。
+        mip_level = torch.zeros(batch_size, dtype=torch.float32, device=self.device)
+        gradients = torch.zeros((batch_size, 4), dtype=torch.float32, device=self.device)
+        target_estimator = request.options.get("target_estimator", "reference")
+        slot_index = -1
+        if target_estimator == "reference":
+            if not self._free_slots:
+                raise RuntimeError("MDL live reference has no free in-flight query slot")
+            slot_index = self._free_slots.pop(0)
+            target, _ = self._runtime.evaluate_torch(
+                slot_index,
+                views,
+                lights,
+                uv,
+                gradients,
+            )
+            target = target[:, None, :]
+        elif target_estimator == "learned-sampler":
+            target = torch.zeros((batch_size, 1, 3), dtype=torch.float32, device=self.device)
+        else:
+            raise ValueError("MDL route target_estimator is unsupported")
+        lease = _LiveBatchLease(self, request.name, slot_index)
+        self._active_leases[request.name] = lease
+        request_index = self._request_count.get(request.name, 0)
+        self._request_count[request.name] = request_index + 1
+        source_features = torch.as_tensor(
+            self._feature_values, dtype=torch.float32, device=self.device
+        ).expand(batch_size, -1)
+        seeds = torch.randint(
+            0,
+            np.iinfo(np.int32).max,
+            (batch_size, 1),
+            dtype=torch.int64,
+            device=self.device,
+            generator=generator,
+        )
+        return TrainingBatch(
+            self.state.family_id,
+            self.source_state_ids * batch_size,
+            "rgb-bsdf-times-absolute-shading-normal-light-cosine",
+            {
+                "source_index": torch.zeros(batch_size, dtype=torch.int64, device=self.device),
+                "wo": views,
+                "wi": lights[:, None, :],
+                "target": target,
+                "solid_angle_weight": solid_angle_weight[:, None],
+                "reference_pdf": proposal_pdf[:, None],
+                "sample_count": torch.ones((batch_size, 1), dtype=torch.int64, device=self.device),
+                "rng_seed": seeds,
+                "query_role": torch.full(
+                    (batch_size,), request.query_role, dtype=torch.int64, device=self.device
+                ),
+                "uv": uv,
+                "uv_dx": gradients[:, :2],
+                "uv_dy": gradients[:, 2:],
+                "mip_level": mip_level,
+                "native_features": source_features,
+                "sample_u": torch.rand(
+                    (batch_size, 2),
+                    dtype=torch.float32,
+                    device=self.device,
+                    generator=generator,
+                ),
+            },
+            {
+                "producer": "mdl-live-reference",
+                "data_source_identity": self.identity,
+                "host_readback": False,
+                "synchronization": "wait_for_falcor",
+                "route_name": request.name,
+                "request_index": request_index,
+                "global_step": request.global_step,
+                "native_feature_layout_id": self._layout_id,
+                "source_adaptation_id": "mdl-class-compiled-parameters-and-uv@1",
+                "texture_filtering": "explicit-lod0",
+                "uv_derivatives_consumed": False,
+                "direction_proposal": proposal,
+                "target_estimator": target_estimator,
+                "gpu_request_seed": request_seed,
+                "gpu_online_sampling": True,
+            },
+            lease,
+        )
+
+    def materialization_features(self) -> NativeFeaturePyramid:
+        return self._feature_pyramid
+
+    def state_dict(self) -> Mapping[str, Any]:
+        if self._active_leases:
+            raise RuntimeError("cannot checkpoint MDL source with active batch leases")
+        return {
+            "rng_by_route": {
+                name: generator.bit_generator.state
+                for name, generator in self._rng_by_route.items()
+            },
+            "request_count": dict(self._request_count),
+        }
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        if self._active_leases or set(state) != {"rng_by_route", "request_count"}:
+            raise ValueError("MDL batch source state is invalid")
+        generators = {}
+        for name, value in dict(state["rng_by_route"]).items():
+            generator = np.random.default_rng()
+            generator.bit_generator.state = value
+            generators[str(name)] = generator
+        self._rng_by_route = generators
+        self._request_count = {
+            str(name): int(value) for name, value in dict(state["request_count"]).items()
+        }
+
+    def close(self) -> None:
+        if self._active_leases:
+            raise RuntimeError("cannot close MDL source with active batch leases")
         self._runtime.close()
         self.provider.close()

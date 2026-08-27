@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ncls.mdl-source@1",
+  "title": "NeuralShading canonical MDL source snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "pack_id", "pack_version", "module", "export", "arguments", "compilation_mode", "mdl_language", "mdl_sdk"],
+  "properties": {
+    "schema": {"const": "ncls.mdl-source@1"},
+    "pack_id": {"type": "string", "minLength": 1},
+    "pack_version": {"type": "string", "minLength": 1},
+    "module": {"type": "string", "pattern": "^::"},
+    "export": {"type": "string", "pattern": "^::.*\\(.*\\)$"},
+    "arguments": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["mdl_type", "value", "editable"],
+        "properties": {
+          "mdl_type": {"type": "string", "minLength": 1},
+          "value": {},
+          "editable": {"type": "boolean"},
+          "choices": {"type": "array"},
+          "minimum": {"type": "number"},
+          "maximum": {"type": "number"},
+          "soft_minimum": {"type": "number"},
+          "soft_maximum": {"type": "number"}
+        }
+      }
+    },
+    "compilation_mode": {"const": "class"},
+    "mdl_language": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"},
+    "mdl_sdk": {"const": "2025.0.0-387700.1252"}
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "schema_name": "ncls.mdl-oracle-parity-gate",
+  "schema_version": 1,
+  "gate_id": "ncls.mdl-falcor2-lod0-directional@1",
+  "status": "frozen-from-calibration-v1",
+  "scope": "MDL surface evaluate/PDF, upper hemisphere, canonical frame, ExplicitLod(0), float32",
+  "source": "Frozen only from calibration-v1 (seed 0x4D444C31) before running the disjoint formal packet. The median margin covers the observed Falcor 8/Pillow versus falcor2/SGL JPEG decode quantization; the other limits retain the stricter provisional values.",
+  "why_hard": "Both integrations use the same MDL SDK closure implementation but different target-code and renderer-resource wiring.",
+  "failure_action": "Treat failure as an integration defect; inspect frame, state, UV origin, arguments and resources. Do not widen this gate from formal observations.",
+  "thresholds": {
+    "absolute_floor": 0.00003,
+    "median_relative_l1_max": 0.0025,
+    "p99_relative_l1_max": 0.01,
+    "max_relative_l1_max": 0.03,
+    "max_scaled_absolute_error": 0.0002
+  },
+  "calibration": {
+    "report": "artifacts/reference-parity/mdl/calibration-v1/report.json",
+    "report_sha256": "b02bea13b3ffb6fe956aa84b9fb8ccc4ed31e40ccafe96e2cf1fc09432ecb871",
+    "seed": 1296321585,
+    "assets": [
+      "carpaint-shifting-flakes",
+      "copper-antique-brushed-patinated"
+    ]
+  }
+}

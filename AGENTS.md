@@ -34,7 +34,7 @@
 - 根仓库包含项目自有源码、测试、环境声明、中文稳定文档、版本化验收门槛、资产清单，以及 `references/` 中的 reference registry/package 说明。
 - 根仓库不包含 `external/`、`assets/`、`data/`、`build/`、`artifacts/`、`reports/` 和缓存。单次正确性验证、实验报告与运行摘要统一进入 `artifacts/`；第三方 reference 源码固定在 `external/`；原始源材质、纹理、测量表和 viewer 运行资产固定在 `assets/`；`data/` 只保存 `data/reference-responses/` 下由 reference 导出的 HDF5；它们都由 `references/` 中的 package/manifest 追溯。
 - 完整规则见 `docs/repository_policy.md`。
-- `external/Falcor`、`external/pbrt-v4`、`external/OpenPBR`、`external/openpbr-bsdf`、`external/glm` 和 `external/MaterialX` 是固定提交的独立克隆。当前均为干净工作树，本项目没有修改上游源码。MaterialX viewer 所需的 NanoGUI 及其依赖使用上游 gitlink 固定提交，由获取脚本初始化。
+- `external/Falcor`、`external/pbrt-v4`、`external/OpenPBR`、`external/openpbr-bsdf`、`external/glm`、`external/MaterialX`、`external/falcor2` 和 `external/stb` 是固定提交的独立克隆；MDL SDK 使用固定官方 binary package。当前均不得保留未说明的上游修改。MaterialX viewer 所需的 NanoGUI 及其依赖使用上游 gitlink 固定提交，由获取脚本初始化。falcor2 仅是 MDL validation oracle，不进入正式 provider/runtime。
 - 若以后确实需要修改上游，先把改动保存为根仓库中的显式补丁和应用脚本，并更新本文件；不得把未说明的修改留在 `external/`。
 
 ### Falcor viewer 构建 overlay
@@ -75,6 +75,9 @@
 - Adobe openpbr-bsdf：`external/openpbr-bsdf`，commit `9edf806740d2140846d9bef76e4342fc458e2ef5`。
 - GLM：`external/glm`，tag `1.0.1`，commit `0af55ccecd98d4e5a8d1fad7de25ba429d60e863`。
 - MaterialX：`external/MaterialX`，tag `v1.39.4`，commit `270b5cf2ae2be24a3b6ef4b0569f1c93038dda1d`；其 NanoGUI gitlink 为 `6452dd6944d2ba5c0c9bc0042a1894f703ce1ace`。
+- NVIDIA MDL SDK：`external/MDL-SDK-2025.0.0-387700.1252-nt-x86-64`，build `2025.0.0-387700.1252`。
+- falcor2 MDL oracle：`external/falcor2`，commit `d629c967fa800af81cf5c916bfb2a825b012f473`；只用于隔离 parity。
+- stb：`external/stb`，commit `013ac3beddff3dbffafd5177e7972067cd2b5083`；`stb_image.h` SHA-256 `594c2fe35d49488b4382dbfaec8f98366defca819d916ac95becf3e75f4200b3`。
 
 ## PowerShell 中文文本编码
 

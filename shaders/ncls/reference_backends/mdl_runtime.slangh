@@ -1,0 +1,884 @@
+// Project-owned renderer callbacks for MDL SDK generated HLSL.
+// The MDL target-code types are supplied by the pinned SDK before this source.
+
+#ifndef NCLS_MDL_TEXTURE_COUNT
+#define NCLS_MDL_TEXTURE_COUNT 1
+#endif
+
+StructuredBuffer<float4> gMdlArgumentBlock;
+StructuredBuffer<float4> gMdlRoData;
+SamplerState gMdlTextureSampler;
+#if NCLS_MDL_TEXTURE_COUNT > 0
+Texture2D<float4> gMdlTexture2D0;
+Texture3D<float4> gMdlTexture3D0;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 1
+Texture2D<float4> gMdlTexture2D1;
+Texture3D<float4> gMdlTexture3D1;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 2
+Texture2D<float4> gMdlTexture2D2;
+Texture3D<float4> gMdlTexture3D2;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 3
+Texture2D<float4> gMdlTexture2D3;
+Texture3D<float4> gMdlTexture3D3;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 4
+Texture2D<float4> gMdlTexture2D4;
+Texture3D<float4> gMdlTexture3D4;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 5
+Texture2D<float4> gMdlTexture2D5;
+Texture3D<float4> gMdlTexture3D5;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 6
+Texture2D<float4> gMdlTexture2D6;
+Texture3D<float4> gMdlTexture3D6;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 7
+Texture2D<float4> gMdlTexture2D7;
+Texture3D<float4> gMdlTexture3D7;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 8
+Texture2D<float4> gMdlTexture2D8;
+Texture3D<float4> gMdlTexture3D8;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 9
+Texture2D<float4> gMdlTexture2D9;
+Texture3D<float4> gMdlTexture3D9;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 10
+Texture2D<float4> gMdlTexture2D10;
+Texture3D<float4> gMdlTexture3D10;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 11
+Texture2D<float4> gMdlTexture2D11;
+Texture3D<float4> gMdlTexture3D11;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 12
+Texture2D<float4> gMdlTexture2D12;
+Texture3D<float4> gMdlTexture3D12;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 13
+Texture2D<float4> gMdlTexture2D13;
+Texture3D<float4> gMdlTexture3D13;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 14
+Texture2D<float4> gMdlTexture2D14;
+Texture3D<float4> gMdlTexture3D14;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 15
+Texture2D<float4> gMdlTexture2D15;
+Texture3D<float4> gMdlTexture3D15;
+#endif
+
+void mdl_texture_dimensions(int textureIndex, out uint width, out uint height)
+{
+    width = 0;
+    height = 0;
+    switch (textureIndex)
+    {
+#if NCLS_MDL_TEXTURE_COUNT > 0
+    case 1: gMdlTexture2D0.GetDimensions(width, height); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 1
+    case 2: gMdlTexture2D1.GetDimensions(width, height); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 2
+    case 3: gMdlTexture2D2.GetDimensions(width, height); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 3
+    case 4: gMdlTexture2D3.GetDimensions(width, height); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 4
+    case 5: gMdlTexture2D4.GetDimensions(width, height); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 5
+    case 6: gMdlTexture2D5.GetDimensions(width, height); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 6
+    case 7: gMdlTexture2D6.GetDimensions(width, height); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 7
+    case 8: gMdlTexture2D7.GetDimensions(width, height); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 8
+    case 9: gMdlTexture2D8.GetDimensions(width, height); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 9
+    case 10: gMdlTexture2D9.GetDimensions(width, height); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 10
+    case 11: gMdlTexture2D10.GetDimensions(width, height); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 11
+    case 12: gMdlTexture2D11.GetDimensions(width, height); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 12
+    case 13: gMdlTexture2D12.GetDimensions(width, height); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 13
+    case 14: gMdlTexture2D13.GetDimensions(width, height); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 14
+    case 15: gMdlTexture2D14.GetDimensions(width, height); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 15
+    case 16: gMdlTexture2D15.GetDimensions(width, height); return;
+#endif
+    default: return;
+    }
+}
+
+float4 mdl_texture_sample_level(int textureIndex, float2 coordinate)
+{
+    switch (textureIndex)
+    {
+#if NCLS_MDL_TEXTURE_COUNT > 0
+    case 1: return gMdlTexture2D0.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 1
+    case 2: return gMdlTexture2D1.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 2
+    case 3: return gMdlTexture2D2.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 3
+    case 4: return gMdlTexture2D3.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 4
+    case 5: return gMdlTexture2D4.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 5
+    case 6: return gMdlTexture2D5.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 6
+    case 7: return gMdlTexture2D6.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 7
+    case 8: return gMdlTexture2D7.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 8
+    case 9: return gMdlTexture2D8.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 9
+    case 10: return gMdlTexture2D9.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 10
+    case 11: return gMdlTexture2D10.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 11
+    case 12: return gMdlTexture2D11.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 12
+    case 13: return gMdlTexture2D12.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 13
+    case 14: return gMdlTexture2D13.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 14
+    case 15: return gMdlTexture2D14.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 15
+    case 16: return gMdlTexture2D15.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+    default: return float4(0.0);
+    }
+}
+
+float4 mdl_texture_sample_grad(int textureIndex, float2 coordinate, float2 dx, float2 dy)
+{
+    switch (textureIndex)
+    {
+#if NCLS_MDL_TEXTURE_COUNT > 0
+    case 1: return gMdlTexture2D0.SampleGrad(gMdlTextureSampler, coordinate, dx, dy);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 1
+    case 2: return gMdlTexture2D1.SampleGrad(gMdlTextureSampler, coordinate, dx, dy);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 2
+    case 3: return gMdlTexture2D2.SampleGrad(gMdlTextureSampler, coordinate, dx, dy);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 3
+    case 4: return gMdlTexture2D3.SampleGrad(gMdlTextureSampler, coordinate, dx, dy);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 4
+    case 5: return gMdlTexture2D4.SampleGrad(gMdlTextureSampler, coordinate, dx, dy);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 5
+    case 6: return gMdlTexture2D5.SampleGrad(gMdlTextureSampler, coordinate, dx, dy);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 6
+    case 7: return gMdlTexture2D6.SampleGrad(gMdlTextureSampler, coordinate, dx, dy);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 7
+    case 8: return gMdlTexture2D7.SampleGrad(gMdlTextureSampler, coordinate, dx, dy);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 8
+    case 9: return gMdlTexture2D8.SampleGrad(gMdlTextureSampler, coordinate, dx, dy);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 9
+    case 10: return gMdlTexture2D9.SampleGrad(gMdlTextureSampler, coordinate, dx, dy);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 10
+    case 11: return gMdlTexture2D10.SampleGrad(gMdlTextureSampler, coordinate, dx, dy);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 11
+    case 12: return gMdlTexture2D11.SampleGrad(gMdlTextureSampler, coordinate, dx, dy);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 12
+    case 13: return gMdlTexture2D12.SampleGrad(gMdlTextureSampler, coordinate, dx, dy);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 13
+    case 14: return gMdlTexture2D13.SampleGrad(gMdlTextureSampler, coordinate, dx, dy);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 14
+    case 15: return gMdlTexture2D14.SampleGrad(gMdlTextureSampler, coordinate, dx, dy);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 15
+    case 16: return gMdlTexture2D15.SampleGrad(gMdlTextureSampler, coordinate, dx, dy);
+#endif
+    default: return float4(0.0);
+    }
+}
+
+float4 mdl_texture_load(int textureIndex, int2 coordinate)
+{
+    switch (textureIndex)
+    {
+#if NCLS_MDL_TEXTURE_COUNT > 0
+    case 1: return gMdlTexture2D0.Load(int3(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 1
+    case 2: return gMdlTexture2D1.Load(int3(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 2
+    case 3: return gMdlTexture2D2.Load(int3(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 3
+    case 4: return gMdlTexture2D3.Load(int3(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 4
+    case 5: return gMdlTexture2D4.Load(int3(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 5
+    case 6: return gMdlTexture2D5.Load(int3(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 6
+    case 7: return gMdlTexture2D6.Load(int3(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 7
+    case 8: return gMdlTexture2D7.Load(int3(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 8
+    case 9: return gMdlTexture2D8.Load(int3(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 9
+    case 10: return gMdlTexture2D9.Load(int3(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 10
+    case 11: return gMdlTexture2D10.Load(int3(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 11
+    case 12: return gMdlTexture2D11.Load(int3(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 12
+    case 13: return gMdlTexture2D12.Load(int3(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 13
+    case 14: return gMdlTexture2D13.Load(int3(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 14
+    case 15: return gMdlTexture2D14.Load(int3(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 15
+    case 16: return gMdlTexture2D15.Load(int3(coordinate, 0));
+#endif
+    default: return float4(0.0);
+    }
+}
+
+uint mdl_read_argblock_word(uint wordOffset)
+{
+    const uint4 words = asuint(gMdlArgumentBlock[wordOffset >> 2]);
+    switch (wordOffset & 3)
+    {
+    case 0: return words.x;
+    case 1: return words.y;
+    case 2: return words.z;
+    default: return words.w;
+    }
+}
+
+float mdl_read_argblock_as_float(int byteOffset)
+{
+    return asfloat(mdl_read_argblock_word(uint(byteOffset) >> 2));
+}
+
+double mdl_read_argblock_as_double(int byteOffset)
+{
+    const uint wordOffset = uint(byteOffset) >> 2;
+    return asdouble(mdl_read_argblock_word(wordOffset), mdl_read_argblock_word(wordOffset + 1));
+}
+
+int mdl_read_argblock_as_int(int byteOffset)
+{
+    return asint(mdl_read_argblock_word(uint(byteOffset) >> 2));
+}
+
+uint mdl_read_argblock_as_uint(int byteOffset)
+{
+    return mdl_read_argblock_word(uint(byteOffset) >> 2);
+}
+
+bool mdl_read_argblock_as_bool(int byteOffset)
+{
+    const uint offset = uint(byteOffset);
+    const uint value = mdl_read_argblock_word(offset >> 2);
+    return (value & (0xffu << (8 * (offset & 3)))) != 0;
+}
+
+uint mdl_read_rodata_word(uint wordOffset)
+{
+    const uint4 words = asuint(gMdlRoData[wordOffset >> 2]);
+    switch (wordOffset & 3)
+    {
+    case 0: return words.x;
+    case 1: return words.y;
+    case 2: return words.z;
+    default: return words.w;
+    }
+}
+
+float mdl_read_rodata_as_float(int byteOffset)
+{
+    return asfloat(mdl_read_rodata_word(uint(byteOffset) >> 2));
+}
+
+double mdl_read_rodata_as_double(int byteOffset)
+{
+    const uint wordOffset = uint(byteOffset) >> 2;
+    return asdouble(mdl_read_rodata_word(wordOffset), mdl_read_rodata_word(wordOffset + 1));
+}
+
+int mdl_read_rodata_as_int(int byteOffset)
+{
+    return asint(mdl_read_rodata_word(uint(byteOffset) >> 2));
+}
+
+int mdl_read_rodata_as_uint(int byteOffset)
+{
+    return int(mdl_read_rodata_word(uint(byteOffset) >> 2));
+}
+
+bool mdl_read_rodata_as_bool(int byteOffset)
+{
+    const uint offset = uint(byteOffset);
+    const uint value = mdl_read_rodata_word(offset >> 2);
+    return (value & (0xffu << (8 * (offset & 3)))) != 0;
+}
+
+float3 mdl_adapt_normal(Shading_state_material state, float3 normal)
+{
+    if (all(normal == float3(0.0)))
+        return normal;
+
+    const float3 geometricNormal = normalize(state.geom_normal);
+    const float signNormal = dot(normal, geometricNormal) >= 0.0 ? 1.0 : -1.0;
+    const float3 orientedNormal = signNormal * normalize(normal);
+    const float threshold = 0.1;
+    const float cosine = dot(state.renderer_state.view_direction, orientedNormal);
+    if (cosine <= threshold)
+    {
+        const float blend = saturate(cosine / threshold);
+        return normalize(signNormal * lerp(geometricNormal, orientedNormal, blend));
+    }
+    return normal;
+}
+
+bool tex_texture_isvalid(int textureIndex)
+{
+    return textureIndex > 0 && textureIndex <= NCLS_MDL_TEXTURE_COUNT;
+}
+
+float mdl_apply_wrap_and_crop(float coordinate, int wrapMode, float2 crop, uint resolution)
+{
+    if (wrapMode != TEX_WRAP_REPEAT || any(crop != float2(0.0, 1.0)))
+    {
+        if (wrapMode == TEX_WRAP_REPEAT)
+        {
+            coordinate -= floor(coordinate);
+        }
+        else
+        {
+            if (wrapMode == TEX_WRAP_MIRRORED_REPEAT)
+            {
+                const float interval = floor(coordinate);
+                if ((int(interval) & 1) != 0)
+                    coordinate = 1.0 - (coordinate - interval);
+                else
+                    coordinate -= interval;
+            }
+            const float halfTexel = 0.5 / float(resolution);
+            coordinate = clamp(coordinate, halfTexel, 1.0 - halfTexel);
+        }
+        coordinate = coordinate * (crop.y - crop.x) + crop.x;
+    }
+    return coordinate;
+}
+
+// Match the MDL integration used by falcor2.  The quintic remap keeps the
+// hardware bilinear footprint but suppresses the visible linear interpolation
+// shoulders that MDL's Falcor runtime deliberately avoids.
+float2 mdl_apply_smootherstep_filter(float2 uv, uint2 size)
+{
+    float2 result = uv * size + 0.5;
+    const float uInteger = floor(result.x);
+    const float vInteger = floor(result.y);
+    float uFraction = result.x - uInteger;
+    float vFraction = result.y - vInteger;
+    uFraction = uFraction * uFraction * uFraction
+        * (uFraction * (uFraction * 6.0 - 15.0) + 10.0);
+    vFraction = vFraction * vFraction * vFraction
+        * (vFraction * (vFraction * 6.0 - 15.0) + 10.0);
+    result.x = uInteger + uFraction;
+    result.y = vInteger + vFraction;
+    return (result - 0.5) / size;
+}
+
+bool mdl_texture_clip(float2 coordinate, int wrapU, int wrapV)
+{
+    return (wrapU == TEX_WRAP_CLIP && (coordinate.x < 0.0 || coordinate.x >= 1.0))
+        || (wrapV == TEX_WRAP_CLIP && (coordinate.y < 0.0 || coordinate.y >= 1.0));
+}
+
+int2 tex_res_2d(int textureIndex, int2 uvTile, float frame)
+{
+    if (!tex_texture_isvalid(textureIndex) || any(uvTile != int2(0)) || frame != 0.0)
+        return int2(0);
+    uint width;
+    uint height;
+    mdl_texture_dimensions(textureIndex, width, height);
+    return int2(width, height);
+}
+
+int tex_width_2d(int textureIndex, int2 uvTile, float frame)
+{
+    return tex_res_2d(textureIndex, uvTile, frame).x;
+}
+
+int tex_height_2d(int textureIndex, int2 uvTile, float frame)
+{
+    return tex_res_2d(textureIndex, uvTile, frame).y;
+}
+
+int tex_first_frame_2d(int textureIndex)
+{
+    return 0;
+}
+
+int tex_last_frame_2d(int textureIndex)
+{
+    return 0;
+}
+
+float4 tex_lookup_float4_2d(
+    int textureIndex,
+    float2 coordinate,
+    int wrapU,
+    int wrapV,
+    float2 cropU,
+    float2 cropV,
+    float frame)
+{
+    if (!tex_texture_isvalid(textureIndex) || frame != 0.0 || mdl_texture_clip(coordinate, wrapU, wrapV))
+        return float4(0.0);
+    uint width;
+    uint height;
+    mdl_texture_dimensions(textureIndex, width, height);
+    coordinate.x = mdl_apply_wrap_and_crop(coordinate.x, wrapU, cropU, width);
+    coordinate.y = mdl_apply_wrap_and_crop(coordinate.y, wrapV, cropV, height);
+    coordinate = mdl_apply_smootherstep_filter(coordinate, uint2(width, height));
+    // Source images are uploaded in their conventional top-left row order;
+    // MDL texture coordinates are lower-left.  falcor2 performs this same
+    // conversion in TextureHandle::sample for a lower-left scene.
+    coordinate.y = 1.0 - coordinate.y;
+    return mdl_texture_sample_level(textureIndex, coordinate);
+}
+
+float3 tex_lookup_float3_2d(int textureIndex, float2 coordinate, int wrapU, int wrapV, float2 cropU, float2 cropV, float frame)
+{
+    return tex_lookup_float4_2d(textureIndex, coordinate, wrapU, wrapV, cropU, cropV, frame).xyz;
+}
+
+float3 tex_lookup_color_2d(int textureIndex, float2 coordinate, int wrapU, int wrapV, float2 cropU, float2 cropV, float frame)
+{
+    return tex_lookup_float4_2d(textureIndex, coordinate, wrapU, wrapV, cropU, cropV, frame).xyz;
+}
+
+float2 tex_lookup_float2_2d(int textureIndex, float2 coordinate, int wrapU, int wrapV, float2 cropU, float2 cropV, float frame)
+{
+    return tex_lookup_float4_2d(textureIndex, coordinate, wrapU, wrapV, cropU, cropV, frame).xy;
+}
+
+float tex_lookup_float_2d(int textureIndex, float2 coordinate, int wrapU, int wrapV, float2 cropU, float2 cropV, float frame)
+{
+    return tex_lookup_float4_2d(textureIndex, coordinate, wrapU, wrapV, cropU, cropV, frame).x;
+}
+
+float4 tex_lookup_deriv_float4_2d(
+    int textureIndex,
+    Derived_float2 coordinate,
+    int wrapU,
+    int wrapV,
+    float2 cropU,
+    float2 cropV,
+    float frame)
+{
+    if (!tex_texture_isvalid(textureIndex) || frame != 0.0 || mdl_texture_clip(coordinate.val, wrapU, wrapV))
+        return float4(0.0);
+    uint width;
+    uint height;
+    mdl_texture_dimensions(textureIndex, width, height);
+    coordinate.val.x = mdl_apply_wrap_and_crop(coordinate.val.x, wrapU, cropU, width);
+    coordinate.val.y = mdl_apply_wrap_and_crop(coordinate.val.y, wrapV, cropV, height);
+    coordinate.val = mdl_apply_smootherstep_filter(coordinate.val, uint2(width, height));
+    coordinate.val.y = 1.0 - coordinate.val.y;
+    coordinate.dx.y = -coordinate.dx.y;
+    coordinate.dy.y = -coordinate.dy.y;
+    return mdl_texture_sample_grad(textureIndex, coordinate.val, coordinate.dx, coordinate.dy);
+}
+
+float3 tex_lookup_deriv_float3_2d(int textureIndex, Derived_float2 coordinate, int wrapU, int wrapV, float2 cropU, float2 cropV, float frame)
+{
+    return tex_lookup_deriv_float4_2d(textureIndex, coordinate, wrapU, wrapV, cropU, cropV, frame).xyz;
+}
+
+float3 tex_lookup_deriv_color_2d(int textureIndex, Derived_float2 coordinate, int wrapU, int wrapV, float2 cropU, float2 cropV, float frame)
+{
+    return tex_lookup_deriv_float4_2d(textureIndex, coordinate, wrapU, wrapV, cropU, cropV, frame).xyz;
+}
+
+float2 tex_lookup_deriv_float2_2d(int textureIndex, Derived_float2 coordinate, int wrapU, int wrapV, float2 cropU, float2 cropV, float frame)
+{
+    return tex_lookup_deriv_float4_2d(textureIndex, coordinate, wrapU, wrapV, cropU, cropV, frame).xy;
+}
+
+float tex_lookup_deriv_float_2d(int textureIndex, Derived_float2 coordinate, int wrapU, int wrapV, float2 cropU, float2 cropV, float frame)
+{
+    return tex_lookup_deriv_float4_2d(textureIndex, coordinate, wrapU, wrapV, cropU, cropV, frame).x;
+}
+
+float4 tex_texel_float4_2d(int textureIndex, int2 coordinate, int2 uvTile, float frame)
+{
+    const int2 size = tex_res_2d(textureIndex, uvTile, frame);
+    if (any(coordinate < int2(0)) || any(coordinate >= size))
+        return float4(0.0);
+    return mdl_texture_load(textureIndex, coordinate);
+}
+
+float3 tex_texel_float3_2d(int textureIndex, int2 coordinate, int2 uvTile, float frame)
+{
+    return tex_texel_float4_2d(textureIndex, coordinate, uvTile, frame).xyz;
+}
+
+float3 tex_texel_color_2d(int textureIndex, int2 coordinate, int2 uvTile, float frame)
+{
+    return tex_texel_float4_2d(textureIndex, coordinate, uvTile, frame).xyz;
+}
+
+float2 tex_texel_float2_2d(int textureIndex, int2 coordinate, int2 uvTile, float frame)
+{
+    return tex_texel_float4_2d(textureIndex, coordinate, uvTile, frame).xy;
+}
+
+float tex_texel_float_2d(int textureIndex, int2 coordinate, int2 uvTile, float frame)
+{
+    return tex_texel_float4_2d(textureIndex, coordinate, uvTile, frame).x;
+}
+
+void mdl_texture_dimensions_3d(int textureIndex, out uint width, out uint height, out uint depth)
+{
+    width = 0;
+    height = 0;
+    depth = 0;
+    switch (textureIndex)
+    {
+#if NCLS_MDL_TEXTURE_COUNT > 0
+    case 1: gMdlTexture3D0.GetDimensions(width, height, depth); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 1
+    case 2: gMdlTexture3D1.GetDimensions(width, height, depth); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 2
+    case 3: gMdlTexture3D2.GetDimensions(width, height, depth); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 3
+    case 4: gMdlTexture3D3.GetDimensions(width, height, depth); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 4
+    case 5: gMdlTexture3D4.GetDimensions(width, height, depth); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 5
+    case 6: gMdlTexture3D5.GetDimensions(width, height, depth); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 6
+    case 7: gMdlTexture3D6.GetDimensions(width, height, depth); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 7
+    case 8: gMdlTexture3D7.GetDimensions(width, height, depth); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 8
+    case 9: gMdlTexture3D8.GetDimensions(width, height, depth); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 9
+    case 10: gMdlTexture3D9.GetDimensions(width, height, depth); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 10
+    case 11: gMdlTexture3D10.GetDimensions(width, height, depth); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 11
+    case 12: gMdlTexture3D11.GetDimensions(width, height, depth); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 12
+    case 13: gMdlTexture3D12.GetDimensions(width, height, depth); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 13
+    case 14: gMdlTexture3D13.GetDimensions(width, height, depth); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 14
+    case 15: gMdlTexture3D14.GetDimensions(width, height, depth); return;
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 15
+    case 16: gMdlTexture3D15.GetDimensions(width, height, depth); return;
+#endif
+    default: return;
+    }
+}
+
+float4 mdl_texture_sample_level_3d(int textureIndex, float3 coordinate)
+{
+    switch (textureIndex)
+    {
+#if NCLS_MDL_TEXTURE_COUNT > 0
+    case 1: return gMdlTexture3D0.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 1
+    case 2: return gMdlTexture3D1.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 2
+    case 3: return gMdlTexture3D2.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 3
+    case 4: return gMdlTexture3D3.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 4
+    case 5: return gMdlTexture3D4.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 5
+    case 6: return gMdlTexture3D5.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 6
+    case 7: return gMdlTexture3D6.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 7
+    case 8: return gMdlTexture3D7.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 8
+    case 9: return gMdlTexture3D8.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 9
+    case 10: return gMdlTexture3D9.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 10
+    case 11: return gMdlTexture3D10.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 11
+    case 12: return gMdlTexture3D11.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 12
+    case 13: return gMdlTexture3D12.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 13
+    case 14: return gMdlTexture3D13.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 14
+    case 15: return gMdlTexture3D14.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 15
+    case 16: return gMdlTexture3D15.SampleLevel(gMdlTextureSampler, coordinate, 0.0);
+#endif
+    default: return float4(0.0);
+    }
+}
+
+float4 mdl_texture_load_3d(int textureIndex, int3 coordinate)
+{
+    switch (textureIndex)
+    {
+#if NCLS_MDL_TEXTURE_COUNT > 0
+    case 1: return gMdlTexture3D0.Load(int4(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 1
+    case 2: return gMdlTexture3D1.Load(int4(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 2
+    case 3: return gMdlTexture3D2.Load(int4(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 3
+    case 4: return gMdlTexture3D3.Load(int4(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 4
+    case 5: return gMdlTexture3D4.Load(int4(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 5
+    case 6: return gMdlTexture3D5.Load(int4(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 6
+    case 7: return gMdlTexture3D6.Load(int4(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 7
+    case 8: return gMdlTexture3D7.Load(int4(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 8
+    case 9: return gMdlTexture3D8.Load(int4(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 9
+    case 10: return gMdlTexture3D9.Load(int4(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 10
+    case 11: return gMdlTexture3D10.Load(int4(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 11
+    case 12: return gMdlTexture3D11.Load(int4(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 12
+    case 13: return gMdlTexture3D12.Load(int4(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 13
+    case 14: return gMdlTexture3D13.Load(int4(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 14
+    case 15: return gMdlTexture3D14.Load(int4(coordinate, 0));
+#endif
+#if NCLS_MDL_TEXTURE_COUNT > 15
+    case 16: return gMdlTexture3D15.Load(int4(coordinate, 0));
+#endif
+    default: return float4(0.0);
+    }
+}
+
+bool mdl_texture_clip_3d(float3 coordinate, int wrapU, int wrapV, int wrapW)
+{
+    return (wrapU == TEX_WRAP_CLIP && (coordinate.x < 0.0 || coordinate.x >= 1.0))
+        || (wrapV == TEX_WRAP_CLIP && (coordinate.y < 0.0 || coordinate.y >= 1.0))
+        || (wrapW == TEX_WRAP_CLIP && (coordinate.z < 0.0 || coordinate.z >= 1.0));
+}
+
+int3 tex_res_3d(int textureIndex, float frame)
+{
+    if (!tex_texture_isvalid(textureIndex) || frame != 0.0)
+        return int3(0);
+    uint width;
+    uint height;
+    uint depth;
+    mdl_texture_dimensions_3d(textureIndex, width, height, depth);
+    return int3(width, height, depth);
+}
+
+int tex_width_3d(int textureIndex, float frame)
+{
+    return tex_res_3d(textureIndex, frame).x;
+}
+
+int tex_height_3d(int textureIndex, float frame)
+{
+    return tex_res_3d(textureIndex, frame).y;
+}
+
+int tex_depth_3d(int textureIndex, float frame)
+{
+    return tex_res_3d(textureIndex, frame).z;
+}
+
+int tex_first_frame_3d(int textureIndex)
+{
+    return 0;
+}
+
+int tex_last_frame_3d(int textureIndex)
+{
+    return 0;
+}
+
+float4 tex_lookup_float4_3d(
+    int textureIndex,
+    float3 coordinate,
+    int wrapU,
+    int wrapV,
+    int wrapW,
+    float2 cropU,
+    float2 cropV,
+    float2 cropW,
+    float frame)
+{
+    if (!tex_texture_isvalid(textureIndex) || frame != 0.0 || mdl_texture_clip_3d(coordinate, wrapU, wrapV, wrapW))
+        return float4(0.0);
+    uint width;
+    uint height;
+    uint depth;
+    mdl_texture_dimensions_3d(textureIndex, width, height, depth);
+    coordinate.x = mdl_apply_wrap_and_crop(coordinate.x, wrapU, cropU, width);
+    coordinate.y = mdl_apply_wrap_and_crop(coordinate.y, wrapV, cropV, height);
+    coordinate.z = mdl_apply_wrap_and_crop(coordinate.z, wrapW, cropW, depth);
+    return mdl_texture_sample_level_3d(textureIndex, coordinate);
+}
+
+float3 tex_lookup_float3_3d(int textureIndex, float3 coordinate, int wrapU, int wrapV, int wrapW, float2 cropU, float2 cropV, float2 cropW, float frame)
+{
+    return tex_lookup_float4_3d(textureIndex, coordinate, wrapU, wrapV, wrapW, cropU, cropV, cropW, frame).xyz;
+}
+
+float3 tex_lookup_color_3d(int textureIndex, float3 coordinate, int wrapU, int wrapV, int wrapW, float2 cropU, float2 cropV, float2 cropW, float frame)
+{
+    return tex_lookup_float4_3d(textureIndex, coordinate, wrapU, wrapV, wrapW, cropU, cropV, cropW, frame).xyz;
+}
+
+float2 tex_lookup_float2_3d(int textureIndex, float3 coordinate, int wrapU, int wrapV, int wrapW, float2 cropU, float2 cropV, float2 cropW, float frame)
+{
+    return tex_lookup_float4_3d(textureIndex, coordinate, wrapU, wrapV, wrapW, cropU, cropV, cropW, frame).xy;
+}
+
+float tex_lookup_float_3d(int textureIndex, float3 coordinate, int wrapU, int wrapV, int wrapW, float2 cropU, float2 cropV, float2 cropW, float frame)
+{
+    return tex_lookup_float4_3d(textureIndex, coordinate, wrapU, wrapV, wrapW, cropU, cropV, cropW, frame).x;
+}
+
+float4 tex_texel_float4_3d(int textureIndex, int3 coordinate, float frame)
+{
+    const int3 size = tex_res_3d(textureIndex, frame);
+    if (any(coordinate < int3(0)) || any(coordinate >= size))
+        return float4(0.0);
+    return mdl_texture_load_3d(textureIndex, coordinate);
+}
+
+float3 tex_texel_float3_3d(int textureIndex, int3 coordinate, float frame)
+{
+    return tex_texel_float4_3d(textureIndex, coordinate, frame).xyz;
+}
+
+float3 tex_texel_color_3d(int textureIndex, int3 coordinate, float frame)
+{
+    return tex_texel_float4_3d(textureIndex, coordinate, frame).xyz;
+}
+
+float2 tex_texel_float2_3d(int textureIndex, int3 coordinate, float frame)
+{
+    return tex_texel_float4_3d(textureIndex, coordinate, frame).xy;
+}
+
+float tex_texel_float_3d(int textureIndex, int3 coordinate, float frame)
+{
+    return tex_texel_float4_3d(textureIndex, coordinate, frame).x;
+}

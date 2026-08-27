@@ -25,10 +25,12 @@ def test_reference_registry_and_packages_are_consistent() -> None:
         "ncls.openpbr@1.1.1",
         "ncls.merl-brdf@1",
         "ncls.materialx-polyhaven@1",
+        "ncls.mdl-vmaterials2@1",
     }
     by_id = {package.reference_id: package for package in packages}
     assert by_id["ncls.openpbr@1.1.1"].dependencies[0]["dependency_id"] == "glm@1.0.1"
     assert by_id["ncls.materialx-polyhaven@1"].source_assets[0]["license"] == "CC0-1.0"
+    assert by_id["ncls.mdl-vmaterials2@1"].source_assets[0]["asset_set_id"] == "nvidia.vmaterials@2.4.0"
 
 
 def test_registry_tracks_each_integration_capability_independently() -> None:
@@ -38,6 +40,9 @@ def test_registry_tracks_each_integration_capability_independently() -> None:
     assert entries["ncls.merl-brdf@1"].capabilities["viewer_integration"] == "ready"
     assert entries["ncls.materialx-polyhaven@1"].capabilities["numerical_parity"] == "not-applicable"
     assert entries["ncls.materialx-polyhaven@1"].capabilities["image_parity"] == "ready"
+    assert entries["ncls.mdl-vmaterials2@1"].status == "active"
+    assert entries["ncls.mdl-vmaterials2@1"].capabilities["falcor_runtime"] == "ready"
+    assert entries["ncls.mdl-vmaterials2@1"].capabilities["numerical_parity"] == "ready"
 
 
 def test_reference_manifest_roots_have_one_canonical_mapping() -> None:

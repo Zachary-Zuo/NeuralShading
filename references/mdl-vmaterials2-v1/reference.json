@@ -1,0 +1,116 @@
+{
+  "schema_name": "ncls.reference-package",
+  "schema_version": 1,
+  "reference_id": "ncls.mdl-vmaterials2@1",
+  "source_material_family_id": "mdl.program@1",
+  "role": "ground-truth",
+  "native_representation": "mdl-program-with-class-compiled-arguments-and-native-resources",
+  "query_contract": {
+    "domain": "upper-hemisphere-surface-bsdf-evaluate",
+    "measure": "rgb-bsdf-times-absolute-shading-normal-light-cosine",
+    "directions": "right-handed-mdl-local-frame-normal-plus-z-tangent-plus-x",
+    "coordinates": "position-and-uv; texture filtering is fixed ExplicitLod(0) in V1",
+    "executor": "project-mdl-sdk-bridge-to-current-falcor-8",
+    "validation_oracle": "isolated-falcor2-with-the-same-mdl-sdk",
+    "public_capabilities": "surface BSDF evaluate only; no public matched sample/pdf",
+    "diagnostic_outputs": "the internal query packet also records the MDL BSDF pdf"
+  },
+  "implementations": [
+    {
+      "implementation_id": "nvidia.mdl-sdk@2025.0.0-387700.1252",
+      "kind": "upstream-language-compiler-and-closure-authority",
+      "path_root": "external",
+      "path": "MDL-SDK-2025.0.0-387700.1252-nt-x86-64",
+      "upstream_url": "https://github.com/NVIDIA/MDL-SDK/releases/tag/2025",
+      "revision": "2025.0.0-387700.1252",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "implementation_id": "ncls.mdl-sdk-compiler-bridge@1",
+      "kind": "project-compiler-and-resource-artifact-bridge",
+      "path_root": "project",
+      "path": "tools/reference/mdl_sdk_bridge",
+      "license": "project"
+    },
+    {
+      "implementation_id": "ncls.falcor8-mdl-runtime@1",
+      "kind": "project-falcor-runtime",
+      "path_root": "project",
+      "path": "shaders/ncls/reference_backends/mdl_runtime.slangh",
+      "license": "project"
+    },
+    {
+      "implementation_id": "ncls.mdl-provider@1",
+      "kind": "project-source-provider-and-query-adapter",
+      "path_root": "project",
+      "path": "src/ncls/data/providers/mdl.py",
+      "license": "project"
+    },
+    {
+      "implementation_id": "nothings.stb-image@013ac3be",
+      "kind": "formal-texture-decoder",
+      "path_root": "external",
+      "path": "stb/stb_image.h",
+      "upstream_url": "https://github.com/nothings/stb.git",
+      "revision": "013ac3beddff3dbffafd5177e7972067cd2b5083",
+      "license": "MIT-or-Public-Domain"
+    },
+    {
+      "implementation_id": "falcor2.mdl-oracle@d629c967",
+      "kind": "external-validation-oracle-only",
+      "path_root": "external",
+      "path": "falcor2",
+      "upstream_url": "https://github.com/shader-slang/falcor2.git",
+      "revision": "d629c967fa800af81cf5c916bfb2a825b012f473",
+      "license": "BSD-3-Clause"
+    }
+  ],
+  "dependencies": [
+    {
+      "dependency_id": "falcor@9dc819c1",
+      "path_root": "external",
+      "path": "Falcor",
+      "revision": "9dc819c162b2070335c65060436041690b7937f8",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "dependency_id": "slang@2024.1.34",
+      "path_root": "external",
+      "path": "Falcor/external/slang",
+      "revision": "2024.1.34",
+      "license": "Apache-2.0"
+    },
+    {
+      "dependency_id": "stb-image@013ac3be",
+      "path_root": "external",
+      "path": "stb/stb_image.h",
+      "revision": "013ac3beddff3dbffafd5177e7972067cd2b5083",
+      "sha256": "594c2fe35d49488b4382dbfaec8f98366defca819d916ac95becf3e75f4200b3",
+      "license": "MIT-or-Public-Domain"
+    }
+  ],
+  "source_assets": [
+    {
+      "asset_set_id": "nvidia.vmaterials@2.4.0",
+      "path_root": "source-materials",
+      "path": "mdl-vmaterials2/2.4.0",
+      "manifest": "references/mdl-vmaterials2-v1/assets.json",
+      "license": "NVIDIA Omniverse terms and embedded MDL Materials license",
+      "credit": "NVIDIA vMaterials 2.4.0"
+    }
+  ],
+  "validation_evidence": {
+    "formal_falcor2_parity": {
+      "path": "artifacts/reference-parity/mdl/formal-stb-v6/report.json",
+      "sha256": "3f1df5e7d9aa80dbe1d95be5ab380b5dac077e586c4d9dc7249bb6f686fd773e",
+      "status": "passed",
+      "query_count": 264
+    },
+    "mdl_sdk_native_fixture_parity": {
+      "path": "artifacts/reference-parity/mdl/native-fixtures-v2/report.json",
+      "sha256": "4d0097ebe34c0826a32f2ab226c90274237a013726726bae5b4af968d55c72f8",
+      "status": "passed",
+      "query_count": 7
+    }
+  }
+}

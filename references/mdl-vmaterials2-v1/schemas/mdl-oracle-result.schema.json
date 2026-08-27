@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ncls.mdl-oracle-result@1",
+  "title": "Isolated falcor2 MDL oracle result metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "request_sha256", "source_snapshot_id", "asset_id", "query_shape", "response_measure", "result_npz", "result_npz_sha256", "generated_shader", "generated_shader_sha256", "provenance"],
+  "properties": {
+    "schema_name": {"const": "ncls.mdl-oracle-result"},
+    "schema_version": {"const": 1},
+    "request_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source_snapshot_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "asset_id": {"type": "string", "minLength": 1},
+    "query_shape": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "integer", "minimum": 1}},
+    "response_measure": {"const": "rgb-bsdf-times-absolute-shading-normal-light-cosine"},
+    "result_npz": {"type": "string", "minLength": 1},
+    "result_npz_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "generated_shader": {"type": "string", "minLength": 1},
+    "generated_shader_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "provenance": {"type": "object"}
+  }
+}

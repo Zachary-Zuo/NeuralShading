@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ncls.mdl-native-protocol@1",
+  "title": "Validation-only MDL SDK native binary protocol",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["query_magic", "result_magic", "endianness", "query_record", "result_record"],
+  "properties": {
+    "query_magic": {"const": "NCLSMQ1\\0"},
+    "result_magic": {"const": "NCLSMR1\\0"},
+    "endianness": {"const": "little"},
+    "query_record": {"const": ["wo.x", "wo.y", "wo.z", "wi.x", "wi.y", "wi.z", "position.x", "position.y", "position.z", "uv.x", "uv.y"]},
+    "result_record": {"const": ["response.r", "response.g", "response.b", "pdf"]}
+  }
+}

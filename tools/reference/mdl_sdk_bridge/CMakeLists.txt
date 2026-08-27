@@ -1,0 +1,26 @@
+cmake_minimum_required(VERSION 3.25)
+
+project(ncls_mdl_sdk_bridge LANGUAGES CXX)
+
+set(MDL_SDK_ROOT "" CACHE PATH "Path to the pinned NVIDIA MDL SDK binary package")
+set(STB_ROOT "" CACHE PATH "Path to the pinned stb source tree")
+if(NOT MDL_SDK_ROOT)
+    message(FATAL_ERROR "MDL_SDK_ROOT is required")
+endif()
+if(NOT EXISTS "${MDL_SDK_ROOT}/include/mi/mdl_sdk.h")
+    message(FATAL_ERROR "MDL SDK headers were not found below MDL_SDK_ROOT=${MDL_SDK_ROOT}")
+endif()
+if(NOT EXISTS "${STB_ROOT}/stb_image.h")
+    message(FATAL_ERROR "stb_image.h was not found below STB_ROOT=${STB_ROOT}")
+endif()
+
+add_executable(ncls_mdl_sdk_bridge main.cpp)
+target_compile_features(ncls_mdl_sdk_bridge PRIVATE cxx_std_20)
+target_include_directories(ncls_mdl_sdk_bridge PRIVATE "${MDL_SDK_ROOT}/include" "${STB_ROOT}")
+target_compile_definitions(ncls_mdl_sdk_bridge PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+
+if(MSVC)
+    target_compile_options(ncls_mdl_sdk_bridge PRIVATE /W4 /EHsc /permissive-)
+else()
+    target_compile_options(ncls_mdl_sdk_bridge PRIVATE -Wall -Wextra -Wpedantic)
+endif()

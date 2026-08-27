@@ -1,0 +1,1580 @@
+{
+  "schema_name": "ncls.mdl-vmaterials-assets",
+  "schema_version": 1,
+  "provider": "NVIDIA",
+  "pack": "vMaterials 2.4.0",
+  "pack_id": "nvidia.vmaterials@2.4.0",
+  "provider_page": "https://docs.omniverse.nvidia.com/usd/latest/usd_content_samples/downloadable_packs.html",
+  "archive": {
+    "url": "https://d4i3qtqj3r0z5.cloudfront.net/vMaterials_2_4_0_NVD%40020240.zip",
+    "file": "vMaterials_2_4_0_NVD@020240.zip",
+    "content_length": 2220534625,
+    "sha256": "ab8116e1944c03ae622b2637939510eca9c522a07fd701cf91948fa54e194204",
+    "etag": "\"719019a683a90c3081489351984b0735-265\"",
+    "last_modified": "Fri, 12 Jul 2024 13:31:48 GMT"
+  },
+  "license": {
+    "acquisition": "NVIDIA Omniverse terms; explicit acceptance required by fetch script",
+    "material_sources": "embedded NVIDIA MDL Materials license retained in each source module",
+    "package_notices": "PACKAGE-LICENSES/"
+  },
+  "module_root": "Materials",
+  "mdl_sdk": "2025.0.0-387700.1252",
+  "assets": [
+    {
+      "asset_id": "carpaint-shifting-flakes",
+      "coverage_role": "color-shifting-car-paint",
+      "module": "::vMaterials_2::Paint::Carpaint::Carpaint_Shifting_Flakes",
+      "export": "::vMaterials_2::Paint::Carpaint::Carpaint_Shifting_Flakes::Carpaint_Shifting_Flakes(color,float,float,float,float,float,float,float,float,color,color,color,color,color,float,texture_2d,float,float,float,float,float,float,float2,float,float2,bool,float,bool,int)",
+      "mdl_language": "1.6",
+      "source_snapshot_id": "db1e8f996036756f531279f1eaea27995139b5353a0d98415d3f20cc472ba862",
+      "source_modules": [
+        {
+          "module": "::vMaterials_2::Paint::Carpaint::Carpaint_Shifting_Flakes",
+          "path": "vMaterials_2/Paint/Carpaint/Carpaint_Shifting_Flakes.mdl",
+          "sha256": "ce5662af009d3fda9b7a50bd3ec2c6dbb5a58706904691afa644a4e132daf2a3"
+        }
+      ],
+      "parameters": {
+        "base_color": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.8468729853630066,
+            0.8468729853630066,
+            0.8468729853630066
+          ]
+        },
+        "clearcoat_ior": {
+          "editable": true,
+          "maximum": 5,
+          "mdl_type": "float",
+          "minimum": 1,
+          "soft_maximum": 3,
+          "soft_minimum": 1,
+          "value": 1.600000023841858
+        },
+        "clearcoat_rough": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.05000000074505806
+        },
+        "clearcoat_visibility": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 1
+        },
+        "edge_darkening": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.9700000286102295
+        },
+        "flake_layer_visibility": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 1
+        },
+        "flakes_density": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.28999999165534973
+        },
+        "flakes_paint_color_1": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            1,
+            0.04373500123620033,
+            0.6724429726600647
+          ]
+        },
+        "flakes_paint_color_2": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.982250988483429,
+            0.40724000334739685,
+            1
+          ]
+        },
+        "flakes_paint_color_3": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.8307700157165527,
+            0.8307700157165527,
+            0.8307700157165527
+          ]
+        },
+        "flakes_paint_color_4": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.8069519996643066,
+            0.8069519996643066,
+            0.8069519996643066
+          ]
+        },
+        "flakes_paint_color_5": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.8307700157165527,
+            0.8307700157165527,
+            0.8307700157165527
+          ]
+        },
+        "flakes_reflectivity": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 1
+        },
+        "flakes_roughness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.4399999976158142
+        },
+        "flakes_size": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 1,
+          "soft_minimum": 0,
+          "value": 0.10000000149011612
+        },
+        "ground_coat_brightness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.9300000071525574
+        },
+        "ground_coat_influence": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.23999999463558197
+        },
+        "orange_peel_size": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 1,
+          "soft_minimum": 0,
+          "value": 1
+        },
+        "orange_peel_strength": {
+          "editable": true,
+          "maximum": 2,
+          "mdl_type": "float",
+          "minimum": 0,
+          "soft_maximum": 1,
+          "soft_minimum": 0,
+          "value": 0
+        },
+        "roughness_texture": {
+          "editable": true,
+          "mdl_type": "texture_2d",
+          "value": {
+            "effective_gamma": 1.0,
+            "path": "vMaterials_2/Paint/Carpaint/textures/smudges_scratches_A_rough.jpg"
+          }
+        },
+        "roughness_variation": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.30000001192092896
+        },
+        "roundcorners_across_materials": {
+          "editable": true,
+          "mdl_type": "bool",
+          "value": false
+        },
+        "roundcorners_enable": {
+          "editable": true,
+          "mdl_type": "bool",
+          "value": false
+        },
+        "roundcorners_radius_mm": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 10,
+          "soft_minimum": 0,
+          "value": 1.5
+        },
+        "spread": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.3700000047683716
+        },
+        "texture_rotate": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 360,
+          "soft_minimum": 0,
+          "value": 0
+        },
+        "texture_scale": {
+          "editable": true,
+          "mdl_type": "float2",
+          "value": [
+            1,
+            1
+          ]
+        },
+        "texture_translate": {
+          "editable": true,
+          "mdl_type": "float2",
+          "value": [
+            0,
+            0
+          ]
+        },
+        "uv_space_index": {
+          "editable": true,
+          "mdl_type": "int",
+          "value": 0
+        }
+      },
+      "resource_hashes": {
+        "vMaterials_2/Paint/Carpaint/Carpaint_Shifting_Flakes.mdl": "ce5662af009d3fda9b7a50bd3ec2c6dbb5a58706904691afa644a4e132daf2a3",
+        "vMaterials_2/Paint/Carpaint/textures/smudges_scratches_A_rough.jpg": "00c226b573d873f241013ce76f2bb1fafe38e544719faae4b7c3494784563566"
+      },
+      "runtime_capability_audit": {
+        "argument_block_bytes": 208,
+        "ro_data_segment_bytes": [
+          2048
+        ],
+        "df_handle_count": 1,
+        "textures": [
+          {
+            "mdl_index": 1,
+            "shape": "bsdf_data",
+            "source_path": null,
+            "source_sha256": null,
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              65,
+              64,
+              33
+            ]
+          },
+          {
+            "mdl_index": 2,
+            "shape": "bsdf_data",
+            "source_path": null,
+            "source_sha256": null,
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              65,
+              64,
+              33
+            ]
+          },
+          {
+            "mdl_index": 3,
+            "shape": "bsdf_data",
+            "source_path": null,
+            "source_sha256": null,
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              65,
+              64,
+              33
+            ]
+          },
+          {
+            "mdl_index": 4,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Paint/Carpaint/textures/smudges_scratches_A_rough.jpg",
+            "source_sha256": "00c226b573d873f241013ce76f2bb1fafe38e544719faae4b7c3494784563566",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          }
+        ],
+        "measured_bsdf": false,
+        "light_profile": false,
+        "surface_bsdf_evaluate": true
+      }
+    },
+    {
+      "asset_id": "copper-antique-brushed-patinated",
+      "coverage_role": "brushed-patinated-metal",
+      "module": "::vMaterials_2::Metal::Copper_Antique_Brushed_Patinated",
+      "export": "::vMaterials_2::Metal::Copper_Antique_Brushed_Patinated::Copper_Antique_Brushed_Patinated(float,float,float,float,float,float,float,float,float2,float,float2)",
+      "mdl_language": "1.4",
+      "source_snapshot_id": "4e7d656753ffc6b38ff1329921821affbad5addd0ec4392bde29b9b25434d833",
+      "source_modules": [
+        {
+          "module": "::vMaterials_2::Metal::Copper_Antique_Brushed_Patinated",
+          "path": "vMaterials_2/Metal/Copper_Antique_Brushed_Patinated.mdl",
+          "sha256": "4f22f6aca9b150ffd71f47c950a3b6e74300482e708d62aeb76d7dc91efb83b5"
+        }
+      ],
+      "parameters": {
+        "copper_bump_amount": {
+          "editable": true,
+          "mdl_type": "float",
+          "value": 1
+        },
+        "corrosion_offset": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 1,
+          "soft_minimum": 0,
+          "value": 0.25
+        },
+        "metal_roughness": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 1,
+          "soft_minimum": 0,
+          "value": 0.4000000059604645
+        },
+        "patina_brightness": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 1,
+          "soft_minimum": 0,
+          "value": 0.5
+        },
+        "patina_bump_amount": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 1,
+          "soft_minimum": 0,
+          "value": 0.3499999940395355
+        },
+        "patina_metal_blend": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.5
+        },
+        "patina_metal_blend_softness": {
+          "editable": true,
+          "maximum": 5,
+          "mdl_type": "float",
+          "minimum": 0,
+          "soft_maximum": 1,
+          "soft_minimum": 0,
+          "value": 0.25
+        },
+        "smudge_amount": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 1,
+          "soft_minimum": 0,
+          "value": 0
+        },
+        "texture_rotate": {
+          "editable": true,
+          "mdl_type": "float",
+          "value": 0
+        },
+        "texture_scale": {
+          "editable": true,
+          "mdl_type": "float2",
+          "value": [
+            1,
+            1
+          ]
+        },
+        "texture_translate": {
+          "editable": true,
+          "mdl_type": "float2",
+          "value": [
+            0,
+            0
+          ]
+        }
+      },
+      "resource_hashes": {
+        "vMaterials_2/Metal/Copper_Antique_Brushed_Patinated.mdl": "4f22f6aca9b150ffd71f47c950a3b6e74300482e708d62aeb76d7dc91efb83b5",
+        "vMaterials_2/Metal/textures/brushed_antique_copper_diff.jpg": "035ec48340ce3fd8ae874e27a78b3e4d4fd7557548329b7cb95f71dc1ce46042",
+        "vMaterials_2/Metal/textures/brushed_antique_copper_norm.jpg": "5eb975e5ce99488cc1c08b191c3bcfdd628ec515f92e076d566f93eb380e8498",
+        "vMaterials_2/Metal/textures/brushed_antique_copper_rough.jpg": "cecc34507ac09074a99b7c66f577d2265bb742481b51b7aad74d8d2e3cf8c7d9",
+        "vMaterials_2/Metal/textures/brushed_antique_copper_smudge_map.jpg": "113cb9e348a5561efaf6c5a672dbdf0a370be99cf20b7543dc51eaabef5af83e",
+        "vMaterials_2/Metal/textures/copper_patina_diff.jpg": "09d9f7cecde28d66b5832ccd50f79c78d986acf1a3fcf8d2bc53e74d4e9a3aef",
+        "vMaterials_2/Metal/textures/copper_patina_norm.jpg": "0c59bcb37b4618f759dfe0e61b75a976555a3b23e626f6112a39319a5c419c48"
+      },
+      "runtime_capability_audit": {
+        "argument_block_bytes": 56,
+        "ro_data_segment_bytes": [],
+        "df_handle_count": 1,
+        "textures": [
+          {
+            "mdl_index": 1,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Metal/textures/brushed_antique_copper_norm.jpg",
+            "source_sha256": "5eb975e5ce99488cc1c08b191c3bcfdd628ec515f92e076d566f93eb380e8498",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 2,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Metal/textures/copper_patina_diff.jpg",
+            "source_sha256": "09d9f7cecde28d66b5832ccd50f79c78d986acf1a3fcf8d2bc53e74d4e9a3aef",
+            "gamma": "srgb",
+            "effective_gamma": 2.2,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 3,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Metal/textures/brushed_antique_copper_smudge_map.jpg",
+            "source_sha256": "113cb9e348a5561efaf6c5a672dbdf0a370be99cf20b7543dc51eaabef5af83e",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 4,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Metal/textures/brushed_antique_copper_rough.jpg",
+            "source_sha256": "cecc34507ac09074a99b7c66f577d2265bb742481b51b7aad74d8d2e3cf8c7d9",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 5,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Metal/textures/brushed_antique_copper_diff.jpg",
+            "source_sha256": "035ec48340ce3fd8ae874e27a78b3e4d4fd7557548329b7cb95f71dc1ce46042",
+            "gamma": "srgb",
+            "effective_gamma": 2.2,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 6,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Metal/textures/copper_patina_norm.jpg",
+            "source_sha256": "0c59bcb37b4618f759dfe0e61b75a976555a3b23e626f6112a39319a5c419c48",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          }
+        ],
+        "measured_bsdf": false,
+        "light_profile": false,
+        "surface_bsdf_evaluate": true
+      }
+    },
+    {
+      "asset_id": "aluminum-scratched",
+      "coverage_role": "micro-scratched-metal",
+      "module": "::vMaterials_2::Metal::Aluminum_Scratched",
+      "export": "::vMaterials_2::Metal::Aluminum_Scratched::Aluminum_Scratched(bool,float,float,float,float,float,float,float,float,float,float,float2,float,float2,bool,float,bool,int)",
+      "mdl_language": "1.5",
+      "source_snapshot_id": "7659949778367ee82e966683b163bcd487848c38ac94b81defe580d857a5e1cd",
+      "source_modules": [
+        {
+          "module": "::vMaterials_2::Metal::Aluminum_Scratched",
+          "path": "vMaterials_2/Metal/Aluminum_Scratched.mdl",
+          "sha256": "528308c86a8aff9bb908092f2cd5e4c2a3fc11d0a1c472a04c110af3955b916a"
+        }
+      ],
+      "parameters": {
+        "across_materials": {
+          "editable": true,
+          "mdl_type": "bool",
+          "value": true
+        },
+        "brightness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.550000011920929
+        },
+        "brightness_variation": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.30000001192092896
+        },
+        "bump_factor": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 2,
+          "soft_minimum": 0,
+          "value": 0.18700000643730164
+        },
+        "dirt_amount": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.21199999749660492
+        },
+        "dirt_transition_softness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.8500000238418579
+        },
+        "enable_round_corners": {
+          "editable": true,
+          "mdl_type": "bool",
+          "value": false
+        },
+        "infinite_tiling": {
+          "editable": true,
+          "mdl_type": "bool",
+          "value": false
+        },
+        "radius_mm": {
+          "editable": true,
+          "mdl_type": "float",
+          "value": 0
+        },
+        "roughness_metal_surface": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 1
+        },
+        "roughness_scratches": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.14499999582767487
+        },
+        "roughness_variation": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.20800000429153442
+        },
+        "scratches_bump_factor": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 2,
+          "soft_minimum": 0,
+          "value": 0.4350000023841858
+        },
+        "scratches_variation": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.30000001192092896
+        },
+        "texture_rotate": {
+          "editable": true,
+          "mdl_type": "float",
+          "value": 0
+        },
+        "texture_scale": {
+          "editable": true,
+          "mdl_type": "float2",
+          "value": [
+            1,
+            1
+          ]
+        },
+        "texture_translate": {
+          "editable": true,
+          "mdl_type": "float2",
+          "value": [
+            0,
+            0
+          ]
+        },
+        "uv_space_index": {
+          "editable": true,
+          "mdl_type": "int",
+          "value": 0
+        }
+      },
+      "resource_hashes": {
+        "vMaterials_2/Metal/Aluminum_Scratched.mdl": "528308c86a8aff9bb908092f2cd5e4c2a3fc11d0a1c472a04c110af3955b916a",
+        "vMaterials_2/Metal/textures/metal_scratched_R_diff_G_scratchvar_B_dirt.jpg": "51a6eb57877fc78f9da063bc7eedfb417ccde0726015712d400dbe84ea03fa46",
+        "vMaterials_2/Metal/textures/metal_scratched_R_scratch1_G_scratch2_B_scratch3.jpg": "22a432baddf95f05140af2f8fb47d763439f06e84648e89eddc9d9b726d59867",
+        "vMaterials_2/Metal/textures/metal_scratched_scratch_norm.jpg": "fef50be8c23dabfbd7a799a3434ba6c39122d058140dd9c11cb0c3da1da5b537"
+      },
+      "runtime_capability_audit": {
+        "argument_block_bytes": 88,
+        "ro_data_segment_bytes": [],
+        "df_handle_count": 1,
+        "textures": [
+          {
+            "mdl_index": 1,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Metal/textures/metal_scratched_R_diff_G_scratchvar_B_dirt.jpg",
+            "source_sha256": "51a6eb57877fc78f9da063bc7eedfb417ccde0726015712d400dbe84ea03fa46",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 2,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Metal/textures/metal_scratched_R_scratch1_G_scratch2_B_scratch3.jpg",
+            "source_sha256": "22a432baddf95f05140af2f8fb47d763439f06e84648e89eddc9d9b726d59867",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 3,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Metal/textures/metal_scratched_scratch_norm.jpg",
+            "source_sha256": "fef50be8c23dabfbd7a799a3434ba6c39122d058140dd9c11cb0c3da1da5b537",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          }
+        ],
+        "measured_bsdf": false,
+        "light_profile": false,
+        "surface_bsdf_evaluate": true
+      }
+    },
+    {
+      "asset_id": "ceramic-tiles-glazed-versailles",
+      "coverage_role": "glazed-ceramic",
+      "module": "::vMaterials_2::Ceramic::Ceramic_Tiles_Glazed_Versailles",
+      "export": "::vMaterials_2::Ceramic::Ceramic_Tiles_Glazed_Versailles::Ceramic_Tiles_Glazed_Versailles(int,color,color,color,color,float,float,float,float,float,float,float,float,float,float,float,float,float,color,float,float,float2,float,float2,float,float,float,float,float,float,int,float,float,float,float,int)",
+      "mdl_language": "1.6",
+      "source_snapshot_id": "53365cea53b0c37b51fc25400d2701d943e02c32702dfa81dce05c9223a818b5",
+      "source_modules": [
+        {
+          "module": "::vMaterials_2::Ceramic::Ceramic_Tiles_Glazed_Versailles",
+          "path": "vMaterials_2/Ceramic/Ceramic_Tiles_Glazed_Versailles.mdl",
+          "sha256": "19a8132b29d0dc8bef01ddf0f4eb045100657f120d2293502e7a1ea8ac57d142"
+        }
+      ],
+      "parameters": {
+        "ao_amount": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.5
+        },
+        "dirt_color": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.05820000171661377,
+            0.03700000047683716,
+            0.026499999687075615
+          ]
+        },
+        "dirt_weight": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 1,
+          "soft_minimum": 0,
+          "value": 0
+        },
+        "drops_amount": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.05000000074505806
+        },
+        "glazing_craquelure_weight": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.05000000074505806
+        },
+        "glazing_edgefade_randomness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0
+        },
+        "glazing_edgefade_weight": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0
+        },
+        "glazing_orange_peel_bump": {
+          "editable": true,
+          "maximum": 5,
+          "mdl_type": "float",
+          "minimum": 0,
+          "soft_maximum": 1,
+          "soft_minimum": 0,
+          "value": 0.029999999329447746
+        },
+        "glazing_orangepeel_noise_levels": {
+          "editable": true,
+          "mdl_type": "int",
+          "soft_maximum": 6,
+          "soft_minimum": 0,
+          "value": 4
+        },
+        "glazing_orangepeel_size": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 1,
+          "soft_minimum": 0,
+          "value": 0.05000000074505806
+        },
+        "glazing_varying_thickness_weight": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0
+        },
+        "grout_brightness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.699999988079071
+        },
+        "grout_bump_strength": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 1
+        },
+        "grout_height": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.05000000074505806
+        },
+        "grout_roughness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.800000011920929
+        },
+        "grout_scale": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 2,
+          "soft_minimum": 0,
+          "value": 1
+        },
+        "grout_softness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.05000000074505806
+        },
+        "texture_rotate": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 360,
+          "soft_minimum": -360,
+          "value": 0
+        },
+        "texture_scale": {
+          "editable": true,
+          "mdl_type": "float2",
+          "value": [
+            1,
+            1
+          ]
+        },
+        "texture_translate": {
+          "editable": true,
+          "mdl_type": "float2",
+          "value": [
+            0,
+            0
+          ]
+        },
+        "tiles_bump_strength": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 1
+        },
+        "tiles_color_1": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.014444000087678432,
+            0.03434000164270401,
+            0.2158609926700592
+          ]
+        },
+        "tiles_color_2": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.017642000690102577,
+            0.03954600170254707,
+            0.2195259928703308
+          ]
+        },
+        "tiles_color_3": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.014444000087678432,
+            0.01850000023841858,
+            0.2195259928703308
+          ]
+        },
+        "tiles_color_little_tile": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.5860000252723694,
+            0.7590000033378601,
+            0.7739999890327454
+          ]
+        },
+        "tiles_little_tile_texture_amount": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.20000000298023224
+        },
+        "tiles_random_brightness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.014999999664723873
+        },
+        "tiles_random_rotation": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 360,
+          "soft_minimum": 0,
+          "value": 1
+        },
+        "tiles_random_scale": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 1,
+          "soft_minimum": 0,
+          "value": 0
+        },
+        "tiles_random_seed": {
+          "editable": true,
+          "mdl_type": "int",
+          "value": 0
+        },
+        "tiles_random_slope_orientation": {
+          "editable": true,
+          "maximum": 5,
+          "mdl_type": "float",
+          "minimum": 0,
+          "soft_maximum": 1,
+          "soft_minimum": 0,
+          "value": 0.03999999910593033
+        },
+        "tiles_rotate": {
+          "editable": true,
+          "mdl_type": "float",
+          "value": 0
+        },
+        "tiles_roughness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.039000000804662704
+        },
+        "tiles_roughness_range": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.003000000026077032
+        },
+        "tiles_scale": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 2,
+          "soft_minimum": 0,
+          "value": 1
+        },
+        "uv_space_index": {
+          "editable": true,
+          "mdl_type": "int",
+          "value": 0
+        }
+      },
+      "resource_hashes": {
+        "vMaterials_2/Ceramic/Ceramic_Tiles_Glazed_Versailles.mdl": "19a8132b29d0dc8bef01ddf0f4eb045100657f120d2293502e7a1ea8ac57d142",
+        "vMaterials_2/Ceramic/textures/diamond_multi_R_noise1_G_noise2_B_craquelure.jpg": "ba8e6b9eecbed2c1814167afb8e3a893524332b776da6f822043f75ae08acd4c",
+        "vMaterials_2/Ceramic/textures/diamond_multi_R_rough_G_thickness_B_drops.jpg": "e21b9af4d88920cb9e75892473bab0906d79f091cad7153fb2e2d7c2783be416",
+        "vMaterials_2/Ceramic/textures/mortar_diff.jpg": "4ba01f0c53f3ab271c4765611a65cf2bd72c4c7e273bb7e7ab1b64023c991d28",
+        "vMaterials_2/Ceramic/textures/mortar_norm.jpg": "2a51e470390be20256a8859e6b87b2c32eca24bf79f9685fb57f65ff89d5fb2c",
+        "vMaterials_2/Ceramic/textures/versailles2_R_id_G_offs_B_color.png": "8913219e16757b718b51036034503029a521c2b72a773577455e2d4bb8494fee",
+        "vMaterials_2/Ceramic/textures/versailles2_multi_R_height_G_edgefade_B_ao.jpg": "c28581f0de1b1de7a73dd6b9411ff726af0819927fe8b09331d27052cad62d5a",
+        "vMaterials_2/Ceramic/textures/versailles2_norm.jpg": "f281aad60c594f02b6c45afe1d0fb623da7469c75f416e42f1dfb3c8ce7359a2"
+      },
+      "runtime_capability_audit": {
+        "argument_block_bytes": 224,
+        "ro_data_segment_bytes": [
+          2048
+        ],
+        "df_handle_count": 1,
+        "textures": [
+          {
+            "mdl_index": 1,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Ceramic/textures/versailles2_R_id_G_offs_B_color.png",
+            "source_sha256": "8913219e16757b718b51036034503029a521c2b72a773577455e2d4bb8494fee",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              2048,
+              2048,
+              1
+            ]
+          },
+          {
+            "mdl_index": 2,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Ceramic/textures/diamond_multi_R_noise1_G_noise2_B_craquelure.jpg",
+            "source_sha256": "ba8e6b9eecbed2c1814167afb8e3a893524332b776da6f822043f75ae08acd4c",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 3,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Ceramic/textures/diamond_multi_R_rough_G_thickness_B_drops.jpg",
+            "source_sha256": "e21b9af4d88920cb9e75892473bab0906d79f091cad7153fb2e2d7c2783be416",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 4,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Ceramic/textures/versailles2_multi_R_height_G_edgefade_B_ao.jpg",
+            "source_sha256": "c28581f0de1b1de7a73dd6b9411ff726af0819927fe8b09331d27052cad62d5a",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 5,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Ceramic/textures/versailles2_norm.jpg",
+            "source_sha256": "f281aad60c594f02b6c45afe1d0fb623da7469c75f416e42f1dfb3c8ce7359a2",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 6,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Ceramic/textures/mortar_diff.jpg",
+            "source_sha256": "4ba01f0c53f3ab271c4765611a65cf2bd72c4c7e273bb7e7ab1b64023c991d28",
+            "gamma": "srgb",
+            "effective_gamma": 2.2,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 7,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Ceramic/textures/mortar_norm.jpg",
+            "source_sha256": "2a51e470390be20256a8859e6b87b2c32eca24bf79f9685fb57f65ff89d5fb2c",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          }
+        ],
+        "measured_bsdf": false,
+        "light_profile": false,
+        "surface_bsdf_evaluate": true
+      }
+    },
+    {
+      "asset_id": "velvet",
+      "coverage_role": "velvet-sheen",
+      "module": "::vMaterials_2::Fabric::Velvet",
+      "export": "::vMaterials_2::Fabric::Velvet::Velvet(color,float,float,float,float,float2,float,float2,int,bool,float,bool)",
+      "mdl_language": "1.7",
+      "source_snapshot_id": "85b681cddc7fd51e7ba0785ee8e22f0921156a643d53de031e162f2ec8eaf8ca",
+      "source_modules": [
+        {
+          "module": "::vMaterials_2::Fabric::Velvet",
+          "path": "vMaterials_2/Fabric/Velvet.mdl",
+          "sha256": "f469b88366dc42b8bbe12380309fe112e906dc98bdba83a15553f52c4a2e5cc8"
+        }
+      ],
+      "parameters": {
+        "roughness_variation": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.5
+        },
+        "roundcorners_across_materials": {
+          "editable": true,
+          "mdl_type": "bool",
+          "value": false
+        },
+        "roundcorners_enable": {
+          "editable": true,
+          "mdl_type": "bool",
+          "value": false
+        },
+        "roundcorners_radius_mm": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 10,
+          "soft_minimum": 0,
+          "value": 1.5
+        },
+        "sheen_brightness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.5199999809265137
+        },
+        "sheen_falloff": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.09000000357627869
+        },
+        "sheen_saturation": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.6899999976158142
+        },
+        "texture_rotate": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 360,
+          "soft_minimum": 0,
+          "value": 0
+        },
+        "texture_scale": {
+          "editable": true,
+          "mdl_type": "float2",
+          "value": [
+            1,
+            1
+          ]
+        },
+        "texture_translate": {
+          "editable": true,
+          "mdl_type": "float2",
+          "value": [
+            0,
+            0
+          ]
+        },
+        "uv_space_index": {
+          "editable": true,
+          "maximum": 10,
+          "mdl_type": "int",
+          "minimum": 0,
+          "value": 0
+        },
+        "velvet_color": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.4019779860973358,
+            0.007499000057578087,
+            0.027320999652147293
+          ]
+        }
+      },
+      "resource_hashes": {
+        "vMaterials_2/Fabric/Velvet.mdl": "f469b88366dc42b8bbe12380309fe112e906dc98bdba83a15553f52c4a2e5cc8",
+        "vMaterials_2/Fabric/textures/velvet_diff.jpg": "5fe6a544cd302f0f3fd7bb9fb6ccd6c8bac98a3472158eb5813fcdfa5b68f095",
+        "vMaterials_2/Fabric/textures/velvet_imperfections.jpg": "0862089ef822953fff76e05a450eb66365b805c98ad1551ad4a543d8d9ed6448",
+        "vMaterials_2/Fabric/textures/velvet_norm.jpg": "392465b13662f01827b79af8d1611d288b51dcd18967be9ef9a2d6e4a608b3c5"
+      },
+      "runtime_capability_audit": {
+        "argument_block_bytes": 80,
+        "ro_data_segment_bytes": [],
+        "df_handle_count": 1,
+        "textures": [
+          {
+            "mdl_index": 1,
+            "shape": "bsdf_data",
+            "source_path": null,
+            "source_sha256": null,
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              65,
+              64,
+              1
+            ]
+          },
+          {
+            "mdl_index": 2,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Fabric/textures/velvet_imperfections.jpg",
+            "source_sha256": "0862089ef822953fff76e05a450eb66365b805c98ad1551ad4a543d8d9ed6448",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 3,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Fabric/textures/velvet_norm.jpg",
+            "source_sha256": "392465b13662f01827b79af8d1611d288b51dcd18967be9ef9a2d6e4a608b3c5",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 4,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Fabric/textures/velvet_diff.jpg",
+            "source_sha256": "5fe6a544cd302f0f3fd7bb9fb6ccd6c8bac98a3472158eb5813fcdfa5b68f095",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          }
+        ],
+        "measured_bsdf": false,
+        "light_profile": false,
+        "surface_bsdf_evaluate": true
+      }
+    },
+    {
+      "asset_id": "wood-tiles-pine-mosaic",
+      "coverage_role": "nvidia-pipeline-correspondence",
+      "module": "::vMaterials_2::Wood::Wood_Tiles_Pine",
+      "export": "::vMaterials_2::Wood::Wood_Tiles_Pine::Wood_Tiles_Pine_Mosaic(color,float,float,float,float,float2,float,float,float,float,float,float,float,float,float,float,float2,float,float2,int,bool,float,bool)",
+      "mdl_language": "1.5",
+      "source_snapshot_id": "d58ac6c5491b8f38fee0074c604397627a9e4cf9f495e4102b84a0ba0fe2c6b7",
+      "source_modules": [
+        {
+          "module": "::vMaterials_2::Wood::Wood_Tiles_Pine",
+          "path": "vMaterials_2/Wood/Wood_Tiles_Pine.mdl",
+          "sha256": "9352ec7804505e0456a1971f096339e7cda94f34eb24bb07b624605fbfa99a77"
+        }
+      ],
+      "parameters": {
+        "across_materials": {
+          "editable": true,
+          "mdl_type": "bool",
+          "value": false
+        },
+        "base_roughness_range": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.6000000238418579
+        },
+        "coating_reflectivity": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 1
+        },
+        "dirt_and_spots_amount": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0
+        },
+        "edgewear_roughness_amount": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0
+        },
+        "floor_brightness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.8999999761581421
+        },
+        "gaps_brightness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.30000001192092896
+        },
+        "round_corners": {
+          "editable": true,
+          "mdl_type": "bool",
+          "value": false
+        },
+        "roundcorner_radius_mm": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 10,
+          "soft_minimum": 0,
+          "value": 1.5
+        },
+        "texture_rotate": {
+          "editable": true,
+          "mdl_type": "float",
+          "value": 0
+        },
+        "texture_scale": {
+          "editable": true,
+          "mdl_type": "float2",
+          "value": [
+            1,
+            1
+          ]
+        },
+        "texture_translate": {
+          "editable": true,
+          "mdl_type": "float2",
+          "value": [
+            0,
+            0
+          ]
+        },
+        "tiles_base_roughness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.03999999910593033
+        },
+        "tiles_bump_strength": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.4000000059604645
+        },
+        "tiles_orange_peel_bump_factor": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0
+        },
+        "tiles_random_slope_orientation": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.05000000074505806
+        },
+        "uv_space_index": {
+          "editable": true,
+          "mdl_type": "int",
+          "value": 0
+        },
+        "wood_brightness_variation": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.5
+        },
+        "wood_bump_strength": {
+          "editable": true,
+          "maximum": 2,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.10000000149011612
+        },
+        "wood_color": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.7799999713897705,
+            0.7799999713897705,
+            0.7799999713897705
+          ]
+        },
+        "wood_random_rotation": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.009999999776482582
+        },
+        "wood_scale": {
+          "editable": true,
+          "mdl_type": "float2",
+          "value": [
+            1,
+            1
+          ]
+        },
+        "wood_scale_variation": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 2,
+          "soft_minimum": 0,
+          "value": 0
+        }
+      },
+      "resource_hashes": {
+        "vMaterials_2/Wood/Wood_Tiles_Pine.mdl": "9352ec7804505e0456a1971f096339e7cda94f34eb24bb07b624605fbfa99a77",
+        "vMaterials_2/Wood/textures/mosaic_R_edgewear_G_gaps_B_gaps_rough.jpg": "b6b9fb4c15e1ad3fe24783be2897c00447f3374433fd923e7a42bf4920fcf8ba",
+        "vMaterials_2/Wood/textures/mosaic_R_id_G_offs_B_rotation.png": "1c4f6877c6be7b39bb705ee1a53c65691e23de2f66d5be524bac2b0890d7859a",
+        "vMaterials_2/Wood/textures/mosaic_norm.png": "fdf922e6866e7e39fd4aa23e7f82374c1fcd5f1b65c17ffde7aa18eba457d8ec",
+        "vMaterials_2/Wood/textures/pine_diff.jpg": "321fc3513edbf620f335aacd59ca7247f8009a5f03173007cc3e7a74684670c1",
+        "vMaterials_2/Wood/textures/pine_norm.jpg": "c674a48b920de0a575e66a5ace50f67be8c0e149e23a049835656632f4193c88",
+        "vMaterials_2/Wood/textures/pine_rough_detail.jpg": "506deb84882672f4f1b371b0196324b76927679c3f02233f5021e65062745855",
+        "vMaterials_2/Wood/textures/pine_rough_grain.jpg": "1ff078d0c7c206753a08a373d78dc76c113f49923f85d375846f7719b5f31e48",
+        "vMaterials_2/Wood/textures/tiles_wood_R_rough_G_dents_B_spots.jpg": "73f07f9f0053a64f77123e0c2c6b7c04fb13c6c3845fbdb73a899c13e1416ad0",
+        "vMaterials_2/Wood/textures/tiles_wood_orangepeel_norm.jpg": "14b18dba2a5e4978a8d14cb1efd17e3a7a8c7ad5e5b3438ddc7d025c6453fbfe"
+      },
+      "runtime_capability_audit": {
+        "argument_block_bytes": 128,
+        "ro_data_segment_bytes": [],
+        "df_handle_count": 1,
+        "textures": [
+          {
+            "mdl_index": 1,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Wood/textures/mosaic_R_edgewear_G_gaps_B_gaps_rough.jpg",
+            "source_sha256": "b6b9fb4c15e1ad3fe24783be2897c00447f3374433fd923e7a42bf4920fcf8ba",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 2,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Wood/textures/tiles_wood_R_rough_G_dents_B_spots.jpg",
+            "source_sha256": "73f07f9f0053a64f77123e0c2c6b7c04fb13c6c3845fbdb73a899c13e1416ad0",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 3,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Wood/textures/pine_rough_detail.jpg",
+            "source_sha256": "506deb84882672f4f1b371b0196324b76927679c3f02233f5021e65062745855",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 4,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Wood/textures/mosaic_R_id_G_offs_B_rotation.png",
+            "source_sha256": "1c4f6877c6be7b39bb705ee1a53c65691e23de2f66d5be524bac2b0890d7859a",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 5,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Wood/textures/pine_rough_grain.jpg",
+            "source_sha256": "1ff078d0c7c206753a08a373d78dc76c113f49923f85d375846f7719b5f31e48",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 6,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Wood/textures/mosaic_norm.png",
+            "source_sha256": "fdf922e6866e7e39fd4aa23e7f82374c1fcd5f1b65c17ffde7aa18eba457d8ec",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 7,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Wood/textures/pine_norm.jpg",
+            "source_sha256": "c674a48b920de0a575e66a5ace50f67be8c0e149e23a049835656632f4193c88",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 8,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Wood/textures/pine_diff.jpg",
+            "source_sha256": "321fc3513edbf620f335aacd59ca7247f8009a5f03173007cc3e7a74684670c1",
+            "gamma": "srgb",
+            "effective_gamma": 2.2,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 9,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Wood/textures/tiles_wood_orangepeel_norm.jpg",
+            "source_sha256": "14b18dba2a5e4978a8d14cb1efd17e3a7a8c7ad5e5b3438ddc7d025c6453fbfe",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              2048,
+              2048,
+              1
+            ]
+          }
+        ],
+        "measured_bsdf": false,
+        "light_profile": false,
+        "surface_bsdf_evaluate": true
+      }
+    }
+  ]
+}

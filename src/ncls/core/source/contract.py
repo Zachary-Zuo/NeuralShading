@@ -9,7 +9,8 @@ from ncls.core.identity import require_sha256, sha256_bytes, sha256_json
 
 ParameterKind = Literal["group", "list", "variant", "value", "resource", "read-only"]
 ParameterValueType = Literal[
-    "float", "bool", "enum", "vector2", "vector3", "color3", "string", "resource"
+    "float", "double", "int", "bool", "enum", "vector2", "vector3", "vector4",
+    "color3", "string", "resource"
 ]
 EditKind = Literal["set", "insert", "remove", "move", "replace-variant"]
 BindingKind = Literal[
