@@ -132,3 +132,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 7: Fancy reference material 候选研究
+
+**Date**: 2026-08-27
+**Task**: Fancy reference material 候选研究
+**Branch**: `main`
+
+### Summary
+
+完成 NVIDIA 2024/2026、公开 MaterialX、Omniverse MDL packs、Ling-Qi Yan 与历史材质模型的候选报告；推荐 vMaterials 2 作为首个新增 MDL source。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cdc5fd9` | (see git log) |
+
+### Status
+
+[OK] **Completed**
