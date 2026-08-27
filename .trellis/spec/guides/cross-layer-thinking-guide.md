@@ -131,6 +131,18 @@ After implementation:
 - 除数值 parity 外，增加跨越多个 iteration 的完整 forward/backward/optimizer soak；单 kernel 或少量 dispatch 只能证明局部互操作。
 - 长跑若在 semaphore/command-buffer 交接点失败，先检查 frame rotation、deferred release、transient heap 与 shared-buffer transfer path，再把它归因于模型或上游驱动。
 
+## GPU Surface / Differential Boundary
+
+当数据从 camera/scene hit 跨到 source reference、package backend 或 texture sampler 时，先把每个量的单位和隐含尺度写出来：
+
+- [ ] camera basis 是归一化方向、image-plane slope，还是共同乘有 focal distance？方向上的 `normalize()` 是否掩盖了 footprint 中仍存在的尺度？
+- [ ] ray cone 是世界空间长度还是角度；triangle Jacobian 是线性尺度还是 `log2`；传给 backend 的 gradient 是否为 normalized UV？
+- [ ] texture/latent dimension 由 surface 层还是 sampler 层加入？只允许一个 owner，不能重复乘除尺寸。
+- [ ] reference PT、package PT 与 deferred 是否由同一 surface contract 产生字段，而不是三份“看起来相同”的公式？
+- [ ] semantic evidence 是否包含 raw UV/LOD 或明显空间结构？resource loaded、slot ready 和平均色只能证明 lifecycle。
+
+具体实现与测试入口见 `../viewer/path-surface.md`。
+
 ---
 
 ## Cross-Platform Template Consistency

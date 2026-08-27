@@ -1,0 +1,54 @@
+{
+  "format_name": "ncls.viewer-capture",
+  "format_version": 4,
+  "reference_integrator": "ncls.scene-path-tracer@1",
+  "bundle_root": "D:/01_Workspace/NeuralShading/artifacts/nvidia-faithful/materialx-recorded-200k/package",
+  "viewer_scene": "D:/01_Workspace/NeuralShading/artifacts/nvidia-faithful/materialx-pt-smoke/viewer-v2/capture-scene.json",
+  "method_id": "6950aeb2a8225e01bf2e6acf2e32346ac0bec48bb1f608cab3f6caa322d02073",
+  "slots": [
+    {
+      "package_id": "6950aeb2a8225e01bf2e6acf2e32346ac0bec48bb1f608cab3f6caa322d02073",
+      "mode": "path-tracing"
+    },
+    {
+      "package_id": "6950aeb2a8225e01bf2e6acf2e32346ac0bec48bb1f608cab3f6caa322d02073",
+      "mode": "deferred"
+    }
+  ],
+  "resolution": [1280, 720],
+  "reference_spp": 64,
+  "reference_samples_per_frame": 4,
+  "reference_scene_max_bounces": 0,
+  "reference_layer_walk_max_depth": 24,
+  "camera": {
+    "target": [-0.0548505187, 1.04786098, -0.0644895136],
+    "yaw": 0.45,
+    "pitch": 0.12,
+    "distance": 4.373682,
+    "vertical_fov_degrees": 38.0
+  },
+  "display": {
+    "comparison_mode": 0,
+    "exposure_ev": 0.0,
+    "difference_scale": 8.0
+  },
+  "lighting": {
+    "use_environment": false,
+    "environment_rotation": 0.0,
+    "environment_intensity": 0.65,
+    "use_sun": true,
+    "sun_direction": [0.35, 0.55, 0.76],
+    "sun_intensity": 1.5,
+    "sun_color": [1.0, 0.92, 0.82],
+    "use_point": false,
+    "point_position": [-1.8, 1.4, 2.0],
+    "point_intensity": 7.0,
+    "point_color": [0.55, 0.72, 1.0],
+    "use_rectangle": false,
+    "rectangle_center": [1.3, 2.4, 1.2],
+    "rectangle_axis_u": [0.65, 0.0, 0.0],
+    "rectangle_axis_v": [0.0, 0.0, 0.45],
+    "rectangle_intensity": 3.2,
+    "rectangle_color": [1.0, 0.78, 0.58]
+  }
+}

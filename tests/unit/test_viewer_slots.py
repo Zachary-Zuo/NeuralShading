@@ -34,3 +34,14 @@ def test_package_path_tracer_uses_package_prepare_evaluate_pdf_and_sample() -> N
     ):
         assert call in source
     assert "ReferencePathTracer.cs.slang" not in source
+
+
+def test_reference_and_package_pt_share_the_path_surface_contract() -> None:
+    for shader in ("ReferencePathTracer.cs.slang", "PackagePathTracer.cs.slang"):
+        source = Path("apps/viewer/shaders", shader).read_text(encoding="utf-8")
+        assert '#include "PathSurface.slang"' in source
+        assert "nclsViewerPrimaryRayConeSpreadAngle(" in source
+        assert "nclsViewerPreparePathSurface(" in source
+        assert "nclsViewerLoadPathVertexData(" in source
+        assert "getVertexDataRayCones(" not in source
+        assert "NCLS_PT_SURFACE_PROBE" not in source

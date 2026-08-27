@@ -3,6 +3,7 @@ import Scene.RaytracingInline;
 import Utils.Geometry.GeometryHelpers;
 
 #include "PackageBackend.slang"
+#include "PathSurface.slang"
 #include "../../../shaders/ncls/reference/sampling.slang"
 
 Texture2D<float4> gPreviousPackage;
@@ -67,56 +68,6 @@ float nclsPackagePowerHeuristic(float firstPdf, float secondPdf)
     return firstSquared / max(firstSquared + secondSquared, 1e-20f);
 }
 
-bool nclsPackageLoadVertexData(
-    const HitInfo hit,
-    const Ray ray,
-    out VertexData vertex,
-    out uint materialId)
-{
-    vertex = {};
-    materialId = 0u;
-#if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_TRIANGLE_MESH)
-    if (hit.getType() == HitType::Triangle)
-    {
-        const TriangleHit triangleHit = hit.getTriangleHit();
-        vertex = gScene.getVertexDataRayCones(
-            triangleHit.instanceID,
-            triangleHit.primitiveIndex,
-            triangleHit.getBarycentricWeights());
-        materialId = gScene.getMaterialID(triangleHit.instanceID);
-        return true;
-    }
-#endif
-#if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_DISPLACED_TRIANGLE_MESH)
-    if (hit.getType() == HitType::DisplacedTriangle)
-    {
-        const DisplacedTriangleHit displacedHit = hit.getDisplacedTriangleHit();
-        vertex = gScene.getVertexData(displacedHit, -ray.dir);
-        materialId = gScene.getMaterialID(displacedHit.instanceID);
-        return true;
-    }
-#endif
-#if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_CURVE)
-    if (hit.getType() == HitType::Curve)
-    {
-        const CurveHit curveHit = hit.getCurveHit();
-        vertex = gScene.getVertexDataFromCurve(curveHit);
-        materialId = gScene.getMaterialID(curveHit.instanceID);
-        return true;
-    }
-#endif
-#if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_SDF_GRID)
-    if (hit.getType() == HitType::SDFGrid)
-    {
-        const SDFGridHit sdfHit = hit.getSDFGridHit();
-        vertex = gScene.getVertexDataFromSDFGrid(sdfHit, ray.origin, ray.dir);
-        materialId = gScene.getMaterialID(sdfHit.instanceID);
-        return true;
-    }
-#endif
-    return false;
-}
-
 NclsPackageSurface nclsPreparePackageSurface(
     const VertexData vertex,
     uint materialId,
@@ -125,30 +76,17 @@ NclsPackageSurface nclsPreparePackageSurface(
     float rayConeWidth)
 {
     NclsPackageSurface surface;
-    surface.position = vertex.posW;
-    surface.faceNormal = normalize(vertex.faceNormalW);
-    surface.normal = normalize(vertex.normalW);
-    surface.tangent = vertex.tangentW.xyz;
-    surface.uv = vertex.texC;
-    surface.materialId = materialId;
-    surface.frontFacing = dot(viewWorld, surface.faceNormal) >= 0.0f ? 1u : 0u;
-    if (gFlipTexCoordV != 0u) surface.uv.y = 1.0f - surface.uv.y;
-    if (surface.frontFacing == 0u) surface.faceNormal = -surface.faceNormal;
-    if (dot(viewWorld, surface.normal) < 0.0f) surface.normal = -surface.normal;
-    surface.tangent -= surface.normal * dot(surface.normal, surface.tangent);
-    surface.tangent = dot(surface.tangent, surface.tangent) > 1e-10f
-        ? normalize(surface.tangent)
-        : nclsViewerTangent(surface.normal);
-
-    // Falcor's coneTexLODValue is the mesh UV/world Jacobian. Combining it
-    // with the path ray cone yields normalized UV gradients; the package owns
-    // the actual texture dimensions and applies its explicit LOD policy.
-    const float normalProjection = max(abs(dot(rayDirection, surface.faceNormal)), 1e-4f);
-    const float lambda = vertex.coneTexLODValue
-        + log2(max(abs(rayConeWidth) / normalProjection, 1e-8f));
-    const float uvFootprint = clamp(exp2(lambda), 1e-8f, 1.0f);
-    surface.uvDx = float2(uvFootprint, 0.0f);
-    surface.uvDy = float2(0.0f, uvFootprint);
+    const NclsViewerPathSurface pathSurface = nclsViewerPreparePathSurface(
+        vertex, materialId, viewWorld, rayDirection, rayConeWidth, gFlipTexCoordV);
+    surface.position = pathSurface.position;
+    surface.faceNormal = pathSurface.faceNormal;
+    surface.normal = pathSurface.normal;
+    surface.tangent = pathSurface.tangent;
+    surface.uv = pathSurface.uv;
+    surface.uvDx = pathSurface.uvDx;
+    surface.uvDy = pathSurface.uvDy;
+    surface.materialId = pathSurface.materialId;
+    surface.frontFacing = pathSurface.frontFacing;
     return surface;
 }
 
@@ -395,8 +333,8 @@ float3 nclsTracePackagePath(uint2 pixel, uint globalSample)
     float previousBsdfPdf = 0.0f;
     float previousEnvironmentPdf = 0.0f;
     float rayConeWidth = 0.0f;
-    const float rayConeSpreadAngle =
-        2.0f * length(gScene.camera.data.cameraV) / float(max(gFrameDim.y, 1u));
+    const float rayConeSpreadAngle = nclsViewerPrimaryRayConeSpreadAngle(
+        gScene.camera.data.cameraV, gScene.camera.data.cameraW, gFrameDim.y);
     const NclsPackageBackend backend = nclsCreatePackageBackend();
     const NclsPackageCompiledMaterial material = nclsLoadPackageMaterial(gCompiledMaterialIndex);
 
@@ -421,7 +359,7 @@ float3 nclsTracePackagePath(uint2 pixel, uint globalSample)
 
         VertexData vertex;
         uint materialId;
-        if (!nclsPackageLoadVertexData(hit, ray, vertex, materialId)) break;
+        if (!nclsViewerLoadPathVertexData(hit, ray, vertex, materialId)) break;
         rayConeWidth += rayConeSpreadAngle * hitDistance;
         const float3 viewWorld = -ray.dir;
         const NclsPackageSurface surface = nclsPreparePackageSurface(

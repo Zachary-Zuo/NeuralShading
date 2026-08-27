@@ -10,6 +10,8 @@ package path tracer 在每个 scene hit构造完整 scattering context，包括 
 
 deferred renderer从 G-buffer传入相同的 UV/gradient 与 frame，再调用同一 package `prepare/evaluate`。两种 mode只改变 transport，不改变 package math或资源。
 
+两个 PT 都通过 `PathSurface.slang` 构造 scene surface。Falcor camera basis 含共同 focal-distance 尺度，primary ray-cone spread 使用 `cameraV/cameraW` 的长度比；输出 footprint 是 normalized UV derivative，可直接交给 MaterialX `SampleGrad` 或 neural latent filter。修改这一链路时必须运行 `tests/gpu/test_viewer_path_surface.py`，并用具有明显空间结构的 local-light capture验证，不能只检查 slot `ready` 或平均颜色。
+
 ## 构建
 
 只使用项目脚本。它验证锁定 Falcor提交和干净 worktree，临时应用 `patches/falcor-viewer-overlay.patch`，构建结束后反向应用 overlay；`external/Falcor` 最终必须保持干净。

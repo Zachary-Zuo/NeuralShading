@@ -1,0 +1,33 @@
+{
+  "id": "viewer-pt-spatial-material-root-fix",
+  "name": "viewer-pt-spatial-material-root-fix",
+  "title": "Viewer PT 空间材质根因修复",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "viewer",
+  "package": null,
+  "priority": "P2",
+  "creator": "Zachary",
+  "assignee": "Zachary",
+  "createdAt": "2026-08-27",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "execution_mode": "continuous",
+    "continuous_authorized": "true",
+    "authorization_parent": "08-27-viewer-pt-spatial-material-root-fix",
+    "commit_policy": "preauthorized-scoped-local-no-push",
+    "stop_policy": "scope-expansion-destructive-external-blocker-only",
+    "authorization_scope": "viewer-pt-spatial-surface-contract-root-audit-and-fix"
+  }
+}

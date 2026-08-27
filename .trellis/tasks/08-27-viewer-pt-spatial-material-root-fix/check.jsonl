@@ -1,0 +1,5 @@
+{"file":".trellis/spec/viewer/path-surface.md","reason":"核对共享命中、frame、normalized UV footprint、fallback 与数值门。"}
+{"file":".trellis/spec/viewer/index.md","reason":"核对 viewer slot/capture/Release build/Falcor clean 质量门。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"审查 camera→ray cone→UV gradient→texture/latent 的单位边界。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"确认 reference/package PT 不再复制 scene surface contract。"}
+{"file":".trellis/tasks/08-27-viewer-pt-spatial-material-root-fix/research/root-cause.md","reason":"对照 probe、真实 capture 与旧验收缺口。"}

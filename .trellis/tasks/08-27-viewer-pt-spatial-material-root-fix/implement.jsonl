@@ -1,0 +1,6 @@
+{"file":".trellis/spec/project/index.md","reason":"遵守根仓库、统一环境与正式架构边界。"}
+{"file":".trellis/spec/project/unified-pipeline.md","reason":"保持 source reference、package 与 backend-specific state 边界。"}
+{"file":".trellis/spec/project/dev-environment.md","reason":"按完整 Windows 状态执行 Falcor GPU、viewer build 与 capture。"}
+{"file":".trellis/spec/project/research-execution.md","reason":"区分数值 hard oracle 与真实资产 report-only 指标。"}
+{"file":".trellis/spec/viewer/index.md","reason":"遵守 viewer 两 slot、capture 与上游 clean 质量门。"}
+{"file":".trellis/tasks/08-27-viewer-pt-spatial-material-root-fix/research/planning-review.md","reason":"执行已确认的 continuous、scoped local commit/no-push 合同。"}

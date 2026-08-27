@@ -95,6 +95,10 @@ shared type guard / normalizer / projection before adding a third reader.
 - Trivial one-liner
 - Abstraction would be more complex than duplication
 
+### Exception: Renderer Boundary Contracts
+
+scene hit → surface interaction 这类边界即使只有两个消费者也必须立即共享，因为 UV、frame、front-facing、differential 中任一字段漂移都会形成“各自能运行、语义却不同”的静默错误。reference/package PT 不得以 source/backend 私有差异为理由复制 scene surface 构造；私有逻辑应从公共 surface 之后开始。具体合同见 `../viewer/path-surface.md`。
+
 ---
 
 ## After Batch Modifications

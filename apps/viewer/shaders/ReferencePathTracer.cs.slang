@@ -7,6 +7,7 @@ import Utils.Geometry.GeometryHelpers;
 #endif
 
 #include "ViewerCommon.slang"
+#include "PathSurface.slang"
 #include "../../../shaders/ncls/contracts/layer_stack_ir.slang"
 #include "../../../shaders/ncls/reference/sampling.slang"
 #if (NCLS_REFERENCE_FAMILY_MASK & 1) != 0
@@ -139,58 +140,6 @@ float3 nclsReferenceIlluminatePath(
         response * nclsOpenPbrLinearSrgbToAcesCgPath(linearSrgbRadiance));
 }
 
-bool nclsLoadVertexData(
-    const HitInfo hit,
-    const Ray ray,
-    out VertexData vertex,
-    out uint materialId)
-{
-    vertex = {};
-    materialId = 0u;
-#if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_TRIANGLE_MESH)
-    if (hit.getType() == HitType::Triangle)
-    {
-        const TriangleHit triangleHit = hit.getTriangleHit();
-        // Retain Falcor's per-triangle UV/world-space Jacobian so textured
-        // MaterialX inputs can select a stable mip from the path ray cone.
-        vertex = gScene.getVertexDataRayCones(
-            triangleHit.instanceID,
-            triangleHit.primitiveIndex,
-            triangleHit.getBarycentricWeights());
-        materialId = gScene.getMaterialID(triangleHit.instanceID);
-        return true;
-    }
-#endif
-#if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_DISPLACED_TRIANGLE_MESH)
-    if (hit.getType() == HitType::DisplacedTriangle)
-    {
-        const DisplacedTriangleHit displacedHit = hit.getDisplacedTriangleHit();
-        vertex = gScene.getVertexData(displacedHit, -ray.dir);
-        materialId = gScene.getMaterialID(displacedHit.instanceID);
-        return true;
-    }
-#endif
-#if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_CURVE)
-    if (hit.getType() == HitType::Curve)
-    {
-        const CurveHit curveHit = hit.getCurveHit();
-        vertex = gScene.getVertexDataFromCurve(curveHit);
-        materialId = gScene.getMaterialID(curveHit.instanceID);
-        return true;
-    }
-#endif
-#if SCENE_HAS_GEOMETRY_TYPE(GEOMETRY_TYPE_SDF_GRID)
-    if (hit.getType() == HitType::SDFGrid)
-    {
-        const SDFGridHit sdfHit = hit.getSDFGridHit();
-        vertex = gScene.getVertexDataFromSDFGrid(sdfHit, ray.origin, ray.dir);
-        materialId = gScene.getMaterialID(sdfHit.instanceID);
-        return true;
-    }
-#endif
-    return false;
-}
-
 NclsReferenceSurface nclsPrepareReferenceSurface(
     const VertexData vertex,
     uint materialId,
@@ -199,6 +148,8 @@ NclsReferenceSurface nclsPrepareReferenceSurface(
     float rayConeWidth)
 {
     NclsReferenceSurface surface;
+    const NclsViewerPathSurface pathSurface = nclsViewerPreparePathSurface(
+        vertex, materialId, viewWorld, rayDirection, rayConeWidth, gFlipTexCoordV);
     surface.materialId = min(materialId, gMaterialCount - 1u);
     const uint4 metadata = gMaterialMetadata[surface.materialId];
     #if NCLS_REFERENCE_FAMILY_MASK == 1
@@ -213,21 +164,11 @@ NclsReferenceSurface nclsPrepareReferenceSurface(
     surface.family = metadata.x;
     #endif
     surface.openPbrColorSpace = metadata.y;
-    surface.position = vertex.posW;
-    surface.faceNormal = normalize(vertex.faceNormalW);
-    surface.normal = normalize(vertex.normalW);
-    surface.tangent = vertex.tangentW.xyz;
-    surface.texCoord = vertex.texC;
-    if (gFlipTexCoordV != 0u) surface.texCoord.y = 1.0f - surface.texCoord.y;
-
-    // All reference closures are prepared in a view-facing local frame. OpenPBR
-    // may subsequently sample the opposite hemisphere for transmission.
-    if (dot(viewWorld, surface.faceNormal) < 0.0f) surface.faceNormal = -surface.faceNormal;
-    if (dot(viewWorld, surface.normal) < 0.0f) surface.normal = -surface.normal;
-    surface.tangent -= surface.normal * dot(surface.normal, surface.tangent);
-    surface.tangent = dot(surface.tangent, surface.tangent) > 1e-10f
-        ? normalize(surface.tangent)
-        : nclsViewerTangent(surface.normal);
+    surface.position = pathSurface.position;
+    surface.faceNormal = pathSurface.faceNormal;
+    surface.normal = pathSurface.normal;
+    surface.tangent = pathSurface.tangent;
+    surface.texCoord = pathSurface.uv;
 
     #if (NCLS_REFERENCE_FAMILY_MASK & 8) != 0
     surface.materialX.baseColor = float3(0.0f);
@@ -235,16 +176,6 @@ NclsReferenceSurface nclsPrepareReferenceSurface(
     surface.materialX.specularRoughness = 0.0f;
     if (surface.family == 3u)
     {
-        // coneTexLODValue converts the world-space cone footprint to a
-        // normalized UV footprint. SampleGrad then adds each texture's own
-        // dimensions, so the same gradients remain valid for all connected
-        // MaterialX inputs.
-        const float normalProjection = max(abs(dot(rayDirection, surface.faceNormal)), 1e-4f);
-        const float lambda = vertex.coneTexLODValue
-            + log2(max(abs(rayConeWidth) / normalProjection, 1e-8f));
-        const float uvFootprint = clamp(exp2(lambda), 1e-8f, 1.0f);
-        const float2 uvDx = float2(uvFootprint, 0.0f);
-        const float2 uvDy = float2(0.0f, uvFootprint);
         surface.materialX = nclsResolveMaterialXSurface(
             gMaterialXInputs[surface.materialId],
             gMaterialXBaseColors[surface.materialId],
@@ -252,15 +183,15 @@ NclsReferenceSurface nclsPrepareReferenceSurface(
             gMaterialXMetalnesses[surface.materialId],
             gMaterialXSampler,
             surface.texCoord,
-            uvDx,
-            uvDy);
+            pathSurface.uvDx,
+            pathSurface.uvDy);
         surface.normal = nclsMaterialXShadingNormal(
             gMaterialXInputs[surface.materialId],
             gMaterialXNormalMaps[surface.materialId],
             gMaterialXSampler,
             surface.texCoord,
-            uvDx,
-            uvDy,
+            pathSurface.uvDx,
+            pathSurface.uvDy,
             surface.normal,
             surface.tangent);
         surface.normal = nclsMxForwardFacingNormal(surface.normal, viewWorld);
@@ -871,10 +802,8 @@ float3 nclsTraceReferencePath(uint2 pixel, uint globalSample)
     float previousBsdfPdf = 0.0f;
     float previousEnvironmentPdf = 0.0f;
     float rayConeWidth = 0.0f;
-    // cameraV spans half of the vertical image plane in Falcor's camera
-    // convention. This is the angular footprint of one primary pixel.
-    const float rayConeSpreadAngle =
-        2.0f * length(gScene.camera.data.cameraV) / float(max(gFrameDim.y, 1u));
+    const float rayConeSpreadAngle = nclsViewerPrimaryRayConeSpreadAngle(
+        gScene.camera.data.cameraV, gScene.camera.data.cameraW, gFrameDim.y);
 
     [loop]
     for (uint depth = 0u; depth <= gMaxSceneBounces; ++depth)
@@ -899,7 +828,8 @@ float3 nclsTraceReferencePath(uint2 pixel, uint globalSample)
 
         VertexData vertex;
         uint materialId;
-        if (!nclsLoadVertexData(hit, ray, vertex, materialId) || materialId >= gMaterialCount) break;
+        if (!nclsViewerLoadPathVertexData(hit, ray, vertex, materialId)
+            || materialId >= gMaterialCount) break;
         rayConeWidth += rayConeSpreadAngle * hitDistance;
         const float3 viewWorld = -ray.dir;
         const NclsReferenceSurface surface = nclsPrepareReferenceSurface(
