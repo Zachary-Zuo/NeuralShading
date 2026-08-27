@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from ncls.core.identity import require_sha256, sha256_json
+from ncls.core.scattering.contract import BackendCapability, REQUIRED_PATH_TRACING_CAPABILITIES
 from ncls.core.source import SourceSnapshot
 
 
@@ -69,6 +70,10 @@ class ReferenceProgramDescriptor:
             raise ValueError("reference program descriptor identity is invalid")
         if self.source_contract_version < 1 or not self.runtime_abi or self.capabilities <= 0:
             raise ValueError("reference program contract is invalid")
+        capabilities = BackendCapability(self.capabilities)
+        if (capabilities & REQUIRED_PATH_TRACING_CAPABILITIES) != REQUIRED_PATH_TRACING_CAPABILITIES:
+            missing = REQUIRED_PATH_TRACING_CAPABILITIES & ~capabilities
+            raise ValueError(f"reference program is missing required path-tracing capabilities: {missing!s}")
         require_sha256("reference implementation_sha256", self.implementation_sha256)
         required = {"maximum_prepare_steps", "maximum_evaluate_steps", "maximum_state_bytes", "maximum_reads"}
         if set(self.bounded_execution) != required or any(int(value) < 1 for value in self.bounded_execution.values()):

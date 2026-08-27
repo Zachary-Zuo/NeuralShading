@@ -3,6 +3,7 @@
 from .abi_layout import CONTRACT_NAME, CONTRACT_VERSION
 from .contract import (
     REQUIRED_REALTIME_CAPABILITIES,
+    REQUIRED_PATH_TRACING_CAPABILITIES,
     BackendCapability,
     BackendCostModel,
     BackendDescriptor,
@@ -15,7 +16,7 @@ from .contract import (
     StateStorage,
     SurfaceInteraction,
     TransportMode,
-    positive_light_cosine,
+    absolute_light_cosine,
     response_cosine,
 )
 from .program import (
@@ -29,6 +30,7 @@ __all__ = [
     "CONTRACT_NAME",
     "CONTRACT_VERSION",
     "REQUIRED_REALTIME_CAPABILITIES",
+    "REQUIRED_PATH_TRACING_CAPABILITIES",
     "BackendCapability",
     "BackendCostModel",
     "BackendDescriptor",
@@ -45,6 +47,6 @@ __all__ = [
     "StateStorage",
     "SurfaceInteraction",
     "TransportMode",
-    "positive_light_cosine",
+    "absolute_light_cosine",
     "response_cosine",
 ]

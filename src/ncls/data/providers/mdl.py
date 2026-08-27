@@ -310,10 +310,7 @@ class MdlGpuQueryRuntime:
             renderer = (
                 PROJECT_ROOT / "shaders/ncls/reference_backends/mdl_runtime.slangh"
             ).read_text(encoding="utf-8")
-            adapter = (
-                PROJECT_ROOT / "shaders/ncls/reference_backends/mdl_query.slang"
-            ).read_text(encoding="utf-8")
-            source = "\n".join(
+            generated_source = "\n".join(
                 (
                     "#define MDL_NUM_TEXTURE_RESULTS 16",
                     "#define MDL_DF_HANDLE_SLOT_MODE -1",
@@ -323,12 +320,15 @@ class MdlGpuQueryRuntime:
                     types,
                     renderer,
                     self.artifact.hlsl,
-                    adapter,
                 )
             )
             desc = self._falcor.ProgramDesc()
-            desc.add_shader_module("ncls_mdl_reference").add_string(
-                source, self.artifact.root / "ncls_mdl_reference.slang"
+            desc.add_shader_module("NclsMdlGenerated").add_string(
+                generated_source, self.artifact.root / "ncls_mdl_generated.slang"
+            )
+            query_path = PROJECT_ROOT / "shaders/ncls/reference_backends/mdl_query.slang"
+            desc.add_shader_module("NclsMdlQuery").add_string(
+                query_path.read_text(encoding="utf-8"), query_path
             )
             desc.cs_entry("main")
             self._compute = self._falcor.ComputePass(self._device, desc)

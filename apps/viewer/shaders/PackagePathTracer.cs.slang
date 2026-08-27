@@ -276,20 +276,29 @@ float3 nclsPackageDirectLighting(
     }
     if (gUseEnvironment != 0u)
     {
-        float3 lightWorld;
-        float lightPdf;
-        nclsPackageSampleEnvironment(rng, lightWorld, lightPdf);
-        if (nclsPackageVisible(
-            query, nclsPackageDirectOrigin(surface, lightWorld), lightWorld,
-            3.402823466e+38f))
+        [loop]
+        for (uint environmentSample = 0u;
+             environmentSample < NCLS_VIEWER_ENVIRONMENT_NEE_SAMPLE_COUNT;
+             ++environmentSample)
         {
-            const NclsScatteringPdf bsdfPdf = state.pdf(lightWorld);
-            const float misWeight = nclsPackagePowerHeuristic(lightPdf, bsdfPdf.forward);
-            radiance += nclsPackageEvaluateResponse(
-                state, context, lightWorld,
-                nclsViewerHash(globalSample ^ depth ^ queryIndex++))
-                * nclsPackageEnvironment(lightWorld)
-                * (misWeight / max(lightPdf, 1e-8f));
+            float3 lightWorld;
+            float lightPdf;
+            nclsPackageSampleEnvironment(rng, lightWorld, lightPdf);
+            if (nclsPackageVisible(
+                query, nclsPackageDirectOrigin(surface, lightWorld), lightWorld,
+                3.402823466e+38f))
+            {
+                const NclsScatteringPdf bsdfPdf = state.pdf(lightWorld);
+                const float scaledLightPdf = lightPdf
+                    * float(NCLS_VIEWER_ENVIRONMENT_NEE_SAMPLE_COUNT);
+                const float misWeight = nclsPackagePowerHeuristic(
+                    scaledLightPdf, bsdfPdf.forward);
+                radiance += nclsPackageEvaluateResponse(
+                    state, context, lightWorld,
+                    nclsViewerHash(globalSample ^ depth ^ queryIndex++))
+                    * nclsPackageEnvironment(lightWorld)
+                    * (misWeight / max(scaledLightPdf, 1e-8f));
+            }
         }
     }
     return radiance;
@@ -332,6 +341,7 @@ float3 nclsTracePackagePath(uint2 pixel, uint globalSample)
     float3 radiance = float3(0.0f);
     float previousBsdfPdf = 0.0f;
     float previousEnvironmentPdf = 0.0f;
+    bool previousDelta = false;
     float rayConeWidth = 0.0f;
     const float rayConeSpreadAngle = nclsViewerPrimaryRayConeSpreadAngle(
         gScene.camera.data.cameraV, gScene.camera.data.cameraW, gFrameDim.y);
@@ -348,7 +358,7 @@ float3 nclsTracePackagePath(uint2 pixel, uint globalSample)
             if (gUseEnvironment != 0u)
             {
                 float misWeight = 1.0f;
-                if (depth > 0u && previousEnvironmentPdf > 0.0f)
+                if (depth > 0u && !previousDelta && previousEnvironmentPdf > 0.0f)
                     misWeight = nclsPackagePowerHeuristic(previousBsdfPdf, previousEnvironmentPdf);
                 radiance += throughput * nclsPackageEnvironment(ray.dir) * misWeight;
             }
@@ -386,13 +396,12 @@ float3 nclsTracePackagePath(uint2 pixel, uint globalSample)
         }
 
         const float3 directionWorld = normalize(scatter.wiWorld);
-        const bool transmission =
-            (scatter.eventFlags & uint(NclsScatteringEvent::Transmission)) != 0u;
-        const float3 nextOrigin = computeRayOrigin(
-            surface.position, transmission ? -surface.faceNormal : surface.faceNormal);
+        const float3 nextOrigin = nclsPackageDirectOrigin(surface, directionWorld);
         ray = Ray(nextOrigin, directionWorld);
         previousBsdfPdf = scatter.pdf.forward;
-        previousEnvironmentPdf = nclsPackageEnvironmentPdf(directionWorld);
+        previousEnvironmentPdf = float(NCLS_VIEWER_ENVIRONMENT_NEE_SAMPLE_COUNT)
+            * nclsPackageEnvironmentPdf(directionWorld);
+        previousDelta = (scatter.eventFlags & (uint)NclsScatteringEvent::Delta) != 0u;
     }
     return max(radiance, 0.0f);
 }

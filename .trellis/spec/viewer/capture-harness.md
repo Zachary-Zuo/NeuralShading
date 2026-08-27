@@ -28,6 +28,7 @@ output extents:
 - `--frames` 只可延长 headless 运行；较小的值不得让 capture 提前于 1024 spp。达到 1024 后 PT 停止累计，后续 benchmark frame 不改变导出图像。
 - replay 中历史 `reference_spp` 不决定新导出的 spp；稳定 harness 始终重新累计到 1024。
 - `difference.exr` 必须由单 panel extent 的独立 linear 纹理导出，并以单 panel 局部 UV 对两个 slot 做逐像素差。不得从全宽 `comparison` 纹理截取或复用全宽 UV。
+- 所有线性 EXR 都从 RGBA32F 资源显式写成 float32 channel。Falcor/FreeImage 的默认压缩 EXR 会落到 half；这会把合法的 `> 65504` HDR 样本写成 `Inf`，因此权威 capture 禁止使用默认 EXR export flags，也禁止用 clamp 掩盖导出溢出。
 - 交互式 difference 显示仍遵守固定 50/50 panel：两个 panel 各自显示同一份正确比例的差分，divider 不参与差分采样。
 
 ## 4. Validation & Error Matrix
@@ -52,6 +53,7 @@ output extents:
 - `tests/unit/test_viewer_slots.py`：断言 1024 spp 常量、最后一帧截断、capture 门槛、difference 独立 view texture 与 panel-local UV。
 - `scripts/build_viewer.ps1 -Configuration Release`：编译 C++ resource binding 与真实 `Composite.cs.slang`。
 - headless capture：读取 EXR header，断言两个 slot 与 difference 的 width/height 完全相同；manifest 中 ready PT slot 的 `spp` 为 1024。
+- headless capture：同时断言线性 EXR 的 RGB channel 是 float32 且像素全 finite；高亮尾部保留原始值。
 - 构建与 capture 后确认 `external/Falcor` 工作树干净。
 
 ## 7. Wrong vs Correct

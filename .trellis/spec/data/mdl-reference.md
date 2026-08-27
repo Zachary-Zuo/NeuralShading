@@ -31,7 +31,7 @@ mdl.program@1 -> project MDL bridge -> MDL SDK target code -> current Falcor 8
 - V1 domain 是 front-facing upper-hemisphere surface-BSDF evaluate；response 为线性 RGB `f * |n_s · wi|`。
 - V1 texture filtering 固定 `ExplicitLod(0)`；`TrainingBatch@1` 为兼容统一 schema 仍携带 `uv_dx/uv_dy/mip_level`，但三者必须为零，provenance 必须包含 `texture_filtering=explicit-lod0` 与 `uv_derivatives_consumed=false`。
 - 正式 JPEG decoder 固定独立 `external/stb` pin/hash。可以与 oracle 使用相同 decoder 语义，但不得从 falcor2 import、链接或复制 runtime。
-- internal query 可输出 MDL BSDF PDF 做诊断；公共 capability 不因此声明 matched `sample/pdf`。
+- provider 的方向响应 query descriptor 固定声明 `evaluate/spatial`，因为 `EvaluatedBlock` / `TrainingBatch@1` 当前不传输 sampler。runtime `ReferenceProgramDescriptor` 属于另一 capability plane，必须完整声明并实现 `prepare/evaluate/sample/pdf` 才能进入 path tracer；不得用 query schema 的窄范围否定 runtime 能力，也不得反向伪造 provider 已输出 sampler。
 
 ## 4. Validation & Error Matrix
 
@@ -77,4 +77,13 @@ capabilities = ("evaluate", "spatial", "uv-footprint")
 
 # 对：V1 descriptor 与实际 ExplicitLod(0) 一致
 capabilities = ("evaluate", "spatial")
+```
+
+```python
+# 错：把 provider query 的 capability 直接复用为 runtime descriptor
+runtime = ReferenceProgramDescriptor(capabilities=query.capabilities)
+
+# 对：两个 descriptor 分别描述真实入口；runtime 缺四入口任一项都 fail closed
+query_capabilities = ("evaluate", "spatial")
+runtime_capabilities = PREPARE | EVALUATE | SAMPLE | PDF
 ```

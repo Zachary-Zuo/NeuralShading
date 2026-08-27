@@ -2,47 +2,12 @@
 import Scene.RaytracingInline;
 import Utils.Geometry.GeometryHelpers;
 
-#ifndef NCLS_REFERENCE_FAMILY_MASK
-#define NCLS_REFERENCE_FAMILY_MASK 15
-#endif
-
-#if (NCLS_REFERENCE_FAMILY_MASK & 16) != 0
-import NclsMdlGenerated;
-#endif
-
 #include "ViewerCommon.slang"
 #include "PathSurface.slang"
-#include "../../../shaders/ncls/contracts/layer_stack_ir.slang"
+#include "SceneReferenceProgram.slang"
+#include "../../../shaders/ncls/contracts/response_measure.slang"
 #include "../../../shaders/ncls/reference/sampling.slang"
-#if (NCLS_REFERENCE_FAMILY_MASK & 1) != 0
-#include "../../../shaders/ncls/reference/random_walk_reference.slang"
-#endif
-#if (NCLS_REFERENCE_FAMILY_MASK & 2) != 0
-#include "../../../shaders/ncls/reference/merl_reference.slang"
-#endif
-#if (NCLS_REFERENCE_FAMILY_MASK & 4) != 0
-#include "../../../shaders/ncls/reference/openpbr_reference.slang"
-#endif
-#if (NCLS_REFERENCE_FAMILY_MASK & 8) != 0
-#include "../../../shaders/ncls/reference/materialx_standard_surface_reference.slang"
-#endif
 
-#ifndef NCLS_MAX_SCENE_MATERIALS
-#define NCLS_MAX_SCENE_MATERIALS 64
-#endif
-
-// Source-material resources remain family-specific. The array index is the
-// Falcor material ID, which lets a single scene path cross arbitrary material
-// slots without converting any source family to Falcor's native material ABI.
-StructuredBuffer<uint4> gMaterialMetadata;
-StructuredBuffer<NclsLayerStackIR> gLayerStacks[NCLS_MAX_SCENE_MATERIALS];
-StructuredBuffer<float3> gMerlBrdfs[NCLS_MAX_SCENE_MATERIALS];
-StructuredBuffer<float> gOpenPbrInputs[NCLS_MAX_SCENE_MATERIALS];
-StructuredBuffer<float> gMaterialXInputs[NCLS_MAX_SCENE_MATERIALS];
-Texture2D<float4> gMaterialXBaseColors[NCLS_MAX_SCENE_MATERIALS];
-Texture2D<float4> gMaterialXRoughnesses[NCLS_MAX_SCENE_MATERIALS];
-Texture2D<float4> gMaterialXMetalnesses[NCLS_MAX_SCENE_MATERIALS];
-Texture2D<float4> gMaterialXNormalMaps[NCLS_MAX_SCENE_MATERIALS];
 Texture2D<float4> gPreviousReference;
 Texture2D<float4> gEnvironment;
 StructuredBuffer<float> gEnvironmentMarginalCdf;
@@ -87,28 +52,27 @@ cbuffer ReferencePathTracerCB
     float _padding2;
 };
 
+struct NclsReferenceSampleGenerator : ISampleGenerator
+{
+    uint state;
+    [mutating] uint next()
+    {
+        state = state * 1664525u + 1013904223u;
+        return state;
+    }
+};
+
 struct NclsReferenceSurface
 {
-    uint materialId;
-    uint family;
-    uint openPbrColorSpace;
     float3 position;
     float3 faceNormal;
     float3 normal;
     float3 tangent;
-    float2 texCoord;
-    #if (NCLS_REFERENCE_FAMILY_MASK & 8) != 0
-    NclsMaterialXResolvedSurface materialX;
-    #endif
-};
-
-struct NclsReferenceSample
-{
-    uint valid;
-    float3 directionLocal;
-    float3 weight;
-    float pdf;
-    uint transmission;
+    float2 uv;
+    float2 uvDx;
+    float2 uvDy;
+    uint materialId;
+    uint frontFacing;
 };
 
 float nclsReferencePowerHeuristic(float firstPdf, float secondPdf)
@@ -118,33 +82,6 @@ float nclsReferencePowerHeuristic(float firstPdf, float secondPdf)
     return firstSquared / max(firstSquared + secondSquared, 1e-20f);
 }
 
-float3 nclsOpenPbrAcesCgToLinearSrgbPath(float3 value)
-{
-    return float3(
-        1.70505099f * value.x - 0.62179212f * value.y - 0.08325887f * value.z,
-        -0.13025642f * value.x + 1.14080474f * value.y - 0.01054832f * value.z,
-        -0.02400336f * value.x - 0.12896898f * value.y + 1.15297233f * value.z);
-}
-
-float3 nclsOpenPbrLinearSrgbToAcesCgPath(float3 value)
-{
-    return float3(
-        0.61309740f * value.x + 0.33952315f * value.y + 0.04737945f * value.z,
-        0.07019372f * value.x + 0.91635388f * value.y + 0.01345240f * value.z,
-        0.02061560f * value.x + 0.10956978f * value.y + 0.86981464f * value.z);
-}
-
-float3 nclsReferenceIlluminatePath(
-    const NclsReferenceSurface surface,
-    float3 response,
-    float3 linearSrgbRadiance)
-{
-    if (surface.family != 2u || surface.openPbrColorSpace == 0u)
-        return response * linearSrgbRadiance;
-    return nclsOpenPbrAcesCgToLinearSrgbPath(
-        response * nclsOpenPbrLinearSrgbToAcesCgPath(linearSrgbRadiance));
-}
-
 NclsReferenceSurface nclsPrepareReferenceSurface(
     const VertexData vertex,
     uint materialId,
@@ -152,519 +89,43 @@ NclsReferenceSurface nclsPrepareReferenceSurface(
     float3 rayDirection,
     float rayConeWidth)
 {
-    NclsReferenceSurface surface;
     const NclsViewerPathSurface pathSurface = nclsViewerPreparePathSurface(
         vertex, materialId, viewWorld, rayDirection, rayConeWidth, gFlipTexCoordV);
-    surface.materialId = min(materialId, gMaterialCount - 1u);
-    const uint4 metadata = gMaterialMetadata[surface.materialId];
-    #if NCLS_REFERENCE_FAMILY_MASK == 1
-    surface.family = 0u;
-    #elif NCLS_REFERENCE_FAMILY_MASK == 2
-    surface.family = 1u;
-    #elif NCLS_REFERENCE_FAMILY_MASK == 4
-    surface.family = 2u;
-    #elif NCLS_REFERENCE_FAMILY_MASK == 8
-    surface.family = 3u;
-    #else
-    surface.family = metadata.x;
-    #endif
-    surface.openPbrColorSpace = metadata.y;
+    NclsReferenceSurface surface;
     surface.position = pathSurface.position;
     surface.faceNormal = pathSurface.faceNormal;
     surface.normal = pathSurface.normal;
     surface.tangent = pathSurface.tangent;
-    surface.texCoord = pathSurface.uv;
-
-    #if (NCLS_REFERENCE_FAMILY_MASK & 8) != 0
-    surface.materialX.baseColor = float3(0.0f);
-    surface.materialX.metalness = 0.0f;
-    surface.materialX.specularRoughness = 0.0f;
-    if (surface.family == 3u)
-    {
-        surface.materialX = nclsResolveMaterialXSurface(
-            gMaterialXInputs[surface.materialId],
-            gMaterialXBaseColors[surface.materialId],
-            gMaterialXRoughnesses[surface.materialId],
-            gMaterialXMetalnesses[surface.materialId],
-            gMaterialXSampler,
-            surface.texCoord,
-            pathSurface.uvDx,
-            pathSurface.uvDy);
-        surface.normal = nclsMaterialXShadingNormal(
-            gMaterialXInputs[surface.materialId],
-            gMaterialXNormalMaps[surface.materialId],
-            gMaterialXSampler,
-            surface.texCoord,
-            pathSurface.uvDx,
-            pathSurface.uvDy,
-            surface.normal,
-            surface.tangent);
-        surface.normal = nclsMxForwardFacingNormal(surface.normal, viewWorld);
-        surface.tangent -= surface.normal * dot(surface.normal, surface.tangent);
-        surface.tangent = dot(surface.tangent, surface.tangent) > 1e-10f
-            ? normalize(surface.tangent)
-            : nclsViewerTangent(surface.normal);
-    }
-    #endif
+    surface.uv = pathSurface.uv;
+    surface.uvDx = pathSurface.uvDx;
+    surface.uvDy = pathSurface.uvDy;
+    surface.materialId = pathSurface.materialId;
+    surface.frontFacing = pathSurface.frontFacing;
     return surface;
 }
 
-float3 nclsEvalReferencePath(
+NclsScatteringContext nclsReferenceContext(
     const NclsReferenceSurface surface,
-    float3 viewLocal,
-    float3 lightLocal,
-    uint2 key)
+    float3 woWorld,
+    float filterRandom)
 {
-    #if NCLS_REFERENCE_FAMILY_MASK == 1
-    if (lightLocal.z <= 0.0f) return float3(0.0f);
-    return max(nclsEvalRandomWalkReference(
-        gLayerStacks[surface.materialId][0], viewLocal, lightLocal, key, gMaxLayerWalkDepth), 0.0f);
-    #elif NCLS_REFERENCE_FAMILY_MASK == 2
-    return nclsEvalMerlReference(gMerlBrdfs[surface.materialId], viewLocal, lightLocal);
-    #elif NCLS_REFERENCE_FAMILY_MASK == 4
-    return nclsEvalOpenPbrReference(gOpenPbrInputs[surface.materialId], viewLocal, lightLocal);
-    #elif NCLS_REFERENCE_FAMILY_MASK == 8
-    if (lightLocal.z <= 0.0f) return float3(0.0f);
-    return nclsEvalMaterialXStandardSurface(
-        gMaterialXInputs[surface.materialId], surface.materialX, viewLocal, lightLocal);
-    #elif NCLS_REFERENCE_FAMILY_MASK == 16
-    if (lightLocal.z <= 0.0f) return float3(0.0f);
-    float mdlPdf;
-    return nclsMdlEvaluateSurface(
-        surface.position,
-        surface.normal,
-        surface.tangent,
-        surface.texCoord,
-        nclsViewerToWorld(viewLocal, surface.normal, surface.tangent),
-        nclsViewerToWorld(lightLocal, surface.normal, surface.tangent),
-        mdlPdf);
-    #else
-    #if (NCLS_REFERENCE_FAMILY_MASK & 2) != 0
-    if (surface.family == 1u)
-        return nclsEvalMerlReference(gMerlBrdfs[surface.materialId], viewLocal, lightLocal);
-    #endif
-    #if (NCLS_REFERENCE_FAMILY_MASK & 4) != 0
-    if (surface.family == 2u)
-        return nclsEvalOpenPbrReference(gOpenPbrInputs[surface.materialId], viewLocal, lightLocal);
-    #endif
-    #if (NCLS_REFERENCE_FAMILY_MASK & 8) != 0
-    if (surface.family == 3u)
-    {
-        if (lightLocal.z <= 0.0f) return float3(0.0f);
-        return nclsEvalMaterialXStandardSurface(
-            gMaterialXInputs[surface.materialId], surface.materialX, viewLocal, lightLocal);
-    }
-    #endif
-    #if (NCLS_REFERENCE_FAMILY_MASK & 16) != 0
-    if (surface.family == 4u)
-    {
-        if (lightLocal.z <= 0.0f) return float3(0.0f);
-        float mdlPdf;
-        return nclsMdlEvaluateSurface(
-            surface.position,
-            surface.normal,
-            surface.tangent,
-            surface.texCoord,
-            nclsViewerToWorld(viewLocal, surface.normal, surface.tangent),
-            nclsViewerToWorld(lightLocal, surface.normal, surface.tangent),
-            mdlPdf);
-    }
-    #endif
-    #if (NCLS_REFERENCE_FAMILY_MASK & 1) != 0
-    if (lightLocal.z <= 0.0f) return float3(0.0f);
-    return max(nclsEvalRandomWalkReference(
-        gLayerStacks[surface.materialId][0], viewLocal, lightLocal, key, gMaxLayerWalkDepth), 0.0f);
-    #else
-    return float3(0.0f);
-    #endif
-    #endif
-}
-
-float nclsReflectionProposalPdf(
-    const NclsReferenceSurface surface,
-    float3 viewLocal,
-    float3 lightLocal)
-{
-    if (lightLocal.z <= 0.0f) return 0.0f;
-    const float cosinePdf = lightLocal.z / NCLS_VIEWER_PI;
-    #if NCLS_REFERENCE_FAMILY_MASK == 1
-    const NclsLayerInterfaceIR top = gLayerStacks[surface.materialId][0].interfaces[0];
-    const float2 alpha = max(float2(top.alphaX, top.alphaY), float2(0.001f));
-    #elif NCLS_REFERENCE_FAMILY_MASK == 8
-    const float anisotropy = gMaterialXInputs[surface.materialId][15];
-    const float2 alpha = nclsMxRoughnessAnisotropy(
-        surface.materialX.specularRoughness, anisotropy);
-    #elif NCLS_REFERENCE_FAMILY_MASK == 2 || NCLS_REFERENCE_FAMILY_MASK == 4
-    const float2 alpha = float2(0.2f);
-    #else
-    float2 alpha = float2(0.2f);
-    #if (NCLS_REFERENCE_FAMILY_MASK & 1) != 0
-    if (surface.family == 0u)
-    {
-        const NclsLayerInterfaceIR top = gLayerStacks[surface.materialId][0].interfaces[0];
-        alpha = max(float2(top.alphaX, top.alphaY), float2(0.001f));
-    }
-    #endif
-    #if (NCLS_REFERENCE_FAMILY_MASK & 8) != 0
-    if (surface.family == 3u)
-    {
-        const float anisotropy = gMaterialXInputs[surface.materialId][15];
-        alpha = nclsMxRoughnessAnisotropy(surface.materialX.specularRoughness, anisotropy);
-    }
-    #endif
-    #endif
-    const float3 halfVector = nclsSafeNormalize(viewLocal + lightLocal);
-    const float specularPdf = nclsGgxVisibleNormalPdf(viewLocal, halfVector, alpha)
-        / max(4.0f * abs(dot(viewLocal, halfVector)), 1e-8f);
-    return 0.5f * cosinePdf + 0.5f * specularPdf;
-}
-
-#if (NCLS_REFERENCE_FAMILY_MASK & 1) != 0
-NclsReferenceSample nclsSampleLayerStackPath(
-    const NclsReferenceSurface surface,
-    float3 viewLocal,
-    inout NclsRng rng)
-{
-    NclsReferenceSample result = {};
-    const NclsLayerStackIR stack = gLayerStacks[surface.materialId][0];
-    if (stack.interfaceCount == 0u || stack.interfaceCount > NCLS_MAX_INTERFACES) return result;
-
-    // A single interface is a reflection closure in the current LayerStack
-    // contract. Multi-interface stacks enter through a dielectric top coat and
-    // then perform the same analog interface/medium walk as the directional
-    // reference, but return the sampled exterior direction and path weight.
-    if (stack.interfaceCount == 1u)
-    {
-        const NclsLayerInterfaceIR layer = stack.interfaces[0];
-        const float etaT = layer.kind == (uint)NclsInterfaceKind::RoughDielectric
-            ? layer.relativeIor : 1.0f;
-        const LayerBsdfSample scatter = nclsSampleInterfaceTransport(
-            layer, viewLocal, 1.0f, etaT, NCLS_SAMPLE_REFLECTION, true, rng);
-        if (scatter.valid == 0u) return result;
-        result.valid = 1u;
-        result.directionLocal = scatter.direction;
-        result.weight = scatter.weight;
-        result.pdf = scatter.pdf;
-        return result;
-    }
-
-    if (stack.interfaces[0].kind != (uint)NclsInterfaceKind::RoughDielectric) return result;
-    LayerBsdfSample entrance = nclsSampleInterfaceTransport(
-        stack.interfaces[0], viewLocal, 1.0f, stack.interfaces[0].relativeIor,
-        NCLS_SAMPLE_ALL, true, rng);
-    if (entrance.valid == 0u) return result;
-    if (entrance.isReflection != 0u)
-    {
-        result.valid = 1u;
-        result.directionLocal = entrance.direction;
-        result.weight = entrance.weight;
-        result.pdf = 0.0f;
-        return result;
-    }
-
-    float3 throughput = entrance.weight;
-    float3 direction = entrance.direction;
-    uint mediumIndex = 0u;
-    float z = stack.media[0].thickness;
-    [loop]
-    for (uint walkDepth = 0u; walkDepth < gMaxLayerWalkDepth; ++walkDepth)
-    {
-        if (!all(isfinite(throughput)) || !any(throughput > 0.0f)) return result;
-        if (walkDepth >= 3u)
-        {
-            const float survival = clamp(max(throughput.x, max(throughput.y, throughput.z)), 0.05f, 0.95f);
-            if (rng.nextFloat() >= survival) return result;
-            throughput /= survival;
-        }
-        if (abs(direction.z) <= NCLS_MIN_COS) return result;
-
-        const NclsHomogeneousMediumIR medium = stack.media[mediumIndex];
-        const float3 sigmaS = nclsMediumSigmaS(medium);
-        const float3 sigmaT = nclsMediumSigmaA(medium) + sigmaS;
-        const bool hasScattering = any(sigmaS > 0.0f);
-        if (hasScattering && !nclsHasAchromaticExtinction(sigmaT)) return result;
-        const float scalarSigmaT = (sigmaT.x + sigmaT.y + sigmaT.z) / 3.0f;
-        const bool travelingToTop = direction.z > 0.0f;
-        const float boundaryZ = travelingToTop ? medium.thickness : 0.0f;
-        const float distanceToBoundary = abs(boundaryZ - z) / abs(direction.z);
-        if (!hasScattering)
-        {
-            throughput *= exp(-sigmaT * distanceToBoundary);
-            z = boundaryZ;
-        }
-        else if (scalarSigmaT > 0.0f)
-        {
-            const float freeFlight = -log(max(1.0f - rng.nextFloat(), 1e-7f)) / scalarSigmaT;
-            if (freeFlight < distanceToBoundary)
-            {
-                z += direction.z * freeFlight;
-                throughput *= sigmaS / scalarSigmaT;
-                direction = nclsSampleHenyeyGreenstein(direction, medium.g, rng);
-                continue;
-            }
-            z = boundaryZ;
-        }
-        else z = boundaryZ;
-
-        const uint interfaceIndex = travelingToTop ? mediumIndex : mediumIndex + 1u;
-        const NclsLayerInterfaceIR layer = stack.interfaces[interfaceIndex];
-        const float etaAbove = nclsEtaAboveInterface(stack, interfaceIndex);
-        const float etaBelow = layer.kind == (uint)NclsInterfaceKind::RoughDielectric
-            ? etaAbove * layer.relativeIor : etaAbove;
-        const float etaI = travelingToTop ? etaBelow : etaAbove;
-        const float etaT = travelingToTop ? etaAbove : etaBelow;
-        const float3 incident = -direction;
-
-        if (interfaceIndex + 1u == stack.interfaceCount)
-        {
-            const LayerBsdfSample reflection = nclsSampleInterface(
-                layer, incident, etaI, etaT, NCLS_SAMPLE_REFLECTION, rng);
-            if (reflection.valid == 0u) return result;
-            throughput *= reflection.weight;
-            direction = reflection.direction;
-            continue;
-        }
-
-        const LayerBsdfSample scatter = nclsSampleInterfaceTransport(
-            layer, incident, etaI, etaT, NCLS_SAMPLE_ALL, true, rng);
-        if (scatter.valid == 0u) return result;
-        throughput *= scatter.weight;
-        direction = scatter.direction;
-        if (interfaceIndex == 0u && scatter.isReflection == 0u)
-        {
-            result.valid = all(isfinite(throughput)) && any(throughput > 0.0f) ? 1u : 0u;
-            result.directionLocal = direction;
-            result.weight = throughput;
-            // The marginal PDF of a layered random walk is intentionally not
-            // approximated. LayerStack therefore uses BSDF-only environment
-            // transport instead of an inconsistent MIS weight.
-            result.pdf = 0.0f;
-            return result;
-        }
-        if (scatter.isReflection == 0u)
-        {
-            if (travelingToTop)
-            {
-                mediumIndex--;
-                z = 0.0f;
-            }
-            else
-            {
-                mediumIndex++;
-                z = stack.media[mediumIndex].thickness;
-            }
-        }
-    }
-    return result;
-}
-#endif
-
-#if (NCLS_REFERENCE_FAMILY_MASK & 4) != 0
-NclsReferenceSample nclsSampleOpenPbrPath(
-    const NclsReferenceSurface surface,
-    float3 viewLocal,
-    inout NclsRng rng)
-{
-    NclsReferenceSample result = {};
-    const OpenPBR_PreparedBsdf prepared = nclsPrepareOpenPbrReference(
-        gOpenPbrInputs[surface.materialId], viewLocal);
-    OpenPBR_DiffuseSpecular weight;
-    OpenPBR_BsdfLobeType sampledType;
-    const float3 randomValue = float3(rng.nextFloat(), rng.nextFloat(), rng.nextFloat());
-    openpbr_sample(prepared, randomValue, result.directionLocal, weight, result.pdf, sampledType);
-    result.weight = openpbr_get_sum_of_diffuse_specular(weight);
-    if (surface.openPbrColorSpace != 0u)
-        result.weight = nclsOpenPbrAcesCgToLinearSrgbPath(result.weight);
-    result.transmission = result.directionLocal.z < 0.0f ? 1u : 0u;
-    result.valid = result.pdf > 0.0f && isfinite(result.pdf)
-        && all(isfinite(result.weight)) && any(result.weight > 0.0f)
-        ? 1u : 0u;
-    return result;
-}
-#endif
-
-#if (NCLS_REFERENCE_FAMILY_MASK & 16) != 0
-NclsReferenceSample nclsSampleMdlPath(
-    const NclsReferenceSurface surface,
-    float3 viewLocal,
-    inout NclsRng rng)
-{
-    NclsReferenceSample result = {};
-    const float3 viewWorld = nclsViewerToWorld(
-        viewLocal, surface.normal, surface.tangent);
-    const float4 xi = float4(
-        rng.nextFloat(), rng.nextFloat(), rng.nextFloat(), rng.nextFloat());
-    const NclsMdlSample sample = nclsMdlSampleSurface(
-        surface.position,
-        surface.normal,
-        surface.tangent,
-        surface.texCoord,
-        viewWorld,
-        xi);
-    result.valid = sample.valid;
-    result.directionLocal = nclsViewerToLocal(
-        sample.directionWorld, surface.normal, surface.tangent);
-    result.weight = sample.weight;
-    result.pdf = sample.pdf;
-    result.transmission = sample.transmission;
-    return result;
-}
-#endif
-
-NclsReferenceSample nclsSampleReferencePath(
-    const NclsReferenceSurface surface,
-    float3 viewLocal,
-    inout NclsRng rng,
-    uint2 key)
-{
-    NclsReferenceSample result = {};
-    #if NCLS_REFERENCE_FAMILY_MASK == 1
-    return nclsSampleLayerStackPath(surface, viewLocal, rng);
-    #elif NCLS_REFERENCE_FAMILY_MASK == 4
-    return nclsSampleOpenPbrPath(surface, viewLocal, rng);
-    #elif NCLS_REFERENCE_FAMILY_MASK == 16
-    return nclsSampleMdlPath(surface, viewLocal, rng);
-    #else
-    #if (NCLS_REFERENCE_FAMILY_MASK & 1) != 0
-    if (surface.family == 0u) return nclsSampleLayerStackPath(surface, viewLocal, rng);
-    #endif
-    #if (NCLS_REFERENCE_FAMILY_MASK & 4) != 0
-    if (surface.family == 2u) return nclsSampleOpenPbrPath(surface, viewLocal, rng);
-    #endif
-    #if (NCLS_REFERENCE_FAMILY_MASK & 16) != 0
-    if (surface.family == 4u) return nclsSampleMdlPath(surface, viewLocal, rng);
-    #endif
-
-    float3 direction;
-    if (rng.nextFloat() < 0.5f)
-    {
-        direction = nclsSampleCosineHemisphere(rng.nextFloat2());
-    }
-    else
-    {
-        #if NCLS_REFERENCE_FAMILY_MASK == 8
-        const float anisotropy = gMaterialXInputs[surface.materialId][15];
-        float2 alpha = nclsMxRoughnessAnisotropy(
-            surface.materialX.specularRoughness, anisotropy);
-        #elif NCLS_REFERENCE_FAMILY_MASK == 2
-        float2 alpha = float2(0.2f);
-        #else
-        float2 alpha = float2(0.2f);
-        #if (NCLS_REFERENCE_FAMILY_MASK & 1) != 0
-        if (surface.family == 0u)
-        {
-            const NclsLayerInterfaceIR top = gLayerStacks[surface.materialId][0].interfaces[0];
-            alpha = max(float2(top.alphaX, top.alphaY), float2(0.001f));
-        }
-        #endif
-        #if (NCLS_REFERENCE_FAMILY_MASK & 8) != 0
-        if (surface.family == 3u)
-        {
-            const float anisotropy = gMaterialXInputs[surface.materialId][15];
-            alpha = nclsMxRoughnessAnisotropy(surface.materialX.specularRoughness, anisotropy);
-        }
-        #endif
-        #endif
-        const float3 halfVector = nclsSampleGgxVisibleNormal(viewLocal, alpha, rng);
-        direction = reflect(-viewLocal, halfVector);
-        if (direction.z <= 0.0f) direction = nclsSampleCosineHemisphere(rng.nextFloat2());
-    }
-    result.directionLocal = direction;
-    result.pdf = nclsReflectionProposalPdf(surface, viewLocal, direction);
-    const float3 response = nclsEvalReferencePath(surface, viewLocal, direction, key);
-    result.weight = response / max(result.pdf, 1e-8f);
-    result.valid = result.pdf > 0.0f && isfinite(result.pdf)
-        && all(isfinite(result.weight)) && any(result.weight > 0.0f)
-        ? 1u : 0u;
-    return result;
-    #endif
-}
-
-float nclsReferencePdfPath(
-    const NclsReferenceSurface surface,
-    float3 viewLocal,
-    float3 lightLocal)
-{
-    #if NCLS_REFERENCE_FAMILY_MASK == 1
-    const NclsLayerStackIR stack = gLayerStacks[surface.materialId][0];
-    if (stack.interfaceCount != 1u) return 0.0f;
-    const NclsLayerInterfaceIR layer = stack.interfaces[0];
-    const float etaT = layer.kind == (uint)NclsInterfaceKind::RoughDielectric
-        ? layer.relativeIor : 1.0f;
-    return nclsInterfacePdf(layer, viewLocal, lightLocal, 1.0f, etaT, NCLS_SAMPLE_REFLECTION);
-    #elif NCLS_REFERENCE_FAMILY_MASK == 4
-    const OpenPBR_PreparedBsdf prepared = nclsPrepareOpenPbrReference(
-        gOpenPbrInputs[surface.materialId], viewLocal);
-    return openpbr_pdf(prepared, lightLocal);
-    #elif NCLS_REFERENCE_FAMILY_MASK == 16
-    return nclsMdlPdfSurface(
-        surface.position,
-        surface.normal,
-        surface.tangent,
-        surface.texCoord,
-        nclsViewerToWorld(viewLocal, surface.normal, surface.tangent),
-        nclsViewerToWorld(lightLocal, surface.normal, surface.tangent));
-    #elif NCLS_REFERENCE_FAMILY_MASK == 2 || NCLS_REFERENCE_FAMILY_MASK == 8
-    return nclsReflectionProposalPdf(surface, viewLocal, lightLocal);
-    #else
-    #if (NCLS_REFERENCE_FAMILY_MASK & 4) != 0
-    if (surface.family == 2u)
-    {
-        const OpenPBR_PreparedBsdf prepared = nclsPrepareOpenPbrReference(
-            gOpenPbrInputs[surface.materialId], viewLocal);
-        return openpbr_pdf(prepared, lightLocal);
-    }
-    #endif
-    #if (NCLS_REFERENCE_FAMILY_MASK & 1) != 0
-    if (surface.family == 0u)
-    {
-        const NclsLayerStackIR stack = gLayerStacks[surface.materialId][0];
-        if (stack.interfaceCount != 1u) return 0.0f;
-        const NclsLayerInterfaceIR layer = stack.interfaces[0];
-        const float etaT = layer.kind == (uint)NclsInterfaceKind::RoughDielectric
-            ? layer.relativeIor : 1.0f;
-        return nclsInterfacePdf(layer, viewLocal, lightLocal, 1.0f, etaT, NCLS_SAMPLE_REFLECTION);
-    }
-    #endif
-    #if (NCLS_REFERENCE_FAMILY_MASK & 16) != 0
-    if (surface.family == 4u)
-        return nclsMdlPdfSurface(
-            surface.position,
-            surface.normal,
-            surface.tangent,
-            surface.texCoord,
-            nclsViewerToWorld(viewLocal, surface.normal, surface.tangent),
-            nclsViewerToWorld(lightLocal, surface.normal, surface.tangent));
-    #endif
-    return nclsReflectionProposalPdf(surface, viewLocal, lightLocal);
-    #endif
-}
-
-float3 nclsReferenceEmissionPath(const NclsReferenceSurface surface, float3 viewLocal)
-{
-    #if NCLS_REFERENCE_FAMILY_MASK == 4
-    const float3 emission = nclsOpenPbrEmission(gOpenPbrInputs[surface.materialId], viewLocal);
-    return surface.openPbrColorSpace == 0u
-        ? emission : nclsOpenPbrAcesCgToLinearSrgbPath(emission);
-    #elif NCLS_REFERENCE_FAMILY_MASK == 8
-    return nclsMaterialXEmission(gMaterialXInputs[surface.materialId]);
-    #elif (NCLS_REFERENCE_FAMILY_MASK & 12) == 0
-    return float3(0.0f);
-    #else
-    #if (NCLS_REFERENCE_FAMILY_MASK & 4) != 0
-    if (surface.family == 2u)
-    {
-        const float3 emission = nclsOpenPbrEmission(gOpenPbrInputs[surface.materialId], viewLocal);
-        return surface.openPbrColorSpace == 0u
-            ? emission : nclsOpenPbrAcesCgToLinearSrgbPath(emission);
-    }
-    #endif
-    #if (NCLS_REFERENCE_FAMILY_MASK & 8) != 0
-    if (surface.family == 3u)
-        return nclsMaterialXEmission(gMaterialXInputs[surface.materialId]);
-    #endif
-    return float3(0.0f);
-    #endif
+    NclsScatteringContext context = {};
+    context.surface.position = surface.position;
+    context.surface.geometricNormal = surface.faceNormal;
+    context.surface.shadingFrame.normal = surface.normal;
+    context.surface.shadingFrame.tangent = surface.tangent;
+    context.surface.shadingFrame.bitangent = cross(surface.normal, surface.tangent);
+    context.surface.uv = surface.uv;
+    context.surface.uvDx = surface.uvDx;
+    context.surface.uvDy = surface.uvDy;
+    context.surface.materialInstanceId = surface.materialId;
+    context.surface.frontFacing = surface.frontFacing;
+    context.woWorld = normalize(woWorld);
+    context.transportMode = (uint)NclsTransportMode::Radiance;
+    context.componentMask = (uint)NclsScatteringEvent::Reflection
+        | (uint)NclsScatteringEvent::Transmission;
+    context.filterRandom = filterRandom;
+    return context;
 }
 
 float3 nclsEnvironmentPath(float3 direction)
@@ -752,34 +213,44 @@ bool nclsVisible(SceneRayQuery<1> query, float3 origin, float3 direction, float 
     return query.traceVisibilityRay(Ray(origin, direction, 0.0f, maximumDistance));
 }
 
-float3 nclsDirectRayOrigin(const NclsReferenceSurface surface, float3 direction)
+float3 nclsDirectRayOrigin(NclsSurfaceInteraction surface, float3 direction)
 {
     return computeRayOrigin(
         surface.position,
-        dot(direction, surface.faceNormal) >= 0.0f ? surface.faceNormal : -surface.faceNormal);
+        dot(direction, surface.geometricNormal) >= 0.0f
+            ? surface.geometricNormal : -surface.geometricNormal);
+}
+
+float3 nclsReferenceEvaluateResponse(
+    NclsSceneReferenceState state,
+    float3 wiWorld,
+    uint seed)
+{
+    NclsReferenceSampleGenerator sampleGenerator = {seed};
+    const NclsScatteringEval evaluation = state.evaluate(wiWorld, sampleGenerator);
+    const NclsSurfaceInteraction surface = state.surfaceInteraction();
+    return nclsScatteringEvalToResponseCos(
+        evaluation, surface.shadingFrame, wiWorld);
 }
 
 float3 nclsDirectLighting(
     SceneRayQuery<1> query,
-    const NclsReferenceSurface surface,
-    float3 viewLocal,
+    NclsSceneReferenceState state,
     uint globalSample,
     uint depth,
     inout NclsRng rng)
 {
     float3 radiance = float3(0.0f);
     uint queryIndex = 0u;
+    const NclsSurfaceInteraction surface = state.surfaceInteraction();
     if (gUseSun != 0u)
     {
         const float3 lightWorld = normalize(gSunDirection);
-        const float3 lightLocal = nclsViewerToLocal(lightWorld, surface.normal, surface.tangent);
-        if ((surface.family == 2u || lightLocal.z > 0.0f)
-            && nclsVisible(query, nclsDirectRayOrigin(surface, lightWorld), lightWorld, 3.402823466e+38f))
+        if (nclsVisible(query, nclsDirectRayOrigin(surface, lightWorld), lightWorld, 3.402823466e+38f))
         {
-            const float3 response = nclsEvalReferencePath(
-                surface, viewLocal, lightLocal,
-                uint2(nclsViewerHash(globalSample ^ depth ^ queryIndex++), globalSample));
-            radiance += nclsReferenceIlluminatePath(surface, response, gSunColor * gSunIntensity);
+            const float3 response = nclsReferenceEvaluateResponse(
+                state, lightWorld, nclsViewerHash(globalSample ^ depth ^ queryIndex++));
+            radiance += state.illuminate(response, gSunColor * gSunIntensity);
         }
     }
     if (gUsePoint != 0u)
@@ -788,15 +259,12 @@ float3 nclsDirectLighting(
         const float distanceSquared = max(dot(toLight, toLight), 1e-8f);
         const float distance = sqrt(distanceSquared);
         const float3 lightWorld = toLight / distance;
-        const float3 lightLocal = nclsViewerToLocal(lightWorld, surface.normal, surface.tangent);
-        if ((surface.family == 2u || lightLocal.z > 0.0f)
-            && nclsVisible(query, nclsDirectRayOrigin(surface, lightWorld), lightWorld, max(distance - 1e-4f, 0.0f)))
+        if (nclsVisible(query, nclsDirectRayOrigin(surface, lightWorld), lightWorld, max(distance - 1e-4f, 0.0f)))
         {
-            const float3 response = nclsEvalReferencePath(
-                surface, viewLocal, lightLocal,
-                uint2(nclsViewerHash(globalSample ^ depth ^ queryIndex++), globalSample));
-            radiance += nclsReferenceIlluminatePath(
-                surface, response, gPointColor * (gPointIntensity / distanceSquared));
+            const float3 response = nclsReferenceEvaluateResponse(
+                state, lightWorld, nclsViewerHash(globalSample ^ depth ^ queryIndex++));
+            radiance += state.illuminate(
+                response, gPointColor * (gPointIntensity / distanceSquared));
         }
     }
     if (gUseRectangle != 0u)
@@ -812,37 +280,41 @@ float3 nclsDirectLighting(
         const float3 lightNormal = normalize(cross(gRectangleAxisU, gRectangleAxisV));
         const float lightCosine = max(dot(lightNormal, -lightWorld), 0.0f);
         const float area = 4.0f * length(cross(gRectangleAxisU, gRectangleAxisV));
-        const float3 lightLocal = nclsViewerToLocal(lightWorld, surface.normal, surface.tangent);
         if (lightCosine > 0.0f && area > 0.0f
-            && (surface.family == 2u || lightLocal.z > 0.0f)
             && nclsVisible(query, nclsDirectRayOrigin(surface, lightWorld), lightWorld, max(distance - 1e-4f, 0.0f)))
         {
-            const float3 response = nclsEvalReferencePath(
-                surface, viewLocal, lightLocal,
-                uint2(nclsViewerHash(globalSample ^ depth ^ queryIndex++), globalSample));
+            const float3 response = nclsReferenceEvaluateResponse(
+                state, lightWorld, nclsViewerHash(globalSample ^ depth ^ queryIndex++));
             const float inversePdf = area * lightCosine / distanceSquared;
-            radiance += nclsReferenceIlluminatePath(
-                surface, response, gRectangleColor * gRectangleIntensity) * inversePdf;
+            radiance += state.illuminate(
+                response, gRectangleColor * gRectangleIntensity) * inversePdf;
         }
     }
-    const bool supportsEnvironmentNee = surface.family != 0u
-        || gLayerStacks[surface.materialId][0].interfaceCount == 1u;
-    if (gUseEnvironment != 0u && supportsEnvironmentNee)
+    if (gUseEnvironment != 0u)
     {
-        float3 lightWorld;
-        float lightPdf;
-        nclsSampleEnvironmentPath(rng, lightWorld, lightPdf);
-        const float3 lightLocal = nclsViewerToLocal(lightWorld, surface.normal, surface.tangent);
-        if ((surface.family == 2u || lightLocal.z > 0.0f)
-            && nclsVisible(query, nclsDirectRayOrigin(surface, lightWorld), lightWorld, 3.402823466e+38f))
+        [loop]
+        for (uint environmentSample = 0u;
+             environmentSample < NCLS_VIEWER_ENVIRONMENT_NEE_SAMPLE_COUNT;
+             ++environmentSample)
         {
-            const float3 response = nclsEvalReferencePath(
-                surface, viewLocal, lightLocal,
-                uint2(nclsViewerHash(globalSample ^ depth ^ queryIndex++), globalSample));
-            const float bsdfPdf = nclsReferencePdfPath(surface, viewLocal, lightLocal);
-            const float misWeight = nclsReferencePowerHeuristic(lightPdf, bsdfPdf);
-            radiance += nclsReferenceIlluminatePath(surface, response, nclsEnvironmentPath(lightWorld))
-                * (misWeight / max(lightPdf, 1e-8f));
+            float3 lightWorld;
+            float lightPdf;
+            nclsSampleEnvironmentPath(rng, lightWorld, lightPdf);
+            if (nclsVisible(
+                query, nclsDirectRayOrigin(surface, lightWorld), lightWorld,
+                3.402823466e+38f))
+            {
+                const float3 response = nclsReferenceEvaluateResponse(
+                    state, lightWorld,
+                    nclsViewerHash(globalSample ^ depth ^ queryIndex++));
+                const NclsScatteringPdf bsdfPdf = state.pdf(lightWorld);
+                const float scaledLightPdf = lightPdf
+                    * float(NCLS_VIEWER_ENVIRONMENT_NEE_SAMPLE_COUNT);
+                const float misWeight = nclsReferencePowerHeuristic(
+                    scaledLightPdf, bsdfPdf.forward);
+                radiance += state.illuminate(response, nclsEnvironmentPath(lightWorld))
+                    * (misWeight / max(scaledLightPdf, 1e-8f));
+            }
         }
     }
     return radiance;
@@ -853,7 +325,8 @@ float2 nclsR2Sample(uint index, uint scramble)
     const float2 shift = float2(
         nclsViewerHashFloat(scramble),
         nclsViewerHashFloat(scramble ^ 0x68bc21ebu));
-    return frac(shift + (float(index) + 0.5f) * float2(0.7548776662466927f, 0.5698402909980532f));
+    return frac(shift + (float(index) + 0.5f)
+        * float2(0.7548776662466927f, 0.5698402909980532f));
 }
 
 Ray nclsPrimaryRay(uint2 pixel, uint globalSample)
@@ -884,9 +357,11 @@ float3 nclsTraceReferencePath(uint2 pixel, uint globalSample)
     float3 radiance = float3(0.0f);
     float previousBsdfPdf = 0.0f;
     float previousEnvironmentPdf = 0.0f;
+    bool previousDelta = false;
     float rayConeWidth = 0.0f;
     const float rayConeSpreadAngle = nclsViewerPrimaryRayConeSpreadAngle(
         gScene.camera.data.cameraV, gScene.camera.data.cameraW, gFrameDim.y);
+    const NclsSceneReferenceBackend backend = {gMaxLayerWalkDepth, gMaterialXSampler};
 
     [loop]
     for (uint depth = 0u; depth <= gMaxSceneBounces; ++depth)
@@ -898,14 +373,12 @@ float3 nclsTraceReferencePath(uint2 pixel, uint globalSample)
             if (gUseEnvironment != 0u)
             {
                 float misWeight = 1.0f;
-                if (depth > 0u && previousEnvironmentPdf > 0.0f)
+                if (depth > 0u && !previousDelta && previousEnvironmentPdf > 0.0f)
                     misWeight = nclsReferencePowerHeuristic(previousBsdfPdf, previousEnvironmentPdf);
                 radiance += throughput * nclsEnvironmentPath(ray.dir) * misWeight;
             }
             else if (depth == 0u)
-            {
                 radiance += throughput * float3(0.025f, 0.03f, 0.04f);
-            }
             break;
         }
 
@@ -915,36 +388,40 @@ float3 nclsTraceReferencePath(uint2 pixel, uint globalSample)
             || materialId >= gMaterialCount) break;
         rayConeWidth += rayConeSpreadAngle * hitDistance;
         const float3 viewWorld = -ray.dir;
-        const NclsReferenceSurface surface = nclsPrepareReferenceSurface(
+        const NclsReferenceSurface pathSurface = nclsPrepareReferenceSurface(
             vertex, materialId, viewWorld, ray.dir, rayConeWidth);
-        const float3 viewLocal = nclsViewerToLocal(viewWorld, surface.normal, surface.tangent);
-        radiance += throughput * nclsReferenceEmissionPath(surface, viewLocal);
+        const NclsScatteringContext context = nclsReferenceContext(
+            pathSurface, viewWorld,
+            nclsViewerHashFloat(seed ^ nclsViewerHash(depth + 0x51ed270bu)));
+        const NclsSceneReferenceCompiledMaterial material = nclsLoadSceneReferenceMaterial(
+            materialId, gMaterialCount);
+        const NclsSceneReferenceState state = backend.prepare(context, material);
+        radiance += throughput * state.emission();
         radiance += throughput * nclsDirectLighting(
-            query, surface, viewLocal, globalSample, depth, rng);
+            query, state, globalSample, depth, rng);
         if (depth >= gMaxSceneBounces) break;
 
-        NclsReferenceSample scatter = nclsSampleReferencePath(
-            surface, viewLocal, rng,
-            uint2(nclsViewerHash(seed ^ depth ^ 0x51ed270bu), globalSample));
-        if (scatter.valid == 0u) break;
+        NclsReferenceSampleGenerator sampleGenerator = {rng.nextUInt()};
+        NclsScatteringSample scatter = {};
+        if (!state.sample(scatter, sampleGenerator) || scatter.valid == 0u) break;
         throughput *= scatter.weight;
         if (!all(isfinite(throughput)) || !any(throughput > 0.0f)) break;
-
         if (depth >= 3u)
         {
-            const float survival = clamp(max(throughput.x, max(throughput.y, throughput.z)), 0.05f, 0.95f);
+            const float survival = clamp(
+                max(throughput.x, max(throughput.y, throughput.z)), 0.05f, 0.95f);
             if (rng.nextFloat() >= survival) break;
             throughput /= survival;
         }
 
-        const float3 directionWorld = normalize(nclsViewerToWorld(
-            scatter.directionLocal, surface.normal, surface.tangent));
-        const bool transmission = scatter.transmission != 0u;
-        const float3 nextOrigin = computeRayOrigin(
-            surface.position, transmission ? -surface.faceNormal : surface.faceNormal);
+        const NclsSurfaceInteraction surface = state.surfaceInteraction();
+        const float3 directionWorld = normalize(scatter.wiWorld);
+        const float3 nextOrigin = nclsDirectRayOrigin(surface, directionWorld);
         ray = Ray(nextOrigin, directionWorld);
-        previousBsdfPdf = scatter.pdf;
-        previousEnvironmentPdf = nclsEnvironmentPdfPath(directionWorld);
+        previousBsdfPdf = scatter.pdf.forward;
+        previousEnvironmentPdf = float(NCLS_VIEWER_ENVIRONMENT_NEE_SAMPLE_COUNT)
+            * nclsEnvironmentPdfPath(directionWorld);
+        previousDelta = (scatter.eventFlags & (uint)NclsScatteringEvent::Delta) != 0u;
     }
     return max(radiance, 0.0f);
 }
@@ -976,9 +453,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint groupIndex : SV_Gro
     {
         const float inverseBatch = 1.0f / max(1u, gSamplesThisFrame);
         if (gAccumulate == 0u || gResetAccumulation != 0u || gReferenceSpp == 0u)
-        {
             accumulated = float4(batchSum * inverseBatch, batchLuminanceSquare * inverseBatch);
-        }
         else
         {
             const float4 previous = gPreviousReference[pixel];
@@ -1003,7 +478,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint groupIndex : SV_Gro
     GroupMemoryBarrierWithGroupSync();
     for (uint stride = 32u; stride > 0u; stride >>= 1u)
     {
-        if (groupIndex < stride) gRelativeStandardError[groupIndex] += gRelativeStandardError[groupIndex + stride];
+        if (groupIndex < stride)
+            gRelativeStandardError[groupIndex] += gRelativeStandardError[groupIndex + stride];
         GroupMemoryBarrierWithGroupSync();
     }
     if (groupIndex == 0u)

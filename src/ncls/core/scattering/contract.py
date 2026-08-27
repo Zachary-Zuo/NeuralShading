@@ -55,6 +55,13 @@ REQUIRED_REALTIME_CAPABILITIES = (
     | BackendCapability.ANISOTROPIC_FRAME
 )
 
+REQUIRED_PATH_TRACING_CAPABILITIES = (
+    BackendCapability.PREPARE
+    | BackendCapability.EVALUATE
+    | BackendCapability.SAMPLE
+    | BackendCapability.PDF
+)
+
 
 class StateStorage(str, Enum):
     INLINE = "inline"
@@ -159,17 +166,17 @@ class ScatteringEval:
         object.__setattr__(self, "event_flags", ScatteringEvent(self.event_flags))
 
 
-def positive_light_cosine(frame: ShadingFrame, wi_world: Vec3) -> float:
-    """返回数据合同和 deferred lighting 唯一允许使用的入射光余弦。"""
+def absolute_light_cosine(frame: ShadingFrame, wi_world: Vec3) -> float:
+    """返回 surface scattering response 使用的入射方向绝对余弦。"""
 
     wi = _unit("wi_world", wi_world)
-    return max(_dot(frame.normal, wi), 0.0)
+    return abs(_dot(frame.normal, wi))
 
 
 def response_cosine(evaluation: ScatteringEval, frame: ShadingFrame, wi_world: Vec3) -> Rgb:
     """把公共接口的纯 BSDF ``f`` 转为磁盘/Falcor 所需的 ``f*cos``。"""
 
-    cosine = positive_light_cosine(frame, wi_world)
+    cosine = absolute_light_cosine(frame, wi_world)
     return tuple(value * cosine for value in evaluation.f)  # type: ignore[return-value]
 
 

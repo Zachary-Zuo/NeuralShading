@@ -31,8 +31,8 @@ target_sources(NclsViewer PRIVATE
     shaders/PackageParity.cs.slang
     shaders/Prepare.cs.slang
     shaders/ReferencePathTracer.cs.slang
+    shaders/SceneReferenceProgram.slang
     shaders/ViewerCommon.slang
-    shaders/MdlViewerAdapter.slang
     "${NCLS_PROJECT_ROOT}/shaders/ncls/contracts/layer_stack_ir.slang"
     "${NCLS_PROJECT_ROOT}/shaders/ncls/contracts/response_measure.slang"
     "${NCLS_PROJECT_ROOT}/shaders/ncls/contracts/scattering_backend.slang"
@@ -44,6 +44,7 @@ target_sources(NclsViewer PRIVATE
     "${NCLS_PROJECT_ROOT}/shaders/ncls/scattering/ggx.slang"
     "${NCLS_PROJECT_ROOT}/shaders/ncls/scattering/fresnel.slang"
     "${NCLS_PROJECT_ROOT}/shaders/ncls/scattering/mixture.slang"
+    "${NCLS_PROJECT_ROOT}/shaders/ncls/scattering/reflection_mixture.slang"
     "${NCLS_PROJECT_ROOT}/shaders/ncls/scattering/nvidia_proposal.slang"
     "${NCLS_PROJECT_ROOT}/shaders/ncls/reference/interfaces.slang"
     "${NCLS_PROJECT_ROOT}/shaders/ncls/reference/merl_reference.slang"
@@ -51,6 +52,11 @@ target_sources(NclsViewer PRIVATE
     "${NCLS_PROJECT_ROOT}/shaders/ncls/reference/openpbr_reference.slang"
     "${NCLS_PROJECT_ROOT}/shaders/ncls/reference/random_walk_reference.slang"
     "${NCLS_PROJECT_ROOT}/shaders/ncls/reference/sampling.slang"
+    "${NCLS_PROJECT_ROOT}/shaders/ncls/reference_backends/layer_stack.slang"
+    "${NCLS_PROJECT_ROOT}/shaders/ncls/reference_backends/materialx.slang"
+    "${NCLS_PROJECT_ROOT}/shaders/ncls/reference_backends/mdl.slang"
+    "${NCLS_PROJECT_ROOT}/shaders/ncls/reference_backends/merl.slang"
+    "${NCLS_PROJECT_ROOT}/shaders/ncls/reference_backends/openpbr.slang"
 )
 
 target_link_libraries(NclsViewer PRIVATE bcrypt pugixml OpenEXR)

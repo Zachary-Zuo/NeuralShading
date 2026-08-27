@@ -61,7 +61,7 @@ def test_viewer_route_is_formal_artifact_only_and_has_fail_closed_checks() -> No
     viewer_files = (
         PROJECT_ROOT / "apps/viewer/MdlReference.cpp",
         PROJECT_ROOT / "apps/viewer/NclsViewer.cpp",
-        PROJECT_ROOT / "apps/viewer/shaders/MdlViewerAdapter.slang",
+        PROJECT_ROOT / "shaders/ncls/reference_backends/mdl.slang",
         PROJECT_ROOT / "scripts/launch_mdl_viewer.ps1",
     )
     combined = "\n".join(path.read_text(encoding="utf-8") for path in viewer_files)

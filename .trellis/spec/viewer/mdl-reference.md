@@ -17,10 +17,10 @@ selectMdlCatalogEntry(source, index) -> ReferenceSource
 正式 shader module 的组合顺序固定为：
 
 ```text
-MDL target-code types
--> project mdl_runtime.slangh
--> artifact generated.hlsl
--> MdlViewerAdapter.slang
+dynamic NclsMdlGenerated module:
+  MDL target-code types -> project mdl_runtime.slangh -> artifact generated.hlsl
+static project modules:
+  reference_backends/mdl.slang -> SceneReferenceProgram.slang / mdl_query.slang
 ```
 
 ## 3. Contracts
@@ -30,7 +30,7 @@ MDL target-code types
 - 2D texture 使用 bridge-decoded payload、origin、pixel type 与 gamma；BSDF-data texture 使用 artifact 的 Float32 3D payload。argument block/RO data 按 16-byte row 上传。
 - viewer 使用 `ProgramDesc::addShaderModule("NclsMdlGenerated").addString(...)`；generated HLSL 不进入根仓库，也不链接 MDL SDK runtime DLL。
 - V1 同一 scene specialization 只允许一个 material-specific generated MDL program。MDL 路径延续必须调用同一 target code 的 `surface_scattering_sample`，环境光 MIS 必须调用同一 target code 的 `surface_scattering_pdf`；`sample.weight` 直接使用 SDK 定义的 `bsdf_over_pdf = f |n_s·wi| / pdf`，不得再次乘 cosine 或除 PDF。
-- matched transport 是 viewer 内部正确积分尖锐 flakes/coat 的要求，不把训练/provider 的 source capability 从 `evaluate` 扩成公共 `sample/pdf`。纹理过滤仍为 `ExplicitLod(0)`。
+- runtime `ReferenceProgramDescriptor` 必须公开并完整实现 `prepare/evaluate/sample/pdf`，缺任一入口即 fail closed。training/provider 的方向响应 query descriptor 仍可只声明 `evaluate/spatial`；两者是不同 capability plane，不能把 query 采集范围误写成 runtime scattering 能力，也不能用 adapter 制造虚假的等价入口。纹理过滤仍为 `ExplicitLod(0)`。
 - 禁止用 radiance/throughput clamp 修复 firefly。若同 replay 的孤立高亮随 spp 持续进入，先比较 source response、实际采样 PDF、MIS PDF 与 `bsdf_over_pdf` 的极端尾部。
 - preset 切换必须先 validate/build，再原子替换 source/resources/pass。shader/resource 失败保留上一材质。
 - capture 记录 `mdl_asset_id`、`mdl_compiled_artifact_sha256`、SDK 和 filtering。单边 capture 不是独立 image parity。
@@ -46,7 +46,7 @@ MDL target-code types
 | 同一 scene 出现两个不同 MDL generated artifact | 明确拒绝 V1 specialization |
 | shader module 或 GPU resource 创建失败 | 保留上一有效 source/pass |
 | falcor2 import、launch 或 runtime fallback 出现在 viewer 路径 | boundary test 失败 |
-| MDL evaluate 配通用 cosine/GGX proposal，或 MIS 使用非 MDL PDF | 数值正确性失败；不得发布 viewer/capture |
+| MDL evaluate 配通用 cosine/GGX proposal，或 MIS 使用非 canonical MDL PDF | 数值正确性失败；不得发布 viewer/capture |
 | `sample` 返回 absorb、非有限方向/weight，或连续事件 PDF 非正 | 终止该路径；不得换 generic proposal 冒充同一 estimator |
 | capture 全 finite 但孤立白点随 spp 增加 | 不能据此通过视觉门；执行 weight/PDF 尾部诊断，不得 clamp |
 
@@ -59,7 +59,7 @@ MDL target-code types
 ## 6. Tests Required
 
 - unit/static：六项 catalog、unknown default、artifact/compiler/capability/hash检查存在、viewer/falcor2 boundary、公共 `PathSurface`、matched `sample/pdf` 路由与 LOD0。
-- GPU adapter：固定 diffuse artifact 上验证 sampled direction/event 有效，sample PDF 等于 formal PDF，`bsdf_over_pdf == evaluate / pdf`；容差按 float32 formal query 冻结，不能根据结果调宽。
+- GPU canonical backend：固定 diffuse artifact 上验证 sampled direction/event 有效，sample PDF 等于 formal PDF，`bsdf_over_pdf == evaluate * |n_s·wi| / pdf`；容差按 float32 formal query 冻结，不能根据结果调宽。
 - Release：`scripts/build_viewer.ps1 -Configuration Release`，必须编译 C++ 和真实 string module入口，随后 Falcor clean。
 - headless：car paint 与 glazed ceramic 各做 1024 spp shaderball capture；EXR shape正确、全 finite，manifest identity 匹配。对现场缺陷回归还要报告 max/high quantile 与基于局部邻域的孤立 firefly 数，不能只报告 finite。
 - 视觉：交互窗口可切换六项 preset；car paint 与 glazed ceramic 随 spp 累计不持续增加孤立白点，真实 flakes、釉面高光与瓷砖图案仍保留。
@@ -83,11 +83,14 @@ program.addShaderModule("NclsMdlGenerated").addString(composedSource, virtualPat
 ```slang
 // 错：closure 有自己的窄峰，却用无关的固定 GGX PDF 除 evaluate。
 direction = sampleFixedGgx(0.2, rng);
-weight = nclsMdlEvaluateSurface(...) / fixedGgxPdf(direction);
+weight = mdlState.evaluate(direction, sg).f * absCosine
+    / fixedGgxPdf(direction);
 
-// 对：方向、weight 与 PDF 来自同一份 MDL target code。
-NclsMdlSample sample = nclsMdlSampleSurface(..., xi);
+// 对：canonical state 的三个入口都落到同一份 MDL target code。
+let mdlState = mdlBackend.prepare(context, material);
+NclsScatteringSample sample;
+if (!mdlState.sample(sample, sg)) return;
 direction = sample.directionWorld;
 weight = sample.weight; // 已经是 bsdf_over_pdf
-misPdf = nclsMdlPdfSurface(..., lightWorld);
+misPdf = mdlState.pdf(lightWorld).forward;
 ```

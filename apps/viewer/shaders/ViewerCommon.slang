@@ -2,6 +2,9 @@
 #define NCLS_VIEWER_COMMON_SLANG
 
 static const float NCLS_VIEWER_PI = 3.14159265358979323846f;
+// 高动态环境的 path-tracing 对照统一使用多样本 MIS。reference 与
+// ScatteringPackage path tracer 必须共享这个数，避免 estimator 漂移。
+static const uint NCLS_VIEWER_ENVIRONMENT_NEE_SAMPLE_COUNT = 4u;
 
 uint nclsViewerHash(uint value)
 {

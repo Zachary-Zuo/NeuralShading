@@ -2,13 +2,15 @@
 
 `NclsViewer` 是 Windows/D3D12 的 `ScatteringPackage@1` 部署验证器。界面固定包含两个宽度相同的 `ComparisonSlot`；每个 slot 独立绑定一个 package，并选择 `path-tracing` 或 `deferred`。slot 加载、ABI、资源或 capability 失败只影响本侧，camera aspect 和另一侧 extent 不变。
 
-viewer 不解释 NVIDIA、LayerStack 或其他 program 的私有结构。C++ loader 校验 package 的三个 identity、module closure、typed buffer/texture/sampler descriptor 与 content hash，随后创建通用 `ScatteringBinding`。NVIDIA latent 的两张 RGBA16F DDS mip chain由 descriptor绑定，不需要把 method shader预编入 viewer。
+viewer 不解释 NVIDIA、LayerStack 或其他 program 的私有结构。C++ loader 校验 package 的三个 identity、module closure、typed buffer/texture/sampler descriptor 与 content hash，随后创建通用 `ScatteringBinding`。source 侧由 `SceneReferenceProgram` 选择 concrete canonical backend；积分器本身看不到 source family。NVIDIA latent 的两张 RGBA16F DDS mip chain 由 descriptor 绑定，不需要把 method shader 预编入 viewer。
 
-MDL source reference 是 source 侧的动态 program，不是 neural package。`scripts/prepare_mdl_viewer.ps1` 复用正式 MDL SDK bridge 生成六种 vMaterials 的 hashed compiled artifact/catalog；viewer 再验证 SDK/compiler identity、精确文件集合和 V1 capability，并把 target-code types、项目 renderer callback、material-specific HLSL 与 viewer adapter 组合成 Falcor 8 string module。falcor2 不在这条启动或运行路径中。
+MDL source reference 是 source 侧的动态 program，不是 neural package。`scripts/prepare_mdl_viewer.ps1` 复用正式 MDL SDK bridge 生成六种 vMaterials 的 hashed compiled artifact/catalog；viewer 再验证 SDK/compiler identity、精确文件集合和 V1 capability。动态 `NclsMdlGenerated` module 只组合 target-code types、项目 renderer callback 与 material-specific HLSL；静态 `reference_backends/mdl.slang` 直接实现 canonical backend，不存在 viewer adapter。falcor2 不在这条启动或运行路径中。
 
 ## 两条 renderer 路径
 
-package path tracer 在每个 scene hit构造完整 scattering context，包括 position、shading/geometric frame、outgoing direction、material instance、UV 与 ray-cone footprint。续路径直接调用当前 slot binding 的 `prepare/sample/pdf`，直接光调用同一 state 的 `evaluate/pdf`；因此 neural PT不是 source reference PT的显示别名。
+package path tracer 在每个 scene hit 构造完整 scattering context，包括 position、shading/geometric frame、outgoing direction、material instance、UV 与 ray-cone footprint。续路径直接调用当前 slot binding 的 `prepare/sample/pdf`，直接光调用同一 state 的 `evaluate/pdf`；source scene path tracer 也只调用各 source 自己的 canonical state。二者共享接口而不共享实现，因此 neural PT 不是 source reference PT 的显示别名。
+
+两个 path tracer 在每个 surface hit 固定做 4 个环境 NEE 样本；light-sampled 与 BSDF-hit 两侧的 power MIS 都使用 `4 * p_light`。续路径 ray origin 根据实际 sampled direction 相对 geometric normal 的符号选侧，不依赖 reflection/transmission event label。该实现不使用 radiance/throughput clamp。
 
 deferred renderer从 G-buffer传入相同的 UV/gradient 与 frame，再调用同一 package `prepare/evaluate`。两种 mode只改变 transport，不改变 package math或资源。
 
@@ -28,7 +30,7 @@ deferred renderer从 G-buffer传入相同的 UV/gradient 与 frame，再调用�
 .\scripts\launch_mdl_viewer.ps1 -Configuration Release
 ```
 
-默认显示 shifting-flakes car paint；`Material` 面板的 `vMaterials preset` 可切换 patinated copper、scratched aluminum、glazed ceramic、velvet 与 pine mosaic。MDL V1 固定 `ExplicitLod(0)`；viewer 内部路径积分调用同一 target code 的 `surface_scattering_sample/pdf`，避免 flakes/coat 与固定 GGX 错配产生 firefly，但不把它登记为训练/provider 的公共 source matched-sampler capability。
+默认显示 shifting-flakes car paint；`Material` 面板的 `vMaterials preset` 可切换 patinated copper、scratched aluminum、glazed ceramic、velvet 与 pine mosaic。MDL V1 固定 `ExplicitLod(0)`；runtime reference descriptor 完整提供 canonical `prepare/evaluate/sample/pdf`，并落到同一 target code，避免 flakes/coat 与固定 GGX 错配。训练/provider 的方向响应 query 仍只输出 evaluate 数据；这是独立的 capability plane，不代表 runtime 通过私有旁路获得 sampler。
 
 构建产物位于锁定 Falcor Release bin。交互式启动可直接指定 package root；`--method` 是 package ID：
 

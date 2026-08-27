@@ -39,6 +39,7 @@ reference/package PT 只能调用这些入口，不能在各自 shader 中复制
 - triangle mesh 必须用 Falcor `getVertexDataRayCones()`。displaced triangle、curve 与 SDF 当前没有同精度 Jacobian，显式标记 invalid differential，再由公共 math 降级到 full-UV footprint；不得消费未初始化值。
 - 无效/退化 differential 产生一个完整 UV period 的有限 footprint，而不是 NaN、固定 texel 或任意 sharp mip。
 - GLB UV 不翻转；只有 scene format policy 令 `flipTexCoordV != 0` 时才翻 V。frame 先按 view orientation 处理 geometric/shading normal，再把 tangent 正交化；退化 tangent 使用 `nclsViewerTangent()`。
+- 续路径 origin 必须由 sampled direction 与 geometric normal 的符号选择偏移侧；不得根据 backend 报告的 reflection/transmission event label 猜测偏移侧。event 仍用于 MIS/delta 等 transport 语义，不承担几何自相交修正。
 - deferred 的 `SceneVisibility.3d.slang` 继续输出 raster UV 与 `ddx/ddy`；这些梯度与 PT helper 输出采用同一 normalized UV 单位，但 transport 不互相冒充。
 
 ## 4. Validation & Error Matrix
@@ -51,6 +52,7 @@ reference/package PT 只能调用这些入口，不能在各自 shader 中复制
 | triangle differential 有限 | 使用 Falcor triangle Jacobian |
 | 非 triangle 或 differential 非有限 | 使用有限、保守的 full-UV fallback |
 | source/package PT 出现不同 UV/frame 构造 | 构建或 source-contract 单测失败，不接受复制修补 |
+| event label 与实际方向所在几何半球不一致 | ray origin 仍按实际方向选侧，禁止 event-driven offset |
 | slot `ready` 但真实纹理为平均色 | 视觉验收失败，必须检查 raw UV/LOD，不以 ready/parity 代替 |
 
 ## 5. Good / Base / Bad Cases
@@ -61,7 +63,7 @@ reference/package PT 只能调用这些入口，不能在各自 shader 中复制
 
 ## 6. Tests Required
 
-- `tests/unit/test_viewer_slots.py`：两个 PT 都 include 共享 helper，且不直接调用 `getVertexDataRayCones()`。
+- `tests/unit/test_viewer_slots.py`：两个 PT 都 include 共享 helper，且不直接调用 `getVertexDataRayCones()`；续路径 origin 使用实际 sampled direction，不用 event label 选侧。
 - `tests/gpu/test_viewer_path_surface.py`：在实际 Slang/GPU 上断言 UV/V flip、frame/front-facing、camera basis scale invariance、分辨率/距离/掠射单调性、有限 fallback 与明确数值 oracle。
 - `scripts/build_viewer.ps1 -Configuration Release`：编译 reference/package PT 的真实 scene specialization。
 - headless local-light capture：用明显空间结构和真实 walnut/denim 资产检查 raw EXR 与 display；环境 PT/deferred 的 transport 差异不能被误判成 surface contract 差异。
@@ -81,3 +83,7 @@ float spread = 2.0f * length(cameraV) / max(length(cameraW), 1e-8f)
 Wrong：reference/package 各复制一次 vertex/frame/LOD 逻辑，再靠截图发现漂移。
 
 Correct：两条 PT 都经 `nclsViewerLoadPathVertexData()` 与 `nclsViewerPreparePathSurface()`，材质私有逻辑从公共 surface 之后开始。
+
+Wrong：`sample.eventFlags` 标为 transmission 就固定沿 `-geometricNormal` 偏移，即使实际 sampled direction 在另一侧。
+
+Correct：用 `dot(scatter.directionWorld, geometricNormal)` 的符号选择偏移侧；frame/event 只描述散射语义。

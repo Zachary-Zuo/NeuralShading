@@ -143,6 +143,26 @@ After implementation:
 
 具体实现与测试入口见 `../viewer/path-surface.md`。
 
+## Scattering Estimator Ownership Boundary
+
+当 source/neural backend 的散射状态跨到 renderer 时，“存在同名接口”不等于 renderer 已遵守合同。必须沿真实调用图确认 estimator 的所有组成量属于同一 owner：
+
+```text
+backend.prepare → state.evaluate / state.sample / state.pdf → MIS / throughput
+```
+
+- [ ] runtime descriptor 是否 fail closed 要求 `prepare/evaluate/sample/pdf`，而不是缺入口后由 renderer 补 generic proposal？
+- [ ] continuous sample 的实际方向分布、reported PDF、`evaluate` 与 `weight = f·|n_s·wi|/pdf` 是否来自同一 backend？
+- [ ] 上游 API 自带 eval/sample/pdf 时，是否把 direction/event/PDF/weight 当作不可拆分的 native sample tuple 验证？极窄掠射方向若因已舍入 `wi` 重建 half-vector而出现独立 query 漂移，是否保留 native tuple，并分别验证 independent evaluate↔pdf，而不是用后者重建 sample？
+- [ ] direct-light MIS 与 BSDF-hit MIS 是否调用同一 state PDF，并在 multiple-sample NEE 下使用相同的 `n·p_light`？
+- [ ] renderer 是否完全不识别 source family/program key？heterogeneous composer 只能做 concrete canonical state dispatch，不能重写材质数学。
+- [ ] query/data capability 与 runtime scattering capability 是否分别命名？训练 batch 不传 sampler，不代表 runtime 可以私下绕开 canonical sampler。
+- [ ] invalid/null sample 是否终止路径？fallback、radiance clamp 与 throughput clamp 都会掩盖 estimator 所有权错误。
+- [ ] tail 诊断是否同时包含 sample→pdf/weight 数学门、HDR 环境峰值、空间邻域与随 spp 的 RSE？`finite` 或单张显示图不能区分真实窄高光与随机 firefly。
+- [ ] ray-origin side 是否由实际 sampled direction 与 geometric normal 决定，而不是依赖可能与 smooth-shading 几何关系不同的 event label？
+
+具体 ABI、错误矩阵与测试入口见 `../core/shared-slang-backend.md` 和 `../viewer/conventions.md`。
+
 ---
 
 ## Cross-Platform Template Consistency

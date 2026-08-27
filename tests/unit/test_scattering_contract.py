@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from ncls.core.scattering import (
+    REQUIRED_PATH_TRACING_CAPABILITIES,
     REQUIRED_REALTIME_CAPABILITIES,
     BackendCapability,
     BackendCostModel,
@@ -16,8 +17,10 @@ from ncls.core.scattering import (
     SurfaceInteraction,
     ScatteringEval,
     ScatteringPdf,
+    absolute_light_cosine,
     response_cosine,
 )
+from ncls.core.scattering import ReferenceProgramDescriptor
 from ncls.core.scattering.abi_layout import render_slang_contract
 
 
@@ -57,6 +60,33 @@ def test_response_measure_multiplies_the_light_cosine_exactly_once() -> None:
         ScatteringEvent.REFLECTION | ScatteringEvent.DIFFUSE,
     )
     assert response_cosine(evaluation, frame, (0.6, 0.0, 0.8)) == pytest.approx((0.16, 0.32, 0.64))
+
+
+def test_response_measure_uses_absolute_cosine_for_transmission() -> None:
+    frame = ShadingFrame((0.0, 0.0, 1.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+    evaluation = ScatteringEval(
+        (0.2, 0.4, 0.8),
+        ScatteringPdf(0.25),
+        ScatteringEvent.TRANSMISSION | ScatteringEvent.GLOSSY,
+    )
+    wi = (0.6, 0.0, -0.8)
+    assert absolute_light_cosine(frame, wi) == pytest.approx(0.8)
+    assert response_cosine(evaluation, frame, wi) == pytest.approx((0.16, 0.32, 0.64))
+
+
+def test_reference_program_descriptor_requires_complete_path_tracing_contract() -> None:
+    with pytest.raises(ValueError, match="path-tracing capabilities"):
+        ReferenceProgramDescriptor(
+            "test.incomplete", 1, "Incomplete", "test.family@1", 1, "0" * 64,
+            "ncls.scattering-backend@1",
+            int(REQUIRED_PATH_TRACING_CAPABILITIES & ~BackendCapability.PDF),
+            {
+                "maximum_prepare_steps": 1,
+                "maximum_evaluate_steps": 1,
+                "maximum_state_bytes": 1,
+                "maximum_reads": 1,
+            },
+        )
 
 
 def make_descriptor() -> BackendDescriptor:

@@ -47,23 +47,67 @@ def test_reference_and_package_pt_share_the_path_surface_contract() -> None:
         assert "NCLS_PT_SURFACE_PROBE" not in source
 
 
-def test_mdl_reference_path_uses_dynamic_formal_module_and_matched_transport() -> None:
+def test_path_tracers_share_unbiased_environment_mis_and_directional_origin() -> None:
+    common = Path("apps/viewer/shaders/ViewerCommon.slang").read_text(
+        encoding="utf-8"
+    )
+    assert "NCLS_VIEWER_ENVIRONMENT_NEE_SAMPLE_COUNT = 4u" in common
+
+    for shader, environment_pdf, direct_origin in (
+        (
+            "ReferencePathTracer.cs.slang",
+            "nclsEnvironmentPdfPath(directionWorld)",
+            "nclsDirectRayOrigin(surface, directionWorld)",
+        ),
+        (
+            "PackagePathTracer.cs.slang",
+            "nclsPackageEnvironmentPdf(directionWorld)",
+            "nclsPackageDirectOrigin(surface, directionWorld)",
+        ),
+    ):
+        source = Path("apps/viewer/shaders", shader).read_text(encoding="utf-8")
+        assert "environmentSample < NCLS_VIEWER_ENVIRONMENT_NEE_SAMPLE_COUNT" in source
+        assert "const float scaledLightPdf = lightPdf" in source
+        assert "* float(NCLS_VIEWER_ENVIRONMENT_NEE_SAMPLE_COUNT);" in source
+        assert (
+            "previousEnvironmentPdf = "
+            "float(NCLS_VIEWER_ENVIRONMENT_NEE_SAMPLE_COUNT)" in source
+        )
+        assert environment_pdf in source
+        assert direct_origin in source
+        assert "scatter.eventFlags & (uint)NclsScatteringEvent::Transmission" not in source
+
+
+def test_reference_path_uses_canonical_scene_backend_contract_only() -> None:
     source = Path("apps/viewer/shaders/ReferencePathTracer.cs.slang").read_text(
         encoding="utf-8"
     )
-    adapter = Path("apps/viewer/shaders/MdlViewerAdapter.slang").read_text(
+    scene = Path("apps/viewer/shaders/SceneReferenceProgram.slang").read_text(
         encoding="utf-8"
     )
-    assert "import NclsMdlGenerated;" in source
-    assert "nclsMdlEvaluateSurface(" in source
-    assert "nclsMdlSampleSurface(" in source
-    assert "nclsMdlPdfSurface(" in source
-    assert "nclsViewerToWorld(viewLocal" in source
-    assert "surface_scattering_evaluate(data, state);" in adapter
-    assert "surface_scattering_sample(data, state);" in adapter
-    assert "surface_scattering_pdf(pdfData, state);" in adapter
-    assert "result.weight = sample.weight;" in source
-    assert "result.pdf = sample.pdf;" in source
+    mdl = Path("shaders/ncls/reference_backends/mdl.slang").read_text(encoding="utf-8")
+    assert '#include "SceneReferenceProgram.slang"' in source
+    assert "backend.prepare(context, material)" in source
+    assert "state.evaluate(wiWorld, sampleGenerator)" in source
+    assert "state.pdf(lightWorld)" in source
+    assert "state.sample(scatter, sampleGenerator)" in source
+    assert "surface.family" not in source
+    for legacy in (
+        "nclsEvalReferencePath",
+        "nclsSampleReferencePath",
+        "nclsReferencePdfPath",
+        "nclsReflectionProposalPdf",
+        "nclsMdlEvaluateSurface",
+        "nclsMdlSampleSurface",
+        "nclsMdlPdfSurface",
+    ):
+        assert legacy not in source and legacy not in scene
+    assert "import NclsMdlGenerated;" in mdl
+    assert "struct NclsMdlReferenceState : INclsScatteringState" in mdl
+    assert "surface_scattering_evaluate(data, targetState);" in mdl
+    assert "surface_scattering_sample(data, targetState);" in mdl
+    assert "surface_scattering_pdf(data, state);" in mdl
+    assert not Path("apps/viewer/shaders/MdlViewerAdapter.slang").exists()
     assert "SampleLevel(gMdlTextureSampler, coordinate, 0.0)" in Path(
         "shaders/ncls/reference_backends/mdl_runtime.slangh"
     ).read_text(encoding="utf-8")
@@ -87,6 +131,9 @@ def test_capture_uses_single_panel_difference_extent_and_fixed_spp() -> None:
     assert "mpDifferenceDisplay = viewTexture();" in viewer
     assert "mpDifferenceLinear->captureToFile(" in viewer
     assert "mpComparisonLinear->captureToFile(0, 0, differencePath" not in viewer
+    assert "kLinearExrExportFlags = Bitmap::ExportFlags::Uncompressed" in viewer
+    assert viewer.count("Bitmap::FileFormat::ExrFile, kLinearExrExportFlags") == 3
+    assert "Bitmap::FileFormat::ExrFile, Bitmap::ExportFlags::None" not in viewer
     assert '{"difference_resolution", {mViewWidth, mOutputHeight}}' in viewer
     assert "gDifferenceLinear[pixel]" in composite
     assert "gDifferenceDisplay[pixel]" in composite

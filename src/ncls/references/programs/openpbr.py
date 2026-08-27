@@ -19,7 +19,7 @@ class OpenPbrReferenceProgram(FileReferenceProgram):
     descriptor = ReferenceProgramDescriptor(
         "ncls.openpbr", 1, "OpenPBR 1.1.1 reference", "openpbr.material@1.1.1", 1,
         implementation_identity((Path(__file__), SHADER)), "ncls.scattering-backend@1",
-        int(BackendCapability.PREPARE | BackendCapability.EVALUATE | BackendCapability.SAMPLE | BackendCapability.PDF | BackendCapability.ANISOTROPIC_FRAME | BackendCapability.REVERSE_PDF | BackendCapability.TRANSMISSION),
+        int(BackendCapability.PREPARE | BackendCapability.EVALUATE | BackendCapability.SAMPLE | BackendCapability.PDF | BackendCapability.ANISOTROPIC_FRAME | BackendCapability.REVERSE_PDF | BackendCapability.DELTA_EVENTS | BackendCapability.TRANSMISSION),
         {"maximum_prepare_steps": 1, "maximum_evaluate_steps": 1, "maximum_state_bytes": 2048, "maximum_reads": 96},
     )
 

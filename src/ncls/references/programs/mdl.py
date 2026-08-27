@@ -24,12 +24,28 @@ from .base import FileReferenceProgram, PROJECT_ROOT, implementation_identity, s
 
 
 QUERY_SHADER = PROJECT_ROOT / "shaders/ncls/reference_backends/mdl_query.slang"
+BACKEND_SHADER = PROJECT_ROOT / "shaders/ncls/reference_backends/mdl.slang"
 RUNTIME_SHADER = PROJECT_ROOT / "shaders/ncls/reference_backends/mdl_runtime.slangh"
-_CAPABILITIES = BackendCapability.PREPARE | BackendCapability.EVALUATE | BackendCapability.ANISOTROPIC_FRAME
+_CAPABILITIES = (
+    BackendCapability.PREPARE
+    | BackendCapability.EVALUATE
+    | BackendCapability.SAMPLE
+    | BackendCapability.PDF
+    | BackendCapability.ANISOTROPIC_FRAME
+    | BackendCapability.REVERSE_PDF
+    | BackendCapability.DELTA_EVENTS
+    | BackendCapability.TRANSMISSION
+)
 _IMPLEMENTATION = sha256_json(
     {
         "files": implementation_identity(
-            (Path(__file__), PROJECT_ROOT / "src/ncls/references/mdl.py", QUERY_SHADER, RUNTIME_SHADER)
+            (
+                Path(__file__),
+                PROJECT_ROOT / "src/ncls/references/mdl.py",
+                QUERY_SHADER,
+                BACKEND_SHADER,
+                RUNTIME_SHADER,
+            )
         ),
         "mdl_sdk": MDL_SDK_BUILD,
         "falcor": "8.0-9dc819c162b2070335c65060436041690b7937f8",

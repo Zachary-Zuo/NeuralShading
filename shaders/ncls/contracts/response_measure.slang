@@ -4,10 +4,11 @@
 #include "scattering_contract.slang"
 
 // 公共 scattering backend 的 evaluate() 返回纯 BSDF f，不含余弦。
-// 数据集的 response_cos 以及 Falcor IBSDF::eval 都返回 f * dot(light, Ns)。
-float nclsPositiveLightCosine(const NclsShadingFrame frame, const float3 wiWorld)
+// 数据集的 response_cos 以及 Falcor IBSDF::eval 都返回 f * abs(dot(light, Ns))；
+// 绝对值让同一个 measure 同时覆盖 reflection 与 transmission。
+float nclsAbsoluteLightCosine(const NclsShadingFrame frame, const float3 wiWorld)
 {
-    return max(dot(frame.normal, wiWorld), 0.0f);
+    return abs(dot(frame.normal, wiWorld));
 }
 
 float3 nclsScatteringEvalToResponseCos(
@@ -16,7 +17,7 @@ float3 nclsScatteringEvalToResponseCos(
     const float3 wiWorld)
 {
     return evaluation.valid != 0u
-        ? evaluation.f * nclsPositiveLightCosine(frame, wiWorld)
+        ? evaluation.f * nclsAbsoluteLightCosine(frame, wiWorld)
         : float3(0.0f);
 }
 

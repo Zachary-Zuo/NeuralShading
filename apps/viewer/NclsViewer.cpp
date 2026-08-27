@@ -752,9 +752,6 @@ void NclsViewer::createSceneReferencePass()
     for (const auto& [materialId, binding] : mInactiveSceneMaterials) registerMdl(binding.source);
     if (mdlSource)
     {
-        std::filesystem::path adapterPath;
-        if (!findFileInShaderDirectories("NclsViewer/shaders/MdlViewerAdapter.slang", adapterPath))
-            throw std::runtime_error("MDL viewer adapter shader is missing from the Falcor runtime");
         const auto& artifact = *mdlSource->mdlArtifact;
         const std::string generatedModule =
             "#define MDL_NUM_TEXTURE_RESULTS 16\n"
@@ -765,8 +762,7 @@ void NclsViewer::createSceneReferencePass()
             + std::to_string(std::max<size_t>(1u, artifact.textures.size())) + "\n"
             + readUtf8File(mdlSource->mdlCatalog.targetCodeTypesPath) + "\n"
             + readUtf8File(mdlSource->mdlCatalog.rendererRuntimePath) + "\n"
-            + artifact.generatedCode + "\n"
-            + readUtf8File(adapterPath);
+            + artifact.generatedCode;
         program.addShaderModule("NclsMdlGenerated").addString(
             generatedModule, artifact.root / "ncls_mdl_viewer_generated.slang");
     }
@@ -2624,6 +2620,10 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
     const fs::path materialPath = stem.string() + "-material.json";
     const fs::path viewerScenePath = stem.string() + "-scene.json";
     const fs::path metricsPath = stem.string() + "-metrics.csv";
+    // Falcor/FreeImage defaults compressed EXR output to half channels. The linear
+    // path-tracing buffers are RGBA32F and may legitimately exceed half's 65504
+    // limit, so authoritative linear captures must explicitly request float EXR.
+    constexpr auto kLinearExrExportFlags = Bitmap::ExportFlags::Uncompressed;
 
     getDevice()->wait();
     if (mpScene && mComparisonSlots[0].pNoiseStats)
@@ -2646,14 +2646,15 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
     for (uint32_t slotIndex = 0u; slotIndex < mComparisonSlots.size(); ++slotIndex)
         if (const auto output = slotOutput(mComparisonSlots[slotIndex]))
             output->captureToFile(
-                0, 0, slotPaths[slotIndex], Bitmap::FileFormat::ExrFile, Bitmap::ExportFlags::None, false);
-    mpComparisonLinear->captureToFile(0, 0, comparisonPath, Bitmap::FileFormat::ExrFile, Bitmap::ExportFlags::None, false);
+                0, 0, slotPaths[slotIndex], Bitmap::FileFormat::ExrFile, kLinearExrExportFlags, false);
+    mpComparisonLinear->captureToFile(
+        0, 0, comparisonPath, Bitmap::FileFormat::ExrFile, kLinearExrExportFlags, false);
     getTargetFbo()->getColorTexture(0)->captureToFile(
         0, 0, displayPath, Bitmap::FileFormat::PngFile, Bitmap::ExportFlags::None, false);
     if (bothSlotsReady)
     {
         mpDifferenceLinear->captureToFile(
-            0, 0, differencePath, Bitmap::FileFormat::ExrFile, Bitmap::ExportFlags::None, false);
+            0, 0, differencePath, Bitmap::FileFormat::ExrFile, kLinearExrExportFlags, false);
         mpDifferenceDisplay->captureToFile(
             0, 0, differenceDisplayPath, Bitmap::FileFormat::PngFile, Bitmap::ExportFlags::None, false);
     }
@@ -2767,7 +2768,7 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         {"reference_estimator", {
             {"raw_authoritative", true},
             {"raw_accumulation", "arithmetic_mean_of_independent_monte_carlo_samples"},
-            {"environment_sampling", "luminance_sin_theta_importance_sampling_with_mis"},
+            {"environment_sampling", "4_sample_luminance_sin_theta_importance_sampling_with_power_mis"},
             {"finite_depth_transport", true},
             {"scene_bounce_cap", mMaxSceneBounces},
             {"layer_walk_cap", mMaxLayerWalkDepth},

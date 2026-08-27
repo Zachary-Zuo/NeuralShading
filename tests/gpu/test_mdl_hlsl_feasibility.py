@@ -94,16 +94,18 @@ def test_mdl_sdk_hlsl_compiles_and_matches_lambertian(tmp_path: Path) -> None:
     artifact_dir = tmp_path / "compiled"
     manifest = _compile_diffuse_artifact(sdk_root, artifact_dir)
     assert manifest["schema"] == "ncls.mdl-compiled-artifact@1"
-    adapter = (PROJECT_ROOT / "shaders" / "ncls" / "reference_backends" / "mdl_query.slang").read_text(
+    query_path = PROJECT_ROOT / "shaders" / "ncls" / "reference_backends" / "mdl_query.slang"
+    query = query_path.read_text(
         encoding="utf-8"
     )
-    source = _common_mdl_source(sdk_root, artifact_dir, manifest) + "\n" + adapter
+    generated_source = _common_mdl_source(sdk_root, artifact_dir, manifest)
 
     device = create_falcor_device(falcor)
     desc = falcor.ProgramDesc()
-    desc.add_shader_module("ncls_mdl_feasibility").add_string(
-        source, tmp_path / "ncls_mdl_feasibility.slang"
+    desc.add_shader_module("NclsMdlGenerated").add_string(
+        generated_source, tmp_path / "ncls_mdl_generated.slang"
     )
+    desc.add_shader_module("NclsMdlQuery").add_string(query, query_path)
     desc.cs_entry("main")
     compute = falcor.ComputePass(device, desc)
 
@@ -137,82 +139,32 @@ def test_mdl_sdk_hlsl_compiles_and_matches_lambertian(tmp_path: Path) -> None:
 
 
 @pytest.mark.falcor
-def test_mdl_viewer_adapter_matches_formal_query_and_sample_on_gpu(tmp_path: Path) -> None:
+def test_mdl_canonical_backend_matches_formal_query_and_sample_on_gpu(tmp_path: Path) -> None:
     falcor = import_falcor()
     sdk_root = _sdk_root()
     artifact_dir = tmp_path / "compiled"
     manifest = _compile_diffuse_artifact(sdk_root, artifact_dir)
     common = _common_mdl_source(sdk_root, artifact_dir, manifest)
-    formal_adapter = (
+    formal_path = (
         PROJECT_ROOT / "shaders/ncls/reference_backends/mdl_query.slang"
-    ).read_text(encoding="utf-8")
-    viewer_adapter = (PROJECT_ROOT / "apps/viewer/shaders/MdlViewerAdapter.slang").read_text(
-        encoding="utf-8"
     )
-    viewer_kernel = r"""
-StructuredBuffer<float4> gViews;
-StructuredBuffer<float4> gLights;
-StructuredBuffer<float4> gPositions;
-StructuredBuffer<float4> gUv;
-RWStructuredBuffer<float4> gOutput;
-uniform uint gQueryCount;
-
-[numthreads(64, 1, 1)]
-void main(uint3 dispatchThreadId : SV_DispatchThreadID)
-{
-    const uint index = dispatchThreadId.x;
-    if (index >= gQueryCount)
-        return;
-    float pdf = 0.0;
-    const float3 value = nclsMdlEvaluateSurface(
-        gPositions[index].xyz,
-        float3(0.0, 0.0, 1.0),
-        float3(1.0, 0.0, 0.0),
-        gUv[index].xy,
-        gViews[index].xyz,
-        gLights[index].xyz,
-        pdf);
-    gOutput[index] = float4(value, pdf);
-}
-"""
-    sample_kernel = r"""
-StructuredBuffer<float4> gViews;
-StructuredBuffer<float4> gPositions;
-StructuredBuffer<float4> gUv;
-StructuredBuffer<float4> gXi;
-RWStructuredBuffer<float4> gDirectionPdf;
-RWStructuredBuffer<float4> gWeightValid;
-uniform uint gQueryCount;
-
-[numthreads(64, 1, 1)]
-void main(uint3 dispatchThreadId : SV_DispatchThreadID)
-{
-    const uint index = dispatchThreadId.x;
-    if (index >= gQueryCount)
-        return;
-    const NclsMdlSample sample = nclsMdlSampleSurface(
-        gPositions[index].xyz,
-        float3(0.0, 0.0, 1.0),
-        float3(1.0, 0.0, 0.0),
-        gUv[index].xy,
-        gViews[index].xyz,
-        gXi[index]);
-    gDirectionPdf[index] = float4(sample.directionWorld, sample.pdf);
-    gWeightValid[index] = float4(sample.weight, float(sample.valid));
-}
-"""
+    formal_source = formal_path.read_text(encoding="utf-8")
+    sample_path = PROJECT_ROOT / "tests/gpu/kernels/mdl_scattering_contract.cs.slang"
+    sample_source = sample_path.read_text(encoding="utf-8")
 
     device = create_falcor_device(falcor)
 
-    def make_pass(module_name: str, source: str):
+    def make_pass(module_name: str, source: str, source_path: Path, entry: str):
         desc = falcor.ProgramDesc()
-        desc.add_shader_module(module_name).add_string(source, tmp_path / f"{module_name}.slang")
-        desc.cs_entry("main")
+        desc.add_shader_module("NclsMdlGenerated").add_string(
+            common, tmp_path / f"{module_name}_generated.slang"
+        )
+        desc.add_shader_module(module_name).add_string(source, source_path)
+        desc.cs_entry(entry)
         return falcor.ComputePass(device, desc)
 
-    formal = make_pass("ncls_mdl_formal_query", common + "\n" + formal_adapter)
-    viewer = make_pass("ncls_mdl_viewer_adapter", common + "\n" + viewer_adapter + "\n" + viewer_kernel)
-    sampler = make_pass("ncls_mdl_viewer_sampler", common + "\n" + viewer_adapter + "\n" + sample_kernel)
+    formal = make_pass("NclsMdlQuery", formal_source, formal_path, "main")
+    sampler = make_pass("NclsMdlContractProbe", sample_source, sample_path, "sampleMain")
     views = np.asarray(
         [[0.0, 0.0, 1.0, 0.0], [0.6, 0.0, 0.8, 0.0], [-0.6, 0.0, 0.8, 0.0]],
         dtype=np.float32,
@@ -248,8 +200,6 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         return output.to_numpy().view(np.float32).reshape(len(views), 4).copy()
 
     formal_result = execute(formal)
-    viewer_result = execute(viewer)
-    np.testing.assert_allclose(viewer_result, formal_result, rtol=2e-6, atol=2e-7)
 
     xi = np.asarray(
         [[0.1, 0.2, 0.3, 0.4], [0.3, 0.7, 0.2, 0.8], [0.8, 0.1, 0.6, 0.4]],
