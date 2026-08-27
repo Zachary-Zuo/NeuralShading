@@ -111,3 +111,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 6: 固定 Viewer Capture Harness
+
+**Date**: 2026-08-27
+**Task**: 固定 Viewer Capture Harness
+**Branch**: `main`
+
+### Summary
+
+修复 difference EXR 复用双 panel 纹理导致的横向拉伸与 shape 不一致；固定 ready PT slot 导出为 1024 spp，并完成 unit、Release build 与真实 headless EXR header 验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `411ef6f` | (see git log) |
+
+### Status
+
+[OK] **Completed**
