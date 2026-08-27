@@ -25,10 +25,11 @@
 - [x] 生成 task-scoped LayerStack ScatteringPackage，真实运行 source/package 双 PT slot 到 1024 spp；两个 slot 均 `ready`、raw EXR finite 且结果一致。
 - [x] 重跑冻结 960×540、1024 spp 的三材质 before/after；生成视觉对照和 report-only tail/RSE/cost。
 - [x] 审计 OpenPBR aluminum/glass、MERL chrome、MaterialX、LayerStack；未发现本次 primary-continuation 回归，ideal glass 的 delta/内部折射高方差作为另一类 PT 限制单独登记。
-- [ ] 启动 viewer 让用户现场检查；用户视觉确认前不把主验收项标为完成。
+- [x] 启动 viewer 让用户现场检查；用户视觉确认前不把主验收项标为完成。
 
 ## Phase 4：知识沉淀与收尾
 
-- [ ] 使用 `trellis-break-loop` 记录“接口正确但公共几何 transport 域/直接光 estimator 仍可产生 firefly”的根因类别与预防门。
-- [ ] 使用 `trellis-update-spec` 更新 viewer path-surface / capture / shared backend 合同及 required tests。
-- [ ] 使用 `trellis-check` 完成质量门，提交实现；用户确认后归档任务并记录 journal。
+- [x] 使用 `trellis-break-loop` 记录“接口正确但公共 estimator 仍可能保留单条上游 path 长尾”的根因类别与预防门。
+- [x] 使用 `trellis-update-spec` 更新 viewer estimator ownership 与 cross-layer 合同及 required tests。
+- [x] 使用 `trellis-check` 完成质量门并提交实现。
+- [ ] 用户视觉确认后归档任务并记录 journal。
