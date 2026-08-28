@@ -241,3 +241,40 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 12: 统一材质 Reference 在线训练数据回路
+
+**Date**: 2026-08-28
+**Task**: 统一材质 Reference 在线训练数据回路
+**Branch**: `main`
+
+### Summary
+
+统一五类源材质的 prepare/evaluate/sample/pdf 查询与在线训练生产回路，删除 LayerStack 专用离线 HDF5/旧 data 路径和兼容层，并同步训练、MethodBundle、viewer、测试及中文规范文档。
+
+### Main Changes
+
+- 引入统一 ReferenceQueryDispatcher、typed evaluator/sampler batch 与 OnlineTrainingProducer。
+- 统一 NVIDIA evaluator 的线性 f 语义及与 evaluate 匹配的 sample/pdf 训练数据。
+- 删除旧 ncls.data、corpus/HDF5 schema 和 LayerStack 专用采集入口，不保留向后兼容。
+- 修复 MaterialX 局部法线导致的无效方向亮点问题，并为五类材质接入同一查询合同。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cf01d33` | (see git log) |
+| `8ea0e60` | (see git log) |
+
+### Testing
+
+- [OK] conda run -n neural-shading python -m pytest tests\\unit -q：83 passed。
+- [OK] scripts/run_falcor_python.ps1 -m pytest tests\\gpu -q：29 passed。
+- [OK] scripts/run_falcor_python.ps1 -m pytest tests\\integration -q：3 passed。
+- [OK] LayerStack/MaterialX 两步训练 smoke、learn evaluate、learn export 与 package validate 均通过。
+- [OK] Release viewer 构建、compileall、git diff --check 与锁定上游 clean 检查均通过。
+
+### Status
+
+[OK] **Completed**
