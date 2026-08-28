@@ -176,9 +176,11 @@ std::shared_ptr<const MdlCompiledArtifact> loadMdlCompiledArtifact(const MdlCata
     require(manifest.value("schema", "") == "ncls.mdl-compiled-artifact@1",
         "unsupported MDL compiled artifact schema");
     require(manifest.value("mdl_sdk", "") == kMdlSdk, "MDL artifact uses another SDK build");
+    require(manifest.value("texture_payloads", "") == "decoded",
+        "MDL viewer requires a decoded runtime texture artifact");
     require(manifest.value("capability_audit", json::object()) == json({
         {"surface_bsdf_evaluate", true}, {"emission", false},
-        {"volume", false}, {"displacement", false}}),
+        {"volume", false}, {"displacement", false}, {"cutout_opacity", false}}),
         "MDL artifact does not satisfy the V1 surface-evaluate capability audit");
     require(manifest.value("diagnostics", "").empty(), "MDL artifact contains compiler diagnostics");
     const auto& compiler = manifest.at("compiler_identity");
@@ -257,13 +259,18 @@ std::shared_ptr<const MdlCompiledArtifact> loadMdlCompiledArtifact(const MdlCata
         const size_t bytesPerTexel = texture.pixelType == "Sint8" ? 1u
             : texture.pixelType == "Rgb" ? 3u
             : texture.pixelType == "Rgba" ? 4u
-            : texture.pixelType == "Float32" ? 4u : 0u;
+            : texture.pixelType == "Rgb_16" ? 6u
+            : texture.pixelType == "Rgba_16" ? 8u
+            : texture.pixelType == "Float32" ? 4u
+            : texture.pixelType == "Float32<2>" ? 8u
+            : texture.pixelType == "Float32<3>" || texture.pixelType == "Rgb_fp" ? 12u
+            : texture.pixelType == "Float32<4>" || texture.pixelType == "Color" ? 16u : 0u;
         require(bytesPerTexel > 0u
             && std::filesystem::file_size(texture.dataPath)
                 == size_t(texture.width) * texture.height * texture.depth * bytesPerTexel,
             "MDL texture payload has the wrong pixel type or size");
-        require((texture.shape == "bsdf_data") == (texture.pixelType == "Float32"),
-            "MDL BSDF-data texture must use Float32 and 2D textures must use decoded bytes");
+        require(texture.shape != "bsdf_data" || texture.pixelType == "Float32",
+            "MDL BSDF-data texture must use Float32");
         result->textures.push_back(std::move(texture));
     }
     require(result->textures.size() <= 16u, "MDL V1 supports at most 16 texture resources");

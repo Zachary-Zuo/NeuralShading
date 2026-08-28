@@ -71,10 +71,23 @@ ref<Texture> createMdlTexture2D(
     const ncls::MdlTextureResource& descriptor)
 {
     auto source = readBinaryFile(descriptor.dataPath);
-    const uint32_t channels = descriptor.pixelType == "Sint8" ? 1u
-        : descriptor.pixelType == "Rgb" ? 3u : descriptor.pixelType == "Rgba" ? 4u : 0u;
+    const bool uint8 = descriptor.pixelType == "Sint8"
+        || descriptor.pixelType == "Rgb" || descriptor.pixelType == "Rgba";
+    const bool uint16 = descriptor.pixelType == "Rgb_16" || descriptor.pixelType == "Rgba_16";
+    const bool float32 = descriptor.pixelType == "Float32"
+        || descriptor.pixelType == "Float32<2>" || descriptor.pixelType == "Float32<3>"
+        || descriptor.pixelType == "Float32<4>" || descriptor.pixelType == "Rgb_fp"
+        || descriptor.pixelType == "Color";
+    const uint32_t channels = descriptor.pixelType == "Sint8" || descriptor.pixelType == "Float32" ? 1u
+        : descriptor.pixelType == "Float32<2>" ? 2u
+        : descriptor.pixelType == "Rgb" || descriptor.pixelType == "Rgb_16"
+            || descriptor.pixelType == "Float32<3>" || descriptor.pixelType == "Rgb_fp" ? 3u
+        : descriptor.pixelType == "Rgba" || descriptor.pixelType == "Rgba_16"
+            || descriptor.pixelType == "Float32<4>" || descriptor.pixelType == "Color" ? 4u : 0u;
     if (channels == 0u) throw std::runtime_error("unsupported MDL 2D texture pixel type");
-    const size_t rowBytes = size_t(descriptor.width) * channels;
+    const size_t componentBytes = uint8 ? 1u : uint16 ? 2u : float32 ? 4u : 0u;
+    if (componentBytes == 0u) throw std::runtime_error("unsupported MDL 2D texture component type");
+    const size_t rowBytes = size_t(descriptor.width) * channels * componentBytes;
     if (descriptor.dataOrigin == "lower_left")
     {
         std::vector<uint8_t> flipped(source.size());
@@ -85,18 +98,98 @@ ref<Texture> createMdlTexture2D(
                 flipped.data() + size_t(row) * rowBytes);
         source = std::move(flipped);
     }
-    if (channels == 1u)
+    if (uint8 && channels == 1u && descriptor.gamma != "srgb")
         return device->createTexture2D(
             descriptor.width, descriptor.height, ResourceFormat::R8Unorm,
             1, 1, source.data(), ResourceBindFlags::ShaderResource);
-    std::vector<uint8_t> rgba(size_t(descriptor.width) * descriptor.height * 4u, 255u);
-    for (size_t pixel = 0u; pixel < size_t(descriptor.width) * descriptor.height; ++pixel)
+    if (uint8 && channels == 1u)
+    {
+        auto srgbToLinear = [](float value)
+        {
+            return value <= 0.04045f ? value / 12.92f
+                : std::pow((value + 0.055f) / 1.055f, 2.4f);
+        };
+        std::vector<float> linear(size_t(descriptor.width) * descriptor.height);
+        for (size_t pixel = 0u; pixel < linear.size(); ++pixel)
+            linear[pixel] = srgbToLinear(float(source[pixel]) / 255.f);
+        return device->createTexture2D(
+            descriptor.width, descriptor.height, ResourceFormat::R32Float,
+            1, 1, linear.data(), ResourceBindFlags::ShaderResource);
+    }
+    const size_t pixelCount = size_t(descriptor.width) * descriptor.height;
+    if (uint8)
+    {
+        std::vector<uint8_t> rgba(pixelCount * 4u, 255u);
+        for (size_t pixel = 0u; pixel < pixelCount; ++pixel)
+            for (uint32_t channel = 0u; channel < channels; ++channel)
+                rgba[4u * pixel + channel] = source[channels * pixel + channel];
+        const auto format = descriptor.gamma == "srgb"
+            ? ResourceFormat::RGBA8UnormSrgb : ResourceFormat::RGBA8Unorm;
+        return device->createTexture2D(
+            descriptor.width, descriptor.height, format,
+            1, 1, rgba.data(), ResourceBindFlags::ShaderResource);
+    }
+    if (uint16)
+    {
+        std::vector<uint16_t> rgba(pixelCount * 4u, std::numeric_limits<uint16_t>::max());
+        for (size_t pixel = 0u; pixel < pixelCount; ++pixel)
+            for (uint32_t channel = 0u; channel < channels; ++channel)
+                std::memcpy(
+                    &rgba[4u * pixel + channel],
+                    source.data() + (channels * pixel + channel) * sizeof(uint16_t),
+                    sizeof(uint16_t));
+        if (descriptor.gamma == "srgb")
+        {
+            auto srgbToLinear = [](float value)
+            {
+                return value <= 0.04045f ? value / 12.92f
+                    : std::pow((value + 0.055f) / 1.055f, 2.4f);
+            };
+            std::vector<float4> linear(pixelCount);
+            for (size_t pixel = 0u; pixel < pixelCount; ++pixel)
+            {
+                const float scale = 1.f / float(std::numeric_limits<uint16_t>::max());
+                linear[pixel] = float4(
+                    srgbToLinear(float(rgba[4u * pixel]) * scale),
+                    srgbToLinear(float(rgba[4u * pixel + 1u]) * scale),
+                    srgbToLinear(float(rgba[4u * pixel + 2u]) * scale),
+                    float(rgba[4u * pixel + 3u]) * scale);
+            }
+            return device->createTexture2D(
+                descriptor.width, descriptor.height, ResourceFormat::RGBA32Float,
+                1, 1, linear.data(), ResourceBindFlags::ShaderResource);
+        }
+        return device->createTexture2D(
+            descriptor.width, descriptor.height, ResourceFormat::RGBA16Unorm,
+            1, 1, rgba.data(), ResourceBindFlags::ShaderResource);
+    }
+    if (channels == 1u)
+        return device->createTexture2D(
+            descriptor.width, descriptor.height, ResourceFormat::R32Float,
+            1, 1, source.data(), ResourceBindFlags::ShaderResource);
+    std::vector<float4> rgba(pixelCount, float4(0.f, 0.f, 0.f, 1.f));
+    for (size_t pixel = 0u; pixel < pixelCount; ++pixel)
         for (uint32_t channel = 0u; channel < channels; ++channel)
-            rgba[4u * pixel + channel] = source[channels * pixel + channel];
-    const auto format = descriptor.gamma == "srgb"
-        ? ResourceFormat::RGBA8UnormSrgb : ResourceFormat::RGBA8Unorm;
+            std::memcpy(
+                &rgba[pixel][channel],
+                source.data() + (channels * pixel + channel) * sizeof(float),
+                sizeof(float));
+    if (descriptor.gamma == "srgb")
+    {
+        auto srgbToLinear = [](float value)
+        {
+            return value <= 0.04045f ? value / 12.92f
+                : std::pow((value + 0.055f) / 1.055f, 2.4f);
+        };
+        for (auto& pixel : rgba)
+        {
+            pixel.x = srgbToLinear(pixel.x);
+            pixel.y = srgbToLinear(pixel.y);
+            pixel.z = srgbToLinear(pixel.z);
+        }
+    }
     return device->createTexture2D(
-        descriptor.width, descriptor.height, format,
+        descriptor.width, descriptor.height, ResourceFormat::RGBA32Float,
         1, 1, rgba.data(), ResourceBindFlags::ShaderResource);
 }
 

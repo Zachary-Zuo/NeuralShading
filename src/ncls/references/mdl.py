@@ -17,6 +17,7 @@ from ncls.paths import PROJECT_ROOT
 MDL_SDK_BUILD = "2025.0.0-387700.1252"
 MDL_SDK_DIRECTORY = f"MDL-SDK-{MDL_SDK_BUILD}-nt-x86-64"
 ARTIFACT_SCHEMA = "ncls.mdl-compiled-artifact@1"
+DISCOVERY_SCHEMA = "ncls.mdl-module-discovery@1"
 STB_COMMIT = "013ac3beddff3dbffafd5177e7972067cd2b5083"
 STB_IMAGE_SHA256 = "594c2fe35d49488b4382dbfaec8f98366defca819d916ac95becf3e75f4200b3"
 CODEGEN_OPTIONS = {
@@ -45,6 +46,13 @@ def _contained(root: Path, path: Path) -> Path:
     except ValueError as error:
         raise ValueError(f"MDL artifact path escapes its root: {path}") from error
     return resolved
+
+
+def _require_hex(name: str, value: object, length: int) -> str:
+    result = str(value)
+    if len(result) != length or any(character not in "0123456789abcdef" for character in result):
+        raise ValueError(f"{name} is not a {length}-character lowercase hexadecimal value")
+    return result
 
 
 def _argument_text(value: Any) -> str:
@@ -84,13 +92,28 @@ class MdlCompiledArtifact:
             raise ValueError("unsupported MDL compiled artifact schema")
         if manifest.get("mdl_sdk") != MDL_SDK_BUILD:
             raise ValueError("MDL compiled artifact was produced by a different SDK build")
-        if manifest.get("capability_audit") != {
+        texture_payloads = manifest.get("texture_payloads")
+        if texture_payloads not in {"decoded", "metadata-only"}:
+            raise ValueError("MDL compiled artifact has an invalid texture payload role")
+        capability_audit = manifest.get("capability_audit")
+        if not isinstance(capability_audit, Mapping) or capability_audit != {
             "surface_bsdf_evaluate": True,
             "emission": False,
             "volume": False,
             "displacement": False,
+            "cutout_opacity": bool(capability_audit.get("cutout_opacity", False)),
         }:
             raise ValueError("MDL compiled artifact has no valid V1 capability audit")
+        _require_hex("MDL compiled material hash", manifest.get("compiled_material_hash"), 32)
+        sub_expression_hashes = manifest.get("sub_expression_hashes")
+        if not isinstance(sub_expression_hashes, Mapping) or set(sub_expression_hashes) != {
+            "surface.scattering",
+            "geometry.normal",
+            "geometry.cutout_opacity",
+        }:
+            raise ValueError("MDL compiled artifact has no complete sub-expression hashes")
+        for name, value in sub_expression_hashes.items():
+            _require_hex(f"MDL {name} hash", value, 32)
         compiler_identity = manifest.get("compiler_identity")
         bridge_digest = (
             str(compiler_identity.get("bridge_executable_sha256", ""))
@@ -154,14 +177,25 @@ class MdlCompiledArtifact:
                     "Sint8": 1,
                     "Rgb": 3,
                     "Rgba": 4,
+                    "Rgb_16": 6,
+                    "Rgba_16": 8,
                     "Float32": 4,
+                    "Float32<2>": 8,
+                    "Float32<3>": 12,
+                    "Float32<4>": 16,
+                    "Rgb_fp": 12,
+                    "Color": 16,
                 }.get(str(texture.get("pixel_type")))
                 if bytes_per_texel is None or data_path.stat().st_size != texel_count * bytes_per_texel:
                     raise ValueError("MDL texture payload has the wrong pixel type or size")
             path = texture.get("path")
             if texture.get("shape") == "2d" and (not path or not Path(str(path)).is_file()):
                 raise ValueError("MDL 2D texture resource is missing")
-            if texture.get("shape") == "2d" and texture.get("data_origin") not in {
+            if texture_payloads == "decoded" and data is None:
+                raise ValueError("MDL runtime artifact is missing a decoded texture payload")
+            if texture_payloads == "metadata-only" and texture.get("shape") == "2d" and data is not None:
+                raise ValueError("MDL inspection artifact unexpectedly contains a decoded 2D texture")
+            if data is not None and texture.get("shape") == "2d" and texture.get("data_origin") not in {
                 "top_left",
                 "lower_left",
             }:
@@ -183,6 +217,63 @@ class MdlCompiledArtifact:
         for path in sorted(item for item in self.root.rglob("*") if item.is_file()):
             files[path.relative_to(self.root).as_posix()] = sha256_file(path)
         return sha256_json(files)
+
+    @property
+    def runtime_supported(self) -> bool:
+        return not bool(self.manifest["capability_audit"]["cutout_opacity"])
+
+    def require_runtime_supported(self) -> None:
+        if not self.runtime_supported:
+            raise ValueError(
+                "MDL runtime does not support non-opaque geometry.cutout_opacity"
+            )
+        if self.manifest["texture_payloads"] != "decoded":
+            raise ValueError("MDL inspection artifact has no decoded runtime texture payloads")
+
+
+@dataclass(frozen=True)
+class MdlModuleDiscovery:
+    root: Path
+    module: str
+    materials: tuple[str, ...]
+    bridge_executable_sha256: str
+
+    @classmethod
+    def load(
+        cls,
+        root: Path,
+        *,
+        expected_module: str | None = None,
+        expected_bridge_sha256: str | None = None,
+    ) -> "MdlModuleDiscovery":
+        resolved = root.resolve()
+        path = _contained(resolved, resolved / "discovery.json")
+        if not path.is_file():
+            raise ValueError(f"MDL module discovery has no document: {resolved}")
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if value.get("schema") != DISCOVERY_SCHEMA or value.get("mdl_sdk") != MDL_SDK_BUILD:
+            raise ValueError("unsupported MDL module discovery document")
+        if not isinstance(value.get("diagnostics"), str):
+            raise ValueError("MDL module discovery diagnostics must be text")
+        module = str(value.get("module", ""))
+        if expected_module is not None and module != expected_module:
+            raise ValueError("MDL module discovery identity mismatch")
+        materials_value = value.get("materials")
+        if not isinstance(materials_value, list) or not materials_value:
+            raise ValueError("MDL module discovery has no materials")
+        materials = tuple(str(item) for item in materials_value)
+        if materials != tuple(sorted(set(materials))):
+            raise ValueError("MDL module discovery materials must be sorted and unique")
+        if any(not item.startswith(module + "::") or "(" not in item for item in materials):
+            raise ValueError("MDL module discovery contains an invalid exact export")
+        bridge_digest = _require_hex(
+            "MDL discovery bridge executable hash",
+            value.get("bridge_executable_sha256"),
+            64,
+        )
+        if expected_bridge_sha256 is not None and bridge_digest != expected_bridge_sha256:
+            raise ValueError("MDL module discovery was produced by another bridge executable")
+        return cls(resolved, module, materials, bridge_digest)
 
 
 class MdlSdkCompilerBridge:
@@ -210,6 +301,50 @@ class MdlSdkCompilerBridge:
         if not self.executable.is_file():
             raise FileNotFoundError("MDL SDK bridge 未构建；运行 scripts/build_mdl_reference.ps1")
 
+    def discover_module(self, module: str, *, output: Path) -> MdlModuleDiscovery:
+        if output.exists():
+            raise ValueError(f"MDL discovery output must be absent: {output}")
+        command = [
+            str(self.executable),
+            "discover",
+            "--sdk-root",
+            str(self.sdk_root),
+            "--module-root",
+            str(self.module_root),
+            "--module",
+            module,
+            "--output-dir",
+            str(output.resolve()),
+        ]
+        environment = os.environ.copy()
+        environment["PATH"] = str(self.sdk_root / "bin") + os.pathsep + environment.get("PATH", "")
+        result = subprocess.run(
+            command,
+            cwd=PROJECT_ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        if result.returncode:
+            message = (result.stderr or result.stdout).strip()
+            raise RuntimeError(f"MDL SDK bridge discovery failed: {message}")
+        path = output / "discovery.json"
+        value = json.loads(path.read_text(encoding="utf-8"))
+        bridge_digest = sha256_file(self.executable)
+        value["bridge_executable_sha256"] = bridge_digest
+        path.write_text(
+            json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return MdlModuleDiscovery.load(
+            output,
+            expected_module=module,
+            expected_bridge_sha256=bridge_digest,
+        )
+
     def _run(
         self,
         module: str,
@@ -219,6 +354,7 @@ class MdlSdkCompilerBridge:
         *,
         native_queries: Path | None = None,
         native_output: Path | None = None,
+        metadata_only: bool = False,
     ) -> MdlCompiledArtifact:
         command = [
             str(self.executable),
@@ -236,6 +372,8 @@ class MdlSdkCompilerBridge:
             if native_output is None:
                 raise ValueError("native result path is required")
             command.extend(("--native-queries", str(native_queries), "--native-output", str(native_output)))
+        if metadata_only:
+            command.append("--skip-texture-payloads")
         for name in sorted(arguments):
             command.extend(("--argument", f"{name}={_argument_text(arguments[name])}"))
         environment = os.environ.copy()
@@ -285,7 +423,13 @@ class MdlSdkCompilerBridge:
 
         if output.exists():
             raise ValueError(f"MDL inspection output must be absent: {output}")
-        return self._run(module, material, arguments or {}, output.resolve())
+        return self._run(
+            module,
+            material,
+            arguments or {},
+            output.resolve(),
+            metadata_only=True,
+        )
 
     def native_evaluate(
         self,

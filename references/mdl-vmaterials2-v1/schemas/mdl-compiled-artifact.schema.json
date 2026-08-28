@@ -3,19 +3,35 @@
   "$id": "ncls.mdl-compiled-artifact@1",
   "title": "Finalized MDL SDK compiled artifact",
   "type": "object",
-  "required": ["schema", "mdl_sdk", "module", "material", "code", "capability_audit", "parameters", "argument_block", "ro_data", "textures", "compiler_identity", "files_sha256", "diagnostics"],
+  "required": ["schema", "mdl_sdk", "module", "material", "code", "texture_payloads", "capability_audit", "compiled_material_hash", "sub_expression_hashes", "parameters", "argument_block", "ro_data", "textures", "compiler_identity", "files_sha256", "diagnostics"],
   "properties": {
     "schema": {"const": "ncls.mdl-compiled-artifact@1"},
     "mdl_sdk": {"const": "2025.0.0-387700.1252"},
     "module": {"type": "string", "pattern": "^::"},
     "material": {"type": "string", "pattern": "^::"},
     "code": {"type": "string", "minLength": 1},
+    "texture_payloads": {"enum": ["decoded", "metadata-only"]},
     "capability_audit": {
-      "const": {
-        "surface_bsdf_evaluate": true,
-        "emission": false,
-        "volume": false,
-        "displacement": false
+      "type": "object",
+      "required": ["surface_bsdf_evaluate", "emission", "volume", "displacement", "cutout_opacity"],
+      "additionalProperties": false,
+      "properties": {
+        "surface_bsdf_evaluate": {"const": true},
+        "emission": {"const": false},
+        "volume": {"const": false},
+        "displacement": {"const": false},
+        "cutout_opacity": {"type": "boolean"}
+      }
+    },
+    "compiled_material_hash": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "sub_expression_hashes": {
+      "type": "object",
+      "required": ["surface.scattering", "geometry.normal", "geometry.cutout_opacity"],
+      "additionalProperties": false,
+      "properties": {
+        "surface.scattering": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "geometry.normal": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "geometry.cutout_opacity": {"type": "string", "pattern": "^[0-9a-f]{32}$"}
       }
     },
     "parameters": {"type": "array"},

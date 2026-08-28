@@ -22,7 +22,7 @@ from ncls.references.mdl import (
     MDL_SDK_BUILD,
     STB_COMMIT,
     STB_IMAGE_SHA256,
-    MdlCompiledArtifact,
+    MdlSdkCompilerBridge,
 )
 from ncls.references.programs import get_reference_program_for_source
 from ncls.references.query import ReferenceQueryDispatcher, ScatteringQuery
@@ -271,9 +271,7 @@ def _asset_parity(asset_id: str, mode: str, output_root: Path, gate_path: Path) 
     locator = _source_locator(asset_id)
     family = create_source_family("mdl.program@1")
     snapshot = family.load_snapshot(locator)
-    artifact = MdlCompiledArtifact.load(
-        Path(str(snapshot.editor_metadata["inspection_artifact"]))
-    )
+    artifact = MdlSdkCompilerBridge(Path(str(locator["module_root"]))).compile_snapshot(snapshot)
     asset_dir = output_root / asset_id
     asset_dir.mkdir(parents=True, exist_ok=True)
     request = _make_request(snapshot, locator, mode)

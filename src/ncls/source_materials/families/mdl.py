@@ -128,8 +128,13 @@ class MdlFamilyDefinition(SourceFamilyDefinition):
         if value or not isinstance(arguments, Mapping):
             raise ValueError(f"unexpected MDL locator fields: {sorted(value)}")
 
-        from ncls.core.identity import sha256_json
-        from ncls.references.mdl import MdlCompiledArtifact, MdlSdkCompilerBridge
+        from ncls.core.identity import sha256_file, sha256_json
+        from ncls.references.mdl import (
+            CODEGEN_OPTIONS,
+            MDL_SDK_BUILD,
+            MdlCompiledArtifact,
+            MdlSdkCompilerBridge,
+        )
         from ncls.source_materials.mdl import snapshot_from_mdl_artifact
 
         bridge = MdlSdkCompilerBridge(module_root)
@@ -141,6 +146,9 @@ class MdlFamilyDefinition(SourceFamilyDefinition):
                 "arguments": dict(arguments),
                 "pack_id": pack_id,
                 "pack_version": pack_version,
+                "bridge": sha256_file(bridge.executable),
+                "mdl_sdk": MDL_SDK_BUILD,
+                "codegen_options": CODEGEN_OPTIONS,
             }
         )
         output = bridge.cache_root / "source-locators" / cache_key

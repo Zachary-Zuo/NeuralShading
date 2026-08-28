@@ -55,6 +55,96 @@ _IMPLEMENTATION = sha256_json(
     }
 )
 
+_MDL_PIXEL_LAYOUTS = {
+    "Sint8": (np.dtype(np.uint8), 1),
+    "Rgb": (np.dtype(np.uint8), 3),
+    "Rgba": (np.dtype(np.uint8), 4),
+    "Rgb_16": (np.dtype(np.uint16), 3),
+    "Rgba_16": (np.dtype(np.uint16), 4),
+    "Float32": (np.dtype(np.float32), 1),
+    "Float32<2>": (np.dtype(np.float32), 2),
+    "Float32<3>": (np.dtype(np.float32), 3),
+    "Float32<4>": (np.dtype(np.float32), 4),
+    "Rgb_fp": (np.dtype(np.float32), 3),
+    "Color": (np.dtype(np.float32), 4),
+}
+
+
+def _srgb_to_linear(values: np.ndarray) -> np.ndarray:
+    return np.where(
+        values <= np.float32(0.04045),
+        values / np.float32(12.92),
+        ((values + np.float32(0.055)) / np.float32(1.055)) ** np.float32(2.4),
+    ).astype(np.float32, copy=False)
+
+
+def _decoded_texture_binding(
+    path: Path, descriptor: dict[str, object]
+) -> tuple[str, bytes, dict[str, object]]:
+    pixel_type = str(descriptor.get("pixel_type", ""))
+    layout = _MDL_PIXEL_LAYOUTS.get(pixel_type)
+    if layout is None:
+        raise ValueError(f"unsupported MDL decoded texture pixel type: {pixel_type}")
+    dtype, channels = layout
+    width = int(descriptor["width"])
+    height = int(descriptor["height"])
+    payload = path.read_bytes()
+    expected_size = width * height * channels * dtype.itemsize
+    if len(payload) != expected_size:
+        raise ValueError("MDL decoded texture payload has the wrong size")
+    source = np.frombuffer(payload, dtype=dtype).reshape(height, width, channels)
+    if channels == 1:
+        encoded = source[..., 0].copy()
+    elif channels == 4:
+        encoded = source.copy()
+    else:
+        one = np.iinfo(dtype).max if np.issubdtype(dtype, np.integer) else 1.0
+        encoded = np.zeros((height, width, 4), dtype=dtype)
+        encoded[..., :channels] = source
+        encoded[..., 3] = one
+    origin = descriptor.get("data_origin")
+    if origin == "lower_left":
+        encoded = encoded[::-1].copy()
+    elif origin != "top_left":
+        raise ValueError("MDL decoded texture has an unsupported row origin")
+
+    gamma = str(descriptor.get("gamma", "linear"))
+    scalar = encoded.ndim == 2
+    hardware_srgb = gamma == "srgb" and dtype == np.dtype(np.uint8) and not scalar
+    color_space = "srgb" if hardware_srgb else "linear"
+    if gamma == "srgb" and not hardware_srgb:
+        normalized = encoded.astype(np.float32)
+        if np.issubdtype(dtype, np.integer):
+            normalized /= np.float32(np.iinfo(dtype).max)
+        if normalized.ndim == 2:
+            normalized = _srgb_to_linear(normalized)
+        else:
+            normalized[..., :3] = _srgb_to_linear(normalized[..., :3])
+        encoded = normalized
+        dtype = np.dtype(np.float32)
+
+    scalar = encoded.ndim == 2
+    if dtype == np.dtype(np.uint8):
+        suffix, format_name = ("r8", "r8-unorm") if scalar else ("rgba8", "rgba8-unorm")
+    elif dtype == np.dtype(np.uint16):
+        suffix, format_name = ("r16", "r16-unorm") if scalar else ("rgba16", "rgba16-unorm")
+    else:
+        suffix, format_name = ("r32f", "r32-float") if scalar else ("rgba32f", "rgba32-float")
+    encoded = np.ascontiguousarray(encoded)
+    return (
+        suffix,
+        encoded.tobytes(),
+        {
+            "kind": "texture2d",
+            "dtype": dtype.name,
+            "shape": [height, width] if scalar else [height, width, 4],
+            "stride": dtype.itemsize if scalar else 4 * dtype.itemsize,
+            "alignment": dtype.itemsize,
+            "format": format_name,
+            "color_space": color_space,
+        },
+    )
+
 
 class MdlReferenceProgram(FileReferenceProgram):
     shader = BACKEND_SHADER
@@ -89,6 +179,7 @@ class MdlReferenceProgram(FileReferenceProgram):
         self.validate_snapshot(snapshot)
         source = MdlMaterialSource.from_snapshot(snapshot)
         artifact = MdlSdkCompilerBridge(source.module_root).compile_snapshot(snapshot)
+        artifact.require_runtime_supported()
         texture_descriptors = artifact.manifest.get("textures", [])
         if any(
             texture.get("shape") not in {"2d", "bsdf_data"}
@@ -167,55 +258,15 @@ class MdlReferenceProgram(FileReferenceProgram):
             if texture["shape"] == "2d":
                 data = texture.get("data")
                 if data is None:
-                    path = Path(str(texture["path"]))
-                    name = f"texture-{index}{path.suffix.lower()}"
-                    resources[name] = path.read_bytes()
-                    resource_descriptors[name] = {
-                        "kind": "texture2d",
-                        "dtype": "encoded-image",
-                        "shape": [int(texture["height"]), int(texture["width"]), 4],
-                        "stride": 1,
-                        "alignment": 1,
-                        "format": "rgba8-unorm",
-                        "color_space": "srgb" if texture.get("gamma") == "srgb" else "linear",
-                        "usage": f"gMdlTexture2D{index - 1}",
-                    }
-                    continue
+                    raise ValueError("MDL runtime artifact has no decoded 2D texture payload")
                 path = artifact.root / str(data)
-                pixel_type = str(texture.get("pixel_type", ""))
-                channels = {"Sint8": 1, "Rgb": 3, "Rgba": 4}.get(pixel_type)
-                if channels is None:
-                    raise ValueError(f"unsupported MDL decoded texture pixel type: {pixel_type}")
-                values = bytearray(path.read_bytes())
-                width = int(texture["width"])
-                height = int(texture["height"])
-                if len(values) != width * height * channels:
-                    raise ValueError("MDL decoded texture payload has the wrong size")
-                source_values = np.frombuffer(values, dtype=np.uint8).reshape(
-                    height, width, channels
+                suffix, resource, resource_descriptor = _decoded_texture_binding(
+                    path, dict(texture)
                 )
-                if channels == 1:
-                    encoded = np.repeat(source_values, 4, axis=2)
-                elif channels == 3:
-                    encoded = np.empty((height, width, 4), dtype=np.uint8)
-                    encoded[..., :3] = source_values
-                    encoded[..., 3] = 255
-                else:
-                    encoded = source_values.copy()
-                if texture.get("data_origin") == "lower_left":
-                    encoded = encoded[::-1].copy()
-                elif texture.get("data_origin") != "top_left":
-                    raise ValueError("MDL decoded texture has an unsupported row origin")
-                name = f"texture-{index}.rgba8"
-                resources[name] = np.ascontiguousarray(encoded).tobytes()
+                name = f"texture-{index}.{suffix}"
+                resources[name] = resource
                 resource_descriptors[name] = {
-                    "kind": "texture2d",
-                    "dtype": "uint8",
-                    "shape": [height, width, 4],
-                    "stride": 4,
-                    "alignment": 1,
-                    "format": "rgba8-unorm",
-                    "color_space": "srgb" if texture.get("gamma") == "srgb" else "linear",
+                    **resource_descriptor,
                     "usage": f"gMdlTexture2D{index - 1}",
                 }
             else:

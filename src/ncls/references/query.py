@@ -332,6 +332,10 @@ class ReferenceQueryDispatcher:
             values = np.frombuffer(payload, dtype=np.uint8).reshape(
                 tuple(int(value) for value in descriptor["shape"])
             ).copy()
+        elif dtype == "uint16":
+            values = np.frombuffer(payload, dtype=np.uint16).reshape(
+                tuple(int(value) for value in descriptor["shape"])
+            ).copy()
         elif dtype == "encoded-image":
             suffix = Path(name).suffix.lower()
             if suffix == ".exr":
@@ -362,6 +366,8 @@ class ReferenceQueryDispatcher:
         resource_format = (
             self._falcor.ResourceFormat.R8Unorm
             if values.dtype == np.uint8 and scalar
+            else self._falcor.ResourceFormat.R16Unorm
+            if values.dtype == np.uint16 and scalar
             else self._falcor.ResourceFormat.R32Float
             if values.dtype == np.float32 and scalar
             else
@@ -369,6 +375,8 @@ class ReferenceQueryDispatcher:
             if values.dtype == np.uint8 and descriptor.get("color_space") == "srgb"
             else self._falcor.ResourceFormat.RGBA8Unorm
             if values.dtype == np.uint8
+            else self._falcor.ResourceFormat.RGBA16Unorm
+            if values.dtype == np.uint16
             else self._falcor.ResourceFormat.RGBA32Float
         )
         kwargs = {

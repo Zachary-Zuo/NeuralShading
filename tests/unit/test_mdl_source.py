@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from ncls.core.identity import sha256_file
@@ -14,9 +15,11 @@ from ncls.references.mdl import (
     STB_COMMIT,
     STB_IMAGE_SHA256,
     MdlCompiledArtifact,
+    MdlModuleDiscovery,
 )
 from ncls.source_materials.families.mdl import MdlFamilyDefinition
 from ncls.source_materials.mdl import MDL_FAMILY_ID, MDL_NATIVE_SCHEMA, MdlMaterialSource
+from ncls.references.programs.mdl import _decoded_texture_binding
 
 
 def _snapshot() -> SourceSnapshot:
@@ -195,11 +198,19 @@ def test_mdl_compiled_artifact_validates_schema_and_argument_block(tmp_path: Pat
         "module": "::constant_diffuse",
         "material": "::constant_diffuse::constant_diffuse(color)",
         "code": "generated.hlsl",
+        "texture_payloads": "decoded",
         "capability_audit": {
             "surface_bsdf_evaluate": True,
             "emission": False,
             "volume": False,
             "displacement": False,
+            "cutout_opacity": False,
+        },
+        "compiled_material_hash": "1" * 32,
+        "sub_expression_hashes": {
+            "surface.scattering": "2" * 32,
+            "geometry.normal": "3" * 32,
+            "geometry.cutout_opacity": "4" * 32,
         },
         "compiler_identity": {
             "mdl_sdk": MDL_SDK_BUILD,
@@ -222,6 +233,15 @@ def test_mdl_compiled_artifact_validates_schema_and_argument_block(tmp_path: Pat
     artifact = MdlCompiledArtifact.load(root)
     assert len(artifact.argument_block) == 16
     assert len(artifact.artifact_sha256) == 64
+    artifact.require_runtime_supported()
+
+    manifest["capability_audit"]["cutout_opacity"] = True
+    (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    unsupported = MdlCompiledArtifact.load(root)
+    assert not unsupported.runtime_supported
+    with pytest.raises(ValueError, match="cutout_opacity"):
+        unsupported.require_runtime_supported()
+    manifest["capability_audit"]["cutout_opacity"] = False
 
     (root / "generated.hlsl").write_text("// tampered", encoding="utf-8")
     with pytest.raises(ValueError, match="hash mismatch"):
@@ -240,11 +260,69 @@ def test_mdl_compiled_artifact_validates_schema_and_argument_block(tmp_path: Pat
         MdlCompiledArtifact.load(root)
 
 
+def test_mdl_rgba16_texture_binding_preserves_all_uint16_bits(tmp_path: Path) -> None:
+    path = tmp_path / "rgba16.bin"
+    values = np.asarray(
+        [[[0, 1, 257, 65535], [65535, 32768, 1024, 9]]], dtype=np.uint16
+    )
+    path.write_bytes(values.tobytes())
+    suffix, payload, descriptor = _decoded_texture_binding(
+        path,
+        {
+            "pixel_type": "Rgba_16",
+            "width": 2,
+            "height": 1,
+            "data_origin": "top_left",
+            "gamma": "linear",
+        },
+    )
+    assert suffix == "rgba16"
+    assert descriptor == {
+        "kind": "texture2d",
+        "dtype": "uint16",
+        "shape": [1, 2, 4],
+        "stride": 8,
+        "alignment": 2,
+        "format": "rgba16-unorm",
+        "color_space": "linear",
+    }
+    assert len(payload) == 2 * 4 * 2
+    np.testing.assert_array_equal(np.frombuffer(payload, dtype=np.uint16).reshape(1, 2, 4), values)
+
+
+def test_mdl_module_discovery_requires_sorted_exact_exports_and_bridge_identity(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "discovery"
+    root.mkdir()
+    document = {
+        "schema": "ncls.mdl-module-discovery@1",
+        "mdl_sdk": MDL_SDK_BUILD,
+        "module": "::fixture",
+        "materials": ["::fixture::a()", "::fixture::b(float)"],
+        "diagnostics": "informational module load trace",
+        "bridge_executable_sha256": "a" * 64,
+    }
+    (root / "discovery.json").write_text(json.dumps(document), encoding="utf-8")
+    discovery = MdlModuleDiscovery.load(
+        root,
+        expected_module="::fixture",
+        expected_bridge_sha256="a" * 64,
+    )
+    assert discovery.materials == ("::fixture::a()", "::fixture::b(float)")
+
+    document["materials"].reverse()
+    (root / "discovery.json").write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(ValueError, match="sorted and unique"):
+        MdlModuleDiscovery.load(root)
+
+
 def test_mdl_reference_protocol_schemas_are_versioned_json_schema() -> None:
     schema_root = Path(__file__).parents[2] / "references/mdl-vmaterials2-v1/schemas"
     expected = {
         "mdl-source.schema.json": "ncls.mdl-source@1",
         "mdl-compiled-artifact.schema.json": "ncls.mdl-compiled-artifact@1",
+        "mdl-vmaterials-family-catalog.schema.json": "ncls.mdl-vmaterials-family-catalog@1",
         "mdl-native-protocol.schema.json": "ncls.mdl-native-protocol@1",
         "mdl-oracle-request.schema.json": "ncls.mdl-oracle-request@1",
         "mdl-oracle-result.schema.json": "ncls.mdl-oracle-result@1",

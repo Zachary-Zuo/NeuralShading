@@ -42,11 +42,14 @@ namespace fs = std::filesystem;
 
 struct Options
 {
+    std::string command;
     fs::path sdkRoot;
     fs::path moduleRoot;
     fs::path outputDirectory;
+    std::string module;
     std::string material;
     std::map<std::string, std::string> arguments;
+    bool skipTexturePayloads = false;
     fs::path nativeQueries;
     fs::path nativeOutput;
 };
@@ -83,6 +86,17 @@ std::string jsonEscape(std::string_view value)
 std::string quote(std::string_view value)
 {
     return "\"" + jsonEscape(value) + "\"";
+}
+
+std::string uuidHex(const mi::base::Uuid& value)
+{
+    std::ostringstream stream;
+    stream << std::hex << std::setfill('0')
+           << std::setw(8) << value.m_id1
+           << std::setw(8) << value.m_id2
+           << std::setw(8) << value.m_id3
+           << std::setw(8) << value.m_id4;
+    return stream.str();
 }
 
 void writeText(const fs::path& path, std::string_view content)
@@ -640,6 +654,26 @@ void requireSurfaceEvaluateOnly(const mi::neuraylib::ICompiled_material* compile
     requireConstantComponents(compiled, "geometry.displacement", 0.0, "displacement");
 }
 
+bool hasNonOpaqueCutout(const mi::neuraylib::ICompiled_material* compiled)
+{
+    const auto value = constantSubExpression(compiled, "geometry.cutout_opacity");
+    return !value || !constantComponentsEqual(value.get(), 1.0);
+}
+
+size_t decodedBytesPerPixel(std::string_view pixelType)
+{
+    if (pixelType == "Sint8") return 1;
+    if (pixelType == "Rgb") return 3;
+    if (pixelType == "Rgba") return 4;
+    if (pixelType == "Rgb_16") return 6;
+    if (pixelType == "Rgba_16") return 8;
+    if (pixelType == "Float32") return 4;
+    if (pixelType == "Float32<2>") return 8;
+    if (pixelType == "Float32<3>" || pixelType == "Rgb_fp") return 12;
+    if (pixelType == "Float32<4>" || pixelType == "Color") return 16;
+    return 0;
+}
+
 class MdlRuntime
 {
 public:
@@ -702,6 +736,85 @@ private:
     mi::base::Handle<mi::neuraylib::INeuray> m_neuray;
     bool m_started = false;
 };
+
+void discover(const Options& options)
+{
+    if (!fs::is_directory(options.sdkRoot) || !fs::is_directory(options.moduleRoot))
+        fail("SDK root and module root must be existing directories");
+    if (fs::exists(options.outputDirectory))
+    {
+        if (!fs::is_directory(options.outputDirectory) || !fs::is_empty(options.outputDirectory))
+            fail("output directory must be absent or empty: " + options.outputDirectory.string());
+    }
+    fs::create_directories(options.outputDirectory);
+
+    MdlRuntime runtime(options.sdkRoot);
+    runtime.start(options.sdkRoot, options.moduleRoot);
+    mi::neuraylib::INeuray* neuray = runtime.get();
+    mi::base::Handle<mi::neuraylib::IDatabase> database(
+        neuray->get_api_component<mi::neuraylib::IDatabase>()
+    );
+    mi::base::Handle<mi::neuraylib::IScope> scope(database->get_global_scope());
+    mi::base::Handle<mi::neuraylib::ITransaction> transaction(scope->create_transaction());
+    {
+        mi::base::Handle<mi::neuraylib::IMdl_impexp_api> impexp(
+            neuray->get_api_component<mi::neuraylib::IMdl_impexp_api>()
+        );
+        mi::base::Handle<mi::neuraylib::IMdl_factory> mdlFactory(
+            neuray->get_api_component<mi::neuraylib::IMdl_factory>()
+        );
+        mi::base::Handle<mi::neuraylib::IMdl_execution_context> context(
+            mdlFactory->create_execution_context()
+        );
+        impexp->load_module(transaction.get(), options.module.c_str(), context.get());
+        requireNoErrors(context.get(), "unable to load module " + options.module);
+        mi::base::Handle<const mi::IString> moduleDbName(
+            mdlFactory->get_db_module_name(options.module.c_str())
+        );
+        mi::base::Handle<const mi::neuraylib::IModule> module(
+            transaction->access<mi::neuraylib::IModule>(moduleDbName->get_c_str())
+        );
+        if (!module)
+            fail("unable to access loaded module: " + options.module);
+
+        std::vector<std::string> materials;
+        for (mi::Size index = 0; index < module->get_material_count(); ++index)
+        {
+            const char* definitionDbName = module->get_material(index);
+            if (!definitionDbName)
+                fail("MDL module returned a removed material definition");
+            mi::base::Handle<const mi::neuraylib::IFunction_definition> definition(
+                transaction->access<mi::neuraylib::IFunction_definition>(definitionDbName)
+            );
+            if (!definition || !definition->is_material())
+                fail("MDL module discovery returned a non-material definition");
+            materials.emplace_back(definition->get_mdl_name());
+        }
+        std::sort(materials.begin(), materials.end());
+        if (std::adjacent_find(materials.begin(), materials.end()) != materials.end())
+            fail("MDL module discovery returned duplicate exact material definitions");
+
+        std::ostringstream document;
+        document << "{\n"
+                 << "  \"schema\": \"ncls.mdl-module-discovery@1\",\n"
+                 << "  \"mdl_sdk\": \"2025.0.0-387700.1252\",\n"
+                 << "  \"module\": " << quote(module->get_mdl_name()) << ",\n"
+                 << "  \"materials\": [";
+        for (size_t index = 0; index < materials.size(); ++index)
+        {
+            if (index)
+                document << ',';
+            document << "\n    " << quote(materials[index]);
+        }
+        if (!materials.empty())
+            document << '\n' << "  ";
+        document << "],\n"
+                 << "  \"diagnostics\": " << quote(diagnostics(context.get())) << "\n"
+                 << "}\n";
+        writeText(options.outputDirectory / "discovery.json", document.str());
+    }
+    transaction->abort();
+}
 
 std::string gammaName(mi::neuraylib::ITarget_code::Gamma_mode gamma)
 {
@@ -1023,6 +1136,7 @@ void compile(const Options& options)
     if (!compiled)
         fail("MDL SDK returned no compiled material");
     requireSurfaceEvaluateOnly(compiled.get());
+    const bool nonOpaqueCutout = hasNonOpaqueCutout(compiled.get());
 
     mi::base::Handle<mi::neuraylib::IMdl_backend_api> backendApi(
         neuray->get_api_component<mi::neuraylib::IMdl_backend_api>()
@@ -1060,6 +1174,7 @@ void compile(const Options& options)
     descriptors.emplace_back("thin_walled", "thin_walled");
     descriptors.emplace_back("surface.scattering", "surface_scattering");
     descriptors.emplace_back("geometry.normal", "geometry_normal");
+    descriptors.emplace_back("geometry.cutout_opacity", "geometry_cutout_opacity");
     linkUnit->add_material(compiled.get(), descriptors.data(), descriptors.size(), context.get());
     requireNoErrors(context.get(), "unable to add material target functions");
     mi::base::Handle<const mi::neuraylib::ITarget_code> target(
@@ -1084,8 +1199,19 @@ void compile(const Options& options)
              << "  \"module\": " << quote(moduleName) << ",\n"
              << "  \"material\": " << quote(definition->get_mdl_name()) << ",\n"
              << "  \"code\": \"generated.hlsl\",\n"
+             << "  \"texture_payloads\": "
+             << quote(options.skipTexturePayloads ? "metadata-only" : "decoded") << ",\n"
              << "  \"capability_audit\": {\"surface_bsdf_evaluate\":true,"
-                "\"emission\":false,\"volume\":false,\"displacement\":false},\n"
+                "\"emission\":false,\"volume\":false,\"displacement\":false,"
+                "\"cutout_opacity\":" << (nonOpaqueCutout ? "true" : "false") << "},\n"
+             << "  \"compiled_material_hash\": " << quote(uuidHex(compiled->get_hash())) << ",\n"
+             << "  \"sub_expression_hashes\": {"
+                "\"surface.scattering\":"
+             << quote(uuidHex(compiled->get_sub_expression_hash("surface.scattering"))) << ','
+             << "\"geometry.normal\":"
+             << quote(uuidHex(compiled->get_sub_expression_hash("geometry.normal"))) << ','
+             << "\"geometry.cutout_opacity\":"
+             << quote(uuidHex(compiled->get_sub_expression_hash("geometry.cutout_opacity"))) << "},\n"
              << "  \"source_modules\": [";
     for (size_t index = 0; index < sourceModules.size(); ++index)
     {
@@ -1211,12 +1337,17 @@ void compile(const Options& options)
             if (const char* filename = image->get_filename(0, 0))
                 filePath = filename;
             relative = "texture-data/texture-" + std::to_string(index) + ".bin";
+            if (options.skipTexturePayloads)
+            {
+                relative.clear();
+                dataOrigin = "unavailable";
+            }
             std::string extension = fs::path(filePath).extension().string();
             std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char value)
             {
                 return static_cast<char>(std::tolower(value));
             });
-            if (extension == ".jpg" || extension == ".jpeg")
+            if (!options.skipTexturePayloads && (extension == ".jpg" || extension == ".jpeg"))
             {
                 const DecodedJpeg decoded = decodeJpeg(filePath);
                 if (decoded.width != canvas->get_resolution_x()
@@ -1230,16 +1361,10 @@ void compile(const Options& options)
                 );
                 dataOrigin = "top_left";
             }
-            else
+            else if (!options.skipTexturePayloads)
             {
-                size_t bytesPerPixel = 0;
-                if (pixelType == "Sint8")
-                    bytesPerPixel = 1;
-                else if (pixelType == "Rgb")
-                    bytesPerPixel = 3;
-                else if (pixelType == "Rgba")
-                    bytesPerPixel = 4;
-                else
+                const size_t bytesPerPixel = decodedBytesPerPixel(pixelType);
+                if (!bytesPerPixel)
                     fail("V1 does not support decoded 2D texture pixel type: " + pixelType);
                 mi::base::Handle<const mi::neuraylib::ITile> tile(canvas->get_tile(0));
                 const size_t size = canvas->get_resolution_x() * canvas->get_resolution_y()
@@ -1281,7 +1406,6 @@ void compile(const Options& options)
 Options parseOptions(int argc, char** argv)
 {
     Options options;
-    bool compileCommand = false;
     for (int index = 1; index < argc; ++index)
     {
         const std::string argument = argv[index];
@@ -1291,12 +1415,19 @@ Options parseOptions(int argc, char** argv)
                 fail("missing value after " + argument);
             return argv[index];
         };
-        if (argument == "compile" || argument == "native-evaluate") compileCommand = true;
+        if (argument == "compile" || argument == "native-evaluate" || argument == "discover")
+        {
+            if (!options.command.empty())
+                fail("multiple bridge commands were provided");
+            options.command = argument;
+        }
         else if (argument == "--sdk-root") options.sdkRoot = fs::absolute(next());
         else if (argument == "--module-root") options.moduleRoot = fs::absolute(next());
+        else if (argument == "--module") options.module = next();
         else if (argument == "--material") options.material = next();
         else if (argument == "--output-dir") options.outputDirectory = fs::absolute(next());
         else if (argument == "--native-queries") options.nativeQueries = fs::absolute(next());
+        else if (argument == "--skip-texture-payloads") options.skipTexturePayloads = true;
         else if (argument == "--native-output") options.nativeOutput = fs::absolute(next());
         else if (argument == "--argument")
         {
@@ -1308,9 +1439,16 @@ Options parseOptions(int argc, char** argv)
         }
         else fail("unknown argument: " + argument);
     }
-    if (!compileCommand || options.sdkRoot.empty() || options.moduleRoot.empty()
-        || options.material.empty() || options.outputDirectory.empty())
-        fail("usage: ncls_mdl_sdk_bridge (compile|native-evaluate) --sdk-root PATH --module-root PATH --material ::module::material --output-dir PATH [--argument name=value] [--native-queries FILE --native-output FILE]");
+    const bool commonMissing = options.command.empty() || options.sdkRoot.empty()
+        || options.moduleRoot.empty() || options.outputDirectory.empty();
+    const bool discoverInvalid = options.command == "discover"
+        && (options.module.empty() || !options.material.empty() || !options.arguments.empty()
+            || options.skipTexturePayloads);
+    const bool compileInvalid = options.command != "discover"
+        && (options.material.empty() || !options.module.empty()
+            || (options.command == "native-evaluate" && options.skipTexturePayloads));
+    if (commonMissing || discoverInvalid || compileInvalid)
+        fail("usage: ncls_mdl_sdk_bridge discover --sdk-root PATH --module-root PATH --module ::module --output-dir PATH | ncls_mdl_sdk_bridge compile --sdk-root PATH --module-root PATH --material ::module::material --output-dir PATH [--argument name=value] [--skip-texture-payloads] | ncls_mdl_sdk_bridge native-evaluate --sdk-root PATH --module-root PATH --material ::module::material --output-dir PATH [--argument name=value] --native-queries FILE --native-output FILE");
     return options;
 }
 
@@ -1320,7 +1458,11 @@ int main(int argc, char** argv)
 {
     try
     {
-        ncls::compile(ncls::parseOptions(argc, argv));
+        const ncls::Options options = ncls::parseOptions(argc, argv);
+        if (options.command == "discover")
+            ncls::discover(options);
+        else
+            ncls::compile(options);
         return 0;
     }
     catch (const std::exception& exception)
