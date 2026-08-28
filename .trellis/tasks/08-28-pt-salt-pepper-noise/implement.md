@@ -33,3 +33,11 @@
 - [x] 使用 `trellis-update-spec` 更新 viewer estimator ownership 与 cross-layer 合同及 required tests。
 - [x] 使用 `trellis-check` 完成质量门并提交实现。
 - [ ] 用户视觉确认后归档任务并记录 journal。
+
+## Phase 3.5：交互性能回归复盘
+
+- [x] 在同一 MDL car paint replay 下对照 `samples per frame = 1/4/16`，确认 1024 spp 质量 identity 不变而单次 dispatch latency 分别为 4.03/22.17/112.78 ms。
+- [x] 逐项核对旧/新 estimator 的 native state 调用与 ray 数，确认 4 条 primary path suffix 是单样本成本增长的主要来源。
+- [x] 核对 viewer frame scheduling，确认相机拖动仍执行完整正式 batch，只关闭 accumulation 并在完成后丢弃 spp；正式 capture batch 与交互 latency 没有分离。
+- [x] 把证据、非根因和修复边界写入 `research/interactive-performance.md`。
+- [ ] 若用户要求实施，先在 renderer 层分离 interactive preview budget 与正式 refinement/capture batch，再独立复核 warm visibility pass。
