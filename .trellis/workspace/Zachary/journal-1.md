@@ -217,3 +217,27 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 11: 完成 PT 椒盐噪点与交互累积根迁移
+
+**Date**: 2026-08-28
+**Task**: 完成 PT 椒盐噪点与交互累积根迁移
+**Branch**: `main`
+
+### Summary
+
+修复公共 PT primary continuation 长尾，并将交互式 PT 迁为每 dispatch 1 spp、持续累积；headless 独占 capture target/batch，完成 source/package、MDL 与 Release 验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2804c11` | (see git log) |
+| `7e55750` | (see git log) |
+| `5c81551` | (see git log) |
+| `d24a3f4` | (see git log) |
+
+### Status
+
+[OK] **Completed**

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 10
+- **Total Sessions**: 11
 - **Last Active**: 2026-08-28
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~219 | Active |
+| `journal-1.md` | ~243 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 11 | 2026-08-28 | 完成 PT 椒盐噪点与交互累积根迁移 | `2804c11`, `7e55750`, `5c81551`, `d24a3f4` | `main` |
 | 10 | 2026-08-28 | 统一材质散射合同根本迁移 | `7a7d78d` | `main` |
 | 9 | 2026-08-28 | MDL reference viewer 与 firefly 根因修复 | `234bb0a` | `main` |
 | 8 | 2026-08-27 | 原生 MDL Reference 与 falcor2 官方对照 | `5e69ba9`, `4f80300` | `main` |
