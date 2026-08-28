@@ -30,7 +30,7 @@ class LayerStackReferenceProgram(FileReferenceProgram):
             stack = canonicalize_layer_stack(MaterialProgram.from_json(snapshot.native_payload.decode("utf-8")))
         payload = pack_layer_stack(stack)
         return MaterialPayload(snapshot.snapshot_id, {"compiled-material": payload}, {
-            "compiled-material": {"dtype": "uint8", "shape": [len(payload)], "stride": len(payload), "alignment": 16, "usage": "gNclsCompiledMaterials"}
+            "compiled-material": {"kind": "structured-buffer", "dtype": "uint8", "shape": [len(payload)], "stride": len(payload), "alignment": 16, "usage": "gNclsCompiledMaterials"}
         })
 
 

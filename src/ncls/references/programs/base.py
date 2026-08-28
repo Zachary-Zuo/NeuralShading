@@ -48,8 +48,18 @@ class FileReferenceProgram(ReferenceProgramDefinition):
     def runtime_blobs(self) -> tuple[dict[str, bytes], dict[str, dict]]:
         return {}, {}
 
+    def runtime_samplers(self) -> dict[str, dict]:
+        return {}
+
     def compile_runtime(self) -> RuntimePayload:
         closure = slang_module_closure(self.shader)
         module = self.shader.resolve().relative_to(PROJECT_ROOT).as_posix()
         blobs, descriptors = self.runtime_blobs()
-        return RuntimePayload(module, closure, blobs, descriptors, self.descriptor.capabilities)
+        return RuntimePayload(
+            module,
+            closure,
+            blobs,
+            descriptors,
+            self.descriptor.capabilities,
+            sampler_descriptors=self.runtime_samplers(),
+        )

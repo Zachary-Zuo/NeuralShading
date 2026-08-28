@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-import ncls.data.falcor as falcor_support
+import ncls.references.falcor as falcor_support
 
 
 class _FakeFalcor:

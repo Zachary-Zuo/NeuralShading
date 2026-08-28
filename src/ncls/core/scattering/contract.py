@@ -174,7 +174,7 @@ def absolute_light_cosine(frame: ShadingFrame, wi_world: Vec3) -> float:
 
 
 def response_cosine(evaluation: ScatteringEval, frame: ShadingFrame, wi_world: Vec3) -> Rgb:
-    """把公共接口的纯 BSDF ``f`` 转为磁盘/Falcor 所需的 ``f*cos``。"""
+    """把公共接口的纯 BSDF ``f`` 转为 renderer transport 的 ``f*cos``。"""
 
     cosine = absolute_light_cosine(frame, wi_world)
     return tuple(value * cosine for value in evaluation.f)  # type: ignore[return-value]

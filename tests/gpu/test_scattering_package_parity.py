@@ -8,7 +8,7 @@ falcor = pytest.importorskip("falcor")
 
 from ncls.bundle import ScatteringPackage, write_scattering_package
 from ncls.core.material import DiffuseInterface, LayerStackIR
-from ncls.data.falcor import create_falcor_device
+from ncls.references.falcor import create_falcor_device
 from ncls.references.programs.layer_stack import REFERENCE_PROGRAM_DEFINITION
 from ncls.source_materials.families.layer_stack import snapshot_from_layer_stack
 

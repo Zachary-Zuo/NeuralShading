@@ -14,8 +14,8 @@ from torch import nn
 from ncls.core.scattering import BackendCapability
 from ncls.bundle.typed_texture import RGBA16F_DDS_DTYPE, encode_rgba16f_dds
 from ncls.core.source import SourceSnapshot
-from ncls.data.training_batch import TrainingBatch
-from ncls.data.native_features import NativeFeaturePyramid
+from ncls.learning.batches import EvaluatorBatch, MethodSamplerBatch, OnlineTrainingBatch
+from ncls.learning.source_adaptation import NativeFeaturePyramid
 from ncls.learning.artifact_packing import pack_fp16_parameters
 from ncls.learning.method import (
     MaterialPayload,
@@ -191,12 +191,12 @@ def _project_frame(
     )
 
 
-def _packed_fp16_parity_response(
+def _packed_fp16_parity_f(
     state: Mapping[str, torch.Tensor],
     view: tuple[float, float, float],
     lights: tuple[tuple[float, float, float], ...],
 ) -> list[list[float]]:
-    """独立模拟 DDS latent、FP16 weights/MLP 与公共 response_cos adapter。"""
+    """独立模拟 DDS latent、FP16 weights/MLP 的线性 RGB f 输出。"""
 
     texels = state.get("latent_texels")
     shapes = state.get("latent_mip_shapes")
@@ -266,13 +266,16 @@ def _packed_fp16_parity_response(
                 weights, bias, hidden, activate=layer_index < len(layer_names) - 1
             )
         with np.errstate(over="ignore", invalid="ignore"):
-            response = np.exp(hidden.astype(np.float32) - np.float32(3.0)).astype(np.float16)
-        cosine = np.float32(max(float(light[2]), 0.0))
-        bare_f = response.astype(np.float32) / np.float32(max(float(light[2]), 1e-6))
-        response_cos = np.asarray(bare_f * cosine, dtype=np.float32)
-        if response_cos.shape != (3,) or not np.isfinite(response_cos).all() or np.any(response_cos < 0.0):
-            raise ValueError("NVIDIA FP16 parity oracle produced an invalid response")
-        expected.append([float(value) for value in response_cos])
+            evaluate_f = np.exp(
+                hidden.astype(np.float32) - np.float32(3.0)
+            ).astype(np.float16).astype(np.float32)
+        if (
+            evaluate_f.shape != (3,)
+            or not np.isfinite(evaluate_f).all()
+            or np.any(evaluate_f < 0.0)
+        ):
+            raise ValueError("NVIDIA FP16 parity oracle produced an invalid f")
+        expected.append([float(value) for value in evaluate_f])
     return expected
 
 
@@ -335,18 +338,23 @@ def _pack_record(width: int, height: int, mip_count: int) -> bytes:
 class NvidiaMethodDefinition(MethodDefinition):
     descriptor = MethodDescriptor(
         "nvidia-neural-appearance",
-        2,
+        3,
         "NVIDIA Real-Time Neural Appearance functional reproduction",
         _implementation_sha256(),
         (
             SourceAdaptationContract("ncls.layer-stack@1", 1, ("/",), "recompile"),
             SourceAdaptationContract("materialx.document@1.39.4", 1, ("/",), "recompile"),
         ),
-        (
-            "source_index", "wo", "wi", "target", "solid_angle_weight",
-            "reference_pdf", "sample_count", "rng_seed", "query_role", "uv",
-            "mip_level", "native_features", "sample_u",
-        ),
+        {
+            "reference-evaluator": (
+                "source_index", "wo", "wi", "target_f", "uv",
+                "mip_level", "native_features",
+            ),
+            "method-sampler": (
+                "source_index", "wo", "sample_u", "uv",
+                "mip_level", "native_features",
+            ),
+        },
         tuple(TensorField(name, dtype, shape) for name, dtype, shape in _TENSOR_SHAPES),
         "ncls.scattering-backend@1",
         int(
@@ -387,7 +395,7 @@ class NvidiaMethodDefinition(MethodDefinition):
         )
 
     def validate_training_config(self, config: Mapping[str, Any]) -> None:
-        if config.get("correspondence_id") != "nvidia-rta2024-functional@1":
+        if config.get("correspondence_id") != "nvidia-rta2024-functional-f@2":
             raise ValueError("NVIDIA training requires the frozen functional correspondence")
         routes = config.get("routes")
         if not isinstance(routes, list) or {item.get("name") for item in routes} != {"evaluator", "sampler"}:
@@ -395,11 +403,11 @@ class NvidiaMethodDefinition(MethodDefinition):
         if len({int(item.get("seed_offset", -1)) for item in routes}) != 2:
             raise ValueError("NVIDIA evaluator and sampler routes require independent seeds")
         routes_by_name = {str(item["name"]): item for item in routes}
-        if routes_by_name["evaluator"].get("options", {}).get("direction_proposal") != "uniform-half-difference@1" \
-            or routes_by_name["evaluator"].get("options", {}).get("target_estimator") != "reference":
+        if routes_by_name["evaluator"].get("kind") != "reference-evaluator" \
+            or routes_by_name["evaluator"].get("options", {}).get("direction_proposal") != "uniform-half-difference@1":
             raise ValueError("NVIDIA evaluator route requires online half/difference reference samples")
-        if routes_by_name["sampler"].get("options", {}).get("direction_proposal") != "uniform-hemisphere-conditioning@1" \
-            or routes_by_name["sampler"].get("options", {}).get("target_estimator") != "learned-sampler":
+        if routes_by_name["sampler"].get("kind") != "method-sampler" \
+            or routes_by_name["sampler"].get("options", {}).get("direction_proposal") != "uniform-hemisphere-conditioning@1":
             raise ValueError("NVIDIA sampler route must sample directions from the current learned proposal")
         loss = config.get("loss")
         if loss != {
@@ -438,11 +446,23 @@ class NvidiaMethodDefinition(MethodDefinition):
             raise ValueError("formal NVIDIA reproduction requires the published cosine schedule")
         if mollification != {"steps": 20_000, "start_degrees": 10.0, "samples": 256}:
             raise ValueError("formal NVIDIA reproduction requires the published cone mollification")
-        batch_source = config.get("batch_source", {})
-        if batch_source.get("kind") != "live" or batch_source.get("options", {}).get(
-            "materialx_asset_id"
-        ) != "american_walnut_veneer":
+        if config.get("source") != {
+            "family_id": "materialx.document@1.39.4",
+            "materials": [
+                {
+                    "locator": {
+                        "kind": "catalog-asset",
+                        "asset_id": "american_walnut_veneer",
+                    }
+                }
+            ],
+        }:
             raise ValueError("formal NVIDIA reproduction requires online reference generation")
+        if config.get("online_query") != {
+            "recipe_id": "generic-reference-query@1",
+            "evaluation_samples": 1,
+        }:
+            raise ValueError("formal NVIDIA reproduction requires the frozen online query recipe")
         if config.get("seed") != 20260827:
             raise ValueError("formal NVIDIA reproduction requires the frozen initialization/query seed")
         if dict(config.get("filtering", {})) != _FORMAL_FILTERING:
@@ -457,12 +477,10 @@ class NvidiaMethodDefinition(MethodDefinition):
         expected_options = {
             "evaluator": {
                 "direction_proposal": "uniform-half-difference@1",
-                "target_estimator": "reference",
                 **route_common,
             },
             "sampler": {
                 "direction_proposal": "uniform-hemisphere-conditioning@1",
-                "target_estimator": "learned-sampler",
                 **route_common,
             },
         }
@@ -489,7 +507,7 @@ class NvidiaMethodDefinition(MethodDefinition):
     def training_objective(
         self,
         model: nn.Module,
-        batches: Mapping[str, TrainingBatch],
+        batches: Mapping[str, OnlineTrainingBatch],
         lifecycle: Mapping[str, Any],
     ) -> tuple[torch.Tensor, Mapping[str, torch.Tensor | float]]:
         if not isinstance(model, NvidiaNeuralAppearanceModel):
@@ -497,16 +515,20 @@ class NvidiaMethodDefinition(MethodDefinition):
         del lifecycle
         if set(batches) != {"evaluator", "sampler"}:
             raise ValueError("NVIDIA objective requires evaluator and sampler batches")
+        if not isinstance(batches["evaluator"], EvaluatorBatch) or not isinstance(
+            batches["sampler"], MethodSamplerBatch
+        ):
+            raise ValueError("NVIDIA objective received the wrong typed route batch")
         evaluator_values = dict(batches["evaluator"].tensors)
         sampler_values = dict(batches["sampler"].tensors)
         evaluator_latent = model.latent_for_batch(evaluator_values)
-        prediction_response = model.response(
+        prediction_f = model.evaluate_f(
             evaluator_latent, evaluator_values["wo"], evaluator_values["wi"]
         )
         evaluator_loss = torch.mean(
             torch.abs(
-                torch.log1p(prediction_response)
-                - torch.log1p(torch.clamp(evaluator_values["target"], min=0.0))
+                torch.log1p(prediction_f)
+                - torch.log1p(torch.clamp(evaluator_values["target_f"], min=0.0))
             )
         )
         sampler_latent = model.latent_for_batch(sampler_values)
@@ -516,11 +538,12 @@ class NvidiaMethodDefinition(MethodDefinition):
             sampler_values["sample_u"],
             "nvidia-diffuse-ggx9",
         )
-        learned_response = model.response(
+        learned_f = model.evaluate_f(
             sampler_latent.detach(), sampler_values["wo"], sampled_wi
         ).detach()
         sampler_loss, valid_fraction = sampler_forward_kl_score(
-            learned_response,
+            learned_f,
+            sampled_wi,
             proposal_pdf,
             valid,
         )
@@ -595,7 +618,7 @@ class NvidiaMethodDefinition(MethodDefinition):
         checkpoint: Mapping[str, Any],
     ) -> Mapping[str, Any]:
         self.descriptor.adaptation_contract(snapshot)
-        state_ids = checkpoint.get("source_state_ids")
+        state_ids = checkpoint.get("source_snapshot_ids")
         state = checkpoint.get("model_state")
         if not isinstance(state_ids, (list, tuple)) or snapshot.snapshot_id not in map(str, state_ids):
             raise ValueError("NVIDIA package parity source does not occur in the checkpoint")
@@ -607,7 +630,7 @@ class NvidiaMethodDefinition(MethodDefinition):
                 "oracle": "nvidia-rta2024-packed-fp16-cpu-emulation@1",
                 "view": list(_PARITY_VIEW),
                 "lights": [list(value) for value in _PARITY_LIGHTS],
-                "expected_response_cos": _packed_fp16_parity_response(
+                "expected_f": _packed_fp16_parity_f(
                     state, _PARITY_VIEW, _PARITY_LIGHTS
                 ),
                 # 64-term half accumulations have an O(10^-2) conservative
@@ -657,10 +680,10 @@ class NvidiaMethodDefinition(MethodDefinition):
         checkpoint: Mapping[str, Any],
     ) -> MaterialPayload:
         self.descriptor.adaptation_contract(snapshot)
-        state_ids = checkpoint.get("source_state_ids")
+        state_ids = checkpoint.get("source_snapshot_ids")
         model_state = checkpoint.get("model_state")
         if not isinstance(state_ids, (list, tuple)) or not isinstance(model_state, Mapping):
-            raise ValueError("NVIDIA material compilation requires source_state_ids and model_state")
+            raise ValueError("NVIDIA material compilation requires source_snapshot_ids and model_state")
         try:
             index = list(map(str, state_ids)).index(snapshot.snapshot_id)
         except ValueError as error:

@@ -10,16 +10,22 @@ import sys
 from typing import Any, Mapping
 
 import numpy as np
+import torch
 
-from ncls.data.collector import CollectionConfig
-from ncls.data.contract import PositionKind, QueryPlan, SurfaceSample
-from ncls.data.providers.mdl import MdlAssetSpec, MdlProvider, MdlProviderConfig
+from ncls.core.source import SourceSnapshot, create_source_family
 from ncls.paths import PROJECT_ROOT
 from ncls.references.acceptance import (
     DeterministicDirectionalGate,
     deterministic_directional_metrics,
 )
-from ncls.references.mdl import MDL_SDK_BUILD, STB_COMMIT, STB_IMAGE_SHA256
+from ncls.references.mdl import (
+    MDL_SDK_BUILD,
+    STB_COMMIT,
+    STB_IMAGE_SHA256,
+    MdlCompiledArtifact,
+)
+from ncls.references.programs import get_reference_program_for_source
+from ncls.references.query import ReferenceQueryDispatcher, ScatteringQuery
 
 from mdl_oracle.protocol import canonical_json
 
@@ -89,37 +95,65 @@ def _query(mode: str) -> dict[str, Any]:
     }
 
 
-def _provider_config(asset_id: str) -> MdlProviderConfig:
+def _source_locator(asset_id: str) -> dict[str, Any]:
     if asset_id == "constant-diffuse":
-        return MdlProviderConfig(
-            assets=(MdlAssetSpec(asset_id, "::constant_diffuse", "constant_diffuse"),)
-        )
+        return {
+            "kind": "mdl-export",
+            "module_root": str(PROJECT_ROOT / "tests/fixtures/mdl"),
+            "module": "::constant_diffuse",
+            "export": "constant_diffuse",
+        }
     if asset_id == "textured-diffuse":
-        return MdlProviderConfig(
-            assets=(MdlAssetSpec(asset_id, "::textured_diffuse", "textured_diffuse"),)
+        return {
+            "kind": "mdl-export",
+            "module_root": str(PROJECT_ROOT / "tests/fixtures/mdl"),
+            "module": "::textured_diffuse",
+            "export": "textured_diffuse",
+        }
+    manifest = json.loads(
+        (PROJECT_ROOT / "references/mdl-vmaterials2-v1/assets.json").read_text(
+            encoding="utf-8"
         )
-    return MdlProviderConfig.from_vmaterials2((asset_id,))
+    )
+    records = {str(item["asset_id"]): item for item in manifest["assets"]}
+    record = records[asset_id]
+    module_root = (
+        PROJECT_ROOT
+        / "assets/source-materials/mdl-vmaterials2/2.4.0"
+        / str(manifest["module_root"])
+    )
+    return {
+        "kind": "mdl-export",
+        "module_root": str(module_root),
+        "module": str(record["module"]),
+        "export": str(record["export"]),
+        "pack_id": "nvidia.vmaterials",
+        "pack_version": "2.4.0",
+    }
 
 
 def _material_name(exact_export: str) -> str:
     return exact_export.rsplit("::", 1)[-1].split("(", 1)[0]
 
 
-def _make_request(provider: MdlProvider, config: MdlProviderConfig, mode: str) -> dict[str, Any]:
-    state = provider.source_states()[0]
-    payload = json.loads(state.native_payload.decode("utf-8"))
-    module_root = config.module_root.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix()
+def _make_request(
+    snapshot: SourceSnapshot, locator: Mapping[str, Any], mode: str
+) -> dict[str, Any]:
+    payload = json.loads(snapshot.native_payload.decode("utf-8"))
+    module_root = Path(str(locator["module_root"])).resolve().relative_to(
+        PROJECT_ROOT.resolve()
+    ).as_posix()
     return {
         "schema_name": "ncls.mdl-oracle-request",
         "schema_version": 1,
         "source": {
-            "asset_id": state.asset_id,
+            "asset_id": payload["module"],
             "module_root": module_root,
             "module": payload["module"],
             "material": _material_name(payload["export"]),
             "exact_export": payload["export"],
             "arguments": payload.get("arguments", {}),
-            "source_snapshot_id": state.snapshot.snapshot_id,
+            "source_snapshot_id": snapshot.snapshot_id,
             "mdl_sdk": payload["mdl_sdk"],
             "compilation_mode": payload["compilation_mode"],
         },
@@ -127,30 +161,77 @@ def _make_request(provider: MdlProvider, config: MdlProviderConfig, mode: str) -
     }
 
 
-def _formal_result(provider: MdlProvider, request: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+def _formal_result(
+    snapshot: SourceSnapshot, request: Mapping[str, Any]
+) -> tuple[np.ndarray, np.ndarray]:
     query = request["query"]
-    surfaces = tuple(
-        SurfaceSample(
-            PositionKind.UV,
-            position=tuple(map(float, item["position"])),
-            uv=tuple(map(float, item["uv"])),
-            uv_dx=tuple(map(float, item["uv_dx"])),
-            uv_dy=tuple(map(float, item["uv_dy"])),
-        )
-        for item in query["surfaces"]
-    )
+    surfaces = tuple(query["surfaces"])
     views = np.asarray(query["view_directions"], dtype=np.float32)
     lights = np.asarray(query["light_directions"], dtype=np.float32)
-    plan = QueryPlan(
-        views,
-        lights,
-        np.ones(len(lights), dtype=np.float32),
-        np.ones(len(lights), dtype=np.float32),
-        "mdl-oracle-parity-lod0",
-        int(query["seed"]),
+    batch = len(surfaces) * len(views)
+    positions = np.repeat(
+        np.asarray([item["position"] for item in surfaces], dtype=np.float32),
+        len(views),
+        axis=0,
     )
-    block = provider.evaluate(provider.source_states()[0], surfaces, plan)
-    return block.mean, block.reference_pdf
+    uv = np.repeat(
+        np.asarray([item["uv"] for item in surfaces], dtype=np.float32),
+        len(views),
+        axis=0,
+    )
+    uv_dx = np.repeat(
+        np.asarray([item["uv_dx"] for item in surfaces], dtype=np.float32),
+        len(views),
+        axis=0,
+    )
+    uv_dy = np.repeat(
+        np.asarray([item["uv_dy"] for item in surfaces], dtype=np.float32),
+        len(views),
+        axis=0,
+    )
+    wo = np.tile(views, (len(surfaces), 1))
+    definition = get_reference_program_for_source(
+        snapshot.family_id, snapshot.source_contract_version
+    )
+    dispatcher = ReferenceQueryDispatcher(
+        definition,
+        (snapshot,),
+        query_capacity=batch * len(lights),
+        device="cuda:0",
+    )
+    device = torch.device("cuda:0")
+    wi = torch.as_tensor(lights, device=device)[None, :, :].expand(
+        batch, -1, -1
+    )
+    try:
+        result = dispatcher.evaluate(
+            ScatteringQuery(
+                torch.zeros(batch, dtype=torch.int64, device=device),
+                torch.as_tensor(wo, device=device),
+                position=torch.as_tensor(positions, device=device),
+                uv=torch.as_tensor(uv, device=device),
+                uv_dx=torch.as_tensor(uv_dx, device=device),
+                uv_dy=torch.as_tensor(uv_dy, device=device),
+            ),
+            wi,
+            torch.arange(
+                int(query["seed"]),
+                int(query["seed"]) + batch * len(lights),
+                dtype=torch.int64,
+                device=device,
+            ).reshape(batch, len(lights)),
+        )
+        response = (
+            result.f * torch.abs(wi[..., 2:3])
+        ).cpu().numpy().copy().reshape(len(surfaces), len(views), len(lights), 3)
+        pdf = result.pdf_forward.cpu().numpy().copy().reshape(
+            len(surfaces), len(views), len(lights)
+        )
+        result.lease.release()
+        dispatcher.end_iteration()
+        return response, pdf
+    finally:
+        dispatcher.close()
 
 
 def _run_oracle(request_path: Path, output_dir: Path) -> None:
@@ -187,79 +268,69 @@ def _gate(path: Path) -> tuple[DeterministicDirectionalGate, Mapping[str, Any]]:
 
 
 def _asset_parity(asset_id: str, mode: str, output_root: Path, gate_path: Path) -> dict[str, Any]:
-    config = _provider_config(asset_id)
-    provider = MdlProvider(
-        CollectionConfig(
-            name=f"mdl-parity-{mode}-{asset_id}",
-            view_count=1,
-            light_count=1,
-            spatial_sample_count=1,
-            footprint_width=0.0,
-            proposal="uniform",
-            seed=SEEDS[mode],
-        ),
-        config,
+    locator = _source_locator(asset_id)
+    family = create_source_family("mdl.program@1")
+    snapshot = family.load_snapshot(locator)
+    artifact = MdlCompiledArtifact.load(
+        Path(str(snapshot.editor_metadata["inspection_artifact"]))
     )
     asset_dir = output_root / asset_id
     asset_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        state = provider.source_states()[0]
-        artifact = state.runtime_state.artifact
-        request = _make_request(provider, config, mode)
-        request_path = asset_dir / "request.json"
-        request_path.write_bytes(canonical_json(request))
-        formal_value, formal_pdf = _formal_result(provider, request)
-        np.savez(asset_dir / "formal.npz", value=formal_value, pdf=formal_pdf)
-        oracle_dir = asset_dir / "oracle"
-        _run_oracle(request_path, oracle_dir)
-        oracle_metadata = json.loads((oracle_dir / "result.json").read_text(encoding="utf-8"))
-        if oracle_metadata["source_snapshot_id"] != request["source"]["source_snapshot_id"]:
-            raise RuntimeError("oracle response source identity differs from the request")
-        oracle = np.load(oracle_dir / "result.npz")
-        oracle_value = np.asarray(oracle["value"], dtype=np.float32)
-        oracle_pdf = np.asarray(oracle["pdf"], dtype=np.float32)
-        if formal_value.shape != oracle_value.shape or formal_pdf.shape != oracle_pdf.shape:
-            raise RuntimeError("formal/oracle result shape mismatch")
+    request = _make_request(snapshot, locator, mode)
+    request_path = asset_dir / "request.json"
+    request_path.write_bytes(canonical_json(request))
+    formal_value, formal_pdf = _formal_result(snapshot, request)
+    np.savez(asset_dir / "formal.npz", value=formal_value, pdf=formal_pdf)
+    oracle_dir = asset_dir / "oracle"
+    _run_oracle(request_path, oracle_dir)
+    oracle_metadata = json.loads(
+        (oracle_dir / "result.json").read_text(encoding="utf-8")
+    )
+    if oracle_metadata["source_snapshot_id"] != request["source"]["source_snapshot_id"]:
+        raise RuntimeError("oracle response source identity differs from the request")
+    oracle = np.load(oracle_dir / "result.npz")
+    oracle_value = np.asarray(oracle["value"], dtype=np.float32)
+    oracle_pdf = np.asarray(oracle["pdf"], dtype=np.float32)
+    if formal_value.shape != oracle_value.shape or formal_pdf.shape != oracle_pdf.shape:
+        raise RuntimeError("formal/oracle result shape mismatch")
 
-        metric_gate, gate_metadata = _gate(gate_path)
-        response_metrics = _metric_dict(oracle_value, formal_value, metric_gate)
-        pdf_metrics = _metric_dict(
-            np.repeat(oracle_pdf[..., None], 3, axis=-1),
-            np.repeat(formal_pdf[..., None], 3, axis=-1),
-            metric_gate,
-        )
-        passed = None if mode == "calibration" else bool(
-            response_metrics["passed"] and pdf_metrics["passed"]
-        )
-        return {
-            "asset_id": asset_id,
-            "source_snapshot_id": request["source"]["source_snapshot_id"],
-            "request": request_path.relative_to(output_root).as_posix(),
-            "request_sha256": _sha256(request_path),
-            "formal_result": "formal.npz",
-            "formal_result_sha256": _sha256(asset_dir / "formal.npz"),
-            "oracle_result": "oracle/result.npz",
-            "oracle_result_sha256": _sha256(oracle_dir / "result.npz"),
-            "response_metrics": response_metrics,
-            "pdf_metrics": pdf_metrics,
-            "gate_identity": gate_metadata["gate_id"],
-            "passed": passed,
-            "formal_provenance": {
-                "executor": "Falcor 8.0 current project runtime",
-                "falcor_commit": "9dc819c162b2070335c65060436041690b7937f8",
-                "mdl_sdk": MDL_SDK_BUILD,
-                "compiled_artifact_sha256": artifact.artifact_sha256,
-                "bridge_executable_sha256": artifact.manifest["compiler_identity"][
-                    "bridge_executable_sha256"
-                ],
-                "stb_commit": STB_COMMIT,
-                "stb_image_sha256": STB_IMAGE_SHA256,
-                "formal_provider_imported_falcor2": False,
-            },
-            "oracle_provenance": oracle_metadata["provenance"],
-        }
-    finally:
-        provider.close()
+    metric_gate, gate_metadata = _gate(gate_path)
+    response_metrics = _metric_dict(oracle_value, formal_value, metric_gate)
+    pdf_metrics = _metric_dict(
+        np.repeat(oracle_pdf[..., None], 3, axis=-1),
+        np.repeat(formal_pdf[..., None], 3, axis=-1),
+        metric_gate,
+    )
+    passed = None if mode == "calibration" else bool(
+        response_metrics["passed"] and pdf_metrics["passed"]
+    )
+    return {
+        "asset_id": asset_id,
+        "source_snapshot_id": request["source"]["source_snapshot_id"],
+        "request": request_path.relative_to(output_root).as_posix(),
+        "request_sha256": _sha256(request_path),
+        "formal_result": "formal.npz",
+        "formal_result_sha256": _sha256(asset_dir / "formal.npz"),
+        "oracle_result": "oracle/result.npz",
+        "oracle_result_sha256": _sha256(oracle_dir / "result.npz"),
+        "response_metrics": response_metrics,
+        "pdf_metrics": pdf_metrics,
+        "gate_identity": gate_metadata["gate_id"],
+        "passed": passed,
+        "formal_provenance": {
+            "executor": "Falcor 8.0 current project runtime",
+            "falcor_commit": "9dc819c162b2070335c65060436041690b7937f8",
+            "mdl_sdk": MDL_SDK_BUILD,
+            "compiled_artifact_sha256": artifact.artifact_sha256,
+            "bridge_executable_sha256": artifact.manifest["compiler_identity"][
+                "bridge_executable_sha256"
+            ],
+            "stb_commit": STB_COMMIT,
+            "stb_image_sha256": STB_IMAGE_SHA256,
+            "formal_provider_imported_falcor2": False,
+        },
+        "oracle_provenance": oracle_metadata["provenance"],
+    }
 
 
 def main() -> int:

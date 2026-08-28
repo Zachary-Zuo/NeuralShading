@@ -173,8 +173,8 @@ ViewerProgram loadPackage(const std::filesystem::path& root)
             result.parity.view = parity.at("view").get<std::array<float, 3>>();
         if (parity.contains("lights"))
             result.parity.lights = parity.at("lights").get<std::vector<std::array<float, 3>>>();
-        if (parity.contains("expected_response_cos"))
-            result.parity.expectedResponseCos = parity.at("expected_response_cos").get<std::vector<std::array<float, 3>>>();
+        if (parity.contains("expected_f"))
+            result.parity.expectedF = parity.at("expected_f").get<std::vector<std::array<float, 3>>>();
         result.parity.relativeTolerance = parity.value("relative_tolerance", result.parity.relativeTolerance);
         result.parity.absoluteTolerance = parity.value("absolute_tolerance", result.parity.absoluteTolerance);
     }

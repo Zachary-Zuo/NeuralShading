@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from ncls.core.identity import sha256_file
 from ncls.core.source import (
@@ -109,6 +109,52 @@ class MdlFamilyDefinition(SourceFamilyDefinition):
         "ncls.mdl-vmaterials2@1",
         sha256_file(Path(__file__)),
     )
+
+    def load_snapshot(self, locator: Mapping[str, Any]) -> SourceSnapshot:
+        value = dict(locator)
+        kind = value.pop("kind", None)
+        if kind != "mdl-export":
+            raise ValueError("MDL locator requires kind=mdl-export")
+        required = {"module_root", "module", "export"}
+        missing = required - set(value)
+        if missing:
+            raise ValueError(f"MDL locator is missing fields: {sorted(missing)}")
+        module_root = Path(str(value.pop("module_root"))).resolve()
+        module = str(value.pop("module"))
+        export = str(value.pop("export"))
+        arguments = value.pop("arguments", {})
+        pack_id = str(value.pop("pack_id", "project.fixtures"))
+        pack_version = str(value.pop("pack_version", "1"))
+        if value or not isinstance(arguments, Mapping):
+            raise ValueError(f"unexpected MDL locator fields: {sorted(value)}")
+
+        from ncls.core.identity import sha256_json
+        from ncls.references.mdl import MdlCompiledArtifact, MdlSdkCompilerBridge
+        from ncls.source_materials.mdl import snapshot_from_mdl_artifact
+
+        bridge = MdlSdkCompilerBridge(module_root)
+        cache_key = sha256_json(
+            {
+                "module_root": str(module_root),
+                "module": module,
+                "export": export,
+                "arguments": dict(arguments),
+                "pack_id": pack_id,
+                "pack_version": pack_version,
+            }
+        )
+        output = bridge.cache_root / "source-locators" / cache_key
+        artifact = (
+            MdlCompiledArtifact.load(output)
+            if output.is_dir()
+            else bridge.inspect(module, export, arguments, output=output)
+        )
+        return snapshot_from_mdl_artifact(
+            artifact,
+            module_root,
+            pack_id=pack_id,
+            pack_version=pack_version,
+        )
 
     @staticmethod
     def _source(snapshot: SourceSnapshot) -> MdlMaterialSource:

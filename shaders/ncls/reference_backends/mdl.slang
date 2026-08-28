@@ -169,4 +169,15 @@ struct NclsMdlReferenceBackend : INclsScatteringBackend
     }
 };
 
+#ifndef NCLS_REFERENCE_BACKEND_NO_PACKAGE_BINDING
+typedef NclsMdlReferenceBackend NclsPackageBackend;
+typedef NclsMdlCompiledMaterial NclsPackageCompiledMaterial;
+typedef NclsMdlReferenceState NclsPackageState;
+NclsPackageBackend nclsCreatePackageBackend() { return {}; }
+NclsPackageCompiledMaterial nclsLoadPackageMaterial(uint index)
+{
+    return {index};
+}
+#endif
+
 #endif

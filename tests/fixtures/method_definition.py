@@ -6,8 +6,8 @@ import torch
 
 from ncls.core.scattering import MaterialPayload, RuntimePayload
 from ncls.core.source import SourceSnapshot
-from ncls.data.training_batch import TrainingBatch
 from ncls.learning.method import MethodDefinition, MethodDescriptor, SourceAdaptationContract, TensorField
+from ncls.learning.batches import OnlineTrainingBatch
 
 
 class ContractFixtureMethod(MethodDefinition):
@@ -17,7 +17,10 @@ class ContractFixtureMethod(MethodDefinition):
             SourceAdaptationContract("openpbr.material@1.1.1", 1, ("/inputs",), "runtime-patch"),
             SourceAdaptationContract("ncls.layer-stack@1", 1, ("/interfaces", "/slabs"), "recompile"),
         ),
-        ("wo", "wi", "target"),
+        {
+            "reference-evaluator": ("wo", "wi", "target_f"),
+            "method-sampler": ("wo", "sample_u"),
+        },
         (TensorField("fixture.scale", "float32", (3,)), TensorField("fixture.bias", "float32", (3,))),
         "ncls.scattering-backend@1", 3,
         {"maximum_prepare_steps": 1, "maximum_evaluate_steps": 2, "maximum_state_bytes": 16, "maximum_reads": 2},
@@ -31,13 +34,13 @@ class ContractFixtureMethod(MethodDefinition):
     def training_objective(
         self,
         model: torch.nn.Module,
-        batches: Mapping[str, TrainingBatch],
+        batches: Mapping[str, OnlineTrainingBatch],
         lifecycle: Mapping[str, Any],
     ):
         del lifecycle
         batch = next(iter(batches.values()))
         prediction = model(batch.tensors["wi"])
-        loss = torch.mean(torch.abs(prediction - batch.tensors["target"]))
+        loss = torch.mean(torch.abs(prediction - batch.tensors["target_f"]))
         return loss, {"l1": loss.detach()}
 
     def export_training_state(self, model: torch.nn.Module):

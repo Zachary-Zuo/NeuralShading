@@ -37,7 +37,11 @@ class OpenPbrReferenceProgram(FileReferenceProgram):
         }
         blobs = {name: np.ascontiguousarray(value, dtype=np.float32).tobytes() for name, value in names.items()}
         descriptors = {
-            name: {"dtype": "float32", "shape": list(value.shape), "stride": 16, "alignment": 16, "usage": binding}
+            name: {
+                "kind": "texture3d" if value.ndim == 4 else "texture2d",
+                "dtype": "float32", "shape": list(value.shape), "stride": 16,
+                "alignment": 16, "format": "rgba32-float", "usage": binding,
+            }
             for (name, value), binding in zip(names.items(), (
                 "gOpenPbrIdealDielectricEnergy", "gOpenPbrIdealDielectricAverage",
                 "gOpenPbrIdealDielectricRatio", "gOpenPbrOpaqueDielectricEnergy",
@@ -47,6 +51,16 @@ class OpenPbrReferenceProgram(FileReferenceProgram):
         }
         return blobs, descriptors
 
+    def runtime_samplers(self) -> dict[str, dict]:
+        return {
+            "openpbr-lut": {
+                "kind": "sampler",
+                "usage": "gOpenPbrLutSampler",
+                "filter": "linear",
+                "address_mode": "clamp",
+            }
+        }
+
     def compile_material(self, snapshot: SourceSnapshot) -> MaterialPayload:
         self.validate_snapshot(snapshot)
         material = snapshot.native_object if isinstance(snapshot.native_object, OpenPBRMaterial) else OpenPBRMaterial.from_json(snapshot.native_payload.decode("utf-8"))
@@ -55,7 +69,7 @@ class OpenPbrReferenceProgram(FileReferenceProgram):
             raise ValueError("OpenPBR reference package compilation requires source asset_root")
         values = np.ascontiguousarray(resolve_openpbr_inputs(material, asset_root=Path(asset_root)), dtype=np.float32)
         return MaterialPayload(snapshot.snapshot_id, {"resolved-inputs": values.tobytes()}, {
-            "resolved-inputs": {"dtype": "float32", "shape": list(values.shape), "stride": 4, "alignment": 16, "usage": "gNclsCompiledMaterialValues"}
+            "resolved-inputs": {"kind": "structured-buffer", "dtype": "float32", "shape": list(values.shape), "stride": 4, "alignment": 16, "usage": "gNclsCompiledMaterialValues"}
         })
 
 

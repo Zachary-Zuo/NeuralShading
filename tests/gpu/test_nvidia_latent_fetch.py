@@ -7,7 +7,7 @@ import pytest
 
 falcor = pytest.importorskip("falcor")
 
-from ncls.data.falcor import create_falcor_device
+from ncls.references.falcor import create_falcor_device
 
 KERNEL_ROOT = Path(__file__).resolve().with_name("kernels")
 

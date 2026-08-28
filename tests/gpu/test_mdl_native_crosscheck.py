@@ -4,10 +4,13 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 
-from ncls.data.providers.mdl import MdlGpuQueryRuntime
+from ncls.core.source import create_source_family
 from ncls.paths import PROJECT_ROOT
 from ncls.references.mdl import MdlSdkCompilerBridge
+from ncls.references.programs import get_reference_program_for_source
+from ncls.references.query import ReferenceQueryDispatcher, ScatteringQuery
 from tools.reference.mdl_native_protocol import (
     read_native_result_packet,
     write_native_query_packet,
@@ -68,22 +71,41 @@ def test_mdl_sdk_native_and_current_falcor_match_on_disjoint_diffuse_queries(
     )
     native_response, native_pdf = read_native_result_packet(result_path)
 
-    runtime = MdlGpuQueryRuntime(
-        artifact,
-        sdk_root=bridge.sdk_root,
-        query_capacity=len(wo),
+    family = create_source_family("mdl.program@1")
+    snapshot = family.load_snapshot(
+        {
+            "kind": "mdl-export",
+            "module_root": str(module_root),
+            "module": "::constant_diffuse",
+            "export": "constant_diffuse",
+            "arguments": {"tint": tint.tolist()},
+        }
+    )
+    definition = get_reference_program_for_source(
+        snapshot.family_id, snapshot.source_contract_version
+    )
+    runtime = ReferenceQueryDispatcher(
+        definition, (snapshot,), query_capacity=len(wo), device="cuda:0"
     )
     try:
-        gpu_response, gpu_pdf = runtime.evaluate_torch(
-            0,
-            wo,
-            wi,
-            uv,
-            np.zeros((len(wo), 4), dtype=np.float32),
-            position,
+        device = torch.device("cuda:0")
+        result = runtime.evaluate(
+            ScatteringQuery(
+                torch.zeros(len(wo), dtype=torch.int64, device=device),
+                torch.as_tensor(wo, device=device),
+                position=torch.as_tensor(position, device=device),
+                uv=torch.as_tensor(uv, device=device),
+            ),
+            torch.as_tensor(wi, device=device)[:, None, :],
+            torch.arange(len(wo), dtype=torch.int64, device=device)[:, None],
         )
-        current_falcor_response = gpu_response.detach().cpu().numpy().copy()
-        current_falcor_pdf = gpu_pdf.detach().cpu().numpy().copy()
+        current_falcor_response = (
+            result.f[:, 0]
+            * torch.abs(torch.as_tensor(wi[:, 2:3], device=device))
+        ).cpu().numpy().copy()
+        current_falcor_pdf = result.pdf_forward[:, 0].cpu().numpy().copy()
+        result.lease.release()
+        runtime.end_iteration()
     finally:
         runtime.close()
 

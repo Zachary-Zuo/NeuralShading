@@ -1142,7 +1142,7 @@ bool NclsViewer::runParityProbe(const ncls::ViewerProgram& method, std::string& 
         parityPass->execute(getRenderContext(), static_cast<uint32_t>(lights.size()), 1, 1);
         std::vector<float4> actual(lights.size());
         output->getBlob(actual.data(), 0, actual.size() * sizeof(float4));
-        const bool hasExpected = method.parity.expectedResponseCos.size() == actual.size();
+        const bool hasExpected = method.parity.expectedF.size() == actual.size();
         for (size_t light = 0; light < actual.size(); ++light)
         {
             for (size_t channel = 0; channel < 3; ++channel)
@@ -1150,11 +1150,11 @@ bool NclsViewer::runParityProbe(const ncls::ViewerProgram& method, std::string& 
                 const float observed = actual[light][channel];
                 if (!std::isfinite(observed) || observed < 0.f)
                 {
-                    error = "GPU contract probe produced a non-finite or negative response";
+                    error = "GPU contract probe produced a non-finite or negative f";
                     return false;
                 }
                 if (!hasExpected) continue;
-                const float expected = method.parity.expectedResponseCos[light][channel];
+                const float expected = method.parity.expectedF[light][channel];
                 const float tolerance = method.parity.absoluteTolerance + method.parity.relativeTolerance * std::abs(expected);
                 if (std::abs(observed - expected) > tolerance)
                 {

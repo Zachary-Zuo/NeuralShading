@@ -10,9 +10,5 @@ ASSET_ROOT = PROJECT_ROOT / "assets"
 SOURCE_MATERIAL_ROOT = ASSET_ROOT / "source-materials"
 VIEWER_ASSET_ROOT = ASSET_ROOT / "viewer"
 
-# reference 导出的唯一正式数据产品；其下只放 ReferenceDataset HDF5。
-DATA_ROOT = PROJECT_ROOT / "data"
-REFERENCE_RESPONSE_ROOT = DATA_ROOT / "reference-responses"
-
 # 可再生成的报告、捕获、缓存和旧实验输出。
 ARTIFACT_ROOT = PROJECT_ROOT / "artifacts"

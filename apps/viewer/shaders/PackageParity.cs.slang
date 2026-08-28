@@ -22,6 +22,5 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     const NclsPackageState state = backend.prepare(
         context, nclsLoadPackageMaterial(gCompiledMaterialIndex));
     NclsViewerSampleGenerator sampleGenerator = {index + 1u};
-    gOutput[index] = float4(nclsScatteringEvalToResponseCos(
-        state.evaluate(light, sampleGenerator), context.surface.shadingFrame, light), 1.0f);
+    gOutput[index] = float4(state.evaluate(light, sampleGenerator).f, 1.0f);
 }

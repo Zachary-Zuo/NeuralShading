@@ -8,7 +8,6 @@ version = "0.1.0"
 description = "多源原生材质到统一固定成本散射实现的研究系统"
 requires-python = ">=3.10"
 dependencies = [
-  "h5py",
   "numpy",
   "scipy",
   "materialx==1.39.4",
@@ -25,10 +24,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 "ncls.core.material" = ["abi/*.json", "schemas/*.json"]
 "ncls.core.scattering" = ["abi/*.json"]
-"ncls.data" = ["schemas/*.json"]
-"ncls.learning" = ["schemas/*.json"]
 "ncls.bundle" = ["schemas/*.json"]
-"ncls.references" = ["schemas/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

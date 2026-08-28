@@ -64,7 +64,7 @@ class NativeFeatureLayout:
 
 
 class NativeFeaturePyramid(Protocol):
-    """materialization 的 tile 化 source-owned 输入，避免展开整张 K-channel 纹理。"""
+    """method source adaptation 的 tile 化输入，避免展开整张 K-channel 纹理。"""
 
     feature_count: int
     level_shapes: tuple[tuple[int, int], ...]

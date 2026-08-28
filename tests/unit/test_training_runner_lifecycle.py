@@ -2,13 +2,18 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-import numpy as np
 import torch
 
 from ncls.core.scattering import MaterialPayload, RuntimePayload
 from ncls.core.source import SourceSnapshot
-from ncls.data.training_batch import TrainingBatch, TrainingRouteRequest
-from ncls.data.native_features import DenseNativeFeaturePyramid, NativeFeaturePyramid
+from ncls.learning.batches import (
+    EvaluatorBatch,
+    MethodSamplerBatch,
+    OnlineTrainingBatch,
+    TrainingConditioning,
+    TrainingRouteRequest,
+)
+from ncls.learning.source_adaptation import DenseNativeFeaturePyramid, NativeFeaturePyramid
 from ncls.learning.method import (
     MethodDefinition,
     MethodDescriptor,
@@ -32,7 +37,10 @@ class _LifecycleMethod(MethodDefinition):
     descriptor = MethodDescriptor(
         "lifecycle-fixture", 1, "Lifecycle fixture", "e" * 64,
         (SourceAdaptationContract("fixture.family", 1, ("/",), "recompile"),),
-        ("wo", "wi", "target"),
+        {
+            "reference-evaluator": ("wo", "wi", "target_f"),
+            "method-sampler": ("wo", "sample_u"),
+        },
         tuple(TensorField(name, dtype, (1,)) for name, dtype in (
             ("encoder", "float32"), ("latent", "float32"),
             ("evaluator", "float32"), ("sampler", "float32"),
@@ -69,13 +77,17 @@ class _LifecycleMethod(MethodDefinition):
     def training_objective(
         self,
         model: torch.nn.Module,
-        batches: Mapping[str, TrainingBatch],
+        batches: Mapping[str, OnlineTrainingBatch],
         lifecycle: Mapping[str, Any],
     ):
         assert isinstance(model, _LifecycleModel)
+        evaluator_batch = batches["evaluator"]
+        sampler_batch = batches["sampler"]
+        assert isinstance(evaluator_batch, EvaluatorBatch)
+        assert isinstance(sampler_batch, MethodSamplerBatch)
         shared = model.encoder if lifecycle["stage"] == "bootstrap" else model.latent
-        evaluator_target = batches["evaluator"].tensors["target"].mean()
-        sampler_target = batches["sampler"].tensors["target"].mean()
+        evaluator_target = evaluator_batch.target_f.mean()
+        sampler_target = sampler_batch.sample_u.mean()
         evaluator_loss = (model.evaluator * shared - evaluator_target).square().mean()
         sampler_loss = (model.sampler * shared.detach() - sampler_target).square().mean()
         return evaluator_loss + sampler_loss, {
@@ -118,43 +130,52 @@ class _LifecycleMethod(MethodDefinition):
         })
 
 
-class _RouteSource:
-    kind = "live"
-    identity = "route-source"
-    source_contracts = ({"family_id": "fixture.family", "source_contract_version": 1},)
-    source_state_ids = ("a" * 64,)
+class _RouteProducer:
+    reference_program_identity = "reference-program:fixture"
+    query_stream_identity = "query-stream:fixture"
+    source_contracts = (
+        {"family_id": "fixture.family", "source_contract_version": 1},
+    )
+    source_snapshot_ids = ("a" * 64,)
     device = torch.device("cpu")
 
     def __init__(self) -> None:
-        self.generators: dict[str, np.random.Generator] = {}
+        self.generators: dict[str, torch.Generator] = {}
         self.counts: dict[str, int] = {}
 
-    def next_batch(self, request: TrainingRouteRequest) -> TrainingBatch:
-        generator = self.generators.setdefault(
-            request.name, np.random.default_rng(request.seed)
-        )
-        target_value = float(generator.random())
-        self.counts[request.name] = self.counts.get(request.name, 0) + 1
+    def _generator(self, request: TrainingRouteRequest) -> torch.Generator:
+        generator = self.generators.get(request.name)
+        if generator is None:
+            generator = torch.Generator().manual_seed(request.seed)
+            self.generators[request.name] = generator
+        return generator
+
+    def next_batch(self, request: TrainingRouteRequest) -> OnlineTrainingBatch:
+        generator = self._generator(request)
         batch = request.batch_size
-        directions = request.direction_count
-        return TrainingBatch(
-            "fixture.family", tuple("a" * 64 for _ in range(batch)), "linear-response",
+        conditioning = TrainingConditioning(
+            "fixture.family",
+            self.source_snapshot_ids,
             {
                 "source_index": torch.zeros(batch, dtype=torch.int64),
                 "wo": torch.tensor([[0.0, 0.0, 1.0]]).expand(batch, 3).clone(),
-                "wi": torch.tensor([[[0.0, 0.0, 1.0]]]).expand(
-                    batch, directions, 3
-                ).clone(),
-                "target": torch.full((batch, directions, 3), target_value),
-                "solid_angle_weight": torch.ones(batch, directions),
-                "reference_pdf": torch.ones(batch, directions),
-                "sample_count": torch.ones(batch, directions, dtype=torch.int64),
-                "rng_seed": torch.full(
-                    (batch, directions), request.seed, dtype=torch.int64
-                ),
-                "query_role": torch.full((batch,), request.query_role, dtype=torch.int64),
             },
-            {"route_name": request.name, "request_index": self.counts[request.name] - 1},
+            {
+                "route_name": request.name,
+                "request_index": self.counts.get(request.name, 0),
+            },
+        )
+        self.counts[request.name] = self.counts.get(request.name, 0) + 1
+        if request.kind == "reference-evaluator":
+            wi = torch.tensor([[[0.0, 0.0, 1.0]]]).expand(
+                batch, request.direction_count, 3
+            ).clone()
+            target_f = torch.rand(
+                (batch, request.direction_count, 3), generator=generator
+            )
+            return EvaluatorBatch(conditioning, wi, target_f)
+        return MethodSamplerBatch(
+            conditioning, torch.rand((batch, 2), generator=generator)
         )
 
     def materialization_features(self) -> NativeFeaturePyramid:
@@ -162,18 +183,24 @@ class _RouteSource:
 
     def state_dict(self) -> Mapping[str, Any]:
         return {
-            "rng": {name: generator.bit_generator.state
-                    for name, generator in self.generators.items()},
-            "counts": dict(self.counts),
+            "query_stream_identity": self.query_stream_identity,
+            "generator_states": {
+                name: generator.get_state() for name, generator in self.generators.items()
+            },
+            "request_count": dict(self.counts),
         }
 
     def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        assert state["query_stream_identity"] == self.query_stream_identity
         self.generators = {}
-        for name, rng_state in state["rng"].items():
-            generator = np.random.default_rng()
-            generator.bit_generator.state = rng_state
+        for name, generator_state in state["generator_states"].items():
+            generator = torch.Generator()
+            generator.set_state(generator_state)
             self.generators[name] = generator
-        self.counts = dict(state["counts"])
+        self.counts = dict(state["request_count"])
+
+    def end_iteration(self) -> None:
+        pass
 
     def close(self) -> None:
         pass
@@ -181,34 +208,48 @@ class _RouteSource:
 
 def _config() -> TrainingConfig:
     return TrainingConfig(
-        "lifecycle-fixture", "smoke", "fixture-correspondence@1", "fixture-recipe@1",
-        "fixture-adapter@1",
-        {"kind": "live", "options": {}}, {"fixture": True},
-        {"total_steps": 4, "materialization_step": 2},
-        (
-            TrainingRoute("evaluator", 2, 1, 0, 0, {}),
-            TrainingRoute("sampler", 2, 1, 1, 1, {}),
+        method_key="lifecycle-fixture",
+        run_class="smoke",
+        correspondence_id="fixture-correspondence@1",
+        recipe_id="fixture-recipe@1",
+        source_adaptation_id="fixture-adapter@1",
+        source={
+            "family_id": "fixture.family",
+            "materials": [{"locator": {"kind": "fixture"}}],
+        },
+        online_query={"recipe_id": "fixture-online-query@1"},
+        model_context={"fixture": True},
+        lifecycle={"total_steps": 4, "materialization_step": 2},
+        routes=(
+            TrainingRoute("evaluator", "reference-evaluator", 2, 1, 0, {}),
+            TrainingRoute("sampler", "method-sampler", 2, 1, 1, {}),
         ),
-        11, "cpu",
-        {"kind": "adam", "betas": [0.9, 0.999], "epsilon": 1e-7,
-         "weight_decay": 0.0},
-        {"kind": "cosine", "start": 1e-3, "end": 1e-4, "total_steps": 4},
-        {"steps": 0, "start_degrees": 0.0, "samples": 1},
-        {"fixture": True}, {"fixture": True},
-        {"interval": 2, "batches": 1}, "tail_guard",
+        seed=11,
+        device="cpu",
+        optimizer={"kind": "adam", "betas": [0.9, 0.999], "epsilon": 1e-7,
+                   "weight_decay": 0.0},
+        schedule={"kind": "cosine", "start": 1e-3, "end": 1e-4, "total_steps": 4},
+        mollification={"steps": 0, "start_degrees": 0.0, "samples": 1},
+        filtering={"fixture": True},
+        loss={"fixture": True},
+        validation={"interval": 2, "batches": 1},
+        checkpoint_selection="tail_guard",
     )
 
 
 def test_runner_resume_matches_uninterrupted_two_route_lifecycle() -> None:
     definition = _LifecycleMethod()
-    full = TrainingRunner(definition, _RouteSource(), _config()).run().checkpoint
-    partial_source = _RouteSource()
-    partial = TrainingRunner(definition, partial_source, _config()).run(stop_at_step=2).checkpoint
+    full = TrainingRunner(definition, _RouteProducer(), _config()).run().checkpoint
+    partial = TrainingRunner(definition, _RouteProducer(), _config()).run(
+        stop_at_step=2
+    ).checkpoint
     assert partial.phase == "finetune"
     assert partial.lifecycle_state["stage"] == "finetune"
-    resumed = TrainingRunner(definition, _RouteSource(), _config()).run(resume=partial).checkpoint
+    resumed = TrainingRunner(definition, _RouteProducer(), _config()).run(
+        resume=partial
+    ).checkpoint
     assert resumed.phase == "complete"
-    assert set(resumed.batch_source_state["rng"]) == {
+    assert set(resumed.query_stream_state["generator_states"]) == {
         "evaluator", "sampler", "validation:evaluator", "validation:sampler"
     }
     assert all(

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import math
 import random
 import time
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Protocol
 
 import numpy as np
 import torch
@@ -12,9 +12,14 @@ from torch import nn
 from tqdm import tqdm
 
 from ncls.core.identity import sha256_json
-from ncls.data.batch_sources import BatchSource
-from ncls.data.training_batch import TrainingBatch, TrainingRouteRequest
+from ncls.learning.batches import (
+    EvaluatorBatch,
+    MethodSamplerBatch,
+    OnlineTrainingBatch,
+    TrainingRouteRequest,
+)
 from ncls.learning.method import MethodDefinition
+from ncls.learning.source_adaptation import NativeFeaturePyramid
 
 from .checkpoint import TrainingCheckpoint
 from .config import TrainingConfig, TrainingRoute
@@ -26,13 +31,28 @@ class TrainingRunResult:
     metrics: tuple[Mapping[str, float], ...]
 
 
+class OnlineTrainingProducer(Protocol):
+    reference_program_identity: str
+    query_stream_identity: str
+    source_contracts: tuple[Mapping[str, Any], ...]
+    source_snapshot_ids: tuple[str, ...]
+    device: torch.device
+
+    def next_batch(self, request: TrainingRouteRequest) -> OnlineTrainingBatch: ...
+    def materialization_features(self) -> NativeFeaturePyramid: ...
+    def state_dict(self) -> Mapping[str, Any]: ...
+    def load_state_dict(self, state: Mapping[str, Any]) -> None: ...
+    def end_iteration(self) -> None: ...
+    def close(self) -> None: ...
+
+
 class TrainingRunner:
     """统一双 route、单 optimizer、可恢复 lifecycle orchestration。"""
 
     def __init__(
         self,
         definition: MethodDefinition,
-        source: BatchSource,
+        producer: OnlineTrainingProducer,
         config: TrainingConfig,
         *,
         progress_factory: Callable[..., Any] = tqdm,
@@ -41,11 +61,15 @@ class TrainingRunner:
     ) -> None:
         if definition.descriptor.method_key != config.method_key:
             raise ValueError("training config method_key disagrees with MethodDefinition")
-        if source.kind != str(config.batch_source["kind"]):
-            raise ValueError("configured batch source kind disagrees with producer")
+        configured_family = str(config.source["family_id"])
+        producer_families = {
+            str(value.get("family_id", "")) for value in producer.source_contracts
+        }
+        if producer_families != {configured_family}:
+            raise ValueError("configured source family disagrees with online producer")
         definition.validate_training_config(config.to_dict())
         self.definition = definition
-        self.source = source
+        self.producer = producer
         self.config = config
         self.progress_factory = progress_factory
         self.checkpoint_callback = checkpoint_callback
@@ -97,21 +121,32 @@ class TrainingRunner:
         seed_offset = route.seed_offset + (1_000_000_007 if validation else 0)
         return TrainingRouteRequest(
             name,
+            route.kind,
             route.batch_size,
             route.direction_count,
             step,
-            route.query_role,
             self.config.seed + seed_offset,
             options,
         )
 
-    def _batches(self, step: int, *, validation: bool = False) -> dict[str, TrainingBatch]:
-        result: dict[str, TrainingBatch] = {}
+    def _batches(
+        self, step: int, *, validation: bool = False
+    ) -> dict[str, OnlineTrainingBatch]:
+        result: dict[str, OnlineTrainingBatch] = {}
         try:
             for route in self.config.routes:
-                result[route.name] = self.source.next_batch(
+                batch = self.producer.next_batch(
                     self._request(route, step, validation=validation)
                 )
+                if route.kind == "reference-evaluator" and not isinstance(
+                    batch, EvaluatorBatch
+                ):
+                    raise TypeError("reference-evaluator route returned the wrong batch type")
+                if route.kind == "method-sampler" and not isinstance(
+                    batch, MethodSamplerBatch
+                ):
+                    raise TypeError("method-sampler route returned the wrong batch type")
+                result[route.name] = batch
         except BaseException:
             for batch in reversed(tuple(result.values())):
                 batch.release()
@@ -126,10 +161,10 @@ class TrainingRunner:
             raise RuntimeError("training routes reused one query stream request")
         return result
 
-    @staticmethod
-    def _release_batches(batches: Mapping[str, TrainingBatch]) -> None:
+    def _release_batches(self, batches: Mapping[str, OnlineTrainingBatch]) -> None:
         for batch in reversed(tuple(batches.values())):
             batch.release()
+        self.producer.end_iteration()
 
     def _optimizer_and_scheduler(
         self, model: nn.Module
@@ -179,8 +214,12 @@ class TrainingRunner:
         checkpoint.validate_method(self.definition.descriptor)
         if checkpoint.training_config_sha256 != self.config.sha256:
             raise ValueError("resume checkpoint training config identity mismatch")
-        if checkpoint.data_source_identity != self.source.identity:
-            raise ValueError("resume checkpoint data source identity mismatch")
+        if checkpoint.reference_program_identity != self.producer.reference_program_identity:
+            raise ValueError("resume checkpoint reference program identity mismatch")
+        if checkpoint.query_stream_identity != self.producer.query_stream_identity:
+            raise ValueError("resume checkpoint query stream identity mismatch")
+        if checkpoint.source_snapshot_ids != self.producer.source_snapshot_ids:
+            raise ValueError("resume checkpoint source snapshot identity mismatch")
         if not 0 <= checkpoint.step <= self.config.total_steps:
             raise ValueError("resume checkpoint step is outside the configured lifecycle")
 
@@ -222,9 +261,10 @@ class TrainingRunner:
             self.definition.descriptor.implementation_sha256,
             config_value,
             sha256_json(config_value),
-            self.source.identity,
-            self.source.source_contracts,
-            self.source.source_state_ids,
+            self.producer.reference_program_identity,
+            self.producer.query_stream_identity,
+            self.producer.source_contracts,
+            self.producer.source_snapshot_ids,
             global_step,
             phase,
             {"policy": self.config.checkpoint_selection, "tail": validation_rows[-1:]},
@@ -234,7 +274,7 @@ class TrainingRunner:
             {},
             self._rng_state(),
             self._lifecycle(global_step),
-            self.source.state_dict(),
+            self.producer.state_dict(),
             {"rows": validation_rows},
         )
         checkpoint.validate_method(self.definition.descriptor)
@@ -247,7 +287,7 @@ class TrainingRunner:
         stop_at_step: int | None = None,
     ) -> TrainingRunResult:
         self._seed()
-        model = self.definition.create_trainable(self.config.model_context).to(self.source.device)
+        model = self.definition.create_trainable(self.config.model_context).to(self.producer.device)
         self.definition.configure_lifecycle(model, self._lifecycle(0))
         optimizer, scheduler = self._optimizer_and_scheduler(model)
         global_step = 0
@@ -257,7 +297,7 @@ class TrainingRunner:
             self.definition.restore_training_state(model, resume.model_state)
             optimizer.load_state_dict(resume.optimizer_state)
             scheduler.load_state_dict(resume.scheduler_state)
-            self.source.load_state_dict(resume.batch_source_state)
+            self.producer.load_state_dict(resume.query_stream_state)
             self._restore_rng(resume.rng_state)
             global_step = resume.step
             validation_rows = [dict(row) for row in resume.validation_state.get("rows", ())]
@@ -300,7 +340,7 @@ class TrainingRunner:
                 global_step += 1
                 if global_step == self.config.materialization_step:
                     self.definition.materialize_latent(
-                        model, self.source.materialization_features()
+                        model, self.producer.materialization_features()
                     )
                 row: dict[str, float] = {
                     "step": float(global_step),
@@ -308,9 +348,9 @@ class TrainingRunner:
                     "learning_rate": float(optimizer.param_groups[0]["lr"]),
                     "work_units": float(global_step * work_per_step),
                 }
-                if self.source.device.type == "cuda":
+                if self.producer.device.type == "cuda":
                     row["peak_memory_bytes"] = float(
-                        torch.cuda.max_memory_allocated(self.source.device)
+                        torch.cuda.max_memory_allocated(self.producer.device)
                     )
                 for name, value in metrics.items():
                     row[name] = (

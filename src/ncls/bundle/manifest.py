@@ -68,8 +68,13 @@ class ScatteringPackageManifest:
                 if logical_name not in files or not isinstance(descriptor, Mapping):
                     raise ValueError("blob/resource descriptor must reference a logical package file")
                 required = {"dtype", "shape", "stride", "alignment", "usage"}
-                if set(descriptor) != required:
-                    raise ValueError(f"typed blob descriptor fields must be exactly {sorted(required)}")
+                optional = {"kind", "module_name", "format", "color_space"}
+                fields = set(descriptor)
+                if not required.issubset(fields) or not fields.issubset(required | optional):
+                    raise ValueError(
+                        "typed payload descriptor fields must contain "
+                        f"{sorted(required)} and only use optional fields {sorted(optional)}"
+                    )
                 if int(descriptor["stride"]) < 1 or int(descriptor["alignment"]) < 1:
                     raise ValueError("typed blob stride and alignment must be positive")
         object.__setattr__(self, "program", program)

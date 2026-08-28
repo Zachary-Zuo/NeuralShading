@@ -13,7 +13,7 @@ namespace ncls
 struct ParityProbe
 {
     std::vector<std::array<float, 3>> lights;
-    std::vector<std::array<float, 3>> expectedResponseCos;
+    std::vector<std::array<float, 3>> expectedF;
     std::array<float, 3> view{0.f, 0.f, 1.f};
     float relativeTolerance = 4e-5f;
     float absoluteTolerance = 4e-6f;

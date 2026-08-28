@@ -173,6 +173,21 @@ class LayerStackFamilyDefinition(SourceFamilyDefinition):
         sha256_file(Path(__file__)),
     )
 
+    def load_snapshot(self, locator: Mapping[str, Any]) -> SourceSnapshot:
+        value = dict(locator)
+        if set(value) != {"kind", "path"} or value.get("kind") != "material-program":
+            raise ValueError(
+                "LayerStack locator fields must be kind=material-program and path"
+            )
+        path = Path(str(value["path"])).resolve()
+        program = MaterialProgram.from_json(path.read_text(encoding="utf-8"))
+        stack = canonicalize_layer_stack(program)
+        return snapshot_from_layer_stack(
+            stack,
+            source_asset_sha256=sha256_file(path),
+            metadata=program.metadata,
+        )
+
     @staticmethod
     def _stack(snapshot: SourceSnapshot) -> tuple[LayerStackIR, MaterialProgram]:
         program = MaterialProgram.from_json(snapshot.native_payload.decode("utf-8"))

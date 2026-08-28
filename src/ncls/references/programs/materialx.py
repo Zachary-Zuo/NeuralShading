@@ -33,19 +33,47 @@ class MaterialXReferenceProgram(FileReferenceProgram):
             "metalness": "gNclsMaterialXMetalness", "normal": "gNclsMaterialXNormalMap",
             "displacement": "gNclsMaterialXDisplacement",
         }
-        resources = {}
-        resource_descriptors = {}
-        for name, path_value in paths.items():
+        input_values = np.frombuffer(inputs, dtype=np.float32)
+        fallbacks = {
+            "base-color": (*map(float, input_values[1:4]), 1.0),
+            "roughness": (float(input_values[12]),) * 3 + (1.0,),
+            "metalness": (float(input_values[5]),) * 3 + (1.0,),
+            "normal": (0.5, 0.5, 1.0, 1.0),
+        }
+        resources: dict[str, bytes] = {}
+        resource_descriptors: dict[str, dict[str, object]] = {}
+        for name, usage in bindings.items():
+            if name == "displacement":
+                continue
+            path_value = paths.get(name)
+            if path_value is None:
+                resource_name = f"{name}.rgba32f"
+                resources[resource_name] = np.asarray(
+                    fallbacks[name], dtype=np.float32
+                ).tobytes()
+                resource_descriptors[resource_name] = {
+                    "kind": "texture2d", "dtype": "float32",
+                    "shape": [1, 1, 4], "stride": 16, "alignment": 16,
+                    "format": "rgba32-float", "usage": usage,
+                }
+                continue
             path = Path(str(path_value))
             resource_name = f"{name}{path.suffix.lower()}"
             resources[resource_name] = path.read_bytes()
             resource_descriptors[resource_name] = {
-                "dtype": "image", "shape": [path.stat().st_size], "stride": 1,
-                "alignment": 1, "usage": bindings[str(name)],
+                "kind": "texture2d", "dtype": "encoded-image",
+                "shape": [path.stat().st_size], "stride": 1,
+                "alignment": 1, "format": "rgba32-float", "usage": usage,
+                "color_space": "srgb" if name == "base-color" else "linear",
             }
         return MaterialPayload(snapshot.snapshot_id, {"resolved-inputs": inputs}, {
-            "resolved-inputs": {"dtype": "float32", "shape": [24], "stride": 4, "alignment": 16, "usage": "gNclsMaterialXInputs"}
-        }, resources, resource_descriptors)
+            "resolved-inputs": {"kind": "structured-buffer", "dtype": "float32", "shape": [24], "stride": 4, "alignment": 16, "usage": "gNclsMaterialXInputs"}
+        }, resources, resource_descriptors, {
+            "materialx": {
+                "kind": "sampler", "usage": "gNclsMaterialXSampler",
+                "filter": "linear", "address_mode": "wrap",
+            }
+        })
 
 
 REFERENCE_PROGRAM_DEFINITION = MaterialXReferenceProgram()

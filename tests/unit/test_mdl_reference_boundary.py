@@ -42,7 +42,7 @@ def test_formal_source_tree_does_not_import_or_launch_falcor2_oracle() -> None:
     assert not violations, "formal MDL dependency boundary violations:\n" + "\n".join(violations)
 
 
-def test_oracle_tree_does_not_import_formal_mdl_provider() -> None:
+def test_oracle_tree_does_not_import_formal_reference_dispatcher() -> None:
     violations = []
     roots = (
         PROJECT_ROOT / "tools/reference/mdl_oracle",
@@ -52,9 +52,9 @@ def test_oracle_tree_does_not_import_formal_mdl_provider() -> None:
     files = tuple(path for root in roots for path in (_python_files(root) if root.is_dir() else (root,)))
     for path in files:
         for module in _imports(path):
-            if module == "ncls.data.providers.mdl" or module.startswith("ncls.data.providers.mdl."):
+            if module == "ncls.references.query" or module.startswith("ncls.references.query."):
                 violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}: import {module}")
-    assert not violations, "oracle imported the formal provider:\n" + "\n".join(violations)
+    assert not violations, "oracle imported the formal dispatcher:\n" + "\n".join(violations)
 
 
 def test_viewer_route_is_formal_artifact_only_and_has_fail_closed_checks() -> None:

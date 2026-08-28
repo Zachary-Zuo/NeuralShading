@@ -121,7 +121,7 @@ NclsNvidiaNeuralPrepared nclsNvidiaNeuralPrepareFp16(
     return prepared;
 }
 
-float3 nclsNvidiaNeuralEvaluateResponseFp16(
+float3 nclsNvidiaNeuralEvaluateFFp16(
     NclsNvidiaNeuralPrepared prepared,
     float3 projectWi,
     NclsNvidiaNeuralParams params)
@@ -167,15 +167,6 @@ float3 nclsNvidiaNeuralEvaluateResponseFp16(
         half(exp(float(output[0]) - 3.0f)),
         half(exp(float(output[1]) - 3.0f)),
         half(exp(float(output[2]) - 3.0f)));
-}
-
-float3 nclsNvidiaNeuralEvaluateFFp16(
-    NclsNvidiaNeuralPrepared prepared,
-    float3 projectWi,
-    NclsNvidiaNeuralParams params)
-{
-    return nclsNvidiaNeuralResponseToBareF(
-        nclsNvidiaNeuralEvaluateResponseFp16(prepared, projectWi, params), projectWi);
 }
 
 #endif

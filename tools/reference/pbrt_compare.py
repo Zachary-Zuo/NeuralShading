@@ -7,6 +7,7 @@ import re
 import subprocess
 
 import numpy as np
+import torch
 
 from ncls.core.material import (
     DiffuseInterface,
@@ -15,7 +16,9 @@ from ncls.core.material import (
     RoughConductorInterface,
     RoughDielectricInterface,
 )
-from ncls.data.reference import FalcorReferenceEvaluator, evaluate_reference_fixed
+from ncls.references.programs import get_reference_program_for_source
+from ncls.references.query import ReferenceQueryDispatcher, ScatteringQuery
+from ncls.source_materials.families.layer_stack import snapshot_from_layer_stack
 
 
 LINE_PATTERN = re.compile(
@@ -167,24 +170,67 @@ def _run_case(
     pbrt_response = np.mean(pbrt_batches, axis=0)
 
     light_directions = np.stack([_direction(float(theta), float(phi)) for theta, phi in directions])
-    evaluator = FalcorReferenceEvaluator(
-        light_directions,
-        max_depth=max_depth,
-        max_query_group_batch=1,
+    if max_depth != 64:
+        raise ValueError("canonical LayerStack reference fixes maximum walk depth at 64")
+    snapshot = snapshot_from_layer_stack(_material(case))
+    definition = get_reference_program_for_source(
+        snapshot.family_id, snapshot.source_contract_version
     )
-    falcor_batches = [
-        evaluate_reference_fixed(
-            evaluator,
-            [_material(case)],
-            _direction(case.view_theta, case.view_phi)[None, :],
-            tile_seeds=np.asarray([53 + 1009 * batch_index], dtype=np.uint32),
-            samples_per_replica=samples,
-        )
-        for batch_index in range(batches)
-    ]
-    falcor_response = np.mean([batch.mean[0] for batch in falcor_batches], axis=0)
-    falcor_variance = np.mean([batch.variance[0] for batch in falcor_batches], axis=0)
-    falcor_standard_error = np.sqrt(falcor_variance / (2 * samples * batches))
+    dispatcher = ReferenceQueryDispatcher(
+        definition,
+        (snapshot,),
+        query_capacity=len(light_directions),
+        device="cuda:0",
+    )
+    device = torch.device("cuda:0")
+    query = ScatteringQuery(
+        torch.zeros(1, dtype=torch.int64, device=device),
+        torch.as_tensor(
+            _direction(case.view_theta, case.view_phi)[:3][None, :],
+            device=device,
+        ),
+    )
+    wi = torch.as_tensor(light_directions[:, :3], device=device)[None, :, :]
+    chunk_means: list[np.ndarray] = []
+    chunk_weights: list[int] = []
+    try:
+        for batch_index in range(batches):
+            remaining = samples
+            chunk_index = 0
+            while remaining:
+                sample_count = min(remaining, 256)
+                seed = 53 + 1009 * batch_index + 65537 * chunk_index
+                seeds = torch.arange(
+                    seed,
+                    seed + len(light_directions),
+                    dtype=torch.int64,
+                    device=device,
+                )[None, :]
+                result = dispatcher.evaluate(
+                    query, wi, seeds, evaluation_samples=sample_count
+                )
+                torch._assert_async(result.valid.all())
+                response = (
+                    result.f[0]
+                    * torch.abs(wi[0, :, 2:3])
+                ).cpu().numpy().copy()
+                result.lease.release()
+                dispatcher.end_iteration()
+                chunk_means.append(response)
+                chunk_weights.append(sample_count)
+                remaining -= sample_count
+                chunk_index += 1
+    finally:
+        dispatcher.close()
+    falcor_response = np.average(
+        np.stack(chunk_means), axis=0, weights=np.asarray(chunk_weights)
+    )
+    falcor_standard_error = (
+        np.std(np.stack(chunk_means), axis=0, ddof=1)
+        / np.sqrt(len(chunk_means))
+        if len(chunk_means) > 1
+        else np.zeros_like(falcor_response)
+    )
     relative_error = np.abs(falcor_response - pbrt_response) / np.maximum(
         0.5 * (falcor_response + pbrt_response), 1e-8
     )
@@ -218,7 +264,7 @@ def main() -> None:
     parser.add_argument("--pbrt-exe", type=Path, required=True)
     parser.add_argument("--samples", type=int, default=262144)
     parser.add_argument("--batches", type=int, default=1)
-    parser.add_argument("--max-depth", type=int, default=32)
+    parser.add_argument("--max-depth", type=int, default=64)
     parser.add_argument(
         "--case",
         action="append",

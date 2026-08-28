@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from ncls.core.identity import sha256_file, write_json_atomic
-from ncls.data.collector import CollectionConfig
-from ncls.data.providers.mdl import MdlProvider, MdlProviderConfig
+from ncls.core.source import create_source_family
 from ncls.paths import PROJECT_ROOT
+from ncls.references.mdl import MdlCompiledArtifact
 
 
 ASSET_IDS = (
@@ -38,67 +39,78 @@ def _portable(path: Path, base: Path) -> str:
 def prepare_catalog(output: Path, default_asset_id: str = ASSET_IDS[0]) -> dict[str, object]:
     if default_asset_id not in ASSET_IDS:
         raise ValueError(f"unknown default MDL viewer asset: {default_asset_id}")
-    provider = MdlProvider(
-        CollectionConfig(
-            name="mdl-viewer-catalog",
-            view_count=1,
-            light_count=1,
-            spatial_sample_count=1,
-            proposal="uniform",
-            seed=73,
-        ),
-        MdlProviderConfig.from_vmaterials2(ASSET_IDS),
-    )
-    try:
-        states = provider.source_states()
-        by_id = {state.asset_id: state for state in states}
-        if tuple(by_id) != ASSET_IDS:
-            raise RuntimeError("MDL provider returned an unexpected vMaterials catalog")
-        target_types = (
-            PROJECT_ROOT
-            / "external/MDL-SDK-2025.0.0-387700.1252-nt-x86-64"
-            / "examples/mdl_sdk/dxr/content/mdl_target_code_types.hlsl"
+    manifest_path = PROJECT_ROOT / "references/mdl-vmaterials2-v1/assets.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    records = {str(item["asset_id"]): item for item in manifest["assets"]}
+    if any(asset_id not in records for asset_id in ASSET_IDS):
+        raise RuntimeError("MDL source manifest is missing a viewer asset")
+    module_root = (
+        PROJECT_ROOT
+        / "assets/source-materials/mdl-vmaterials2/2.4.0"
+        / str(manifest["module_root"])
+    ).resolve()
+    family = create_source_family("mdl.program@1")
+    snapshots = {}
+    artifacts = {}
+    for asset_id in ASSET_IDS:
+        record = records[asset_id]
+        snapshot = family.load_snapshot(
+            {
+                "kind": "mdl-export",
+                "module_root": str(module_root),
+                "module": str(record["module"]),
+                "export": str(record["export"]),
+                "pack_id": "nvidia.vmaterials",
+                "pack_version": "2.4.0",
+            }
         )
-        renderer_runtime = PROJECT_ROOT / "shaders/ncls/reference_backends/mdl_runtime.slangh"
-        base = output.resolve().parent
-        assets = []
-        for asset_id in ASSET_IDS:
-            state = by_id[asset_id]
-            artifact = state.runtime_state.artifact
-            assets.append(
-                {
-                    "asset_id": asset_id,
-                    "display_name": DISPLAY_NAMES[asset_id],
-                    "source_snapshot_id": state.snapshot.snapshot_id,
-                    "artifact_root": _portable(artifact.root, base),
-                    "compiled_artifact_sha256": artifact.artifact_sha256,
-                }
-            )
-        document: dict[str, object] = {
-            "schema_name": "ncls.mdl-viewer-catalog",
-            "schema_version": 1,
-            "reference_id": "ncls.mdl-vmaterials2@1",
-            "source_material_family_id": "mdl.program@1",
-            "formal_executor": "project-mdl-sdk-bridge-to-current-falcor-8",
-            "validation_oracle": "falcor2-isolated-not-a-runtime-dependency",
-            "mdl_sdk": "2025.0.0-387700.1252",
-            "texture_filtering": "explicit-lod0",
-            "uv_derivatives_consumed": False,
-            "default_asset_id": default_asset_id,
-            "target_code_types": {
-                "path": _portable(target_types, base),
-                "sha256": sha256_file(target_types),
-            },
-            "renderer_runtime": {
-                "path": _portable(renderer_runtime, base),
-                "sha256": sha256_file(renderer_runtime),
-            },
-            "assets": assets,
-        }
-        write_json_atomic(output.resolve(), document)
-        return document
-    finally:
-        provider.close()
+        snapshots[asset_id] = snapshot
+        artifacts[asset_id] = MdlCompiledArtifact.load(
+            Path(str(snapshot.editor_metadata["inspection_artifact"]))
+        )
+    target_types = (
+        PROJECT_ROOT
+        / "external/MDL-SDK-2025.0.0-387700.1252-nt-x86-64"
+        / "examples/mdl_sdk/dxr/content/mdl_target_code_types.hlsl"
+    )
+    renderer_runtime = PROJECT_ROOT / "shaders/ncls/reference_backends/mdl_runtime.slangh"
+    base = output.resolve().parent
+    assets = []
+    for asset_id in ASSET_IDS:
+        snapshot = snapshots[asset_id]
+        artifact = artifacts[asset_id]
+        assets.append(
+            {
+                "asset_id": asset_id,
+                "display_name": DISPLAY_NAMES[asset_id],
+                "source_snapshot_id": snapshot.snapshot_id,
+                "artifact_root": _portable(artifact.root, base),
+                "compiled_artifact_sha256": artifact.artifact_sha256,
+            }
+        )
+    document: dict[str, object] = {
+        "schema_name": "ncls.mdl-viewer-catalog",
+        "schema_version": 1,
+        "reference_id": "ncls.mdl-vmaterials2@1",
+        "source_material_family_id": "mdl.program@1",
+        "formal_executor": "project-mdl-sdk-bridge-to-current-falcor-8",
+        "validation_oracle": "falcor2-isolated-not-a-runtime-dependency",
+        "mdl_sdk": "2025.0.0-387700.1252",
+        "texture_filtering": "explicit-lod0",
+        "uv_derivatives_consumed": False,
+        "default_asset_id": default_asset_id,
+        "target_code_types": {
+            "path": _portable(target_types, base),
+            "sha256": sha256_file(target_types),
+        },
+        "renderer_runtime": {
+            "path": _portable(renderer_runtime, base),
+            "sha256": sha256_file(renderer_runtime),
+        },
+        "assets": assets,
+    }
+    write_json_atomic(output.resolve(), document)
+    return document
 
 
 def main() -> int:

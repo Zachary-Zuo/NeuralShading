@@ -17,6 +17,7 @@ class RuntimePayload:
     blob_descriptors: Mapping[str, Mapping[str, Any]]
     capabilities: int
     defines: Mapping[str, str] = field(default_factory=dict)
+    sampler_descriptors: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.program_module or self.program_module not in self.module_closure:
@@ -31,6 +32,11 @@ class RuntimePayload:
         if any(not name or not value for name, value in self.defines.items()):
             raise ValueError("runtime payload defines must have nonempty names and values")
         object.__setattr__(self, "defines", dict(self.defines))
+        object.__setattr__(
+            self,
+            "sampler_descriptors",
+            {name: dict(value) for name, value in self.sampler_descriptors.items()},
+        )
 
 
 @dataclass(frozen=True)
@@ -40,6 +46,7 @@ class MaterialPayload:
     blob_descriptors: Mapping[str, Mapping[str, Any]]
     resources: Mapping[str, bytes] = field(default_factory=dict)
     resource_descriptors: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    sampler_descriptors: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         require_sha256("material payload source_snapshot_id", self.source_snapshot_id)
@@ -51,6 +58,11 @@ class MaterialPayload:
         object.__setattr__(self, "blob_descriptors", {name: dict(value) for name, value in self.blob_descriptors.items()})
         object.__setattr__(self, "resources", dict(self.resources))
         object.__setattr__(self, "resource_descriptors", {name: dict(value) for name, value in self.resource_descriptors.items()})
+        object.__setattr__(
+            self,
+            "sampler_descriptors",
+            {name: dict(value) for name, value in self.sampler_descriptors.items()},
+        )
 
 
 @dataclass(frozen=True)

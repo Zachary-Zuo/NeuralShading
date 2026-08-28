@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Mapping
 
 import MaterialX as mx
 
@@ -16,6 +16,7 @@ from ncls.core.source import (
     SourceSnapshot,
 )
 from ncls.source_materials.materialx import LoadedMaterialX
+from ncls.source_materials.identity import materialx_asset_sha256
 
 
 _VALUE_TYPES = {
@@ -56,6 +57,79 @@ class MaterialXFamilyDefinition(SourceFamilyDefinition):
         "ncls.materialx-polyhaven@1",
         sha256_file(Path(__file__)),
     )
+
+    def load_snapshot(self, locator: Mapping[str, Any]) -> SourceSnapshot:
+        value = dict(locator)
+        kind = value.pop("kind", None)
+        asset_id = value.pop("asset_id", None)
+        if kind != "catalog-asset" or not isinstance(asset_id, str):
+            raise ValueError(
+                "MaterialX locator requires kind=catalog-asset and asset_id"
+            )
+        project_root = Path(__file__).resolve().parents[4]
+        materialx_root = Path(
+            str(value.pop("materialx_root", project_root / "external/MaterialX"))
+        ).resolve()
+        asset_root = Path(
+            str(
+                value.pop(
+                    "asset_root",
+                    project_root / "assets/source-materials/materialx-polyhaven/v1",
+                )
+            )
+        ).resolve()
+        manifest = Path(
+            str(
+                value.pop(
+                    "asset_manifest",
+                    project_root / "references/materialx-polyhaven-v1/assets.json",
+                )
+            )
+        ).resolve()
+        if value:
+            raise ValueError(f"unexpected MaterialX locator fields: {sorted(value)}")
+        from ncls.source_materials.materialx import MaterialXReference
+        from ncls.source_materials.materialx_runtime import resolve_materialx_runtime
+
+        loaded = MaterialXReference(materialx_root, asset_root, manifest).load(
+            asset_id, verify_files=True
+        )
+        runtime = resolve_materialx_runtime(loaded.document_path, loaded.material)
+        paths = tuple(
+            path
+            for path in (
+                runtime.base_color,
+                runtime.roughness,
+                runtime.metalness,
+                runtime.normal,
+                runtime.displacement,
+            )
+            if path is not None
+        )
+        source_hash = materialx_asset_sha256(loaded.document_path, paths)
+        resource_hashes = {
+            path.relative_to(loaded.document_path.parent).as_posix(): sha256_file(path)
+            for path in paths
+        }
+        return snapshot_from_materialx(
+            loaded,
+            source_asset_sha256=source_hash,
+            resource_hashes=resource_hashes,
+            runtime_metadata={
+                "resolved_inputs": runtime.inputs.tobytes(),
+                "resource_paths": {
+                    name: str(path.resolve())
+                    for name, path in (
+                        ("base-color", runtime.base_color),
+                        ("roughness", runtime.roughness),
+                        ("metalness", runtime.metalness),
+                        ("normal", runtime.normal),
+                        ("displacement", runtime.displacement),
+                    )
+                    if path is not None
+                },
+            },
+        )
 
     @staticmethod
     def _loaded(snapshot: SourceSnapshot) -> LoadedMaterialX:

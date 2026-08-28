@@ -7,7 +7,7 @@ import pytest
 import torch
 
 from ncls.learning.methods.nvidia import METHOD_DEFINITION
-from ncls.data.native_features import DenseNativeFeaturePyramid
+from ncls.learning.source_adaptation import DenseNativeFeaturePyramid
 from ncls.bundle.typed_texture import inspect_rgba16f_dds
 from ncls.core.source import SourceSnapshot
 
@@ -15,15 +15,21 @@ from ncls.core.source import SourceSnapshot
 def _formal_config() -> dict:
     return {
         "format_name": "ncls.training-config",
-        "format_version": 2,
+        "format_version": 3,
         "method_key": "nvidia-neural-appearance",
         "run_class": "formal",
-        "correspondence_id": "nvidia-rta2024-functional@1",
+        "correspondence_id": "nvidia-rta2024-functional-f@2",
         "recipe_id": "nvidia-rta2024-materialx-formal-300k-stage100k@1",
         "source_adaptation_id": "materialx-standard-surface-spatial@1",
-        "batch_source": {"kind": "live", "options": {
-            "materialx_asset_id": "american_walnut_veneer", "query_tile_size": 262_144,
-        }},
+        "source": {
+            "family_id": "materialx.document@1.39.4",
+            "materials": [{"locator": {
+                "kind": "catalog-asset", "asset_id": "american_walnut_veneer",
+            }}],
+        },
+        "online_query": {
+            "recipe_id": "generic-reference-query@1", "evaluation_samples": 1,
+        },
         "model_context": {
             "native_feature_count": 38,
             "latent_width": 4096,
@@ -34,10 +40,9 @@ def _formal_config() -> dict:
         "routes": [
             {
                 "name": "evaluator", "batch_size": 65_000, "direction_count": 1,
-                "query_role": 0, "seed_offset": 0,
+                "kind": "reference-evaluator", "seed_offset": 0,
                 "options": {
                     "direction_proposal": "uniform-half-difference@1",
-                    "target_estimator": "reference",
                     "mip_exponential_scale": 1.0,
                     "spatial_samples_per_texel_area": 1.0,
                     "maximum_spatial_samples": 64,
@@ -45,10 +50,9 @@ def _formal_config() -> dict:
             },
             {
                 "name": "sampler", "batch_size": 65_000, "direction_count": 1,
-                "query_role": 1, "seed_offset": 1,
+                "kind": "method-sampler", "seed_offset": 1,
                 "options": {
                     "direction_proposal": "uniform-hemisphere-conditioning@1",
-                    "target_estimator": "learned-sampler",
                     "mip_exponential_scale": 1.0,
                     "spatial_samples_per_texel_area": 1.0,
                     "maximum_spatial_samples": 64,
@@ -156,7 +160,7 @@ def test_nvidia_material_compiler_emits_two_full_rgba16f_mip_chains() -> None:
     material = METHOD_DEFINITION.compile_material(
         snapshot,
         {
-            "source_state_ids": [snapshot.snapshot_id],
+            "source_snapshot_ids": [snapshot.snapshot_id],
             "model_state": METHOD_DEFINITION.export_training_state(model),
         },
     )
@@ -183,7 +187,7 @@ def test_nvidia_package_freezes_deterministic_fp16_runtime_parity() -> None:
     )
     snapshot = SourceSnapshot("ncls.layer-stack@1", 1, "fixture", "a" * 64, b"{}")
     checkpoint = {
-        "source_state_ids": [snapshot.snapshot_id],
+        "source_snapshot_ids": [snapshot.snapshot_id],
         "model_state": METHOD_DEFINITION.export_training_state(model),
     }
     first = METHOD_DEFINITION.package_validation(snapshot, checkpoint)
@@ -194,10 +198,10 @@ def test_nvidia_package_freezes_deterministic_fp16_runtime_parity() -> None:
     parity = first["parity"]
     assert parity["oracle"] == "nvidia-rta2024-packed-fp16-cpu-emulation@1"
     assert parity["view"] == [0.0, 0.0, 1.0]
-    assert len(parity["lights"]) == len(parity["expected_response_cos"]) == 4
+    assert len(parity["lights"]) == len(parity["expected_f"]) == 4
     assert parity["relative_tolerance"] == 2e-2
     assert parity["absolute_tolerance"] == 2e-4
-    values = torch.tensor(parity["expected_response_cos"])
+    values = torch.tensor(parity["expected_f"])
     assert values.shape == (4, 3)
     assert torch.isfinite(values).all() and torch.all(values >= 0.0)
 

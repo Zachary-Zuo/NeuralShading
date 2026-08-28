@@ -57,9 +57,28 @@ class OpenPBRFamilyDefinition(SourceFamilyDefinition):
         "openpbr.material@1.1.1",
         1,
         "ncls.openpbr-material@1",
-        "ncls.openpbr@1.1.1",
+        "ncls.openpbr@1",
         sha256_file(Path(__file__)),
     )
+
+    def load_snapshot(self, locator: Mapping[str, Any]) -> SourceSnapshot:
+        value = dict(locator)
+        kind = value.pop("kind", None)
+        path_value = value.pop("path", None)
+        if value or kind not in {"materialx-document", "json-document"} or path_value is None:
+            raise ValueError(
+                "OpenPBR locator requires kind=materialx-document|json-document and path"
+            )
+        path = Path(str(path_value)).resolve()
+        if kind == "materialx-document":
+            material = OpenPBRMaterial.from_materialx(path)
+        else:
+            material = OpenPBRMaterial.from_json(path.read_text(encoding="utf-8"))
+        return snapshot_from_openpbr(
+            material,
+            source_asset_sha256=sha256_file(path),
+            asset_root=path.parent,
+        )
 
     @staticmethod
     def _material(snapshot: SourceSnapshot) -> OpenPBRMaterial:

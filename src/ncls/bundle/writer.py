@@ -14,8 +14,13 @@ from .typed_texture import validate_typed_resource
 
 def _typed_descriptor(value: Mapping[str, Any]) -> dict[str, Any]:
     required = {"dtype", "shape", "stride", "alignment", "usage"}
-    if set(value) != required:
-        raise ValueError(f"typed blob descriptor fields must be exactly {sorted(required)}")
+    optional = {"kind", "module_name", "format", "color_space"}
+    fields = set(value)
+    if not required.issubset(fields) or not fields.issubset(required | optional):
+        raise ValueError(
+            "typed payload descriptor fields must contain "
+            f"{sorted(required)} and only use optional fields {sorted(optional)}"
+        )
     return {name: value[name] for name in sorted(value)}
 
 

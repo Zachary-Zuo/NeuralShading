@@ -18,6 +18,13 @@ from .acceptance import (
     linear_hdr_image_metrics,
     load_reference_acceptance,
 )
+from .query import (
+    ReferenceEvaluateResult,
+    ReferencePdfResult,
+    ReferenceQueryDispatcher,
+    ReferenceSampleResult,
+    ScatteringQuery,
+)
 
 __all__ = [
     "ReferenceImplementation",
@@ -36,4 +43,9 @@ __all__ = [
     "deterministic_directional_metrics",
     "linear_hdr_image_metrics",
     "load_reference_acceptance",
+    "ReferenceEvaluateResult",
+    "ReferencePdfResult",
+    "ReferenceQueryDispatcher",
+    "ReferenceSampleResult",
+    "ScatteringQuery",
 ]

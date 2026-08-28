@@ -10,8 +10,8 @@ from torch import nn
 from ncls.core.identity import require_sha256, sha256_json
 from ncls.core.scattering import MaterialPayload, RuntimePayload
 from ncls.core.source import SourceEditResult, SourceSnapshot
-from ncls.data.training_batch import TrainingBatch
-from ncls.data.native_features import NativeFeaturePyramid
+from ncls.learning.source_adaptation import NativeFeaturePyramid
+from ncls.learning.batches import OnlineTrainingBatch
 
 
 AdaptationAction = Literal["unchanged", "runtime-patch", "recompile", "unsupported"]
@@ -75,7 +75,7 @@ class MethodDescriptor:
     display_name: str
     implementation_sha256: str
     supported_sources: tuple[SourceAdaptationContract, ...]
-    training_batch_requirements: tuple[str, ...]
+    training_batch_requirements: Mapping[str, tuple[str, ...]]
     tensor_state_schema: tuple[TensorField, ...]
     runtime_abi: str
     capabilities: int
@@ -91,8 +91,24 @@ class MethodDescriptor:
         source_keys = {(item.family_id, item.source_contract_version) for item in self.supported_sources}
         if len(source_keys) != len(self.supported_sources):
             raise ValueError("method source adaptation contracts must be unique")
-        if not self.training_batch_requirements:
-            raise ValueError("method descriptor requires training batch fields")
+        requirements = {
+            str(kind): tuple(fields)
+            for kind, fields in self.training_batch_requirements.items()
+        }
+        if set(requirements) != {"reference-evaluator", "method-sampler"}:
+            raise ValueError("method descriptor requires both typed training routes")
+        if any(not fields or len(set(fields)) != len(fields) for fields in requirements.values()):
+            raise ValueError("method typed route fields must be nonempty and unique")
+        if "target_f" not in requirements["reference-evaluator"]:
+            raise ValueError("reference-evaluator requirements must include target_f")
+        if "sample_u" not in requirements["method-sampler"]:
+            raise ValueError("method-sampler requirements must include sample_u")
+        if any(
+            legacy in fields
+            for fields in requirements.values()
+            for legacy in ("target", "query_role", "reference_pdf", "solid_angle_weight")
+        ):
+            raise ValueError("method descriptor contains a removed training batch field")
         if len({field.name for field in self.tensor_state_schema}) != len(self.tensor_state_schema):
             raise ValueError("method tensor state fields must be unique")
         if self.capabilities <= 0:
@@ -101,7 +117,7 @@ class MethodDescriptor:
         if set(self.bounded_execution) != required_bounds or any(int(value) < 1 for value in self.bounded_execution.values()):
             raise ValueError(f"bounded_execution fields must be exactly {sorted(required_bounds)}")
         object.__setattr__(self, "supported_sources", tuple(self.supported_sources))
-        object.__setattr__(self, "training_batch_requirements", tuple(self.training_batch_requirements))
+        object.__setattr__(self, "training_batch_requirements", requirements)
         object.__setattr__(self, "tensor_state_schema", tuple(self.tensor_state_schema))
         object.__setattr__(self, "bounded_execution", dict(self.bounded_execution))
         object.__setattr__(self, "cost_claims", dict(self.cost_claims))
@@ -117,7 +133,10 @@ class MethodDescriptor:
             "display_name": self.display_name,
             "implementation_sha256": self.implementation_sha256,
             "supported_sources": [item.to_dict() for item in self.supported_sources],
-            "training_batch_requirements": list(self.training_batch_requirements),
+            "training_batch_requirements": {
+                kind: list(fields)
+                for kind, fields in self.training_batch_requirements.items()
+            },
             "tensor_state_schema": [item.to_dict() for item in self.tensor_state_schema],
             "runtime_abi": self.runtime_abi,
             "capabilities": self.capabilities,
@@ -146,7 +165,7 @@ class MethodDefinition(ABC):
     def training_objective(
         self,
         model: nn.Module,
-        batches: Mapping[str, TrainingBatch],
+        batches: Mapping[str, OnlineTrainingBatch],
         lifecycle: Mapping[str, Any],
     ) -> tuple[torch.Tensor, Mapping[str, torch.Tensor | float]]:
         raise NotImplementedError

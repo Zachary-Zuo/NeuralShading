@@ -4,6 +4,8 @@ from pathlib import Path
 
 import numpy as np
 
+from ncls.core.source import source_family_descriptors
+
 from ncls.references import (
     deterministic_directional_metrics,
     linear_hdr_image_metrics,
@@ -12,9 +14,33 @@ from ncls.references import (
     resolve_reference_path,
     validate_reference_tree,
 )
+from ncls.references.programs import (
+    discover_reference_programs,
+    get_reference_program_for_source,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_every_source_contract_has_one_full_canonical_reference_program() -> None:
+    programs = discover_reference_programs()
+    assert len(programs) == 5
+    assert len(
+        {
+            (item.descriptor.family_id, item.descriptor.source_contract_version)
+            for item in programs
+        }
+    ) == len(programs)
+    for source in source_family_descriptors():
+        program = get_reference_program_for_source(
+            source.family_id,
+            source.source_contract_version,
+            source_descriptor=source,
+        )
+        assert source.reference_program_id == (
+            f"{program.descriptor.program_key}@{program.descriptor.version}"
+        )
 
 
 def test_reference_registry_and_packages_are_consistent() -> None:

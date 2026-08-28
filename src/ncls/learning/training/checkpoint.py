@@ -18,9 +18,10 @@ class TrainingCheckpoint:
     implementation_identity: str
     training_config: Mapping[str, Any]
     training_config_sha256: str
-    data_source_identity: str
+    reference_program_identity: str
+    query_stream_identity: str
     source_contracts: tuple[Mapping[str, Any], ...]
-    source_state_ids: tuple[str, ...]
+    source_snapshot_ids: tuple[str, ...]
     step: int
     phase: str
     selection_evidence: Mapping[str, Any]
@@ -30,15 +31,20 @@ class TrainingCheckpoint:
     scaler_state: Mapping[str, Any] = field(default_factory=dict)
     rng_state: Mapping[str, Any] = field(default_factory=dict)
     lifecycle_state: Mapping[str, Any] = field(default_factory=dict)
-    batch_source_state: Mapping[str, Any] = field(default_factory=dict)
+    query_stream_state: Mapping[str, Any] = field(default_factory=dict)
     validation_state: Mapping[str, Any] = field(default_factory=dict)
     format_name: str = "ncls.training-checkpoint"
-    format_version: int = 2
+    format_version: int = 3
 
     def __post_init__(self) -> None:
-        if self.format_name != "ncls.training-checkpoint" or self.format_version != 2:
+        if self.format_name != "ncls.training-checkpoint" or self.format_version != 3:
             raise ValueError("unsupported TrainingCheckpoint format")
-        if not self.method_key or not self.implementation_identity or not self.data_source_identity:
+        if (
+            not self.method_key
+            or not self.implementation_identity
+            or not self.reference_program_identity
+            or not self.query_stream_identity
+        ):
             raise ValueError("TrainingCheckpoint identities must be nonempty")
         require_sha256("method_descriptor_sha256", self.method_descriptor_sha256)
         require_sha256("training_config_sha256", self.training_config_sha256)
@@ -46,10 +52,10 @@ class TrainingCheckpoint:
             raise ValueError("TrainingCheckpoint training config hash mismatch")
         if self.step < 0 or self.phase not in {"bootstrap", "finetune", "complete"}:
             raise ValueError("TrainingCheckpoint step or phase is invalid")
-        if not self.source_contracts or not self.source_state_ids:
-            raise ValueError("TrainingCheckpoint source contracts and state IDs are required")
-        for state_id in self.source_state_ids:
-            require_sha256("source_state_id", state_id)
+        if not self.source_contracts or not self.source_snapshot_ids:
+            raise ValueError("TrainingCheckpoint source contracts and snapshot IDs are required")
+        for snapshot_id in self.source_snapshot_ids:
+            require_sha256("source_snapshot_id", snapshot_id)
         state = dict(self.model_state)
         if not state or any(not isinstance(value, torch.Tensor) for value in state.values()):
             raise ValueError("TrainingCheckpoint model_state must be a nonempty tensor mapping")
@@ -57,7 +63,7 @@ class TrainingCheckpoint:
             raise ValueError("TrainingCheckpoint model tensors must be finite")
         object.__setattr__(self, "training_config", dict(self.training_config))
         object.__setattr__(self, "source_contracts", tuple(dict(value) for value in self.source_contracts))
-        object.__setattr__(self, "source_state_ids", tuple(self.source_state_ids))
+        object.__setattr__(self, "source_snapshot_ids", tuple(self.source_snapshot_ids))
         object.__setattr__(self, "selection_evidence", dict(self.selection_evidence))
         object.__setattr__(self, "model_state", state)
         object.__setattr__(self, "optimizer_state", dict(self.optimizer_state))
@@ -65,7 +71,7 @@ class TrainingCheckpoint:
         object.__setattr__(self, "scaler_state", dict(self.scaler_state))
         object.__setattr__(self, "rng_state", dict(self.rng_state))
         object.__setattr__(self, "lifecycle_state", dict(self.lifecycle_state))
-        object.__setattr__(self, "batch_source_state", dict(self.batch_source_state))
+        object.__setattr__(self, "query_stream_state", dict(self.query_stream_state))
         object.__setattr__(self, "validation_state", dict(self.validation_state))
 
     def validate_method(self, descriptor: MethodDescriptor) -> None:
@@ -95,14 +101,15 @@ class TrainingCheckpoint:
             "method_key": self.method_key, "method_descriptor_sha256": self.method_descriptor_sha256,
             "implementation_identity": self.implementation_identity,
             "training_config": dict(self.training_config), "training_config_sha256": self.training_config_sha256,
-            "data_source_identity": self.data_source_identity,
+            "reference_program_identity": self.reference_program_identity,
+            "query_stream_identity": self.query_stream_identity,
             "source_contracts": [dict(value) for value in self.source_contracts],
-            "source_state_ids": list(self.source_state_ids), "step": self.step, "phase": self.phase,
+            "source_snapshot_ids": list(self.source_snapshot_ids), "step": self.step, "phase": self.phase,
             "selection_evidence": dict(self.selection_evidence), "model_state": dict(self.model_state),
             "optimizer_state": dict(self.optimizer_state), "scheduler_state": dict(self.scheduler_state),
             "scaler_state": dict(self.scaler_state), "rng_state": dict(self.rng_state),
             "lifecycle_state": dict(self.lifecycle_state),
-            "batch_source_state": dict(self.batch_source_state),
+            "query_stream_state": dict(self.query_stream_state),
             "validation_state": dict(self.validation_state),
         }
 
@@ -111,9 +118,10 @@ class TrainingCheckpoint:
         required = {
             "format_name", "format_version", "method_key", "method_descriptor_sha256",
             "implementation_identity", "training_config", "training_config_sha256",
-            "data_source_identity", "source_contracts", "source_state_ids", "step", "phase",
+            "reference_program_identity", "query_stream_identity", "source_contracts",
+            "source_snapshot_ids", "step", "phase",
             "selection_evidence", "model_state", "optimizer_state", "scheduler_state",
-            "scaler_state", "rng_state", "lifecycle_state", "batch_source_state",
+            "scaler_state", "rng_state", "lifecycle_state", "query_stream_state",
             "validation_state",
         }
         if set(value) != required:
@@ -121,11 +129,12 @@ class TrainingCheckpoint:
         return cls(
             str(value["method_key"]), str(value["method_descriptor_sha256"]),
             str(value["implementation_identity"]), value["training_config"],
-            str(value["training_config_sha256"]), str(value["data_source_identity"]),
-            tuple(value["source_contracts"]), tuple(str(item) for item in value["source_state_ids"]),
+            str(value["training_config_sha256"]),
+            str(value["reference_program_identity"]), str(value["query_stream_identity"]),
+            tuple(value["source_contracts"]), tuple(str(item) for item in value["source_snapshot_ids"]),
             int(value["step"]), str(value["phase"]), value["selection_evidence"], value["model_state"],
             value["optimizer_state"], value["scheduler_state"], value["scaler_state"], value["rng_state"],
-            value["lifecycle_state"], value["batch_source_state"], value["validation_state"],
+            value["lifecycle_state"], value["query_stream_state"], value["validation_state"],
             str(value["format_name"]), int(value["format_version"]),
         )
 

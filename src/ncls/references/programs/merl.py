@@ -31,7 +31,7 @@ class MerlReferenceProgram(FileReferenceProgram):
             raise ValueError("MERL reference package compilation requires source asset_root")
         table = np.ascontiguousarray(MerlBrdfReference(material, Path(asset_root)).gpu_table(), dtype=np.float32)
         return MaterialPayload(snapshot.snapshot_id, {"brdf-table": table.tobytes()}, {
-            "brdf-table": {"dtype": "float32", "shape": list(table.shape), "stride": 12, "alignment": 16, "usage": "gNclsMeasuredBrdfTable"}
+            "brdf-table": {"kind": "structured-buffer", "dtype": "float32", "shape": list(table.shape), "stride": 12, "alignment": 16, "usage": "gNclsMeasuredBrdfTable"}
         })
 
 

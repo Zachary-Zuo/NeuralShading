@@ -8,7 +8,7 @@ from torch.nn import functional as F
 
 from ncls.learning.slang.runtime import SlangModuleSession
 from ncls.paths import PROJECT_ROOT
-from ncls.data.native_features import NativeFeaturePyramid
+from ncls.learning.source_adaptation import NativeFeaturePyramid
 
 
 _CORE_PATH = PROJECT_ROOT / "shaders/ncls/backends/nvidia_neural_appearance/nvidia_neural_appearance_core.slang"
@@ -276,7 +276,9 @@ class NvidiaNeuralAppearanceModel(nn.Module):
         latent_queries = latent[:, None, :].expand(-1, wi.shape[1], -1)
         return torch.cat((projected, latent_queries), dim=-1)
 
-    def response(self, latent: torch.Tensor, wo: torch.Tensor, wi: torch.Tensor) -> torch.Tensor:
+    def evaluate_f(
+        self, latent: torch.Tensor, wo: torch.Tensor, wi: torch.Tensor
+    ) -> torch.Tensor:
         inputs = self._evaluation_input(latent, wo, wi)
         hidden = F.relu(F.linear(inputs, self.evaluate_w0, self.evaluate_b0))
         hidden = F.relu(F.linear(hidden, self.evaluate_w1, self.evaluate_b1))
@@ -284,7 +286,7 @@ class NvidiaNeuralAppearanceModel(nn.Module):
         raw = F.linear(hidden, self.evaluate_out_w, self.evaluate_out_b)
         return torch.exp(raw - 3.0)
 
-    def response_slang(
+    def evaluate_f_slang(
         self, latent: torch.Tensor, wo: torch.Tensor, wi: torch.Tensor
     ) -> torch.Tensor:
         """独立部署数学oracle；训练主路径不通过Slang autograd。"""
@@ -310,11 +312,12 @@ class NvidiaNeuralAppearanceModel(nn.Module):
         raw = self._linear_slang(
             "nclsNvidiaNeuralEvaluatorDot64Out", self.evaluate_out_w, self.evaluate_out_b, hidden
         )
-        return getattr(self.session.module, "nclsNvidiaNeuralDecodeResponse" + role)(raw)
+        return getattr(self.session.module, "nclsNvidiaNeuralDecodeF" + role)(raw)
 
-    def forward(self, latent: torch.Tensor, wo: torch.Tensor, wi: torch.Tensor) -> torch.Tensor:
-        response = self.response(latent, wo, wi)
-        return response / torch.clamp(wi[..., 2:3], min=1e-6)
+    def forward(
+        self, latent: torch.Tensor, wo: torch.Tensor, wi: torch.Tensor
+    ) -> torch.Tensor:
+        return self.evaluate_f(latent, wo, wi)
 
     def sampler_raw(self, latent: torch.Tensor, wo: torch.Tensor, *, detach_latent: bool) -> torch.Tensor:
         if detach_latent:

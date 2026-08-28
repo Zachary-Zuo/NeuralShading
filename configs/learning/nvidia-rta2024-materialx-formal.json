@@ -1,18 +1,18 @@
 {
   "format_name": "ncls.training-config",
-  "format_version": 2,
+  "format_version": 3,
   "method_key": "nvidia-neural-appearance",
   "run_class": "formal",
-  "correspondence_id": "nvidia-rta2024-functional@1",
+  "correspondence_id": "nvidia-rta2024-functional-f@2",
   "recipe_id": "nvidia-rta2024-materialx-formal-300k-stage100k@1",
   "source_adaptation_id": "materialx-standard-surface-spatial@1",
-  "batch_source": {
-    "kind": "live",
-    "options": {
-      "materialx_asset_id": "american_walnut_veneer",
-      "query_tile_size": 262144
-    }
+  "source": {
+    "family_id": "materialx.document@1.39.4",
+    "materials": [
+      {"locator": {"kind": "catalog-asset", "asset_id": "american_walnut_veneer"}}
+    ]
   },
+  "online_query": {"recipe_id": "generic-reference-query@1", "evaluation_samples": 1},
   "model_context": {
     "native_feature_count": 38,
     "latent_width": 4096,
@@ -28,11 +28,10 @@
       "name": "evaluator",
       "batch_size": 65000,
       "direction_count": 1,
-      "query_role": 0,
+      "kind": "reference-evaluator",
       "seed_offset": 0,
       "options": {
         "direction_proposal": "uniform-half-difference@1",
-        "target_estimator": "reference",
         "mip_exponential_scale": 1.0,
         "spatial_samples_per_texel_area": 1.0,
         "maximum_spatial_samples": 64
@@ -42,11 +41,10 @@
       "name": "sampler",
       "batch_size": 65000,
       "direction_count": 1,
-      "query_role": 1,
+      "kind": "method-sampler",
       "seed_offset": 1,
       "options": {
         "direction_proposal": "uniform-hemisphere-conditioning@1",
-        "target_estimator": "learned-sampler",
         "mip_exponential_scale": 1.0,
         "spatial_samples_per_texel_area": 1.0,
         "maximum_spatial_samples": 64

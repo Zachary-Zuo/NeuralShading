@@ -215,17 +215,9 @@ float[NCLS_NVIDIA_NEURAL_SAMPLER_INPUT] nclsNvidiaNeuralSamplerInput(
 }
 
 [Differentiable]
-float3 nclsNvidiaNeuralDecodeResponse(float3 raw)
+float3 nclsNvidiaNeuralDecodeF(float3 raw)
 {
     return exp(raw - 3.0f);
-}
-
-[Differentiable]
-float3 nclsNvidiaNeuralResponseToBareF(
-    float3 response,
-    no_diff float3 projectWi)
-{
-    return response / max(projectWi.z, NCLS_NVIDIA_NEURAL_MIN_COS);
 }
 
 [Differentiable]
@@ -326,7 +318,7 @@ float[NCLS_NVIDIA_NEURAL_EVALUATE_INPUT] nclsNvidiaNeuralPreparedEvaluationInput
 }
 
 [Differentiable]
-float3 nclsNvidiaNeuralEvaluateResponse(
+float3 nclsNvidiaNeuralEvaluateF(
     NclsNvidiaNeuralPrepared prepared,
     no_diff float3 projectWi,
     NclsNvidiaNeuralParams params)
@@ -335,17 +327,7 @@ float3 nclsNvidiaNeuralEvaluateResponse(
         nclsNvidiaNeuralPreparedEvaluationInput(prepared, projectWi);
     float3 raw;
     nclsNvidiaNeuralEvaluateMlp(input, params, raw);
-    return nclsNvidiaNeuralDecodeResponse(raw);
-}
-
-[Differentiable]
-float3 nclsNvidiaNeuralEvaluateF(
-    NclsNvidiaNeuralPrepared prepared,
-    no_diff float3 projectWi,
-    NclsNvidiaNeuralParams params)
-{
-    return nclsNvidiaNeuralResponseToBareF(
-        nclsNvidiaNeuralEvaluateResponse(prepared, projectWi, params), projectWi);
+    return nclsNvidiaNeuralDecodeF(raw);
 }
 
 float nclsNvidiaNeuralPreparedPdf(
@@ -556,29 +538,15 @@ float[NCLS_NVIDIA_NEURAL_SAMPLER_INPUT] nclsNvidiaNeuralSamplerInputInference(
 }
 
 [Differentiable]
-float3 nclsNvidiaNeuralDecodeResponseTraining(float3 raw)
+float3 nclsNvidiaNeuralDecodeFTraining(float3 raw)
 {
-    return nclsNvidiaNeuralDecodeResponse(raw);
+    return nclsNvidiaNeuralDecodeF(raw);
 }
 
 [Differentiable]
-float3 nclsNvidiaNeuralDecodeResponseInference(float3 raw)
+float3 nclsNvidiaNeuralDecodeFInference(float3 raw)
 {
-    return nclsNvidiaNeuralDecodeResponse(raw);
-}
-
-[Differentiable]
-float3 nclsNvidiaNeuralResponseToBareFTraining(
-    float3 response, no_diff float3 projectWi)
-{
-    return nclsNvidiaNeuralResponseToBareF(response, projectWi);
-}
-
-[Differentiable]
-float3 nclsNvidiaNeuralResponseToBareFInference(
-    float3 response, no_diff float3 projectWi)
-{
-    return nclsNvidiaNeuralResponseToBareF(response, projectWi);
+    return nclsNvidiaNeuralDecodeF(raw);
 }
 
 #endif

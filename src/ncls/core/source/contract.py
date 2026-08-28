@@ -295,6 +295,12 @@ class SourceFamilyDefinition(ABC):
     descriptor: SourceFamilyDescriptor
 
     @abstractmethod
+    def load_snapshot(self, locator: Mapping[str, Any]) -> SourceSnapshot:
+        """从 family-native locator 构造 canonical source snapshot。"""
+
+        raise NotImplementedError
+
+    @abstractmethod
     def describe_parameters(self, snapshot: SourceSnapshot) -> SourceParameterView:
         raise NotImplementedError
 

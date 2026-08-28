@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 from ncls.core.identity import sha256_json
 
@@ -11,25 +11,32 @@ from ncls.core.identity import sha256_json
 @dataclass(frozen=True)
 class TrainingRoute:
     name: str
+    kind: Literal["reference-evaluator", "method-sampler"]
     batch_size: int
     direction_count: int
-    query_role: int
     seed_offset: int
     options: Mapping[str, Any]
 
     def __post_init__(self) -> None:
-        if not self.name or self.batch_size < 1 or self.direction_count < 1:
+        if (
+            not self.name
+            or self.kind not in {"reference-evaluator", "method-sampler"}
+            or self.batch_size < 1
+            or self.direction_count < 1
+        ):
             raise ValueError("training route identity and sizes must be positive")
-        if self.query_role < 0 or self.seed_offset < 0:
-            raise ValueError("training route role and seed_offset must be nonnegative")
+        if self.seed_offset < 0:
+            raise ValueError("training route seed_offset must be nonnegative")
+        if "target_estimator" in self.options or "query_role" in self.options:
+            raise ValueError("training route contains a removed legacy field")
         object.__setattr__(self, "options", dict(self.options))
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
+            "kind": self.kind,
             "batch_size": self.batch_size,
             "direction_count": self.direction_count,
-            "query_role": self.query_role,
             "seed_offset": self.seed_offset,
             "options": dict(self.options),
         }
@@ -37,13 +44,14 @@ class TrainingRoute:
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "TrainingRoute":
         required = {
-            "name", "batch_size", "direction_count", "query_role", "seed_offset", "options"
+            "name", "kind", "batch_size", "direction_count", "seed_offset", "options"
         }
         if set(value) != required or not isinstance(value["options"], Mapping):
             raise ValueError(f"training route fields must be exactly {sorted(required)}")
         return cls(
-            str(value["name"]), int(value["batch_size"]), int(value["direction_count"]),
-            int(value["query_role"]), int(value["seed_offset"]), value["options"],
+            str(value["name"]), str(value["kind"]),  # type: ignore[arg-type]
+            int(value["batch_size"]), int(value["direction_count"]),
+            int(value["seed_offset"]), value["options"],
         )
 
 
@@ -54,7 +62,8 @@ class TrainingConfig:
     correspondence_id: str
     recipe_id: str
     source_adaptation_id: str
-    batch_source: Mapping[str, Any]
+    source: Mapping[str, Any]
+    online_query: Mapping[str, Any]
     model_context: Mapping[str, Any]
     lifecycle: Mapping[str, Any]
     routes: tuple[TrainingRoute, ...]
@@ -68,21 +77,39 @@ class TrainingConfig:
     validation: Mapping[str, Any]
     checkpoint_selection: str
     format_name: str = "ncls.training-config"
-    format_version: int = 2
+    format_version: int = 3
 
     def __post_init__(self) -> None:
-        if self.format_name != "ncls.training-config" or self.format_version != 2:
+        if self.format_name != "ncls.training-config" or self.format_version != 3:
             raise ValueError("unsupported training config format")
         if not self.method_key or self.run_class not in {"smoke", "profile", "adapted", "formal"}:
             raise ValueError("training method identity or run_class is invalid")
         if not self.correspondence_id or not self.recipe_id or not self.source_adaptation_id or self.seed < 0 or not self.device:
             raise ValueError("training correspondence/source identity, seed and device are required")
 
-        source = dict(self.batch_source)
-        if set(source) != {"kind", "options"} or source["kind"] not in {"offline", "live"}:
-            raise ValueError("batch_source fields must be kind/offline|live and options")
-        if not isinstance(source["options"], Mapping):
-            raise ValueError("batch_source options must be an object")
+        source = dict(self.source)
+        if set(source) != {"family_id", "materials"}:
+            raise ValueError("source fields must be family_id and materials")
+        materials = source["materials"]
+        if (
+            not isinstance(source["family_id"], str)
+            or not source["family_id"]
+            or not isinstance(materials, (list, tuple))
+            or not materials
+            or any(
+                not isinstance(item, Mapping)
+                or set(item) != {"locator"}
+                or not isinstance(item["locator"], Mapping)
+                or not item["locator"]
+                for item in materials
+            )
+        ):
+            raise ValueError("source family_id and material locators are invalid")
+        online_query = dict(self.online_query)
+        if not online_query:
+            raise ValueError("online_query recipe is required")
+        if any(name in online_query for name in ("offline", "recorded", "hdf5")):
+            raise ValueError("online_query cannot declare an offline or recorded data path")
 
         lifecycle = dict(self.lifecycle)
         if set(lifecycle) != {"total_steps", "materialization_step"}:
@@ -97,6 +124,8 @@ class TrainingConfig:
             raise ValueError("training routes must be nonempty with unique names")
         if len({route.seed_offset for route in routes}) != len(routes):
             raise ValueError("training routes require independent seed offsets")
+        if {route.kind for route in routes} != {"reference-evaluator", "method-sampler"}:
+            raise ValueError("training requires evaluator and method-sampler route kinds")
 
         optimizer = dict(self.optimizer)
         if set(optimizer) != {"kind", "betas", "epsilon", "weight_decay"} or optimizer["kind"] != "adam":
@@ -130,7 +159,15 @@ class TrainingConfig:
         if not self.model_context or not self.filtering or not self.loss:
             raise ValueError("model_context, filtering and loss recipes are required")
 
-        object.__setattr__(self, "batch_source", {"kind": source["kind"], "options": dict(source["options"])})
+        object.__setattr__(
+            self,
+            "source",
+            {
+                "family_id": source["family_id"],
+                "materials": [{"locator": dict(item["locator"])} for item in materials],
+            },
+        )
+        object.__setattr__(self, "online_query", online_query)
         object.__setattr__(self, "model_context", dict(self.model_context))
         object.__setattr__(self, "lifecycle", {"total_steps": total_steps, "materialization_step": materialization_step})
         object.__setattr__(self, "routes", routes)
@@ -162,7 +199,14 @@ class TrainingConfig:
             "correspondence_id": self.correspondence_id,
             "recipe_id": self.recipe_id,
             "source_adaptation_id": self.source_adaptation_id,
-            "batch_source": {"kind": self.batch_source["kind"], "options": dict(self.batch_source["options"])},
+            "source": {
+                "family_id": self.source["family_id"],
+                "materials": [
+                    {"locator": dict(item["locator"])}
+                    for item in self.source["materials"]
+                ],
+            },
+            "online_query": dict(self.online_query),
             "model_context": dict(self.model_context),
             "lifecycle": dict(self.lifecycle),
             "routes": [route.to_dict() for route in self.routes],
@@ -181,7 +225,7 @@ class TrainingConfig:
     def from_dict(cls, value: Mapping[str, Any]) -> "TrainingConfig":
         required = {
             "format_name", "format_version", "method_key", "run_class", "correspondence_id", "recipe_id",
-            "source_adaptation_id", "batch_source", "model_context", "lifecycle", "routes",
+            "source_adaptation_id", "source", "online_query", "model_context", "lifecycle", "routes",
             "seed", "device", "optimizer", "schedule", "mollification", "filtering", "loss",
             "validation", "checkpoint_selection",
         }
@@ -189,7 +233,7 @@ class TrainingConfig:
             raise ValueError(f"training config fields must be exactly {sorted(required)}")
         return cls(
             str(value["method_key"]), str(value["run_class"]), str(value["correspondence_id"]), str(value["recipe_id"]),
-            str(value["source_adaptation_id"]), value["batch_source"], value["model_context"],
+            str(value["source_adaptation_id"]), value["source"], value["online_query"], value["model_context"],
             value["lifecycle"], tuple(TrainingRoute.from_dict(item) for item in value["routes"]),
             int(value["seed"]), str(value["device"]), value["optimizer"], value["schedule"],
             value["mollification"], value["filtering"], value["loss"], value["validation"],

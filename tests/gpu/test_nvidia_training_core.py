@@ -35,13 +35,13 @@ def test_fp32_torch_training_core_matches_slang_functional_oracle() -> None:
     wi = _hemisphere(257 * 3, device=device).reshape(257, 3, 3)
 
     with torch.no_grad():
-        torch_response = model.response(latent, wo, wi)
-        slang_response = model.response_slang(latent, wo, wi)
+        torch_f = model.evaluate_f(latent, wo, wi)
+        slang_f = model.evaluate_f_slang(latent, wo, wi)
         raw = model.sampler_raw(latent, wo, detach_latent=True)
         torch_pdf = model._sampler_pdf_from_raw(raw, wo, wi)
         slang_pdf = model.sampler_pdf_slang(raw, wo, wi)
 
-    torch.testing.assert_close(torch_response, slang_response, rtol=2e-5, atol=2e-6)
+    torch.testing.assert_close(torch_f, slang_f, rtol=2e-5, atol=2e-6)
     torch.testing.assert_close(torch_pdf, slang_pdf, rtol=5e-5, atol=2e-6)
 
 
@@ -59,10 +59,10 @@ def test_fp32_torch_training_core_has_finite_joint_gradients() -> None:
     latent = torch.randn((1024, 8), dtype=torch.float32, device=device, requires_grad=True)
     wo = _hemisphere(1024, device=device)
     wi = _hemisphere(1024, device=device)[:, None, :]
-    response = model.response(latent, wo, wi).mean()
+    evaluate_f = model.evaluate_f(latent, wo, wi).mean()
     raw = model.sampler_raw(latent, wo, detach_latent=True)
     pdf = model._sampler_pdf_from_raw(raw, wo, wi).mean()
-    (response + pdf).backward()
+    (evaluate_f + pdf).backward()
 
     assert latent.grad is not None and bool(torch.isfinite(latent.grad).all())
     assert all(
@@ -87,11 +87,11 @@ def test_sampler_score_path_updates_only_sampler_head() -> None:
     latent = torch.randn((2048, 8), dtype=torch.float32, device=device, requires_grad=True)
     wo = _hemisphere(2048, device=device)
     sample_u = torch.rand((2048, 2), dtype=torch.float32, device=device)
-    _, pdf, _, valid = model.sampler_sample_with_head(
+    wi, pdf, _, valid = model.sampler_sample_with_head(
         latent, wo, sample_u, "nvidia-diffuse-ggx9"
     )
-    response = torch.full((2048, 1, 3), 0.25, dtype=torch.float32, device=device)
-    loss, valid_fraction = sampler_forward_kl_score(response, pdf, valid)
+    evaluator_f = torch.full((2048, 1, 3), 0.25, dtype=torch.float32, device=device)
+    loss, valid_fraction = sampler_forward_kl_score(evaluator_f, wi, pdf, valid)
     assert float(valid_fraction) > 0.5
     loss.backward()
 
