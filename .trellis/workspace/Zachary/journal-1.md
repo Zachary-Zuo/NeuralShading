@@ -278,3 +278,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 13: 补齐 vMaterials preset catalog 与 capability audit
+
+**Date**: 2026-08-28
+**Task**: 补齐 vMaterials preset catalog 与 capability audit
+**Branch**: `main`
+
+### Summary
+
+完成 11 个 vMaterials family、172 个 authored preset 的 SDK discovery、资源闭包与 capability catalog；将 Rgba_16 等输入格式无损接入通用 MDL/Falcor/viewer typed texture 路径，punched suede 仅因 geometry.cutout_opacity 输出合同缺失而显式失败关闭。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d8d9795` | (see git log) |
+| `5b9672c` | (see git log) |
+
+### Status
+
+[OK] **Completed**

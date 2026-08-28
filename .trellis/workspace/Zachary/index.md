@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 12
+- **Total Sessions**: 13
 - **Last Active**: 2026-08-28
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~280 | Active |
+| `journal-1.md` | ~302 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 13 | 2026-08-28 | 补齐 vMaterials preset catalog 与 capability audit | `d8d9795`, `5b9672c` | `main` |
 | 12 | 2026-08-28 | 统一材质 Reference 在线训练数据回路 | `cf01d33`, `8ea0e60` | `main` |
 | 11 | 2026-08-28 | 完成 PT 椒盐噪点与交互累积根迁移 | `2804c11`, `7e55750`, `5c81551`, `d24a3f4` | `main` |
 | 10 | 2026-08-28 | 统一材质散射合同根本迁移 | `7a7d78d` | `main` |
