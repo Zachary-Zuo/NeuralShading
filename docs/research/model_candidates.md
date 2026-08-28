@@ -25,14 +25,14 @@ m            : 一个 source material state（或资产）
 z_m ∈ R^D    : 可部署 material code
 wo, wi ∈ S²  : 局部 frame 中的出射/入射方向
 f(m,wo,wi)   : evaluate() 的语义输出，线性 RGB，不含几何余弦
-y = f·|cosθi|: HDF5 监督量（response_cos）
+target_f      : online source evaluate() 直接产生的线性 RGB f
 
 c      = Condition(z_m)          # 每材质一次，可烘焙
 p      = Prepare(c, wo)          # 每 (材质, 着色点, wo) 一次，供多个 wi 复用
 f_hat  = Evaluate(p, wi; c)      # 每 wi 一次
 ```
 
-训练 batch 形状为 `wo:[G,3]`、`wi:[G,N,3]`、`y:[G,N,3]`，但模型不得依赖固定 `N`：单次随机 `wi` 查询必须成立，`prepare` 不得隐藏完整方向表。
+evaluator batch形状为`wo:[G,3]`、`wi:[G,N,3]`、`target_f:[G,N,3]`，但模型不得依赖固定`N`：单次随机`wi`查询必须成立，`prepare`不得隐藏完整方向表。sampler batch不含`wi/target_f`，只提供独立conditioning与`sample_u`。
 
 ### 1.2 方向 chart 前端（M1/M2/M4/M5 共用）
 

@@ -2,7 +2,7 @@
 
 每个正式 run（标准档及以上）一行；快速档 smoke 不入表。可比性、结论强度与对照要求见 [`experiment_framework.md`](experiment_framework.md) §7。详细数值与逐项报告留在 `artifacts/`，本表只保留能回答「现在做到哪了」的最小信息。
 
-v1 基准（P0）生效前本表为空；迁移前结果的适用边界已汇总在 [`model_candidates.md`](model_candidates.md) §9，不重复登记，也不为其保留当前 pipeline/config 入口。
+下表是迁移前与迁移过程中的历史证据，其中HDF5/corpus行不属于当前online pipeline，不能与新run作matched比较，也不为它们保留reader、config或磁盘数据。新的正式run应以source snapshot、reference/query identity和`TrainingCheckpoint@3`登记。
 
 | 日期 | run ID | 候选+配置 | 数据版本 | 预算档 | seeds | 方向 L1 (med/p95) | 能量误差 (med/p95) | 结论 | artifacts |
 |---|---|---|---|---|---|---|---|---|---|
@@ -16,9 +16,9 @@ v1 基准（P0）生效前本表为空；迁移前结果的适用边界已汇总
 | 2026-08-26 | `be5c565e0458e5d01332f2aa2df3d13c7446f01bafa0c37512c5aa6e17f8af69` | NVIDIA learned-frame 3×64 + GGX9，离线预算适配诊断 | LayerStack mollification entry `47ef2013…5a89` | 25k（实际 25k；非论文 300k×2×65k online） | `20260824` × 1 | 0.6801 / 1.2053 | 0.4080 / 4.3722 | 网络形态主要对齐论文，但训练使用冻结 HDF5、方向覆盖和总预算远低于论文；best@25k 且 late slope 仍显著为负，只能判为有限/改善/未发散，不能称 paper-scale baseline。当前 checkpoint 本身有显著底色与能量误差 | `artifacts/runs/unified-scattering-03/formal-nvidia-original-seed-20260824/` |
 | 2026-08-27 | `ee3e6fb3bf105008247348989857f81801a9be992a59f90b07cb81eca4fe12fe` | NVIDIA RTA 2024 functional reproduction，MaterialX spatial adaptation，regular packed FP16 | `american_walnut_veneer` snapshot `4543ca60…0f91` | 300k recipe；用户在慢收敛区间冻结并只记录 200k | `20260827` × 1 | 0.0255 / 0.0702 | 0.0116 / 0.0427 | encoder/hierarchy/lifecycle/双65k online route/two-lobe sampler/package PT 已逐项对应；200k packed-FP16 方向与能量观察值如左，matched sampler 相对标准差均值为 uniform 的 0.231×。该行不声称完成原 300k protocol，也不声称复现作者未公开资产/图像 | `artifacts/nvidia-faithful/materialx-recorded-200k/` |
 
-## P1 v1 阶段结论（2026-08-25）
+## P1 v1 历史阶段结论（2026-08-25，迁移前）
 
-- 数据：正式 corpus manifest 为 `artifacts/corpus/layer-stack-p1-v1.json`，`data_id=0513d0c837b109f74cbf6fd4f811e05c6bc68c02226bd6d443f3225ef5dd64b7`；69/69 shards 完整并通过 corpus/hash/split/role 校验。dense audit 为 `artifacts/corpus/layer-stack-p1-v1-dense-audit.json`，没有 state 需要提升到 16,384 directions。reciprocal 与 diagnostic high-noise 行保留 moments/SE，但不参与模型质量宣称。
+- 历史数据：当时的corpus manifest为`artifacts/corpus/layer-stack-p1-v1.json`，`data_id=0513d0c837b109f74cbf6fd4f811e05c6bc68c02226bd6d443f3225ef5dd64b7`。这些记录只解释旧run，当前仓库没有对应reader/config/数据，不能作为新实验输入。
 - 评测：test、adversarial probe、dense slice 共 21 份报告均使用 `quality-v1` suite hash `3cf0db5e35ff06a55aeb43c5da342241f83495a1341ee8c9315f944c6ca758d1`，全部 `valid=True`。M1-S 三个 role 的 med/p95 分别为 `0.0506/0.1196`、`0.0512/0.1219`、`0.0522/0.1170`；M1-M 为 `0.0452/0.1180`、`0.0434/0.1096`、`0.0478/0.0990`。
 - 容量与成本：RTX 4090 PyTorch benchmark 中，M1-S 为 `1.888 ms/query`、`7.662 µs/direction@256`，M1-M 为 `2.574 ms`、`10.447 µs`，M1-L 为 `4.389 ms`、`19.118 µs`。S→M 的 test median/p95 差异 95% CI 分别为 `[-0.0104, 0.0014]`、`[-0.0357, 0.0207]`，没有显著质量收益；M→L 两项都显著变差。按 `experiment_framework.md` §0.1（2026-08-25 恢复的部署预算），本表七个 run 的 `C_eval`（≥ 1.2e5 MAC）、state（≥ 512 B）与烘焙资产（≥ 5.6 KB）全部超软线，登记为非部署候选，只作容量曲线记录；P2 起点按 `p1_audit.md` §5.1 重定：精确 direct-top core + 非负 residual lobe（无 `clamp` 死区）+ 匹配 `sample/pdf`，不以 M1 任何档为起点；不追加 seed。
 - 审计：`artifacts/audits/p1-v1/`（`mechanism-audit.json` report `c78f8951…`、`supplemental-test-audit.json` `3a7d4332…`、`conclusions.md`），`ncls learn audit-p1` 冻结推理，七个 best checkpoint 的逐 state L1 与 `quality-v1` 报告最大差 1.6e-13。判定：M2 死区机制成立（按 core 覆盖分层后与最差 4 个 state 完全重合）；M1-M 系统性偏暗 0.8% 成立但 loss 因果未证；30-state p95 bootstrap CI 跨参考线（M1-M `[0.074, 0.243]`）；M2-S best/last p95 0.586/0.340 暴露 checkpoint 规则缺 tail guard。

@@ -206,12 +206,12 @@ Real-Time Neural Appearance Models 中的 encoder 更接近 source-parameter enc
 
 | 数据语义 | 候选确定性变换 | 逆变换/注意事项 |
 |---|---|---|
-| 非负 `f` 或 `response_cos` | `q = log1p(y / s)` | `y = s * expm1(q)`；`s` 只由 train split 统计 |
+| 非负线性 `f` | `q = log1p(f / s)` | `f = s * expm1(q)`；`s` 只由source-train × query-train统计 |
 | 带正负号的 analytic residual | `q = asinh(r / s)` | `r = s * sinh(q)`；不能对负 residual 使用普通 log |
 | 跨通道长尾 | 对变换后的值用预计算 `mean/std` 标准化 | 统计量按 reference family/通道版本化，并计入 runtime 常量 |
 | 极窄峰与总能量并存 | 分解为积分能量 `E` 与归一化方向 shape | 分别预测 `log E` 和 shape，重建后检查能量与峰位 |
 
-建议的首轮默认候选是：对训练监督 `y=response_cos` 使用 train-only scale 的 `log1p`，再按通道标准化；若使用 analytic residual，则改为 `asinh`。同时保留 raw-linear baseline，避免变换改善了 log 误差却损害线性能量。
+建议的首轮默认候选是：对online `target_f`使用train-only scale的`log1p`，再按通道标准化；若使用analytic residual，则改为`asinh`。同时保留raw-linear baseline，避免变换改善了log误差却损害线性能量。
 
 必须遵守四条边界：
 

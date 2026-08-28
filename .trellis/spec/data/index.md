@@ -1,5 +1,5 @@
-# 数据层
+# Source 与 reference 层
 
-数据层拥有 source family、reference program/execution、query stream、offline/live batch producer 与 corpus sink。当前产品 family 是 LayerStack、OpenPBR、MERL、MaterialX 与 MDL；pbrt 仅为外部 crosscheck。MDL 的正式执行与 oracle 隔离合同见 [mdl-reference.md](mdl-reference.md)。
+这一层拥有 source family、canonical snapshot、reference program、typed runtime/material payload 与统一 GPU query dispatcher。当前正式 family 是 LayerStack、OpenPBR、MERL、MaterialX 与 MDL；pbrt 仅为外部 crosscheck。online训练合同见 [reference-query.md](reference-query.md)，MDL 的正式执行与 oracle 隔离合同见 [mdl-reference.md](mdl-reference.md)。
 
-开发与质量合同见 `../project/unified-pipeline.md`。新增 source 必须提供 canonical snapshot、typed editor、reference program/package 和 parity；不得增加平行 collector/manifest/reader。
+项目没有离线训练数据层或 corpus sink。新增 source 必须提供 locator loader、canonical snapshot、typed editor、完整 `prepare/evaluate/sample/pdf` reference 与 parity；不得增加 collector、磁盘 batch、reader 或 family-specific producer。

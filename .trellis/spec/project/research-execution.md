@@ -3,7 +3,6 @@ name: project-research-execution
 description: 研究任务的验收来源、需求保真、数据与实验冻结、失败分类、长运行进度与性能及收尾边界
 paths:
   - .trellis/tasks/**
-  - configs/corpus/**
   - configs/learning/**
   - configs/evaluation/**
   - docs/research/**

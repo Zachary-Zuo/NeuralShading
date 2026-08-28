@@ -2,56 +2,86 @@
 
 ## 1. Scope / Trigger
 
-修改 source family、reference execution、batch producer、method、checkpoint、package 或 viewer 时适用。新增方法或 source family 不得修改其他层的通用实现。
+修改 source family、reference execution、online producer、method、checkpoint、package 或 viewer 时适用。新增方法或 source family 不得修改其他层的通用实现，也不得增加磁盘 batch、family-specific producer 或 CLI 分支。
 
 ## 2. Signatures
 
 ```text
+SourceFamilyDefinition.load_snapshot(locator) -> SourceSnapshot
 SourceFamilyDefinition.describe_parameters(snapshot) -> SourceParameterView@1
 SourceFamilyDefinition.apply_edit(snapshot, SourceEditPatch@1) -> SourceEditResult
-ReferenceBackend.prepare(context, compiledMaterial) -> ReferenceState
-ReferenceState.evaluate(wiWorld, sampleGenerator) -> NclsScatteringEval
-ReferenceState.sample(sampleGenerator) -> NclsScatteringSample
-ReferenceState.pdf(wiWorld) -> NclsScatteringPdf
-BatchSource.next_batch(size) -> TrainingBatch@1
+ReferenceProgramDefinition.compile_runtime() -> RuntimePayload
+ReferenceProgramDefinition.compile_material(snapshot) -> MaterialPayload
+ReferenceQueryDispatcher.evaluate(query, wi, seeds, evaluation_samples=1) -> ReferenceEvaluateResult
+ReferenceQueryDispatcher.sample(query, seeds) -> ReferenceSampleResult
+ReferenceQueryDispatcher.pdf(query, wi, seeds) -> ReferencePdfResult
+OnlineTrainingProducer.next_batch(TrainingRouteRequest) -> EvaluatorBatch@2 | MethodSamplerBatch@2
 MethodDefinition.compile_runtime(checkpoint) -> RuntimePayload
 MethodDefinition.compile_material(snapshot, checkpoint) -> MaterialPayload
 write_scattering_package(...) -> ScatteringPackageManifest@1
 ScatteringPackage.open(path).create_binding() -> ScatteringBinding
 ```
 
+CLI：
+
+```text
+ncls learn train <config-v3.json> <checkpoint.pt> [--resume <checkpoint.pt>]
+ncls learn evaluate <config-v3.json> <checkpoint.pt> [--batches N]
+ncls learn export <checkpoint.pt> <package-dir> [--material-index N]
+```
+
 ## 3. Contracts
 
-`SourceSnapshot` 是 source 唯一真相；每个 runtime reference 必须完整提供自己的 `prepare/evaluate/sample/pdf`，descriptor 缺任一 path-tracing capability 时 fail closed。统一接口不改变 source 原生参数、图结构、资源、closure 或 proposal；renderer 不识别 source family。batch 全 tensor 同 device；live target 禁止 host readback；checkpoint tensor schema 来自 method descriptor；package 三个 identity 独立；viewer 恰有两个对称 slot，panel 宽度为 `floor(W/2)`。
+- `SourceSnapshot` 是 source 唯一真相。每个正式 source contract 在 registry 中恰有一个 canonical reference，且完整声明 `PREPARE|EVALUATE|SAMPLE|PDF`。
+- `RuntimePayload` / `MaterialPayload` 通过 `kind/dtype/shape/stride/alignment/format/color_space/usage` typed descriptor 绑定；dispatcher 不判断 family 名称。
+- `evaluate()` 返回线性 RGB `f`，不含几何余弦。renderer response adapter 与 sampler density 需要 `f·|cosθi|` 时在消费点显式计算。
+- evaluator route 调 source `prepare/evaluate`，生成 `EvaluatorBatch(conditioning, wi, target_f)`；method-sampler route只生成 `MethodSamplerBatch(conditioning, sample_u)`。source `sample/pdf` 用于 PT 与正确性验证，不是 NVIDIA sampler teacher。
+- live target 保持在同一 CUDA device；CUDA→Falcor、Falcor→CUDA 顺序显式同步，consumer持有 lease 时输出 slot 不得复用。
+- reference 的 `valid=false` 是可表达的局部 domain rejection。producer 在 GPU 上压实有效行并继续补采，记录 `candidate_count/rejected_count/rejection_rounds`；不得 clamp、把无效行当零 GT，或因任一行无效而杀死整个 batch。每轮 result lease 在复制已选行后必须释放，达到 `maximum_rejection_rounds` 则失败。
+- `TrainingConfig@3` 只含 source locator、online query recipe 与 typed routes；`TrainingCheckpoint@3` 保存 source snapshots、reference/query identities、各 route RNG 与 lifecycle。旧 config/checkpoint 无 reader或 converter。
+- 正式训练不读写 HDF5、shard、corpus 或 recorded batch。磁盘只保存 source 资产、checkpoint、package 和 `artifacts/` 中的验证结果。
 
 ## 4. Validation & Error Matrix
 
 | 条件 | 行为 |
 |---|---|
-| stale edit base snapshot | 拒绝 patch |
-| runtime reference 缺 prepare/evaluate/sample/pdf | descriptor 构造失败 |
-| sample/pdf 与 evaluate 不匹配 | GPU 数值正确性失败，不得 fallback 或 clamp |
-| batch 缺 tensor、跨 device 或 shape 错 | 构造失败 |
-| checkpoint hash/schema/tensor 不符 | 拒绝恢复 |
-| package URI 越界、文件/hash/ABI 错 | 拒绝 binding |
-| slot mode 缺 capability | 该 slot 为 unsupported，另一侧不变 |
-| 新 material 编译或验证失败 | 保留旧 binding，显示 error |
+| source/reference family、version、program identity 不一致 | 构造期拒绝 |
+| reference 缺 `prepare/evaluate/sample/pdf` | descriptor/registry 构造失败 |
+| typed binding 缺字段、usage 重复或 payload 尺寸错误 | dispatcher/package writer拒绝 |
+| reference row invalid | 在线拒绝采样并补足 batch；超过轮次上限时报错 |
+| batch tag、shape、device、finite/nonnegative 错 | typed batch构造失败 |
+| config出现 offline/recorded/HDF5或旧 route字段 | `TrainingConfig@3` 拒绝 |
+| checkpoint hash/schema/tensor/query identity不符 | 拒绝恢复 |
+| package URI越界、文件/hash/ABI错 | 拒绝 binding |
+| 新 material 编译或验证失败 | viewer保留旧 binding并显示 error |
 
 ## 5. Good / Base / Bad Cases
 
-- Good：test fixture 使用不同 tensor layout 和 source adapter，不改 runner/writer/viewer。
-- Base：同一 runtime 换 material，只改变 material/package identity。
-- Bad：增加 method-specific CLI/exporter/session，或用 CPU copy 伪装 live batch。
+- Good：新增 source 只实现 family loader、canonical reference program和 typed payload；统一 dispatcher测试其四个 operation。
+- Base：同一个 material-local normal 使少量通用方向 invalid；producer拒绝这些行并用同一确定性 RNG stream补足。
+- Bad：为 LayerStack 增加专用 collector，给 sampler batch塞零 target，或把 `f·cos` 持久化后再除 cosine训练 evaluator。
 
 ## 6. Tests Required
 
-unit 覆盖 scattering descriptor、response measure、batch、method fixture、checkpoint、package tamper、source editor、slot extent/studio；Falcor 覆盖各 source 的 sample→pdf/weight 恒等式、CUDA live batch 与 package absolute-path compile；Release viewer build 后确认 Falcor clean。
+- unit：registry唯一性、typed batch字段、invalid-row压实与lease释放、config/checkpoint v3、resume确定性、package tamper。
+- GPU：五个正式 source 通过同一 dispatcher执行 `evaluate/sample/pdf`；MDL native crosscheck；NVIDIA Python/Slang evaluator与sampler梯度；package shader parity。
+- integration/smoke：LayerStack与带纹理MaterialX各完成 bootstrap→materialization→finetune，并产出可恢复 `TrainingCheckpoint@3`。
+- 静态：`src/shaders/configs/tests/tools` 中无 `ncls.data`、HDF5 reader/writer、source-specific producer或旧采集 shader。
 
 ## 7. Wrong vs Correct
 
 ```python
-# 错
-if isinstance(model, ConcreteModel): ...
-# 对
-loss, metrics = method.training_objective(model, batch, phase)
+# 错：把旧矩形 batch 强加给 sampler route
+TrainingBatch(target=torch.zeros(...), wi=torch.zeros(...), sample_u=u)
+
+# 对：route只携带有语义的字段
+MethodSamplerBatch(conditioning, sample_u=u)
+```
+
+```python
+# 错：局部法线造成一个 invalid row就终止整批
+torch._assert_async(result.valid.all())
+
+# 对：复制valid行、释放lease、继续从同一route RNG stream补采
+selected = torch.nonzero(result.valid.all(dim=1)).flatten()
 ```

@@ -2,7 +2,7 @@
 
 ## 1. Scope / Trigger
 
-新增或修改 `mdl.program@1` source、MDL SDK bridge、compiled artifact、current-Falcor runtime、offline/live producer 或 falcor2 parity 时适用。本合同防止 validation oracle 变成第二条正式路径，也防止将未实现的 texture filtering/closure 能力写入公共 descriptor。
+新增或修改 `mdl.program@1` source、MDL SDK bridge、compiled artifact、current-Falcor canonical backend或falcor2 parity时适用。本合同防止validation oracle成为第二条正式路径，也防止恢复已删除的MDL专用training/query入口。
 
 ## 2. Signatures
 
@@ -10,80 +10,70 @@
 MdlSdkCompilerBridge.inspect(module, material, arguments) -> ncls.mdl-inspection@1
 MdlSdkCompilerBridge.compile_snapshot(SourceSnapshot) -> ncls.mdl-compiled-artifact@1
 MdlSdkCompilerBridge.native_evaluate(...) -> validation-only native packet
-MdlProvider.evaluate(SourceState, SurfaceSample[], QueryPlan) -> EvaluatedBlock
-MdlLiveReferenceBatchSource.next_batch(TrainingRouteRequest) -> TrainingBatch@1
+MdlSourceFamily.load_snapshot(locator) -> SourceSnapshot
+MdlReferenceProgram.compile_material(snapshot) -> MaterialPayload
+ReferenceQueryDispatcher.evaluate/sample/pdf(...) -> typed GPU result
 scripts/run_mdl_reference_parity.ps1 -Mode formal -AssetId <ids> -OutputDir <new artifacts path>
 ```
 
 正式依赖方向只有：
 
 ```text
-mdl.program@1 -> project MDL bridge -> MDL SDK target code -> current Falcor 8
-              -> unified EvaluatedBlock / TrainingBatch@1
+mdl.program@1 -> project MDL bridge -> locked MDL SDK target code
+              -> NclsMdlGenerated typed source module + canonical mdl.slang
+              -> generic ReferenceQueryDispatcher / viewer
 ```
 
-`external/falcor2` 只能由 `tools/reference/mdl_oracle/` 和 parity runner 启动。
+`external/falcor2`只能由`tools/reference/mdl_oracle/`和显式parity runner启动。
 
 ## 3. Contracts
 
-- source snapshot 固定 pack/version、module、exact export、typed arguments、传递 module/resource hash 与 MDL SDK build；argument block offset 不是公共接口。
-- compiled artifact 是 ignored cache，必须记录 compiler identity 和精确文件 SHA-256；加载时拒绝缺失、额外或 hash 漂移文件。
-- V1 domain 是 front-facing upper-hemisphere surface-BSDF evaluate；response 为线性 RGB `f * |n_s · wi|`。
-- V1 texture filtering 固定 `ExplicitLod(0)`；`TrainingBatch@1` 为兼容统一 schema 仍携带 `uv_dx/uv_dy/mip_level`，但三者必须为零，provenance 必须包含 `texture_filtering=explicit-lod0` 与 `uv_derivatives_consumed=false`。
-- 正式 JPEG decoder 固定独立 `external/stb` pin/hash。可以与 oracle 使用相同 decoder 语义，但不得从 falcor2 import、链接或复制 runtime。
-- provider 的方向响应 query descriptor 固定声明 `evaluate/spatial`，因为 `EvaluatedBlock` / `TrainingBatch@1` 当前不传输 sampler。runtime `ReferenceProgramDescriptor` 属于另一 capability plane，必须完整声明并实现 `prepare/evaluate/sample/pdf` 才能进入 path tracer；不得用 query schema 的窄范围否定 runtime 能力，也不得反向伪造 provider 已输出 sampler。
+- snapshot固定pack/version、module、exact export、typed arguments、module/resource hash与SDK build；argument block offset不是公共接口。
+- compiled artifact是ignored cache，记录compiler identity与所有文件SHA-256；加载时拒绝缺失、额外或漂移文件。
+- canonical backend必须完整实现`prepare/evaluate/sample/pdf`，`evaluate().f`为线性RGB且不含cosine。
+- generated HLSL以`kind=slang-module-source`注入；argument block、RO segment、2D/3D texture与sampler均走通用typed binder。
+- 正式JPEG decoder固定独立`external/stb` pin/hash。不得从falcor2 import、链接或复制runtime。
+- 不存在`mdl_query.slang`、MDL provider或MDL live batch source。训练只能通过source locator、canonical program与generic dispatcher。
 
 ## 4. Validation & Error Matrix
 
 | 条件 | 行为 |
 |---|---|
-| stale edit、类型/range 错、resource 越过 pack root 或 hash 漂移 | 拒绝 source edit/compile |
-| emission、volume、displacement、measured BSDF、light profile 或未知 texture shape | bridge fail closed；不得只求 surface 后继续 |
-| texture/RO/DF handle 超过 V1 静态上限 | bridge/runtime construction 失败 |
-| compiled artifact 文件缺失、额外或 hash 不符 | `MdlCompiledArtifact.load()` 拒绝 |
-| formal import/启动 falcor2 或 oracle module | 静态边界测试失败 |
-| formal parity 超出冻结门槛 | 归类 renderer integration defect；不得放宽门槛或切换 executor |
-| 缺 MDL SDK/vMaterials | 选择 MDL 时给出可操作错误；普通 import/unit 不受影响 |
+| stale edit、类型/range错、resource越过pack root或hash漂移 | 拒绝source edit/compile |
+| emission、volume、displacement、measured BSDF、light profile或未知texture shape | bridge fail closed |
+| texture/RO/DF handle超过V1静态上限 | bridge/runtime构造失败 |
+| artifact文件缺失、额外或hash不符 | `MdlCompiledArtifact.load()`拒绝 |
+| 多source snapshot需要不同generated module | dispatcher拒绝，不能误绑第一个module |
+| formal路径import/启动falcor2 | 静态边界测试失败 |
 
 ## 5. Good / Base / Bad Cases
 
-- Good：编辑 `texture_2d` pack-relative URI后生成新 snapshot，MDL SDK 重建 argument block，current Falcor 与 oracle 用同一冻结 query 做 parity。
-- Base：无纹理 constant diffuse 只使用 argument block，在 current Falcor、MDL native 和解析 Lambertian 三方一致。
-- Bad：provider 失败后启动 falcor2 生成 target；把 falcor2 result 写入 HDF5；或随机生成非零 mip metadata 但 runtime 固定 LOD0。
+- Good：编辑`texture_2d` URI后产生新snapshot，bridge重建artifact，generic dispatcher与native oracle在冻结query上parity。
+- Base：constant diffuse只绑定argument/RO buffer，canonical evaluate/sample/pdf均可运行。
+- Bad：为MDL复制一个query shader或producer；正式失败后启动falcor2生成target。
 
 ## 6. Tests Required
 
-- unit：typed scalar/enum/range/texture edit、path containment、artifact tamper、schema/tree、formal/oracle import boundary。
-- current-Falcor GPU：analytic diffuse、texture UV/gamma/wrap、parameter edit、RO/BSDF-data、same-device live batch、slot reuse、统一 HDF5 roundtrip、六材质 smoke。
-- fail-closed：至少一个 emissive fixture 必须被 bridge 拒绝。
-- independent validation：MDL SDK native fixture parity；car paint 与 textured copper 的 disjoint frozen falcor2 formal parity，报告须记录 bridge/Falcor/SDK/stb/falcor2 identity。
+- unit：typed edit、path containment、artifact tamper、source/reference registry、formal/oracle import边界。
+- current-Falcor GPU：generic dispatcher evaluate/sample/pdf、analytic diffuse、texture/RO绑定与slot生命周期。
+- fail-closed：emissive fixture必须被bridge拒绝。
+- independent validation：MDL SDK native fixture parity；falcor2只产生隔离报告。
 
 ## 7. Wrong vs Correct
 
 ```python
-# 错：oracle 成为 fallback，产生第二条正式 reference 路径
-try:
-    return formal_provider.evaluate(state, surfaces, plan)
-except RuntimeError:
-    return falcor2_oracle.evaluate(state, surfaces, plan)
+# 错：专用入口绕开统一binder
+run_shader("mdl_query.slang", artifact)
 
-# 对：正式失败直接传播；oracle 只由显式 parity 命令运行
-return formal_provider.evaluate(state, surfaces, plan)
+# 对：generated module是MaterialPayload的一部分
+dispatcher = ReferenceQueryDispatcher(mdl_reference, (snapshot,), ...)
 ```
 
 ```python
-# 错：runtime 不消费 derivative，却声明 uv-footprint
-capabilities = ("evaluate", "spatial", "uv-footprint")
+# 错：oracle成为fallback
+try: return dispatcher.evaluate(...)
+except RuntimeError: return falcor2_oracle.evaluate(...)
 
-# 对：V1 descriptor 与实际 ExplicitLod(0) 一致
-capabilities = ("evaluate", "spatial")
-```
-
-```python
-# 错：把 provider query 的 capability 直接复用为 runtime descriptor
-runtime = ReferenceProgramDescriptor(capabilities=query.capabilities)
-
-# 对：两个 descriptor 分别描述真实入口；runtime 缺四入口任一项都 fail closed
-query_capabilities = ("evaluate", "spatial")
-runtime_capabilities = PREPARE | EVALUATE | SAMPLE | PDF
+# 对：正式失败直接传播，oracle仅由显式parity命令运行
+return dispatcher.evaluate(...)
 ```

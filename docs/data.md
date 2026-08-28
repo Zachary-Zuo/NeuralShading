@@ -1,9 +1,23 @@
-# 数据与 reference
+# Source、reference 与在线训练查询
 
-五个正式 source family 通过 `SourceFamilyDefinition` 产生 canonical `SourceSnapshot`，再由对应 `ReferenceProgramDefinition` 求值。LayerStack 使用随机游走，OpenPBR、MERL、MaterialX、MDL 使用各自权威实现；pbrt 不进入 discovery。
+五个正式source family通过`SourceFamilyDefinition.load_snapshot(locator)`产生canonical `SourceSnapshot`。LayerStack使用多层随机游走reference，OpenPBR、MERL、MaterialX与MDL使用各自权威实现；pbrt和falcor2只处在隔离验证边界。
 
-采集与在线训练共享 query/batch 合同。离线入口读 `reference-shard v5` / `reference-corpus`；在线入口返回同设备的 CUDA `TrainingBatch@1`。MaterialX formal route 在 GPU 上生成独立 UV、half/difference 或 conditioning direction、指数 mip、Gaussian footprint 与 cone mollification，native-feature mip 在 CUDA 上 bilinear 过滤，Falcor reference 通过 shared buffer直接写回 CUDA。response 不经过 CPU/NumPy readback。
+每个source contract在registry中唯一映射到一个`ReferenceProgramDefinition`。reference将snapshot编译为`RuntimePayload`和`MaterialPayload`，所有buffer、texture、sampler与动态source module都带typed descriptor。`ReferenceQueryDispatcher`只读这些descriptor，通过同一个family-agnostic shader执行：
 
-`TrainingRouteRequest` 明确 route name、global step、batch/direction shape、proposal、target estimator、filter recipe 与 seed。producer identity 覆盖 source snapshot、reference implementation 与 live producer implementation；recipe 的完整 JSON另由 config hash锁定。
+```text
+prepare(context, compiledMaterial)
+evaluate(wi) → f, pdf, event, valid
+sample(seed) → wi, weight, pdf, eta, event, valid
+pdf(wi) → forward, reverse, valid
+```
 
-正式 corpus 仍遵循 role 隔离、矩形 shard、canonical identity、原子写入与 hash 校验。源材质参数与资源都参与 snapshot identity。
+`evaluate().f`是线性RGB材质值，不含几何余弦。stochastic reference可用`evaluation_samples`重复求值并只平均`f`；非有限或合同不一致的结果标为invalid，不做亮度clamp或异常值过滤。
+
+正式训练只有online路径。`OnlineTrainingProducer`组合route RNG、surface conditioning、method/source adapter与dispatcher结果：
+
+- `reference-evaluator`生成`wo/wi`并返回`EvaluatorBatch(target_f)`；
+- `method-sampler`生成独立conditioning与`sample_u`，不调用source scattering query，也不携带target。
+
+带normal map的材质会改变局部shading frame，因此世界半球方向可能落到材质局部horizon以下。producer保留有效行并继续补采，在provenance中写`candidate_count`、`rejected_count`和`rejection_rounds`。这是proposal rejection，不是噪点清洗；达到轮次上限仍无法填满时明确失败。
+
+训练response始终留在同一CUDA device，通过显式CUDA↔Falcor同步与双slot lease管理生命周期。项目不保存或读取HDF5、shard、corpus或recorded batch；磁盘只保存source资产、checkpoint、package与`artifacts/`中的诊断/验证结果。

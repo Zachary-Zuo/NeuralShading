@@ -41,8 +41,8 @@ compgen -G 'external/Falcor/build/linux-gcc/bin/Release/python/falcor/falcor_ext
 
 | 状态 | 条件 | 允许 | 禁止 |
 |---|---|---|---|
-| **完整 Windows** | G ∧ E ∧ FW ∧ W | `TESTING.md` 中的全部命令：`tests/unit`、`tests/gpu`、`tests/integration`、`ncls data / learn / bundle` 全链路、`scripts/build_viewer.ps1`、`scripts/benchmark_viewer.ps1`、正式训练与采集 | — |
-| **Linux reference** | G ∧ E ∧ FL ∧ L | `tests/unit`、`slangpy` 测试、CUDA 训练/评测，以及经 `scripts/run_falcor_python.sh` 的 headless LayerStack/MERL/OpenPBR/MaterialX reference 采集 | Windows viewer、D3D12-only GPU 测试、尚未迁移的 pbrt Windows probe；不能把 HDF5 collector 称为 GPU-resident online training |
+| **完整 Windows** | G ∧ E ∧ FW ∧ W | `TESTING.md` 中的全部命令：`tests/unit`、`tests/gpu`、`tests/integration`、`ncls learn / bundle` 全链路、`scripts/build_viewer.ps1`、`scripts/benchmark_viewer.ps1` 与正式online训练 | — |
+| **Linux reference** | G ∧ E ∧ FL ∧ L | `tests/unit`、`slangpy` 测试、CUDA online训练/评测，以及经 `scripts/run_falcor_python.sh` 的 headless LayerStack/MERL/OpenPBR/MaterialX reference query | Windows viewer、D3D12-only GPU测试、尚未迁移的pbrt Windows probe |
 | **仅 GPU** | G ∧ E，缺少当前平台对应的 FW/FL | `tests/unit`、`slangpy` marker 的测试、`ncls learn train / evaluate / compare / benchmark`、SlangPy spike | 任何 `falcor` marker 的测试与 Falcor launcher、viewer、正式 LayerStack reference 采集 |
 | **静态** | 其余（当前本机：WSL2 + `RTX 3060 Laptop`，无 conda、无 `external/`） | 读代码、字节码编译检查、`git diff --check`、写代码与文档 | 运行任何项目代码；宣称"已验证 / 已通过 / 已复现" |
 

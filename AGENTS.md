@@ -9,14 +9,14 @@
 当前已经实现的第一种源材质族是多层界面与均匀 slab，近期工作仍围绕它的研究主线展开：
 
 1. 可信的多层随机游走 reference；
-2. 该 reference 生成的方向响应数据；
-3. 按 `docs/research/experiment_framework.md` 的采样密度表生成 v1 语料，冻结按源表示类型定义的泛化考核（G1/G2/G2s 与工作流稳健性 W）和四层指标体系；
+2. 通过统一 `prepare/evaluate/sample/pdf` dispatcher 在线生成方向查询；
+3. 按 `docs/research/experiment_framework.md` 冻结 source locator、在线 query recipe、泛化考核（G1/G2/G2s 与工作流稳健性 W）和四层指标体系；
 4. 在稳定评测框架内比较 `docs/research/model_candidates.md` 中的候选，每个候选实现一个着色器预算内的最大形态；每个结论要求 matched 对照与 bootstrap 置信区间，结果登记在 `docs/research/experiment_log.md`；
 5. evaluator 与 compiler 主线稳定后，再扩展 matched sampler、环境积分和 UE 式实时工作流；MethodBundle/Slang/viewer 是每个研究阶段收尾执行一次的部署轨道。
 
 当前已有一个端到端可部署方法用于验证 compiler、MethodBundle、Slang backend 和 viewer 生命周期。接下来的方法研究以 neural evaluator 的建模为中心：候选在统一评测框架内以各自的配置轴比较，同时测量局部散射质量与实际单次查询成本；现有解析方法作为回归与成本对照，不决定目标 neural representation。
 
-数据、学习、方法包和 Windows viewer 的基础闭环已经迁到正式架构。当前研究采用基准优先顺序：先冻结 v1 语料与评测协议，再在稳定框架内迭代候选；运行时合同（`evaluate()` 输出线性 `f`、固定读取数、`prepare` 复用）保留为候选注册时的静态约束，MethodBundle/Slang parity 与 viewer 证据由每个研究阶段收尾执行一次的部署轨道提供。不得在 evaluator 尚未成形时把多灯 scaling、PT 方差或 UE 集成写成当前可执行的 kill test。这个顺序不把 `LayerStackIR` 提升为所有源材质的 GT 表示，也不把某个 backend 的状态布局提升为公共接口。
+数据、学习、方法包和 Windows viewer 的基础闭环已经迁到正式架构。正式训练只使用 GPU-resident online reference query，不保存或读取训练 batch；当前研究先冻结 source/query recipe 与评测协议，再在稳定框架内迭代候选。运行时合同（`evaluate()` 输出线性 `f`、固定读取数、`prepare` 复用）保留为候选注册时的静态约束，MethodBundle/Slang parity 与 viewer 证据由每个研究阶段收尾执行一次的部署轨道提供。不得在 evaluator 尚未成形时把多灯 scaling、PT 方差或 UE 集成写成当前可执行的 kill test。这个顺序不把 `LayerStackIR` 提升为所有源材质的 GT 表示，也不把某个 backend 的状态布局提升为公共接口。
 
 ## 文档与表述
 
@@ -32,7 +32,7 @@
 ## 根 Git 仓库边界
 
 - 根仓库包含项目自有源码、测试、环境声明、中文稳定文档、版本化验收门槛、资产清单，以及 `references/` 中的 reference registry/package 说明。
-- 根仓库不包含 `external/`、`assets/`、`data/`、`build/`、`artifacts/`、`reports/` 和缓存。单次正确性验证、实验报告与运行摘要统一进入 `artifacts/`；第三方 reference 源码固定在 `external/`；原始源材质、纹理、测量表和 viewer 运行资产固定在 `assets/`；`data/` 只保存 `data/reference-responses/` 下由 reference 导出的 HDF5；它们都由 `references/` 中的 package/manifest 追溯。
+- 根仓库不包含 `external/`、`assets/`、`data/`、`build/`、`artifacts/`、`reports/` 和缓存。单次正确性验证、实验报告与运行摘要统一进入 `artifacts/`；第三方 reference 源码固定在 `external/`；原始源材质、纹理、测量表和 viewer 运行资产固定在 `assets/`。正式训练数据只由 reference 在 GPU 上在线生成，不存在持久化的 batch/corpus 数据产品；source 与 runtime 由 `references/` 中的 package/manifest 追溯。
 - 完整规则见 `docs/repository_policy.md`。
 - `external/Falcor`、`external/pbrt-v4`、`external/OpenPBR`、`external/openpbr-bsdf`、`external/glm`、`external/MaterialX`、`external/falcor2` 和 `external/stb` 是固定提交的独立克隆；MDL SDK 使用固定官方 binary package。当前均不得保留未说明的上游修改。MaterialX viewer 所需的 NanoGUI 及其依赖使用上游 gitlink 固定提交，由获取脚本初始化。falcor2 仅是 MDL validation oracle，不进入正式 provider/runtime。
 - 若以后确实需要修改上游，先把改动保存为根仓库中的显式补丁和应用脚本，并更新本文件；不得把未说明的修改留在 `external/`。
