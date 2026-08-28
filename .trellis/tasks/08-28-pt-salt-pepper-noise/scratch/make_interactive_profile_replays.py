@@ -1,4 +1,4 @@
-"""生成同一 MDL 场景的 samples-per-frame 性能诊断 replay。"""
+"""生成同一 MDL 场景的 headless capture 调度诊断 replay。"""
 
 from __future__ import annotations
 
@@ -21,6 +21,16 @@ def main() -> None:
             encoding="utf-8",
         )
         print(output)
+
+    remainder_variant = dict(replay)
+    remainder_variant["reference_spp"] = 18
+    remainder_variant["reference_samples_per_frame"] = 16
+    remainder_output = TASK_SCRATCH / "mdl-carpaint-960x540-target18-spf16.json"
+    remainder_output.write_text(
+        json.dumps(remainder_variant, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(remainder_output)
 
 
 if __name__ == "__main__":

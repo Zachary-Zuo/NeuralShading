@@ -42,7 +42,7 @@ external\Falcor\build\windows-vs2022\bin\Release\NclsViewer.exe `
 
 ## capture v4 与回放
 
-自动化比较使用 `ncls.viewer-capture@4`。稳定 capture harness 固定所有 ready 的 path-tracing slot 为 1024 spp；未达到该值时不得导出 EXR，deferred slot 为确定性单次求值，不虚构 spp。manifest 的 `slots[2]` 分别记录 `package_id`、`mode`、status 与 runtime/material/source identity；`*-slot-0.exr`、`*-slot-1.exr` 与 `*-difference.exr` 都固定为单 panel 的 `view_resolution`，difference 不复用双 panel composite 纹理。`source-reference` 是内建的权威 source transport请求，其余值必须对应 `bundle_root` 下通过验证的 package。验证 neural mode 对称性时，可让两个 slot绑定同一 neural package并分别选择 PT/deferred。
+自动化比较使用 `ncls.viewer-capture@4`。headless capture 从 replay 的 `reference_spp` 读取目标，正式基线使用 1024 spp；未达到目标时不得导出 EXR，deferred slot 为确定性单次求值，不虚构 spp。`reference_samples_per_frame` 只控制 headless 每次 dispatch 的 batch，不进入交互状态。manifest 的 `slots[2]` 分别记录 `package_id`、`mode`、status 与 runtime/material/source identity；`*-slot-0.exr`、`*-slot-1.exr` 与 `*-difference.exr` 都固定为单 panel 的 `view_resolution`，difference 不复用双 panel composite 纹理。`source-reference` 是内建的权威 source transport请求，其余值必须对应 `bundle_root` 下通过验证的 package。验证 neural mode 对称性时，可让两个 slot绑定同一 neural package并分别选择 PT/deferred。
 
 最小 slot 片段如下：
 
@@ -74,7 +74,7 @@ external\Falcor\build\windows-vs2022\bin\Release\NclsViewer.exe `
 
 ## 操作与诊断
 
-交互模式保留 orbit、pan、dolly、材质/source编辑与 viewer scene保存。任一相机、场景、材质、package或 mode变化都会清空对应 slot accumulation。普通运行把详细 shader diagnostics写入 `NclsViewer*.log`；需要完整控制台输出时使用 `--verbose-console`。headless 始终保留控制台日志，便于 CI 和 artifact审计。
+交互模式保留 orbit、pan、dolly、材质/source编辑与 viewer scene保存。交互 PT 固定每次 dispatch 追加 1 spp，只要状态不变就持续累积，不受 headless capture 目标限制；任一相机、场景、材质、package或 mode变化都会把统一 sample sequence 重置到 0。普通运行把详细 shader diagnostics写入 `NclsViewer*.log`；需要完整控制台输出时使用 `--verbose-console`。headless 始终保留控制台日志，便于 CI 和 artifact审计。
 
 固定路径 benchmark仍由项目脚本执行：
 

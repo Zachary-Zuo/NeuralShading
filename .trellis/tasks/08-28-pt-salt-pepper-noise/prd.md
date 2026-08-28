@@ -21,6 +21,7 @@
 - R5：source-native `sample()` 返回的 direction/event/PDF/weight tuple 保持不可拆分；公共 transport 可以拒绝几何上不可能的 event，但不得重算或夹紧已接受 sample 的 weight/PDF。
 - R6：`ReferencePathTracer` 与 `PackagePathTracer` 使用同一份环境采样、MIS、shading-normal 与几何半球规则；材质仍只通过 canonical state 接口进入 renderer。
 - R7：修复后审计 MDL car paint/ceramic、OpenPBR car paint/aluminum/glass、MERL chrome、MaterialX 与 LayerStack，区分合法连续高光、材质纹理结构和随机孤立亮点。
+- R8：交互式 PT 每次 dispatch 恰好追加 1 个 `globalSample`，状态不变时随时间持续累积，不受 headless capture 的目标 spp 限制。只有 headless capture 使用固定目标 spp 与批处理大小；相机或材质状态改变时重新从 sample 0 开始，同一状态下不得计算后丢弃 sample。
 
 ## Out of Scope
 
@@ -40,6 +41,7 @@
 - [ ] 【诊断正确性；来源：本任务冻结设计】临时 contribution AOV 的分量和与 beauty 在冻结 float32 容差内一致；正式实现不保留会污染公共 scattering ABI 的诊断字段。
 - [ ] 【回归交付；来源：用户追问“其它材质”】完成 R7 材质矩阵 capture 并以视觉分类和 report-only tail/RSE 报告结果；不从 observed 数值反推新的 hard gate。
 - [ ] 【工程质量；来源：项目规范】相关 unit、Falcor/D3D12 GPU、integration 与 Release viewer build 通过；六个锁定 upstream 工作树保持 clean。
+- [ ] 【交互调度正确性；来源：用户明确纠正】交互 source/package PT 都固定为 1 spp/dispatch、无 capture spp 停止条件；headless 才按 replay target/batch 截断，正式视觉基线 target 为 1024。shader 继续以累计 spp 派生 `globalSample` 和 path suffix identity，不存在 preview/final estimator 分叉或拖动期间丢弃 accumulation。
 
 ## Notes
 

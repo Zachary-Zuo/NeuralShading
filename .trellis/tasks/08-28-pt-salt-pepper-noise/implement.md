@@ -40,4 +40,12 @@
 - [x] 逐项核对旧/新 estimator 的 native state 调用与 ray 数，确认 4 条 primary path suffix 是单样本成本增长的主要来源。
 - [x] 核对 viewer frame scheduling，确认相机拖动仍执行完整正式 batch，只关闭 accumulation 并在完成后丢弃 spp；正式 capture batch 与交互 latency 没有分离。
 - [x] 把证据、非根因和修复边界写入 `research/interactive-performance.md`。
-- [ ] 若用户要求实施，先在 renderer 层分离 interactive preview budget 与正式 refinement/capture batch，再独立复核 warm visibility pass。
+- [x] 原“interactive preview / 正式 refinement 分叉”建议经用户纠正后作废；不作为实现路径。
+
+## Phase 3.6：交互连续 sample sequence 根迁移
+
+- [x] 用户纠正合同：删除“非权威 preview / 结束后重启正式 accumulation”的设计，交互与 headless 共享同一 estimator 和 sample identity。
+- [x] host 调度迁为交互固定 1 spp/dispatch、无 capture cap；headless 独占 replay target、batch 与末帧截断，正式基线仍使用 1024 spp。
+- [x] 删除 source/package shader 的 `gAccumulate` 和 host 拖动丢弃路径；reset 后当前帧直接成为新状态 sample 0。
+- [x] 移除 UI/viewer-scene 的 `Samples per frame`，把 replay batch 收敛为 headless-only option。
+- [x] 更新 unit/static、README、capture/viewer spec，完成 Release、GPU、integration 与真实 headless capture 验证。

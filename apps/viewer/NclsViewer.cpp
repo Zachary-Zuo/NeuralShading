@@ -26,7 +26,7 @@ FALCOR_EXPORT_D3D12_AGILITY_SDK
 namespace
 {
 constexpr uint32_t kMaximumSceneMaterials = 64;
-constexpr uint32_t kCapturePathTracingSpp = 1024;
+constexpr uint32_t kDefaultCapturePathTracingSpp = 1024;
 const Gui::DropdownList kComparisonModes = {
     {0, "Reference / method split"},
     {1, "Linear absolute error"},
@@ -255,8 +255,19 @@ ViewerOptions parseOptions(int argc, char** argv)
         const auto resolution = replay.at("resolution");
         options.width = resolution.at(0).get<uint32_t>();
         options.height = resolution.at(1).get<uint32_t>();
-        const uint32_t samples = std::clamp(replay.value("reference_samples_per_frame", 1u), 1u, 16u);
-        options.frameCount = (kCapturePathTracingSpp + samples - 1u) / samples;
+        const bool hasPathTracingSlot = replayVersion != 4u || std::any_of(
+            options.requestedSlotModes.begin(), options.requestedSlotModes.end(),
+            [](ncls::SlotMode mode) { return mode == ncls::SlotMode::PathTracing; });
+        options.captureTargetSpp = hasPathTracingSlot
+            ? replay.value("reference_spp", kDefaultCapturePathTracingSpp)
+            : 0u;
+        if (hasPathTracingSlot && options.captureTargetSpp == 0u)
+            throw std::runtime_error("capture reference_spp must be positive");
+        options.captureSamplesPerDispatch = std::clamp(
+            replay.value("reference_samples_per_frame", 1u), 1u, 16u);
+        options.frameCount = hasPathTracingSlot
+            ? 1u + (options.captureTargetSpp - 1u) / options.captureSamplesPerDispatch
+            : 1u;
         break;
     }
     auto value = [&](int& index, const char* name) -> std::string {
@@ -1369,13 +1380,19 @@ void NclsViewer::renderVisibility(RenderContext* pRenderContext)
     mVisibilityDirty = false;
 }
 
+uint32_t NclsViewer::pathSamplesThisDispatch(const ComparisonSlotRuntime& slot) const
+{
+    if (!mOptions.headless) return 1u;
+    const uint32_t remaining = mOptions.captureTargetSpp
+        - std::min(slot.spp, mOptions.captureTargetSpp);
+    return std::min(mOptions.captureSamplesPerDispatch, remaining);
+}
+
 void NclsViewer::renderReference(RenderContext* pRenderContext, ComparisonSlotRuntime& slot)
 {
-    const uint32_t samplesThisFrame = std::min(
-        mSamplesPerFrame, kCapturePathTracingSpp - std::min(slot.spp, kCapturePathTracingSpp));
+    const uint32_t samplesThisFrame = pathSamplesThisDispatch(slot);
     if (samplesThisFrame == 0u) return;
     const uint32_t next = 1u - slot.ping;
-    const bool accumulate = !mCameraDragging && !mPanDragging;
     beginTiming(slot.timing);
     {
         auto root = mpReferencePathPass->getRootVar();
@@ -1443,7 +1460,6 @@ void NclsViewer::renderReference(RenderContext* pRenderContext, ComparisonSlotRu
         constants["gMaxSceneBounces"] = mMaxSceneBounces;
         constants["gMaxLayerWalkDepth"] = mMaxLayerWalkDepth;
         constants["gResetAccumulation"] = uint32_t(slot.resetAccumulation);
-        constants["gAccumulate"] = uint32_t(accumulate);
         std::string extension = mReferenceGeometryPath.extension().string();
         std::transform(extension.begin(), extension.end(), extension.begin(),
             [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
@@ -1461,12 +1477,8 @@ void NclsViewer::renderReference(RenderContext* pRenderContext, ComparisonSlotRu
             mEstimatedRelativeStandardError = float(stats[0]) / (4096.f * float(stats[1]));
     }
     slot.ping = next;
-    if (accumulate)
-    {
-        slot.spp += samplesThisFrame;
-        mAccumulationSeconds += getFrameRate().getLastFrameTime();
-    }
-    else slot.spp = 0;
+    slot.spp += samplesThisFrame;
+    mAccumulationSeconds += getFrameRate().getLastFrameTime();
     slot.resetAccumulation = false;
 }
 
@@ -1500,11 +1512,9 @@ void NclsViewer::renderPackagePath(RenderContext* pRenderContext, ComparisonSlot
 {
     const auto* method = slotProgram(slot);
     if (!method || !slot.pPathPass) return;
-    const uint32_t samplesThisFrame = std::min(
-        mSamplesPerFrame, kCapturePathTracingSpp - std::min(slot.spp, kCapturePathTracingSpp));
+    const uint32_t samplesThisFrame = pathSamplesThisDispatch(slot);
     if (samplesThisFrame == 0u) return;
     const uint32_t next = 1u - slot.ping;
-    const bool accumulate = !mCameraDragging && !mPanDragging;
     auto root = slot.pPathPass->getRootVar();
     mpScene->bindShaderDataForRaytracing(pRenderContext, root["gScene"]);
     root["gPreviousPackage"] = slot.pAccumulated[slot.ping];
@@ -1522,7 +1532,6 @@ void NclsViewer::renderPackagePath(RenderContext* pRenderContext, ComparisonSlot
     constants["gSamplesThisFrame"] = samplesThisFrame;
     constants["gMaxSceneBounces"] = mMaxSceneBounces;
     constants["gResetAccumulation"] = uint32_t(slot.resetAccumulation);
-    constants["gAccumulate"] = uint32_t(accumulate);
     constants["gCompiledMaterialIndex"] = method->compiledMaterialIndex;
     std::string extension = mReferenceGeometryPath.extension().string();
     std::transform(extension.begin(), extension.end(), extension.begin(),
@@ -1535,8 +1544,7 @@ void NclsViewer::renderPackagePath(RenderContext* pRenderContext, ComparisonSlot
     slot.pPathPass->execute(pRenderContext, mViewWidth, mOutputHeight);
     endTiming(slot.timing);
     slot.ping = next;
-    if (accumulate) slot.spp += samplesThisFrame;
-    else slot.spp = 0u;
+    slot.spp += samplesThisFrame;
     slot.resetAccumulation = false;
 }
 
@@ -1585,9 +1593,9 @@ void NclsViewer::onFrameRender(RenderContext* pRenderContext, const ref<Fbo>& pT
     ++mFrameIndex;
 
     const bool captureSppReady = std::all_of(
-        mComparisonSlots.begin(), mComparisonSlots.end(), [](const ComparisonSlotRuntime& slot) {
+        mComparisonSlots.begin(), mComparisonSlots.end(), [&](const ComparisonSlotRuntime& slot) {
             return !slot.ready() || slot.contract.mode != ncls::SlotMode::PathTracing
-                || slot.spp == kCapturePathTracingSpp;
+                || slot.spp == mOptions.captureTargetSpp;
         });
     if (mOptions.headless && ++mRenderedFrames >= mOptions.frameCount && captureSppReady)
     {
@@ -2162,7 +2170,7 @@ void NclsViewer::onGuiRender(Gui* pGui)
         if (group)
         {
             group.text("Reference: " + std::string(mReferenceSource.familyId()));
-            group.var("Samples per frame", mSamplesPerFrame, 1u, 16u);
+            group.text("Interactive PT: 1 spp/dispatch, continuous accumulation.");
             if (mpScene && group.var("Max scene bounces", mMaxSceneBounces, 0u, 16u))
                 resetReference(false);
             if (mReferenceSource.family == ncls::ReferenceFamily::LayerStack
@@ -2403,7 +2411,7 @@ void NclsViewer::saveViewerScene(const std::filesystem::path& requestedPath)
 
     const nlohmann::json document = {
         {"format_name", "ncls.viewer-scene"},
-        {"format_version", 1},
+        {"format_version", 2},
         {"reference_integrator", "ncls.scene-path-tracer@1"},
         {"geometry", {
             {"uri", portableUri(mReferenceGeometryPath, base)},
@@ -2416,7 +2424,6 @@ void NclsViewer::saveViewerScene(const std::filesystem::path& requestedPath)
         {"active_material_id", mActiveSceneMaterial},
         {"material_bindings", bindings},
         {"reference", {
-            {"samples_per_frame", mSamplesPerFrame},
             {"scene_max_bounces", mMaxSceneBounces},
             {"layer_walk_max_depth", mMaxLayerWalkDepth},
         }},
@@ -2468,7 +2475,9 @@ void NclsViewer::loadViewerScene(const std::filesystem::path& requestedPath)
     std::ifstream stream(path, std::ios::binary);
     if (!stream) throw std::runtime_error("cannot open viewer scene: " + path.string());
     const nlohmann::json document = nlohmann::json::parse(stream);
-    if (document.value("format_name", "") != "ncls.viewer-scene" || document.value("format_version", 0u) != 1u)
+    const uint32_t sceneVersion = document.value("format_version", 0u);
+    if (document.value("format_name", "") != "ncls.viewer-scene"
+        || (sceneVersion != 1u && sceneVersion != 2u))
         throw std::runtime_error("unsupported viewer scene format: " + path.string());
     if (document.value("reference_integrator", "") != "ncls.scene-path-tracer@1")
         throw std::runtime_error("viewer scene requires reference_integrator ncls.scene-path-tracer@1");
@@ -2501,7 +2510,6 @@ void NclsViewer::loadViewerScene(const std::filesystem::path& requestedPath)
         return float3(value[0].get<float>(), value[1].get<float>(), value[2].get<float>());
     };
     const auto& reference = document.at("reference");
-    mSamplesPerFrame = std::clamp(reference.at("samples_per_frame").get<uint32_t>(), 1u, 16u);
     mMaxSceneBounces = std::clamp(reference.at("scene_max_bounces").get<uint32_t>(), 0u, 16u);
     mMaxLayerWalkDepth = std::clamp(reference.at("layer_walk_max_depth").get<uint32_t>(), 4u, 128u);
     const auto& camera = document.at("camera");
@@ -2590,7 +2598,6 @@ void NclsViewer::applyReplaySettings(const std::filesystem::path& path)
         if (!value.is_array() || value.size() != 3) throw std::runtime_error("replay vector must contain three values");
         return float3(value[0].get<float>(), value[1].get<float>(), value[2].get<float>());
     };
-    mSamplesPerFrame = std::clamp(replay.value("reference_samples_per_frame", 1u), 1u, 16u);
     mMaxSceneBounces = std::clamp(replay.value("reference_scene_max_bounces", 4u), 0u, 16u);
     mMaxLayerWalkDepth = std::clamp(replay.value("reference_layer_walk_max_depth", 24u), 4u, 128u);
     const auto& camera = replay.at("camera");
@@ -2626,17 +2633,31 @@ void NclsViewer::applyReplaySettings(const std::filesystem::path& path)
 void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
 {
     namespace fs = std::filesystem;
+    uint32_t capturedPathTracingSpp = 0u;
     for (uint32_t slotIndex = 0u; slotIndex < mComparisonSlots.size(); ++slotIndex)
     {
         const auto& slot = mComparisonSlots[slotIndex];
-        if (slot.ready() && slot.contract.mode == ncls::SlotMode::PathTracing
-            && slot.spp != kCapturePathTracingSpp)
+        if (!slot.ready() || slot.contract.mode != ncls::SlotMode::PathTracing) continue;
+        if (mOptions.headless && slot.spp != mOptions.captureTargetSpp)
         {
             mStatus = "Capture blocked: path-tracing slot " + std::to_string(slotIndex)
-                + " must reach exactly 1024 spp.";
+                + " must reach exactly " + std::to_string(mOptions.captureTargetSpp) + " spp.";
             logWarning("{}", mStatus);
             return;
         }
+        if (!mOptions.headless && slot.spp == 0u)
+        {
+            mStatus = "Capture blocked: interactive path-tracing slots must contain at least one sample.";
+            logWarning("{}", mStatus);
+            return;
+        }
+        if (capturedPathTracingSpp != 0u && slot.spp != capturedPathTracingSpp)
+        {
+            mStatus = "Capture blocked: ready path-tracing slots must have matched spp.";
+            logWarning("{}", mStatus);
+            return;
+        }
+        capturedPathTracingSpp = slot.spp;
     }
     fs::path manifestPath = requestedManifestPath;
     if (manifestPath.extension() != ".json") manifestPath /= "capture.json";
@@ -2793,8 +2814,8 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         {"resolution", {mOutputWidth, mOutputHeight}},
         {"view_resolution", {mViewWidth, mOutputHeight}},
         {"difference_resolution", {mViewWidth, mOutputHeight}},
-        {"reference_spp", kCapturePathTracingSpp},
-        {"reference_samples_per_frame", mSamplesPerFrame},
+        {"reference_spp", capturedPathTracingSpp},
+        {"reference_samples_per_frame", mOptions.captureSamplesPerDispatch},
         {"reference_scene_max_bounces", mMaxSceneBounces},
         {"reference_layer_walk_max_depth", mMaxLayerWalkDepth},
         {"reference_integrator", "ncls.scene-path-tracer@1"},

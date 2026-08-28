@@ -12,7 +12,7 @@
    完整 16-sample dispatch，只是关闭 accumulation，算完后把 `spp` 重新置零。
 
 因此用户看到的是单次约 113 ms 的 PT dispatch 阻塞 UI；相机变化还会令 visibility pass
-变 dirty。正式 reference 的 estimator 正确性与交互调度被混在了同一个
+变 dirty。旧实现把正式 reference 的 estimator 正确性与交互调度混在了同一个
 `mSamplesPerFrame` 开关中。
 
 ## 2. 开发机与诊断边界
@@ -95,22 +95,40 @@ resource 创建和 shader specialization 位于材质安装/切换路径，没�
 
 ## 6. 正确的修复边界
 
-下一步应先修 renderer scheduling，不修改材质接口，也不降低正式 reference 的总 1024 spp
-或 MIS 数学：
+用户复核后明确否决了“交互 preview、结束后重启正式 accumulation”的分叉设计。正式迁移
+必须修 renderer scheduling，不修改材质接口或 MIS 数学：
 
-1. 显式分离 `interactiveSamplesPerFrame` 与正式 refinement/capture batch；交互期间先固定为
-   1 个 global sample/dispatch。
-2. 相机拖动或连续参数编辑期间显示非权威 preview；结束交互时只 reset 一次，从 0 spp
-   恢复同一正式 estimator 的 accumulation。
-3. headless capture 和冻结 replay 继续使用记录的 batch 值与 1024 spp，保证产物 identity、
-   可复现性和吞吐不变。
+1. 交互固定为 1 个 `globalSample`/dispatch；状态不变时持续累积，不设置 capture spp cap。
+2. 相机或参数实际变化时把同一 sample sequence reset 到 0；reset 后当前帧直接累计新状态的
+   sample 0，不再计算后丢弃，也不创建另一套 preview estimator。
+3. 只有 headless capture 读取 `reference_spp` target 和 replay batch，并在最后一个 dispatch
+   截断；交互 UI/viewer-scene 不保存 batch 状态。
 4. source reference PT 与 package PT 必须共享这套调度规则；不得按 MDL、ceramic 或 neural
    material 分支。
 
-这一步预计把灯光/材质交互的 PT latency 从约 113 ms 降到约 4 ms。相机交互还需单独记录
+这一步把灯光/材质交互的 PT latency 从约 113 ms 降到约 4 ms，同时保留随累计 spp 递增的
+完整 path suffix identity。相机交互还需单独记录
 warm visibility pass latency；若它仍主导，再优化 visibility invalidation 或 preview G-buffer，
 不能用缩减正式 estimator 掩盖。
 
 更深层的 estimator 性能优化应作为后续独立设计：例如 wavefront/branch compaction，或能保留
 4-path primary averaging 统计语义的等价调度。未经新的 AOV 与 parity 验证，不应恢复单条
 primary continuation，也不应加入 clamp、denoiser 或材质专用 fast path。
+
+## 7. 根迁移验证
+
+正式实现删除了 host 的 `mSamplesPerFrame` 与 shader 的 `gAccumulate`。source/package PT 都经
+`pathSamplesThisDispatch()` 调度：交互直接返回 1；headless 才按 replay target 与 batch 计算
+remaining。UI 和 viewer scene 不再保存 batch。
+
+运行时证据：
+
+- MDL car paint `reference_spp=18, batch=16`：第 2 个 dispatch 截断为 2，manifest 与 slot
+  都记录 18 spp；
+- 同材质 `reference_spp=1024, batch=16`：输出恰好 1024 spp，raw EXR SHA-256 与迁移前
+  完全一致；
+- LayerStack source/package 双 PT slot、`reference_spp=1024, batch=4`：两个 slot 都为
+  `ready / 1024 spp`，两份 raw EXR 分别与迁移前逐文件 SHA-256 一致。
+
+这证明调度迁移没有改变 estimator、native state 调用、`globalSample` 或 path suffix identity；
+只移除了 capture cap/batch 对交互生命周期的污染。

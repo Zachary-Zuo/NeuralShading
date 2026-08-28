@@ -12,6 +12,9 @@ SceneReferenceProgram.prepare(context, sceneMaterial) -> ReferenceState
 ScatteringBinding.prepare(context, packageMaterial) -> PackageState
 State.evaluate/sample/pdf(...)
 ncls.viewer-capture@4 -> slots[2] + single-panel EXR outputs
+ncls.viewer-scene@2 -> scene/material/camera/lighting + reference bounce limits（无 spp target/batch）
+interactive PT dispatch -> exactly 1 new globalSample per ready PT slot
+headless PT dispatch -> min(reference_samples_per_frame, reference_spp - slot.spp)
 ```
 
 ## 3. Contracts
@@ -28,6 +31,9 @@ ncls.viewer-capture@4 -> slots[2] + single-panel EXR outputs
 - MDL 动态 module 只装载 SDK target-code types、项目 runtime callback 与 generated target code；canonical `mdl.slang`、scene composer 和 query 是静态项目 module。
 - 每个 slot 独立 package/mode/status/resource/timing；panel 为相同 `floor(W/2)×H`，奇数像素是 divider。错误只影响当前 slot。
 - source editor 只解释 typed parameter tree。capture v4 保存 `slots[2]`，不含左右角色或可变分割位置。
+- 交互 PT 不拥有 capture spp cap 或可调 batch：每次 dispatch 恰好追加 1 spp，状态不变时持续累积。`globalSample = slot.spp + sampleIndex` 是 source/package 共用的 sample identity；相机、材质或灯光实际变化才 reset 到 0，reset 后当前 dispatch 的 sample 0 必须进入 accumulation，不能因处于拖动状态而计算后丢弃。
+- `reference_spp` target 与 `reference_samples_per_frame` batch 只属于 headless capture。viewer UI 与 `ncls.viewer-scene` 不保存它们；headless 最后一个 dispatch 必须按 remaining 截断。交互手工 capture 记录当前 matched slot spp，不把 1024 伪装成当前值。
+- viewer scene writer 使用 `ncls.viewer-scene@2`，其 reference 只保存 bounce/layer-walk limit。reader 可读 v1/v2 以复现既有 capture scene，但 v1 的旧 `samples_per_frame` 字段一律忽略，不进入 runtime state；这不是第二条调度路径。
 
 ## 4. Validation & Error Matrix
 
@@ -41,6 +47,9 @@ ncls.viewer-capture@4 -> slots[2] + single-panel EXR outputs
 | sample 为 null、非有限或连续 PDF 非正 | 终止当前路径，不 fallback |
 | shader/resource 创建失败 | 保留上一有效 binding，报告当前 slot error |
 | capture 未达到 path-tracing 目标 spp | 不导出正式 EXR |
+| 交互 slot 达到或超过 headless `reference_spp` | 继续每 dispatch 追加 1 spp，不停止、不回绕 |
+| 相机拖动但当前姿态已 dispatch | 保留新姿态的 1 spp；下一次实际相机变化再 reset |
+| source/package ready PT slot 在交互 capture 时 spp 不一致 | 拒绝 comparison capture，不能伪造 matched spp |
 | Falcor upstream worktree 被 overlay 留脏 | build gate 失败 |
 
 ## 5. Good / Base / Bad Cases
@@ -48,10 +57,12 @@ ncls.viewer-capture@4 -> slots[2] + single-panel EXR outputs
 - Good：MDL、OpenPBR、MaterialX、MERL 与 LayerStack 都经 `SceneReferenceProgram` 进入同一 reference integrator，各自 state 仍执行自己的 proposal。
 - Base：常量 Lambertian source 与同语义 package 在相同 scene surface 上给出一致 transport。
 - Bad：`ReferencePathTracer` 按 source family 调不同自由函数；把 `4*p_light` 只用于 light side、遗漏 `4*p_bsdf`；保留额外的单条 primary continuation；用 clamp 隐藏 HDR 环境尾部。
+- Bad：把 replay 的 capture batch 接到交互 UI；交互到 1024 spp 后停止；拖动时仍计算完整 batch、再通过 `gAccumulate=false` 丢弃。
 
 ## 6. Tests Required
 
 - unit/static：slot 对称性、canonical source routing、无 family branch、4+4 MIS 两侧 multiplier、primary path-pool ownership、双线性 CDF reconstruction、实际方向 ray-origin 选择、capture schema。
+- unit/static：还必须断言交互固定返回 1 spp、host 没有 `mSamplesPerFrame`、viewer scene 没有 batch 字段、source/package shader 没有 `gAccumulate`，并保留 `globalSample = accumulatedSpp + sampleIndex`。
 - GPU：公共 `PathSurface`、source backend sample→pdf/weight、package ABI、continuous/delta MIS math 与 Falcor path sample generator。
 - Release：只用 `scripts/build_viewer.ps1 -Configuration Release` 编译真实 scene specialization，结束后 Falcor clean。
 - headless：MDL car paint/ceramic 及其他 source 做 1024 spp capture，检查 finite、identity、RSE/high quantile 与局部 firefly 结构。
@@ -72,4 +83,14 @@ origin = nclsViewerDirectOrigin(position, geometricNormal, scatter.directionWorl
 // 对：两个 heuristic 比较同一对 technique PDF。
 float lightTechniquePdf = float(NCLS_VIEWER_ENVIRONMENT_NEE_SAMPLE_COUNT) * pLight;
 float bsdfTechniquePdf = float(NCLS_VIEWER_ENVIRONMENT_BSDF_SAMPLE_COUNT) * pBsdf;
+```
+
+```cpp
+// 错：capture cap/batch 泄漏进交互，并在拖动时丢弃已经计算的 sample。
+samples = min(uiSamplesPerFrame, captureTarget - slot.spp);
+accumulate = !cameraDragging;
+
+// 对：交互是一条持续增长的正式 sample sequence；只有 headless 计算 remaining。
+if (!options.headless) return 1u;
+return min(options.captureSamplesPerDispatch, options.captureTargetSpp - slot.spp);
 ```

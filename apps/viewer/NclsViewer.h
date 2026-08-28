@@ -39,6 +39,8 @@ struct ViewerOptions
     bool headless = false;
     bool verboseConsole = false;
     bool evaluatorPreviewLighting = false;
+    uint32_t captureTargetSpp = 1024;
+    uint32_t captureSamplesPerDispatch = 1;
     uint32_t frameCount = 1024;
     uint32_t width = 1280;
     uint32_t height = 720;
@@ -177,6 +179,7 @@ private:
     Falcor::ref<Falcor::Texture> slotOutput(const ComparisonSlotRuntime& slot) const;
     void bindProgramResources(Falcor::ShaderVar root, const ComparisonSlotRuntime& slot) const;
     void bindLighting(Falcor::ShaderVar root, const char* constantBufferName);
+    uint32_t pathSamplesThisDispatch(const ComparisonSlotRuntime& slot) const;
     void renderVisibility(Falcor::RenderContext* pRenderContext);
     void renderReference(Falcor::RenderContext* pRenderContext, ComparisonSlotRuntime& slot);
     void renderApproximation(Falcor::RenderContext* pRenderContext, ComparisonSlotRuntime& slot);
@@ -261,7 +264,6 @@ private:
     uint32_t mSelectedSceneMaterial = std::numeric_limits<uint32_t>::max();
     std::string mSelectedSceneGeometryName;
     std::string mSelectedSceneMaterialName;
-    uint32_t mSamplesPerFrame = 1;
     uint32_t mMaxSceneBounces = 4;
     uint32_t mMaxLayerWalkDepth = 24;
     uint32_t mSelectedInterface = 0;

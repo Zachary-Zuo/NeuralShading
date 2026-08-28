@@ -168,6 +168,18 @@ backend.prepare → state.evaluate / state.sample / state.pdf → MIS / throughp
 
 具体 ABI、错误矩阵与测试入口见 `../core/shared-slang-backend.md` 和 `../viewer/conventions.md`。
 
+## Viewer Sampling Lifecycle Boundary
+
+当同一 PT 同时用于交互 viewer、headless capture 和 benchmark 时，先把 estimator identity、dispatch batch 与 termination target 分开：
+
+- [ ] 交互是否每 dispatch 追加一个新的 `globalSample`，并在状态不变时持续累积，而不是继承 capture spp cap？
+- [ ] headless 的 `reference_spp` 和 batch 是否只存在于 replay/options，未进入 UI 或 viewer scene？
+- [ ] reset 是否只由相机/材质/灯光状态实际变化触发？reset 后当前 sample 是否保留，而不是用 dragging/preview flag 算完再丢弃？
+- [ ] source/package 是否都以 `globalSample = accumulatedSpp + sampleIndex` 派生同一 path suffix identity？
+- [ ] 测试是否分别覆盖交互无 cap、headless remaining 截断和相同 target 下 raw output identity？
+
+具体 owner、错误矩阵与断言点见 `../viewer/conventions.md` 和 `../viewer/capture-harness.md`。
+
 ---
 
 ## Cross-Platform Template Consistency

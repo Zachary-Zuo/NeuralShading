@@ -28,7 +28,6 @@ cbuffer ReferencePathTracerCB
     uint gMaxSceneBounces;
     uint gMaxLayerWalkDepth;
     uint gResetAccumulation;
-    uint gAccumulate;
     uint gFlipTexCoordV;
     uint2 gEnvironmentSamplingDimensions;
     uint gUseEnvironment;
@@ -474,7 +473,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint groupIndex : SV_Gro
     if (validPixel)
     {
         const float inverseBatch = 1.0f / max(1u, gSamplesThisFrame);
-        if (gAccumulate == 0u || gResetAccumulation != 0u || gReferenceSpp == 0u)
+        if (gResetAccumulation != 0u || gReferenceSpp == 0u)
             accumulated = float4(batchSum * inverseBatch, batchLuminanceSquare * inverseBatch);
         else
         {
@@ -489,7 +488,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint groupIndex : SV_Gro
     }
 
     const float sampleCount = float(
-        (gAccumulate == 0u || gResetAccumulation != 0u || gReferenceSpp == 0u)
+        (gResetAccumulation != 0u || gReferenceSpp == 0u)
         ? gSamplesThisFrame : gReferenceSpp + gSamplesThisFrame);
     const float meanLuminance = nclsViewerLuminance(accumulated.rgb);
     const float variance = max(accumulated.a - meanLuminance * meanLuminance, 0.0f);

@@ -69,6 +69,19 @@ H2 首次实现为“每个 hit 使用 4 个 light direct samples、4 个独立 
 
 环境 CDF 同时改为对 GPU 双线性 radiance lookup 的 cell-integrated reconstruction 建表。单个 texel 对相邻 cell 的积分权重为可分离的 `[1/8, 3/4, 1/8]`；这样亮 texel 过滤到邻格时，light PDF 不再仍按暗邻格报告。
 
+### 3.3 交互累积与 headless capture 的调度边界
+
+用户在性能复盘中明确纠正了原设计：交互式渲染不是可丢弃的低质量 preview，也不拥有 capture spp cap。source/package PT 使用同一条连续 sample sequence：
+
+- 交互模式每次 dispatch 固定追加 1 spp；只要场景、相机和材质状态不变，就持续累积，不在 1024 spp 停止；
+- `globalSample = accumulatedSpp + sampleIndex` 仍是唯一 sample identity，4 条 primary path suffix 继续由该 identity 派生；不创建 preview/final 两套 estimator；
+- 状态变化由 `resetReference()` 把累计计数和图像一起清零；reset 后当前帧的 1 spp 是新状态的 sample 0，必须保留；
+- headless capture 才读取 replay 的 batch 大小，按固定 1024 spp 目标计算 remaining，并在最后一个 dispatch 截断；
+- UI 和 viewer-scene 不再持有 `Samples per frame`。capture batch 属于 headless 执行参数，不是交互材质/场景状态；
+- `ReferencePathTracer` 与 `PackagePathTracer` 删除 `gAccumulate` 非累计分支，避免算完再把同一状态的 sample 丢弃。
+
+这是一条 host scheduling 合同，不改变 4×4 MIS、native tuple、path suffix 或 scattering ABI。
+
 ## 4. 文件边界
 
 预计正式修改：

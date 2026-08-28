@@ -37,3 +37,43 @@
 - [x] 将任务级根因与视觉审计写入 `research/root-cause.md`、`visual-verification.md`。
 - [x] 项目没有 `src/templates/markdown/spec/`，因此不存在需要同步的本地模板副本。
 - [ ] ideal glass 高方差只有在用户授权扩大范围后再创建独立任务。
+
+---
+
+## Bug Analysis：headless capture 生命周期污染交互 accumulation
+
+### 1. Root Cause Category
+
+- **Category**：B - Cross-Layer Contract，同时包含 E - Implicit Assumption。
+- **Specific Cause**：`mSamplesPerFrame` 同时充当 replay/capture batch、交互 UI 状态和 PT dispatch 大小；`kCapturePathTracingSpp=1024` 又直接进入两条 render path。旧代码因而默认“capture 的有限运行就是 viewer PT 的完整生命周期”，并用 `gAccumulate=false` 在拖动时丢弃已经计算的 sample。
+
+### 2. Why Fixes Failed
+
+1. **把 SPF 手动调成 1**：只改变运行参数，没有移除 UI、viewer scene 和 capture target 对交互 renderer 的所有权，属于 surface workaround。
+2. **提出 non-authoritative preview / release 后重启 accumulation**：虽然能降低 latency，却制造 preview/final 两条 sample lifecycle，并破坏同一状态下连续的 `globalSample` sequence；这是错误 mental model。
+3. **只分析 estimator 调用量**：解释了单 sample 为什么变贵，却不能解释为何交互达到 1024 后停止、拖动为何丢弃；缺少 host lifecycle 端到端追踪。
+
+### 3. Prevention Mechanisms
+
+| Priority | Mechanism | Specific Action | Status |
+|---|---|---|---|
+| P0 | Architecture | 单一 `pathSamplesThisDispatch()`：交互恒为 1；headless 才读取 target/batch/remaining | DONE |
+| P0 | Architecture | 删除 host drag accumulation 分支和两条 shader 的 `gAccumulate` | DONE |
+| P0 | Schema ownership | UI/viewer scene 删除 batch；capture manifest/replay 独占 target 与 batch | DONE |
+| P0 | Test Coverage | static test 固定无交互 cap、无 `mSamplesPerFrame/gAccumulate`，并锁定 `globalSample = spp + sampleIndex` | DONE |
+| P1 | Runtime | 18/16 remainder、1024 identity、source/package 双 PT hash parity | DONE |
+| P1 | Documentation | 更新 viewer convention、capture harness 与 cross-layer checklist | DONE |
+
+### 4. Systematic Expansion
+
+- **Similar Issues**：benchmark warmup/frame limit、offline corpus sample cap、training batch size 都可能被误接成 live viewer 生命周期；它们必须由各自执行入口拥有。
+- **Design Improvement**：把 estimator identity、dispatch batch 和 termination target 分成三个正交量。前者由 shader/sample ID 定义；batch 是执行吞吐参数；target 只属于有限作业。
+- **Process Improvement**：性能修复前画出 `state reset → globalSample → dispatch batch → termination`；不能只 profile shader 内部调用量。
+- **Knowledge Gap**：相同 estimator 不只要求公式相同，还要求 sample sequence 的创建、保留和停止规则不被另一运行模式覆盖。
+
+### 5. Knowledge Capture
+
+- [x] 更新 `.trellis/spec/viewer/conventions.md` 与 `capture-harness.md`。
+- [x] 更新 `.trellis/spec/guides/cross-layer-thinking-guide.md`。
+- [x] 更新 task design、实施清单与性能报告。
+- [x] 项目没有 `src/templates/markdown/spec/`，无需同步模板副本。
