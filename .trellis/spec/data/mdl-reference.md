@@ -2,17 +2,22 @@
 
 ## 1. Scope / Trigger
 
-新增或修改 `mdl.program@1` source、MDL SDK bridge、compiled artifact、current-Falcor canonical backend或falcor2 parity时适用。本合同防止validation oracle成为第二条正式路径，也防止恢复已删除的MDL专用training/query入口。
+新增或修改 `mdl.program@1` source、MDL SDK bridge、module discovery、compiled artifact、preset catalog、current-Falcor canonical backend 或 falcor2 parity 时适用。本合同防止 validation oracle 成为第二条正式路径，也防止把输入资源格式限制误报成 closure 输出限制，或恢复已删除的 MDL 专用 training/query 入口。
 
 ## 2. Signatures
 
 ```text
-MdlSdkCompilerBridge.inspect(module, material, arguments) -> ncls.mdl-inspection@1
+MdlSdkCompilerBridge.discover_module(module, *, output) -> ncls.mdl-module-discovery@1
+MdlSdkCompilerBridge.inspect(module, material, arguments, *, output) -> metadata-only ncls.mdl-compiled-artifact@1
 MdlSdkCompilerBridge.compile_snapshot(SourceSnapshot) -> ncls.mdl-compiled-artifact@1
 MdlSdkCompilerBridge.native_evaluate(...) -> validation-only native packet
+MdlVmaterialsCatalog.load(path, expected_bridge_sha256) -> ncls.mdl-vmaterials-family-catalog@1
+MdlVmaterialsCatalog.verify_resources(module_root) -> None
+MdlVmaterialsCatalog.locator(family_id, preset_id, *, module_root, allow_unsupported=False) -> mdl-export locator
 MdlSourceFamily.load_snapshot(locator) -> SourceSnapshot
 MdlReferenceProgram.compile_material(snapshot) -> MaterialPayload
 ReferenceQueryDispatcher.evaluate/sample/pdf(...) -> typed GPU result
+tools/reference/generate_mdl_vmaterials_manifest.py --artifact-root <ignored cache> [--refresh-artifacts|--check]
 scripts/run_mdl_reference_parity.ps1 -Mode formal -AssetId <ids> -OutputDir <new artifacts path>
 ```
 
@@ -29,9 +34,15 @@ mdl.program@1 -> project MDL bridge -> locked MDL SDK target code
 ## 3. Contracts
 
 - snapshot固定pack/version、module、exact export、typed arguments、module/resource hash与SDK build；argument block offset不是公共接口。
-- compiled artifact是ignored cache，记录compiler identity与所有文件SHA-256；加载时拒绝缺失、额外或漂移文件。
+- module discovery 必须通过 MDL SDK `IModule` 枚举 exact export；不得用正则表达式解析 MDL 源码来建立 authoritative preset 列表。discovery 记录 bridge executable SHA-256，并要求 export 唯一且稳定排序。
+- compiled artifact 是 ignored cache，记录 compiler identity、compiled material/sub-expression hash 与所有文件 SHA-256；加载时拒绝缺失、额外或漂移文件。
+- `inspect()` 只为 catalog 审计生成 `texture_payloads=metadata-only` artifact；`compile_snapshot()`、native parity、viewer 和正式 dispatcher 必须使用 `texture_payloads=decoded` artifact。metadata-only artifact 不得进入 runtime binder。
+- `references/mdl-vmaterials2-v1/families.json` 是 11 个 family、172 个 authored preset 的版本化 catalog；记录 typed arguments、source/resource closure、runtime resource signature、compiled identity 与 capability audit。`assets.json` 只登记每个 family 的 primary export，不复制 172 条专用 producer。
+- catalog locator 只返回通用 `mdl-export` source locator。默认拒绝 `runtime_supported=false` 的 preset；`allow_unsupported=True` 只允许审计/研究代码显式取 locator，不改变 runtime 能力。
 - canonical backend必须完整实现`prepare/evaluate/sample/pdf`，`evaluate().f`为线性RGB且不含cosine。
-- generated HLSL以`kind=slang-module-source`注入；argument block、RO segment、2D/3D texture与sampler均走通用typed binder。
+- generated HLSL以`kind=slang-module-source`注入；argument block、RO segment、BSDF data、2D/3D texture与sampler均走通用typed binder。
+- 输入像素格式支持与 closure 输出支持是两个独立 capability。V1 decoded texture 至少支持 `Sint8`、`Rgb`、`Rgba`、`Rgb_16`、`Rgba_16`、`Float32`、`Float32<2/3/4>`、`Rgb_fp`、`Color`；`Rgba_16` 必须以每 texel 8 bytes 保留为 `uint16`，并绑定 `RGBA16Unorm`，不得量化为 8-bit。无对应 sRGB hardware view 的 uint16/float texture 可先无损归一化并显式线性化为 float32。
+- `geometry.cutout_opacity` 是输出/合成能力。当前 public evaluator 未实现它时，punched suede 必须以 `unsupported_reasons=["geometry.cutout_opacity"]` 失败关闭；这不允许 bridge 丢弃、跳过或降位其 `Rgba_16` cutout atlas。
 - 正式JPEG decoder固定独立`external/stb` pin/hash。不得从falcor2 import、链接或复制runtime。
 - 不存在`mdl_query.slang`、MDL provider或MDL live batch source。训练只能通过source locator、canonical program与generic dispatcher。
 
@@ -40,7 +51,13 @@ mdl.program@1 -> project MDL bridge -> locked MDL SDK target code
 | 条件 | 行为 |
 |---|---|
 | stale edit、类型/range错、resource越过pack root或hash漂移 | 拒绝source edit/compile |
-| emission、volume、displacement、measured BSDF、light profile或未知texture shape | bridge fail closed |
+| discovery bridge hash、module 或 export 集漂移 | `MdlModuleDiscovery.load()` 拒绝 |
+| catalog family/preset 重名、compiled identity 或 resource signature 漂移 | `MdlVmaterialsCatalog.load()` 拒绝 |
+| catalog resource 缺失、越过 module root 或 SHA-256 不符 | `verify_resources()` 拒绝 |
+| metadata-only artifact 进入 runtime | `require_runtime_supported()` 拒绝 |
+| emission、volume、displacement、measured BSDF、light profile、未知 texture shape 或未知 pixel type | bridge/runtime fail closed |
+| 已知 `Rgba_16`/float pixel type | 按原 bit depth 生成 typed payload；不得归入 unknown 或静默降位 |
+| `geometry.cutout_opacity` 非常量 1 | catalog 标记 unsupported；正式 runtime fail closed，inspection 仍完整记录纹理元数据 |
 | texture/RO/DF handle超过V1静态上限 | bridge/runtime构造失败 |
 | artifact文件缺失、额外或hash不符 | `MdlCompiledArtifact.load()`拒绝 |
 | 多source snapshot需要不同generated module | dispatcher拒绝，不能误绑第一个module |
@@ -48,16 +65,20 @@ mdl.program@1 -> project MDL bridge -> locked MDL SDK target code
 
 ## 5. Good / Base / Bad Cases
 
-- Good：编辑`texture_2d` URI后产生新snapshot，bridge重建artifact，generic dispatcher与native oracle在冻结query上parity。
+- Good：`Rgba_16` punched suede inspection 记录 `1024 * 1024 * 4 * 2` bytes 的 decoded runtime payload；typed binder 选择 `uint16/RGBA16Unorm`，随后仅因 public cutout 输出合同缺失而拒绝 evaluate。
 - Base：constant diffuse只绑定argument/RO buffer，canonical evaluate/sample/pdf均可运行。
+- Bad：看到 punched material 尚不可渲染，就跳过其 atlas、转成 8-bit，或把 preset 从 catalog 删除。
 - Bad：为MDL复制一个query shader或producer；正式失败后启动falcor2生成target。
 
 ## 6. Tests Required
 
-- unit：typed edit、path containment、artifact tamper、source/reference registry、formal/oracle import边界。
-- current-Falcor GPU：generic dispatcher evaluate/sample/pdf、analytic diffuse、texture/RO绑定与slot生命周期。
+- unit：typed edit、path containment、artifact tamper、discovery sorted/exact export、catalog count/identity/signature、source/reference registry、formal/oracle import边界。
+- unit：用已知 16-bit pattern 断言 `_decoded_texture_binding()` 保留所有 bits，并返回 `dtype=uint16`、`format=rgba16-unorm`。
+- current-Falcor GPU：generic dispatcher evaluate/sample/pdf、analytic diffuse、texture/RO绑定与slot生命周期；真实 punched atlas 必须断言 payload byte count 为 `width * height * 4 * 2`，Falcor texture format 为 `RGBA16Unorm`。
 - fail-closed：emissive fixture必须被bridge拒绝。
+- fail-closed：punched suede 的 full artifact 必须先通过 decoded texture 校验，再因 `geometry.cutout_opacity` 被 runtime 拒绝。
 - independent validation：MDL SDK native fixture parity；falcor2只产生隔离报告。
+- manifest：生成后执行 `--check`，断言 11 families / 172 presets / 164 supported / 8 cutout-unsupported，且旧的 6 条 primary asset 记录逐字段不变。
 
 ## 7. Wrong vs Correct
 
@@ -76,4 +97,14 @@ except RuntimeError: return falcor2_oracle.evaluate(...)
 
 # 对：正式失败直接传播，oracle仅由显式parity命令运行
 return dispatcher.evaluate(...)
+```
+
+```python
+# 错：把尚未支持 cutout 输出误当成不支持 16-bit 输入
+if artifact.capability_audit["cutout_opacity"]:
+    skip_texture_payloads()
+
+# 对：始终无损解码已知输入格式，输出能力在绑定后独立失败关闭
+binding = decoded_texture_binding(pixel_type="Rgba_16", dtype="uint16")
+artifact.require_runtime_supported()  # 仅在这里报告 geometry.cutout_opacity
 ```

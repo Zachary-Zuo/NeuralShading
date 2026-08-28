@@ -19,6 +19,7 @@ from .materialx import (
     MaterialXReference,
     MaterialXSourceMaterial,
 )
+from .mdl_catalog import MdlVmaterialsCatalog
 
 __all__ = [
     "ConstantBinding",
@@ -33,6 +34,7 @@ __all__ = [
     "MaterialXGeneratedShader",
     "MaterialXReference",
     "MaterialXSourceMaterial",
+    "MdlVmaterialsCatalog",
     "OpenPBRMaterial",
     "OpenPBRReference",
     "resolve_openpbr_inputs",

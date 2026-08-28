@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ncls.mdl-vmaterials-family-catalog@1",
+  "title": "NVIDIA vMaterials authored family and preset catalog",
+  "type": "object",
+  "required": [
+    "schema_name", "schema_version", "provider", "pack", "pack_id",
+    "source_pack_id", "source_pack_version", "module_root", "mdl_sdk",
+    "bridge_executable_sha256", "family_count", "preset_count",
+    "runtime_supported_count", "runtime_unsupported_count", "resources", "families"
+  ],
+  "properties": {
+    "schema_name": {"const": "ncls.mdl-vmaterials-family-catalog"},
+    "schema_version": {"const": 1},
+    "provider": {"const": "NVIDIA"},
+    "pack": {"const": "vMaterials 2.4.0"},
+    "pack_id": {"const": "nvidia.vmaterials@2.4.0"},
+    "source_pack_id": {"const": "nvidia.vmaterials"},
+    "source_pack_version": {"const": "2.4.0"},
+    "module_root": {"const": "Materials"},
+    "mdl_sdk": {"const": "2025.0.0-387700.1252"},
+    "bridge_executable_sha256": {"$ref": "#/$defs/sha256"},
+    "family_count": {"const": 11},
+    "preset_count": {"const": 172},
+    "runtime_supported_count": {"const": 164},
+    "runtime_unsupported_count": {"const": 8},
+    "resources": {
+      "type": "object",
+      "minProperties": 11,
+      "additionalProperties": {"$ref": "#/$defs/sha256"}
+    },
+    "families": {
+      "type": "array",
+      "minItems": 11,
+      "maxItems": 11,
+      "items": {"$ref": "#/$defs/family"}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "uuid_hash": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "relative_path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"},
+    "preset": {
+      "type": "object",
+      "required": [
+        "preset_id", "export_name", "exact_export", "source_snapshot_id",
+        "mdl_language", "parameters", "source_module_paths", "resource_paths",
+        "runtime_resources", "resource_signature", "compiled_material_hash",
+        "sub_expression_hashes", "runtime_capability_audit", "runtime_supported",
+        "unsupported_reasons", "evaluation_subfamily"
+      ],
+      "properties": {
+        "preset_id": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+        "export_name": {"type": "string", "minLength": 1},
+        "exact_export": {"type": "string", "pattern": "^::"},
+        "source_snapshot_id": {"$ref": "#/$defs/sha256"},
+        "mdl_language": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"},
+        "parameters": {"type": "object"},
+        "source_module_paths": {"type": "array", "items": {"$ref": "#/$defs/relative_path"}},
+        "resource_paths": {"type": "array", "items": {"$ref": "#/$defs/relative_path"}},
+        "runtime_resources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "index", "sha256"],
+            "properties": {
+              "kind": {"enum": ["ro_data", "bsdf_data"]},
+              "index": {"type": "integer", "minimum": 0},
+              "sha256": {"$ref": "#/$defs/sha256"}
+            }
+          }
+        },
+        "resource_signature": {"$ref": "#/$defs/sha256"},
+        "compiled_material_hash": {"$ref": "#/$defs/uuid_hash"},
+        "sub_expression_hashes": {
+          "type": "object",
+          "required": ["surface.scattering", "geometry.normal", "geometry.cutout_opacity"],
+          "additionalProperties": {"$ref": "#/$defs/uuid_hash"}
+        },
+        "runtime_capability_audit": {
+          "type": "object",
+          "required": [
+            "surface_bsdf_evaluate", "emission", "volume", "displacement",
+            "cutout_opacity", "argument_block_bytes", "ro_data", "df_handle_count", "textures"
+          ]
+        },
+        "runtime_supported": {"type": "boolean"},
+        "unsupported_reasons": {"type": "array", "items": {"type": "string"}},
+        "evaluation_subfamily": {"type": "string", "minLength": 1}
+      }
+    },
+    "family": {
+      "type": "object",
+      "required": [
+        "family_id", "primary_asset_id", "coverage_role", "evaluation_role",
+        "module", "source_path", "primary_export", "preset_count", "presets"
+      ],
+      "properties": {
+        "family_id": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+        "primary_asset_id": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+        "coverage_role": {"type": "string", "minLength": 1},
+        "evaluation_role": {"enum": ["parameterized", "discrete-subfamilies", "spatial-resource-control"]},
+        "module": {"type": "string", "pattern": "^::"},
+        "source_path": {"$ref": "#/$defs/relative_path"},
+        "primary_export": {"type": "string", "minLength": 1},
+        "preset_count": {"type": "integer", "minimum": 1},
+        "presets": {"type": "array", "items": {"$ref": "#/$defs/preset"}}
+      }
+    }
+  }
+}

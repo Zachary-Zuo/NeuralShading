@@ -1575,6 +1575,1057 @@
         "light_profile": false,
         "surface_bsdf_evaluate": true
       }
+    },
+    {
+      "asset_id": "carpaint-metallic",
+      "coverage_role": "metallic-car-paint",
+      "module": "::vMaterials_2::Paint::Carpaint::Carpaint_Metallic",
+      "export": "::vMaterials_2::Paint::Carpaint::Carpaint_Metallic::Carpaint_Metallic(color,float,float,float,color,float,float,float,float,float,float,texture_2d,float,float,float,float,float,float,float2,float,float2,bool,float,bool,int)",
+      "mdl_language": "1.6",
+      "source_snapshot_id": "1185f89b3ff2c6963c663115d6d1152a913aeebee3affade16f7011ee6bfd129",
+      "source_modules": [
+        {
+          "module": "::vMaterials_2::Paint::Carpaint::Carpaint_Metallic",
+          "path": "vMaterials_2/Paint/Carpaint/Carpaint_Metallic.mdl",
+          "sha256": "01ce60d2980028ce266b5d749b39c1bcbb5838ee0c8582bade1fd371e52d2e45"
+        }
+      ],
+      "parameters": {
+        "base_color": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.021219000220298767,
+            0.09084200114011765,
+            0.21223099529743195
+          ]
+        },
+        "candy_flip": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.1899999976158142
+        },
+        "clearcoat_ior": {
+          "editable": true,
+          "maximum": 5,
+          "mdl_type": "float",
+          "minimum": 1,
+          "soft_maximum": 3,
+          "soft_minimum": 1,
+          "value": 1.600000023841858
+        },
+        "clearcoat_rough": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.05999999865889549
+        },
+        "clearcoat_visibility": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 1
+        },
+        "edge_darkening": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.7599999904632568
+        },
+        "flake_layer_visibility": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.5699999928474426
+        },
+        "flakes_density": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.46000000834465027
+        },
+        "flakes_roughness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.550000011920929
+        },
+        "flakes_size": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 1,
+          "soft_minimum": 0,
+          "value": 0.15000000596046448
+        },
+        "flakes_tint": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.08021999895572662,
+            0.3139890134334564,
+            0.6038269996643066
+          ]
+        },
+        "ground_coat_brightness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.3700000047683716
+        },
+        "ground_coat_influence": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.44999998807907104
+        },
+        "orange_peel_size": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 1,
+          "soft_minimum": 0,
+          "value": 0.009999999776482582
+        },
+        "orange_peel_strength": {
+          "editable": true,
+          "maximum": 2,
+          "mdl_type": "float",
+          "minimum": 0,
+          "soft_maximum": 1,
+          "soft_minimum": 0,
+          "value": 0
+        },
+        "roughness_texture": {
+          "editable": true,
+          "mdl_type": "texture_2d",
+          "value": {
+            "effective_gamma": 1.0,
+            "path": "vMaterials_2/Paint/Carpaint/textures/smudges_scratches_A_rough.jpg"
+          }
+        },
+        "roughness_variation": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.14000000059604645
+        },
+        "roundcorners_across_materials": {
+          "editable": true,
+          "mdl_type": "bool",
+          "value": false
+        },
+        "roundcorners_enable": {
+          "editable": true,
+          "mdl_type": "bool",
+          "value": false
+        },
+        "roundcorners_radius_mm": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 10,
+          "soft_minimum": 0,
+          "value": 1.5
+        },
+        "spread": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.25
+        },
+        "texture_rotate": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 360,
+          "soft_minimum": 0,
+          "value": 0
+        },
+        "texture_scale": {
+          "editable": true,
+          "mdl_type": "float2",
+          "value": [
+            1,
+            1
+          ]
+        },
+        "texture_translate": {
+          "editable": true,
+          "mdl_type": "float2",
+          "value": [
+            0,
+            0
+          ]
+        },
+        "uv_space_index": {
+          "editable": true,
+          "mdl_type": "int",
+          "value": 0
+        }
+      },
+      "resource_hashes": {
+        "vMaterials_2/Paint/Carpaint/Carpaint_Metallic.mdl": "01ce60d2980028ce266b5d749b39c1bcbb5838ee0c8582bade1fd371e52d2e45",
+        "vMaterials_2/Paint/Carpaint/textures/smudges_scratches_A_rough.jpg": "00c226b573d873f241013ce76f2bb1fafe38e544719faae4b7c3494784563566"
+      },
+      "runtime_capability_audit": {
+        "argument_block_bytes": 144,
+        "ro_data_segment_bytes": [
+          2048
+        ],
+        "df_handle_count": 1,
+        "textures": [
+          {
+            "mdl_index": 1,
+            "shape": "bsdf_data",
+            "source_path": null,
+            "source_sha256": null,
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              65,
+              64,
+              33
+            ]
+          },
+          {
+            "mdl_index": 2,
+            "shape": "bsdf_data",
+            "source_path": null,
+            "source_sha256": null,
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              65,
+              64,
+              33
+            ]
+          },
+          {
+            "mdl_index": 3,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Paint/Carpaint/textures/smudges_scratches_A_rough.jpg",
+            "source_sha256": "00c226b573d873f241013ce76f2bb1fafe38e544719faae4b7c3494784563566",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          }
+        ],
+        "measured_bsdf": false,
+        "light_profile": false,
+        "surface_bsdf_evaluate": true
+      }
+    },
+    {
+      "asset_id": "effect-pigment-metallic",
+      "coverage_role": "metallic-effect-pigment",
+      "module": "::vMaterials_2::Paint::Carpaint::Effect_Pigment_Metallic",
+      "export": "::vMaterials_2::Paint::Carpaint::Effect_Pigment_Metallic::Effect_Pigment_Metallic(color,float,float,float3,float,float,float,float,float,float,float,color,color,color,color,color)",
+      "mdl_language": "1.4",
+      "source_snapshot_id": "45dd877675df2ad68cae802e392f09787bb377184c1b1c04ac7879f27468a30a",
+      "source_modules": [
+        {
+          "module": "::vMaterials_2::Paint::Carpaint::Effect_Pigment_Metallic",
+          "path": "vMaterials_2/Paint/Carpaint/Effect_Pigment_Metallic.mdl",
+          "sha256": "93c2217564975797224e1a1917bd2f7b8dc31657f0a269bbbb05a232063c5de3"
+        }
+      ],
+      "parameters": {
+        "base_color": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.03999999910593033,
+            0.07382799685001373,
+            0.21952000260353088
+          ]
+        },
+        "clearcoat_ior": {
+          "editable": true,
+          "mdl_type": "float",
+          "value": 1.4500000476837158
+        },
+        "clearcoat_roughness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0
+        },
+        "flakes_coverage": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 1
+        },
+        "flakes_orientation_random": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.5
+        },
+        "flakes_paint_color_1": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.07200700044631958,
+            0.7388449907302856,
+            0.7388449907302856
+          ]
+        },
+        "flakes_paint_color_2": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.1273300051689148,
+            0.10653900355100632,
+            1
+          ]
+        },
+        "flakes_paint_color_3": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.52252197265625,
+            0.041436001658439636,
+            0.36826199293136597
+          ]
+        },
+        "flakes_paint_color_4": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.52252197265625,
+            0.22199299931526184,
+            0
+          ]
+        },
+        "flakes_paint_color_5": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.26678600907325745,
+            0.52252197265625,
+            0.044149000197649
+          ]
+        },
+        "flakes_roughness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.15000000596046448
+        },
+        "flakes_scale": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.014999999664723873
+        },
+        "flakes_transparency": {
+          "editable": true,
+          "mdl_type": "float",
+          "value": 0
+        },
+        "orange_peel_amount": {
+          "editable": true,
+          "mdl_type": "float",
+          "value": 0.02500000037252903
+        },
+        "orange_peel_scale": {
+          "editable": true,
+          "mdl_type": "float",
+          "value": 0.07999999821186066
+        },
+        "texture_scale": {
+          "editable": true,
+          "mdl_type": "float3",
+          "value": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "resource_hashes": {
+        "vMaterials_2/Paint/Carpaint/Effect_Pigment_Metallic.mdl": "93c2217564975797224e1a1917bd2f7b8dc31657f0a269bbbb05a232063c5de3"
+      },
+      "runtime_capability_audit": {
+        "argument_block_bytes": 176,
+        "ro_data_segment_bytes": [
+          2048
+        ],
+        "df_handle_count": 1,
+        "textures": [],
+        "measured_bsdf": false,
+        "light_profile": false,
+        "surface_bsdf_evaluate": true
+      }
+    },
+    {
+      "asset_id": "retroreflective-material",
+      "coverage_role": "retroreflective-layer",
+      "module": "::vMaterials_2::Other::Retroreflective::Retroreflective_Material",
+      "export": "::vMaterials_2::Other::Retroreflective::Retroreflective_Material::Retroreflective_Material(color,color,float,float,float,float,float2,float,float2,int)",
+      "mdl_language": "1.7",
+      "source_snapshot_id": "cf3e7390c7131582ee272d376906868fc683cef0c38fd454461356d4a76dff57",
+      "source_modules": [
+        {
+          "module": "::vMaterials_2::Other::Retroreflective::Retroreflective_Material",
+          "path": "vMaterials_2/Other/Retroreflective/Retroreflective_Material.mdl",
+          "sha256": "17f5f0c4d559d0fb7c5f8c159863a338bc989a9c05dda92b86e3f1e56268207c"
+        }
+      ],
+      "parameters": {
+        "bump_strength": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.10000000149011612
+        },
+        "material_color": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.22322799265384674,
+            0.22322799265384674,
+            0.22322799265384674
+          ]
+        },
+        "retroreflection_roughness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.20000000298023224
+        },
+        "retroreflective_tint": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            1,
+            1,
+            1
+          ]
+        },
+        "roughness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.6899999976158142
+        },
+        "smudges_amount": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0
+        },
+        "texture_rotate": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 360,
+          "soft_minimum": 0,
+          "value": 0
+        },
+        "texture_scale": {
+          "editable": true,
+          "mdl_type": "float2",
+          "value": [
+            1,
+            1
+          ]
+        },
+        "texture_translate": {
+          "editable": true,
+          "mdl_type": "float2",
+          "value": [
+            0,
+            0
+          ]
+        },
+        "uv_space_index": {
+          "editable": true,
+          "mdl_type": "int",
+          "value": 0
+        }
+      },
+      "resource_hashes": {
+        "vMaterials_2/Other/Retroreflective/Retroreflective_Material.mdl": "17f5f0c4d559d0fb7c5f8c159863a338bc989a9c05dda92b86e3f1e56268207c",
+        "vMaterials_2/Other/Retroreflective/textures/glitter_noise_1k.png": "08210cd09f455de30b5402e636407a91e185a62aa07ae4029b08884cb425d8cd",
+        "vMaterials_2/Other/Retroreflective/textures/smudges_retro_paint.jpg": "fa61d9a4a26e7831ec30f1c278e88e24733b2fb29e4f3640f998f953b6ae4b17",
+        "vMaterials_2/Other/Retroreflective/textures/tape_patterns_norm.jpg": "c6c5831b1795dcf374f2a116b962afa582d5f08df705fe1e074b14338ca4d79a"
+      },
+      "runtime_capability_audit": {
+        "argument_block_bytes": 96,
+        "ro_data_segment_bytes": [],
+        "df_handle_count": 1,
+        "textures": [
+          {
+            "mdl_index": 1,
+            "shape": "bsdf_data",
+            "source_path": null,
+            "source_sha256": null,
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              65,
+              64,
+              33
+            ]
+          },
+          {
+            "mdl_index": 2,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Other/Retroreflective/textures/tape_patterns_norm.jpg",
+            "source_sha256": "c6c5831b1795dcf374f2a116b962afa582d5f08df705fe1e074b14338ca4d79a",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              2048,
+              2048,
+              1
+            ]
+          },
+          {
+            "mdl_index": 3,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Other/Retroreflective/textures/smudges_retro_paint.jpg",
+            "source_sha256": "fa61d9a4a26e7831ec30f1c278e88e24733b2fb29e4f3640f998f953b6ae4b17",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 4,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Other/Retroreflective/textures/glitter_noise_1k.png",
+            "source_sha256": "08210cd09f455de30b5402e636407a91e185a62aa07ae4029b08884cb425d8cd",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              1024,
+              1024,
+              1
+            ]
+          }
+        ],
+        "measured_bsdf": false,
+        "light_profile": false,
+        "surface_bsdf_evaluate": true
+      }
+    },
+    {
+      "asset_id": "carbon-fiber",
+      "coverage_role": "anisotropic-carbon-fiber",
+      "module": "::vMaterials_2::Composite::Carbon_Fiber",
+      "export": "::vMaterials_2::Composite::Carbon_Fiber::Carbon_Fiber(float,float,float,float,bool,float,float,float,float,float,float2,float,float2,bool,float,bool,int)",
+      "mdl_language": "1.6",
+      "source_snapshot_id": "c2d6eee3d8cfe2e7fd6bb48357d5ef33116e33caf7de1ed5c010c79621a8b306",
+      "source_modules": [
+        {
+          "module": "::vMaterials_2::Composite::Carbon_Fiber",
+          "path": "vMaterials_2/Composite/Carbon_Fiber.mdl",
+          "sha256": "93afaf9588aa942876fcf70d6f783bea19d2c483d9d67614f84b5d613402136f"
+        }
+      ],
+      "parameters": {
+        "carbon_fiber_brightness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.2199999988079071
+        },
+        "coating_damages_intensity": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.019999999552965164
+        },
+        "coating_damages_scale": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.75
+        },
+        "coating_dust": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.23000000417232513
+        },
+        "coating_roughness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0
+        },
+        "coating_roughness_variation": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.36000001430511475
+        },
+        "enable_coating": {
+          "editable": true,
+          "mdl_type": "bool",
+          "value": false
+        },
+        "fibers_anisotropy": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.18000000715255737
+        },
+        "fibers_roughness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.1599999964237213
+        },
+        "roundcorners_across_materials": {
+          "editable": true,
+          "mdl_type": "bool",
+          "value": false
+        },
+        "roundcorners_enable": {
+          "editable": true,
+          "mdl_type": "bool",
+          "value": false
+        },
+        "roundcorners_radius_mm": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 10,
+          "soft_minimum": 0,
+          "value": 1.5
+        },
+        "texture_rotate": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 360,
+          "soft_minimum": 0,
+          "value": 0
+        },
+        "texture_scale": {
+          "editable": true,
+          "mdl_type": "float2",
+          "value": [
+            1,
+            1
+          ]
+        },
+        "texture_translate": {
+          "editable": true,
+          "mdl_type": "float2",
+          "value": [
+            0,
+            0
+          ]
+        },
+        "uv_space_index": {
+          "editable": true,
+          "mdl_type": "int",
+          "value": 0
+        },
+        "weaving_bump_strength": {
+          "editable": true,
+          "maximum": 2,
+          "mdl_type": "float",
+          "minimum": 0,
+          "soft_maximum": 1,
+          "soft_minimum": 0,
+          "value": 1
+        }
+      },
+      "resource_hashes": {
+        "vMaterials_2/Composite/Carbon_Fiber.mdl": "93afaf9588aa942876fcf70d6f783bea19d2c483d9d67614f84b5d613402136f",
+        "vMaterials_2/Composite/textures/carbon_fiber_fibers_norm.jpg": "f51228a9279f1f33e2c9b3fe170f64dcb00a791c56b6381299a1e7b4cca97318",
+        "vMaterials_2/Composite/textures/carbon_fiber_multi_R_rough_G_cutout_B_patternA.jpg": "73113466118219fca0277e2e6824ee2538de0d0b09d88457f63894d8aa0ec5f4",
+        "vMaterials_2/Composite/textures/carbon_fiber_weaving_norm.png": "1455c730d548d17f286dcce4004028cdc2e55d7603f45e0dffa7c6d95a734604",
+        "vMaterials_2/Composite/textures/generic_surface_rough.jpg": "e7e5f3e086d87ccbff43a2f2b5c33e8d6aace3b594d43ab00d6303a16ba8af64",
+        "vMaterials_2/Composite/textures/surface_damages_multi_R_rough_B_rough2.jpg": "f2049f6d34df7de036e9cc180aba9a9fc26ba5ed6c9b6bdf368cda074fe0abbb",
+        "vMaterials_2/Composite/textures/surface_damages_norm.jpg": "21c306362e3ae2305fa96315288406044797634739e39e861a7c65fea26580ad"
+      },
+      "runtime_capability_audit": {
+        "argument_block_bytes": 80,
+        "ro_data_segment_bytes": [],
+        "df_handle_count": 1,
+        "textures": [
+          {
+            "mdl_index": 1,
+            "shape": "bsdf_data",
+            "source_path": null,
+            "source_sha256": null,
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              65,
+              64,
+              33
+            ]
+          },
+          {
+            "mdl_index": 2,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Composite/textures/generic_surface_rough.jpg",
+            "source_sha256": "e7e5f3e086d87ccbff43a2f2b5c33e8d6aace3b594d43ab00d6303a16ba8af64",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 3,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Composite/textures/surface_damages_multi_R_rough_B_rough2.jpg",
+            "source_sha256": "f2049f6d34df7de036e9cc180aba9a9fc26ba5ed6c9b6bdf368cda074fe0abbb",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 4,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Composite/textures/carbon_fiber_multi_R_rough_G_cutout_B_patternA.jpg",
+            "source_sha256": "73113466118219fca0277e2e6824ee2538de0d0b09d88457f63894d8aa0ec5f4",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 5,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Composite/textures/carbon_fiber_weaving_norm.png",
+            "source_sha256": "1455c730d548d17f286dcce4004028cdc2e55d7603f45e0dffa7c6d95a734604",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              1024,
+              1024,
+              1
+            ]
+          },
+          {
+            "mdl_index": 6,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Composite/textures/carbon_fiber_fibers_norm.jpg",
+            "source_sha256": "f51228a9279f1f33e2c9b3fe170f64dcb00a791c56b6381299a1e7b4cca97318",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 7,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Composite/textures/surface_damages_norm.jpg",
+            "source_sha256": "21c306362e3ae2305fa96315288406044797634739e39e861a7c65fea26580ad",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          }
+        ],
+        "measured_bsdf": false,
+        "light_profile": false,
+        "surface_bsdf_evaluate": true
+      }
+    },
+    {
+      "asset_id": "suede-leather",
+      "coverage_role": "suede-leather-cutout",
+      "module": "::vMaterials_2::Leather::Suede_Leather",
+      "export": "::vMaterials_2::Leather::Suede_Leather::Suede_Leather(bool,float,color,float,float,float,float,float,color,float,float,bool,color,float,float,float2,float,float2,bool,float,bool,int)",
+      "mdl_language": "1.5",
+      "source_snapshot_id": "bab439ae5678370414e50e015d2061be6434c53d31d6c8b231d361d2a1557de5",
+      "source_modules": [
+        {
+          "module": "::vMaterials_2::Leather::Suede_Leather",
+          "path": "vMaterials_2/Leather/Suede_Leather.mdl",
+          "sha256": "f2dc9e5d6fc178a42822f77d9968a7c645875bd906364549854086c9be621c6e"
+        }
+      ],
+      "parameters": {
+        "across_materials": {
+          "editable": true,
+          "mdl_type": "bool",
+          "value": true
+        },
+        "bump_strength": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.4000000059604645
+        },
+        "color_back_leather": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.014310999773442745,
+            0.03847299888730049,
+            0.07176099717617035
+          ]
+        },
+        "color_front": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.10114499926567078,
+            0.26317501068115234,
+            0.4936160147190094
+          ]
+        },
+        "diffuse_brightness_back": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.6000000238418579
+        },
+        "diffuse_brightness_front": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.10000000149011612
+        },
+        "dirt_back_on_off": {
+          "editable": true,
+          "mdl_type": "bool",
+          "value": true
+        },
+        "dirt_color": {
+          "editable": true,
+          "mdl_type": "color",
+          "value": [
+            0.023000000044703484,
+            0.023000000044703484,
+            0.023000000044703484
+          ]
+        },
+        "dust": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 1
+        },
+        "grunge": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.800000011920929
+        },
+        "infinite_tiling": {
+          "editable": true,
+          "mdl_type": "bool",
+          "value": true
+        },
+        "position_1": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.5
+        },
+        "radius": {
+          "editable": true,
+          "mdl_type": "float",
+          "soft_maximum": 10,
+          "soft_minimum": 0,
+          "value": 1.5
+        },
+        "reflection_roughness_back": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.8450000286102295
+        },
+        "reflection_roughness_front": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.20000000298023224
+        },
+        "round_corners": {
+          "editable": true,
+          "mdl_type": "bool",
+          "value": false
+        },
+        "smudges": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 0.4000000059604645
+        },
+        "softness": {
+          "editable": true,
+          "maximum": 1,
+          "mdl_type": "float",
+          "minimum": 0,
+          "value": 1
+        },
+        "texture_rotate": {
+          "editable": true,
+          "mdl_type": "float",
+          "value": 0
+        },
+        "texture_scale": {
+          "editable": true,
+          "mdl_type": "float2",
+          "value": [
+            1,
+            1
+          ]
+        },
+        "texture_translate": {
+          "editable": true,
+          "mdl_type": "float2",
+          "value": [
+            0,
+            0
+          ]
+        },
+        "uv_space_index": {
+          "editable": true,
+          "mdl_type": "int",
+          "value": 0
+        }
+      },
+      "resource_hashes": {
+        "vMaterials_2/Leather/Suede_Leather.mdl": "f2dc9e5d6fc178a42822f77d9968a7c645875bd906364549854086c9be621c6e",
+        "vMaterials_2/Leather/textures/multi_R_dust_G_grunge_B_leather.jpg": "1a4b0dba37e43303a3b2b29063c59df23d627c35911f35660cfcc323df2187ba",
+        "vMaterials_2/Leather/textures/suede_leather_front_diff.jpg": "3ebda755a292f23b06f640c042dba568830e2969accf2f490a246e95fe1019db",
+        "vMaterials_2/Leather/textures/suede_leather_front_multi_rough_dirt_height.jpg": "f71dd9c00ce3faa88240eea6af7555d6ffcc5e08bde25d270667a5e10e056631",
+        "vMaterials_2/Leather/textures/suede_leather_front_norm.jpg": "ff08eb03fc6a641cb319bacf06402144eb58dcbe1b264bd00805cae732338252"
+      },
+      "runtime_capability_audit": {
+        "argument_block_bytes": 160,
+        "ro_data_segment_bytes": [],
+        "df_handle_count": 1,
+        "textures": [
+          {
+            "mdl_index": 1,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Leather/textures/suede_leather_front_multi_rough_dirt_height.jpg",
+            "source_sha256": "f71dd9c00ce3faa88240eea6af7555d6ffcc5e08bde25d270667a5e10e056631",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 2,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Leather/textures/multi_R_dust_G_grunge_B_leather.jpg",
+            "source_sha256": "1a4b0dba37e43303a3b2b29063c59df23d627c35911f35660cfcc323df2187ba",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 3,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Leather/textures/suede_leather_front_norm.jpg",
+            "source_sha256": "ff08eb03fc6a641cb319bacf06402144eb58dcbe1b264bd00805cae732338252",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 4,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Leather/textures/suede_leather_front_diff.jpg",
+            "source_sha256": "3ebda755a292f23b06f640c042dba568830e2969accf2f490a246e95fe1019db",
+            "gamma": "linear",
+            "effective_gamma": 1.0,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          },
+          {
+            "mdl_index": 5,
+            "shape": "2d",
+            "source_path": "vMaterials_2/Leather/textures/suede_leather_front_diff.jpg",
+            "source_sha256": "3ebda755a292f23b06f640c042dba568830e2969accf2f490a246e95fe1019db",
+            "gamma": "srgb",
+            "effective_gamma": 2.2,
+            "dimensions": [
+              4096,
+              4096,
+              1
+            ]
+          }
+        ],
+        "measured_bsdf": false,
+        "light_profile": false,
+        "surface_bsdf_evaluate": true
+      }
     }
   ]
 }

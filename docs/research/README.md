@@ -13,6 +13,7 @@
 - [实验注册表](experiment_log.md)：每个正式 run 一行的结果索引（P0 建表，随首个正式 run 启用）。
 - [P1 v1 审计](p1_audit.md)：对 P1 结果与部署的代码级审计——放宽了哪些约束、当前模型/Slang 实现的成本量级、质量与长尾差的原因（FiLM 钳位、残差 clamp 死区、log 域噪声偏置）、应采用的 lobe 参数化 + 匹配 sampler 形态，以及训练/评测/viewer 共用单一 Slang 后端的目标结构。
 - [P1 v2 实施计划](p1_v2_plan.md)：lobe-residual 候选（精确顶层 core + 非负 LTC lobe + 可选 log 修正、64 B state、匹配 sample/pdf）的数学定义与成本自检，分五期的文件级任务、验收测试、依赖图、风险与待决事项。
+- [首批 MDL neural 材质族](mdl_vmaterials_neural_cohort.md)：冻结 vMaterials 2.4.0 的 11 个首批适配族、172 个 authored exports、连续编辑与离散资源评测边界、原生目录/精简包组织方式，以及 Base/Automotive 暂缓结论。
 
 ## 文档维护规则
 
