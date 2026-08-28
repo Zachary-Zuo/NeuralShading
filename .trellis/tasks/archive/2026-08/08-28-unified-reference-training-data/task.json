@@ -1,0 +1,28 @@
+{
+  "id": "unified-reference-training-data",
+  "name": "unified-reference-training-data",
+  "title": "统一材质 Reference 训练数据回路",
+  "description": "删除旧 offline/HDF5 与 source-specific live producer，把所有材质统一到同一 GPU online scattering query 回路，并明确 evaluate/sample/pdf 在 NVIDIA evaluator 与 sampler 训练中的职责。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "cross-layer",
+  "package": null,
+  "priority": "P2",
+  "creator": "Zachary",
+  "assignee": "Zachary",
+  "createdAt": "2026-08-28",
+  "completedAt": "2026-08-28",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "planning_summary": "generic online scattering dispatcher; typed evaluator/sampler batches; direct-f NVIDIA semantics; no HDF5/recorded path"
+  }
+}
