@@ -1,9 +1,13 @@
-# ScatteringPackage@1 合同
+# ScatteringPackage@2 合同
 
-`ncls.scattering-package@1` 是 reference 与 neural program均可使用的部署目录。manifest 精确包含 program/source/scattering identity、typed program/material descriptors、validation、provenance、files 与 content hashes。viewer的特殊请求 `source-reference` 仍可直接调用 source family权威 transport；它不是磁盘 package，也不改变本合同。
+`ncls.scattering-package@2`把部署产物分成三个独立section：
 
-三个身份互不混用：`program_runtime_id` 覆盖程序、ABI、capability、module closure、defines 与 runtime blobs；`material_asset_id` 覆盖 source snapshot、program descriptor 与 material blobs/resources；`package_id` 覆盖前两者和 validation/provenance。
+- `program`：module closure、defines、共享typed blobs、无文件sampler state、ABI和capability，计算`program_id`；
+- `asset`：source snapshot对应的compiled blobs、typed resources与无文件sampler state，计算`asset_id`；
+- `instance`：原子绑定一个`program_id + asset_id`并保存instance参数，计算`instance_id`。
 
-所有URI必须是POSIX相对路径且不得越界；逻辑URI唯一；hash精确覆盖全部文件。typed descriptor保留`kind/dtype/shape/stride/alignment/format/color_space/usage`，覆盖structured/byte buffer、typed texture与动态module source；shape、stride、alignment、usage和纹理header/extent/mip/format必须一致。loader先做schema、URI、存在性与hash校验，再创建binding；任何mismatch都拒绝，不fallback。包内program从package绝对路径加载，不要求预编入viewer。
+`package_id`覆盖三项identity、validation/provenance及其文件hash。instance binding必须与同一manifest的program/asset逐值一致；不能部分替换、猜测或fallback。URI均为POSIX相对路径且不得越界，逻辑名和物理URI唯一，content hash精确覆盖全部文件。typed descriptor保留`kind/dtype/shape/stride/alignment/format/color_space/usage`，纹理header、extent、mip和format必须与descriptor一致。sampler以`kind/usage/filter/address_mode`显式登记并参与program或asset identity，不得被writer忽略或由viewer猜测；所有runtime binding usage全局唯一。
 
-导出器通过通用`MethodDefinition.package_validation()`冻结方法专属验证合同。NVIDIA包写入独立packed-FP16 oracle的固定view/light与`expected_f`；viewer加载同一package shader后必须在预先冻结的FP16容差内通过，不能用“结果有限”代替数值parity。验证内容参与`package_id`，checkpoint step和oracle identity必须可追溯。
+Python loader先完成schema、identity、URI、存在性、hash和typed resource校验，再一次性创建`ProgramRuntime + AssetBinding + InstanceBinding`。viewer按`program_id`缓存程序runtime，asset与instance分别绑定；任一段失败都不改变现有slot。特殊请求`source-reference`仍直接调用权威source transport，不伪装成磁盘package。
+
+导出器通过通用method artifact conformance检查required runtime artifacts和Slang entry points。NVIDIA package另外冻结packed-FP16 parity oracle；真实D3D12 package shader必须在预先冻结的容差内通过，不能以“结果有限”替代数值parity。

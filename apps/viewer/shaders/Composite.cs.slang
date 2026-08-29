@@ -15,6 +15,7 @@ cbuffer CompositeCB
     float gExposure;
     float gDifferenceScale;
     uint2 gSlotReady;
+    float3 gDividerColor;
 };
 
 [numthreads(8, 8, 1)]
@@ -55,11 +56,11 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
                 : float3(0.12f, 0.02f, 0.02f);
             linear = comparisonLinear;
         }
-        else { comparisonLinear = float3(0.85f); linear = comparisonLinear; }
+        else { comparisonLinear = gDividerColor; linear = comparisonLinear; }
     }
     else
     {
-        if (!leftPanel && !rightPanel) comparisonLinear = float3(0.85f);
+        if (!leftPanel && !rightPanel) comparisonLinear = gDividerColor;
         else if (gComparisonMode == 1u) comparisonLinear = absoluteDifference;
         else if (gComparisonMode == 2u) comparisonLinear = absoluteDifference / max(max(abs(reference), abs(approximation)), 0.01f);
         else comparisonLinear = absoluteDifference * gDifferenceScale;

@@ -1,6 +1,6 @@
 # NclsViewer 规格
 
-viewer 是 Windows/D3D12 部署验证工具。已编译方法从 `ScatteringPackage@1` 读取，并将 package program/material 变成 `ScatteringBinding`；另保留显式的 `source-reference` 请求来调用源材质族的权威 source transport。后者不是磁盘 package，不得填充虚假的 package/runtime/material identity。
+viewer 是 Windows/D3D12 部署验证工具。已编译方法从 `ScatteringPackage@2` 读取，并把package拆成可按`program_id`复用的`ProgramRuntime`、独立`AssetBinding`和原子`InstanceBinding`；另保留显式的`source-reference`请求来调用源材质族的权威source transport。后者不是磁盘package，不得填充虚假的program/asset/instance identity。
 
 ## 双 slot
 
@@ -20,4 +20,4 @@ package PT 与 deferred renderer 都只调用公共 scattering binding，不按 
 
 reference PT 与 package PT 必须经 `PathSurface.slang` 共享命中解码、UV/V flip、geometric/shading frame、front-facing 和 ray-cone footprint。Falcor 的 `cameraU/cameraV/cameraW` 含共同 `focalDistance` 尺度，因此 primary spread 按 `2·|cameraV|/(|cameraW|·height)` 构造；不得只使用 `|cameraV|`。PT 输出与 deferred raster `ddx/ddy` 都是 normalized UV derivative，纹理或 latent 的实际尺寸由各自 sampler/backend 消费。非 triangle geometry 缺少可信 triangle Jacobian 时使用显式有限 fallback，不把未初始化 differential 传给 source/package。
 
-capture/replay 使用 `ncls.viewer-capture@4`，核心字段是 `slots[2]`，每项记录 package/runtime/material/source identity、mode 与 status。
+capture/replay 使用 `ncls.viewer-capture@4`，核心字段是 `slots[2]`，每项记录 package/program/asset/instance/source identity、mode 与 status。

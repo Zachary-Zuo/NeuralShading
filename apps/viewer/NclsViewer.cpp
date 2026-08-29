@@ -46,6 +46,36 @@ const Gui::DropdownList kReferenceFamilies = {
     {4, "MDL / vMaterials 2"},
 };
 
+ref<Sampler> createPackageSampler(
+    const ref<Device>& device,
+    const ncls::ViewerSamplerDescriptor& descriptor)
+{
+    const auto linear = descriptor.filter == "point"
+        ? TextureFilteringMode::Point : TextureFilteringMode::Linear;
+    const auto address = descriptor.addressMode == "wrap"
+        ? TextureAddressingMode::Wrap : TextureAddressingMode::Clamp;
+    Sampler::Desc value;
+    value.setFilterMode(linear, linear, linear)
+        .setMaxAnisotropy(descriptor.filter == "anisotropic" ? 16u : 1u)
+        .setAddressingMode(address, address, address);
+    return device->createSampler(value);
+}
+
+ref<Buffer> createPackageBuffer(
+    const ref<Device>& device,
+    const ncls::ViewerTypedBlob& descriptor)
+{
+    if (descriptor.data.empty() || descriptor.stride == 0u
+        || descriptor.data.size() % descriptor.stride != 0u)
+        throw std::runtime_error("package typed blob size disagrees with its stride");
+    return device->createStructuredBuffer(
+        descriptor.stride,
+        static_cast<uint32_t>(descriptor.data.size() / descriptor.stride),
+        ResourceBindFlags::ShaderResource,
+        MemoryType::DeviceLocal,
+        descriptor.data.data());
+}
+
 std::vector<uint8_t> readBinaryFile(const std::filesystem::path& path)
 {
     std::ifstream stream(path, std::ios::binary);
@@ -303,6 +333,11 @@ std::vector<float4> readHalfRgbaExrPixels(
 ViewerOptions parseOptions(int argc, char** argv)
 {
     ViewerOptions options;
+    const auto parseSlotMode = [](const std::string& value, const char* option) {
+        if (value == "path-tracing") return ncls::SlotMode::PathTracing;
+        if (value == "deferred") return ncls::SlotMode::Deferred;
+        throw std::runtime_error(std::string(option) + " must be path-tracing or deferred");
+    };
     for (int index = 1; index + 1 < argc; ++index)
     {
         if (std::string(argv[index]) != "--replay") continue;
@@ -339,9 +374,7 @@ ViewerOptions parseOptions(int argc, char** argv)
             {
                 options.requestedSlotPackages[slotIndex] = slots[slotIndex].value("package_id", std::string());
                 const std::string mode = slots[slotIndex].value("mode", "path-tracing");
-                if (mode == "path-tracing") options.requestedSlotModes[slotIndex] = ncls::SlotMode::PathTracing;
-                else if (mode == "deferred") options.requestedSlotModes[slotIndex] = ncls::SlotMode::Deferred;
-                else throw std::runtime_error("capture v4 slot mode is invalid");
+                options.requestedSlotModes[slotIndex] = parseSlotMode(mode, "capture v4 slot mode");
             }
             options.hasRequestedSlots = true;
         }
@@ -373,6 +406,26 @@ ViewerOptions parseOptions(int argc, char** argv)
         if (argument == "--bundle-root") options.packageRoot = value(index, "--bundle-root");
         else if (argument == "--material") options.materialPath = value(index, "--material");
         else if (argument == "--method") options.requestedPackageId = value(index, "--method");
+        else if (argument == "--slot0-package")
+        {
+            options.requestedSlotPackages[0] = value(index, "--slot0-package");
+            options.hasRequestedSlots = true;
+        }
+        else if (argument == "--slot1-package")
+        {
+            options.requestedSlotPackages[1] = value(index, "--slot1-package");
+            options.hasRequestedSlots = true;
+        }
+        else if (argument == "--slot0-mode")
+        {
+            options.requestedSlotModes[0] = parseSlotMode(value(index, "--slot0-mode"), "--slot0-mode");
+            options.hasRequestedSlots = true;
+        }
+        else if (argument == "--slot1-mode")
+        {
+            options.requestedSlotModes[1] = parseSlotMode(value(index, "--slot1-mode"), "--slot1-mode");
+            options.hasRequestedSlots = true;
+        }
         else if (argument == "--environment") options.environmentPath = value(index, "--environment");
         else if (argument == "--reference-geometry") options.referenceGeometryPath = value(index, "--reference-geometry");
         else if (argument == "--replay") { options.replayPath = value(index, "--replay"); }
@@ -391,6 +444,8 @@ ViewerOptions parseOptions(int argc, char** argv)
                    "[--reference-geometry SCENE] [--environment HDRI] "
                    "[--headless --frames N --capture FILE] "
                    "[--method SHA256] [--evaluator-preview-lighting] "
+                   "[--slot0-package ID --slot0-mode path-tracing|deferred] "
+                   "[--slot1-package ID --slot1-mode path-tracing|deferred] "
                    "[--width W --height H] [--verbose-console]\n";
             std::exit(0);
         }
@@ -444,24 +499,63 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
     else if (!mOptions.replayPath.empty()) applyReplaySettings(mOptions.replayPath);
     else if (mOptions.referenceGeometryPath.empty())
     {
-        const auto presetPath = getRuntimeDirectory() / "data/ncls-viewer/studio-v1.json";
+        const auto presetPath = getRuntimeDirectory() / "data/ncls-viewer/studio-v2.json";
         std::ifstream stream(presetPath, std::ios::binary);
         if (!stream) throw std::runtime_error(
             "fixed viewer studio preset is missing; rebuild with scripts/build_viewer.ps1: " + presetPath.string());
         const nlohmann::json preset = nlohmann::json::parse(stream);
-        if (preset.value("format_name", "") != "ncls.viewer-studio" || preset.value("format_version", 0u) != 1u)
+        if (preset.value("format_name", "") != "ncls.viewer-studio" || preset.value("format_version", 0u) != 2u)
             throw std::runtime_error("unsupported fixed viewer studio preset: " + presetPath.string());
         const auto assetRoot = presetPath.parent_path();
-        mOptions.referenceGeometryPath = assetRoot / preset.at("reference_geometry").get<std::string>();
-        mOptions.referenceGeometrySha256 = preset.at("reference_geometry_sha256").get<std::string>();
+        const auto runtimeAsset = [&](const nlohmann::json& uri) {
+            const std::filesystem::path sourcePath(uri.get<std::string>());
+            if (sourcePath.empty() || !sourcePath.has_filename())
+                throw std::runtime_error("fixed viewer studio asset URI is invalid");
+            return assetRoot / sourcePath.filename();
+        };
+        const auto vector3 = [](const nlohmann::json& value) {
+            if (!value.is_array() || value.size() != 3u)
+                throw std::runtime_error("fixed viewer studio vector must contain three values");
+            return float3(value[0].get<float>(), value[1].get<float>(), value[2].get<float>());
+        };
+        const auto& scene = preset.at("scene");
+        mOptions.referenceGeometryPath = runtimeAsset(scene.at("geometry"));
+        mOptions.referenceGeometrySha256 = scene.at("geometry_sha256").get<std::string>();
         if (mOptions.environmentPath.empty())
         {
-            mOptions.environmentPath = assetRoot / preset.at("environment").get<std::string>();
-            mOptions.environmentSha256 = preset.at("environment_sha256").get<std::string>();
+            mOptions.environmentPath = runtimeAsset(scene.at("environment"));
+            mOptions.environmentSha256 = scene.at("environment_sha256").get<std::string>();
         }
         if (mOptions.materialPath.empty())
-            mOptions.materialPath = assetRoot / preset.at("source_material").get<std::string>();
-        applyReplaySettings(presetPath);
+            mOptions.materialPath = assetRoot / "viewer-studio-material-v1.json";
+
+        const auto& camera = preset.at("camera");
+        mCamera.target = vector3(camera.at("target"));
+        mCamera.yaw = camera.at("yaw").get<float>();
+        mCamera.pitch = camera.at("pitch").get<float>();
+        mCamera.distance = camera.at("distance").get<float>();
+        mCamera.verticalFovDegrees = camera.at("vertical_fov_degrees").get<float>();
+        const auto& lighting = preset.at("lighting");
+        mLighting.environmentRotation = lighting.at("environment_rotation").get<float>();
+        mLighting.environmentIntensity = lighting.at("environment_intensity").get<float>();
+        const auto& display = preset.at("display");
+        mExposure = display.at("exposure_ev").get<float>();
+        mDividerColor = vector3(display.at("divider_color"));
+        if (!mOptions.hasRequestedSlots)
+        {
+            const auto& slots = preset.at("slots");
+            if (!slots.is_array() || slots.size() != 2u)
+                throw std::runtime_error("fixed viewer studio requires exactly two slots");
+            for (uint32_t slotIndex = 0u; slotIndex < 2u; ++slotIndex)
+            {
+                mOptions.requestedSlotPackages[slotIndex] = slots[slotIndex].at("package").get<std::string>();
+                const std::string mode = slots[slotIndex].at("mode").get<std::string>();
+                if (mode == "path-tracing") mOptions.requestedSlotModes[slotIndex] = ncls::SlotMode::PathTracing;
+                else if (mode == "deferred") mOptions.requestedSlotModes[slotIndex] = ncls::SlotMode::Deferred;
+                else throw std::runtime_error("fixed viewer studio slot mode is invalid");
+            }
+            mOptions.hasRequestedSlots = true;
+        }
     }
     if (mOptions.viewerScenePath.empty())
     {
@@ -1044,8 +1138,8 @@ void NclsViewer::updateReferenceSourceBuffer()
 bool NclsViewer::allMaterialsSupportedBy(const ncls::ViewerProgram& method) const
 {
     const auto supports = [&](const ncls::ReferenceSource& source) {
-        return source.familyId() == method.sourceFamilyId
-            && source.sourceSha256 == method.sourceAssetSha256;
+        return source.familyId() == method.asset.sourceFamilyId
+            && source.sourceSha256 == method.asset.sourceAssetSha256;
     };
     if (!supports(mReferenceSource)) return false;
     for (const auto& [materialId, binding] : mInactiveSceneMaterials)
@@ -1148,8 +1242,8 @@ ref<ComputePass> NclsViewer::createProgramPass(
     DefineList defines;
     defines.add(
         "NCLS_PACKAGE_PROGRAM_HEADER",
-        "\"" + std::filesystem::path(method.shaderModule).generic_string() + "\"");
-    for (const auto& [name, value] : method.shaderDefines) defines.add(name, value);
+        "\"" + std::filesystem::path(method.program->shaderModule).generic_string() + "\"");
+    for (const auto& [name, value] : method.program->shaderDefines) defines.add(name, value);
     return ComputePass::create(getDevice(), program, defines, true);
 }
 
@@ -1163,8 +1257,8 @@ ref<ComputePass> NclsViewer::createProgramPathPass(const ncls::ViewerProgram& me
     DefineList defines = mpScene->getSceneDefines();
     defines.add(
         "NCLS_PACKAGE_PROGRAM_HEADER",
-        "\"" + std::filesystem::path(method.shaderModule).generic_string() + "\"");
-    for (const auto& [name, value] : method.shaderDefines) defines.add(name, value);
+        "\"" + std::filesystem::path(method.program->shaderModule).generic_string() + "\"");
+    for (const auto& [name, value] : method.program->shaderDefines) defines.add(name, value);
     return ComputePass::create(getDevice(), program, defines, true);
 }
 
@@ -1173,12 +1267,6 @@ bool NclsViewer::runParityProbe(const ncls::ViewerProgram& method, std::string& 
     try
     {
         const auto flags = ResourceBindFlags::ShaderResource;
-        auto weights = getDevice()->createStructuredBuffer(
-            sizeof(uint32_t), static_cast<uint32_t>(method.sharedWeightWords.size()),
-            flags, MemoryType::DeviceLocal, method.sharedWeightWords.data());
-        auto compiledMaterials = getDevice()->createStructuredBuffer(
-            method.compiledMaterialBytes, method.compiledMaterialCount,
-            flags, MemoryType::DeviceLocal, method.compiledMaterials.data());
         const float4 view(method.parity.view[0], method.parity.view[1], method.parity.view[2], 0.f);
         const std::vector<std::array<float, 3>> probeLights = method.parity.lights.empty()
             ? std::vector<std::array<float, 3>>{
@@ -1195,11 +1283,17 @@ bool NclsViewer::runParityProbe(const ncls::ViewerProgram& method, std::string& 
             ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess);
         auto parityPass = createProgramPass("NclsViewer/shaders/PackageParity.cs.slang", method);
         auto root = parityPass->getRootVar();
-        root["gNclsRuntimeWeights"] = weights;
-        root["gNclsCompiledMaterials"] = compiledMaterials;
+        std::vector<ref<Buffer>> buffers;
+        auto bindBlob = [&](const ncls::ViewerTypedBlob& descriptor) {
+            auto buffer = createPackageBuffer(getDevice(), descriptor);
+            root[descriptor.usage] = buffer;
+            buffers.push_back(std::move(buffer));
+        };
+        for (const auto& descriptor : method.program->blobs) bindBlob(descriptor);
+        for (const auto& descriptor : method.asset.blobs) bindBlob(descriptor);
         std::vector<ref<Texture>> textures;
         std::vector<ref<Sampler>> samplers;
-        for (const auto& resource : method.resources)
+        for (const auto& resource : method.asset.resources)
         {
             if (resource.dtype == "texture2d-rgba16float-dds@1")
             {
@@ -1211,27 +1305,19 @@ bool NclsViewer::runParityProbe(const ncls::ViewerProgram& method, std::string& 
                 root[resource.usage] = texture;
                 textures.push_back(std::move(texture));
             }
-            else if (resource.dtype == "sampler-linear-wrap-explicit-lod@1")
-            {
-                Sampler::Desc desc;
-                desc.setFilterMode(
-                        TextureFilteringMode::Linear,
-                        TextureFilteringMode::Linear,
-                        TextureFilteringMode::Point)
-                    .setAddressingMode(
-                        TextureAddressingMode::Wrap,
-                        TextureAddressingMode::Wrap,
-                        TextureAddressingMode::Wrap);
-                auto sampler = getDevice()->createSampler(desc);
-                root[resource.usage] = sampler;
-                samplers.push_back(std::move(sampler));
-            }
         }
+        auto bindSampler = [&](const ncls::ViewerSamplerDescriptor& descriptor) {
+            auto sampler = createPackageSampler(getDevice(), descriptor);
+            root[descriptor.usage] = sampler;
+            samplers.push_back(std::move(sampler));
+        };
+        for (const auto& descriptor : method.program->samplers) bindSampler(descriptor);
+        for (const auto& descriptor : method.asset.samplers) bindSampler(descriptor);
         root["gViews"] = viewBuffer;
         root["gLights"] = lightBuffer;
         root["gOutput"] = output;
         root["gLightCount"] = static_cast<uint32_t>(lights.size());
-        root["gCompiledMaterialIndex"] = method.compiledMaterialIndex;
+        root["gCompiledMaterialIndex"] = method.instance.compiledMaterialIndex;
         parityPass->execute(getRenderContext(), static_cast<uint32_t>(lights.size()), 1, 1);
         std::vector<float4> actual(lights.size());
         output->getBlob(actual.data(), 0, actual.size() * sizeof(float4));
@@ -1340,19 +1426,21 @@ void NclsViewer::activateComparisonSlot(uint32_t slotIndex, uint32_t selection)
             }
             if (candidate.contract.status == ncls::SlotStatus::Ready)
             {
-                candidate.pWeights = getDevice()->createStructuredBuffer(
-                    sizeof(uint32_t), static_cast<uint32_t>(method.sharedWeightWords.size()),
-                    ResourceBindFlags::ShaderResource, MemoryType::DeviceLocal,
-                    method.sharedWeightWords.data());
-                candidate.pCompiledMaterials = getDevice()->createStructuredBuffer(
-                    method.compiledMaterialBytes, method.compiledMaterialCount,
-                    ResourceBindFlags::ShaderResource, MemoryType::DeviceLocal,
-                    method.compiledMaterials.data());
+                auto addBlob = [&](const ncls::ViewerTypedBlob& descriptor) {
+                    const auto inserted = candidate.buffers.emplace(
+                        descriptor.usage,
+                        createPackageBuffer(getDevice(), descriptor)
+                    );
+                    if (!inserted.second)
+                        throw std::runtime_error("package buffer usage is duplicated");
+                };
+                for (const auto& descriptor : method.program->blobs) addBlob(descriptor);
+                for (const auto& descriptor : method.asset.blobs) addBlob(descriptor);
                 candidate.pDeferredPass = createProgramPass(
                     "NclsViewer/shaders/DeferredRenderer.cs.slang", method);
-                if ((method.capabilities & (4u | 8u)) == (4u | 8u))
+                if ((method.program->capabilities & (4u | 8u)) == (4u | 8u))
                     candidate.pPathPass = createProgramPathPass(method);
-                for (const auto& resource : method.resources)
+                for (const auto& resource : method.asset.resources)
                 {
                     if (resource.dtype == "texture2d-rgba16float-dds@1")
                     {
@@ -1363,20 +1451,17 @@ void NclsViewer::activateComparisonSlot(uint32_t slotIndex, uint32_t selection)
                             throw std::runtime_error("package texture load disagrees with typed descriptor");
                         candidate.textures.emplace(resource.usage, std::move(value));
                     }
-                    else if (resource.dtype == "sampler-linear-wrap-explicit-lod@1")
-                    {
-                        Sampler::Desc desc;
-                        desc.setFilterMode(
-                                TextureFilteringMode::Linear,
-                                TextureFilteringMode::Linear,
-                                TextureFilteringMode::Point)
-                            .setAddressingMode(
-                                TextureAddressingMode::Wrap,
-                                TextureAddressingMode::Wrap,
-                                TextureAddressingMode::Wrap);
-                        candidate.samplers.emplace(resource.usage, getDevice()->createSampler(desc));
-                    }
                 }
+                auto addSampler = [&](const ncls::ViewerSamplerDescriptor& descriptor) {
+                    const auto inserted = candidate.samplers.emplace(
+                        descriptor.usage,
+                        createPackageSampler(getDevice(), descriptor)
+                    );
+                    if (!inserted.second)
+                        throw std::runtime_error("package sampler usage is duplicated");
+                };
+                for (const auto& descriptor : method.program->samplers) addSampler(descriptor);
+                for (const auto& descriptor : method.asset.samplers) addSampler(descriptor);
             }
         }
         resizeComparisonSlot(candidate);
@@ -1400,8 +1485,7 @@ ref<Texture> NclsViewer::slotOutput(const ComparisonSlotRuntime& slot) const
 
 void NclsViewer::bindProgramResources(ShaderVar root, const ComparisonSlotRuntime& slot) const
 {
-    root["gNclsRuntimeWeights"] = slot.pWeights;
-    root["gNclsCompiledMaterials"] = slot.pCompiledMaterials;
+    for (const auto& [usage, buffer] : slot.buffers) root[usage] = buffer;
     for (const auto& [usage, texture] : slot.textures) root[usage] = texture;
     for (const auto& [usage, sampler] : slot.samplers) root[usage] = sampler;
 }
@@ -1592,9 +1676,9 @@ void NclsViewer::renderApproximation(RenderContext* pRenderContext, ComparisonSl
     root["gApproximation"] = slot.pDeferred;
     bindProgramResources(root, slot);
     root["ApproximationCB"]["gFrameDim"] = uint2(mViewWidth, mOutputHeight);
-    root["ApproximationCB"]["gCompiledMaterialIndex"] = method->compiledMaterialIndex;
-    root["ApproximationCB"]["gEnvironmentQueryBudget"] = method->environmentQueryBudget;
-    root["ApproximationCB"]["gRectangleQueryBudget"] = method->rectangleQueryBudget;
+    root["ApproximationCB"]["gCompiledMaterialIndex"] = method->instance.compiledMaterialIndex;
+    root["ApproximationCB"]["gEnvironmentQueryBudget"] = method->program->environmentQueryBudget;
+    root["ApproximationCB"]["gRectangleQueryBudget"] = method->program->rectangleQueryBudget;
     bindLighting(root, "ApproximationCB");
     beginTiming(slot.timing);
     slot.pDeferredPass->execute(pRenderContext, mViewWidth, mOutputHeight);
@@ -1625,7 +1709,7 @@ void NclsViewer::renderPackagePath(RenderContext* pRenderContext, ComparisonSlot
     constants["gSamplesThisFrame"] = samplesThisFrame;
     constants["gMaxSceneBounces"] = mMaxSceneBounces;
     constants["gResetAccumulation"] = uint32_t(slot.resetAccumulation);
-    constants["gCompiledMaterialIndex"] = method->compiledMaterialIndex;
+    constants["gCompiledMaterialIndex"] = method->instance.compiledMaterialIndex;
     std::string extension = mReferenceGeometryPath.extension().string();
     std::transform(extension.begin(), extension.end(), extension.begin(),
         [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
@@ -1660,6 +1744,7 @@ void NclsViewer::renderComposite(RenderContext* pRenderContext)
     constants["gDifferenceScale"] = mDifferenceScale;
     constants["gSlotReady"] = uint2(
         uint32_t(mComparisonSlots[0].ready()), uint32_t(mComparisonSlots[1].ready()));
+    constants["gDividerColor"] = mDividerColor;
     beginTiming(mCompositeTiming);
     mpCompositePass->execute(pRenderContext, mOutputWidth, mOutputHeight);
     endTiming(mCompositeTiming);
@@ -2325,7 +2410,7 @@ void NclsViewer::onGuiRender(Gui* pGui)
                 if (!slot.contract.diagnostic.empty()) group.textWrapped(slot.contract.diagnostic);
                 if (const auto* method = slotProgram(slot))
                     group.text("package " + shortId(method->packageId)
-                        + " / " + method->runtimeClass);
+                        + " / " + method->program->runtimeClass);
             }
             if (group.button("Rescan ScatteringPackages")) scanPackages();
             if (!mPackageFailures.empty())
@@ -2859,9 +2944,10 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         slots.push_back({
             {"slot_index", slotIndex},
             {"package_id", program ? program->packageId : slot.sourceReference ? "source-reference" : ""},
-            {"program_runtime_id", program ? program->programRuntimeId : slot.sourceReference ? "ncls.scene-path-tracer@1" : ""},
-            {"material_asset_id", program ? program->materialAssetId : ""},
-            {"source_snapshot_id", program ? program->sourceSnapshotId : ncls::referenceSourceStateHash(mReferenceSource)},
+            {"program_id", program ? program->program->programId : slot.sourceReference ? "ncls.scene-path-tracer@1" : ""},
+            {"asset_id", program ? program->asset.assetId : ""},
+            {"instance_id", program ? program->instance.instanceId : ""},
+            {"source_snapshot_id", program ? program->asset.sourceSnapshotId : ncls::referenceSourceStateHash(mReferenceSource)},
             {"mode", slot.contract.mode == ncls::SlotMode::PathTracing ? "path-tracing" : "deferred"},
             {"status", slotStatusName(slot.contract.status)},
             {"diagnostic", slot.contract.diagnostic},
@@ -2923,7 +3009,7 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         {"estimated_mean_relative_standard_error", mEstimatedRelativeStandardError},
         {"comparison_semantics", mComparisonSlots[0].ready() && mComparisonSlots[1].ready()
             ? "symmetric_slot_linear_output_difference" : "partial_slot_capture"},
-        {"method_runtime_class", rightProgram ? rightProgram->runtimeClass : "none"},
+        {"method_runtime_class", rightProgram ? rightProgram->program->runtimeClass : "none"},
         {"camera", {
             {"target", {mCamera.target.x, mCamera.target.y, mCamera.target.z}},
             {"yaw", mCamera.yaw}, {"pitch", mCamera.pitch}, {"distance", mCamera.distance},

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator, Mapping, Protocol
+from typing import Any, Callable, Iterator, Mapping, Protocol
 
 import numpy as np
 from PIL import Image
@@ -78,53 +78,435 @@ class NativeFeatureLayout:
         }
 
 
-class NativeFeaturePyramid(Protocol):
-    """method source adaptation 的 tile 化输入，避免展开整张 K-channel 纹理。"""
+@dataclass(frozen=True)
+class NativeAssetRole:
+    role_id: str
+    semantic: str
+    channel_offset: int
+    channel_count: int
+    transfer_function: str
+    filter_rule: str
 
-    feature_count: int
-    level_shapes: tuple[tuple[int, int], ...]
+    def __post_init__(self) -> None:
+        if (
+            not self.role_id
+            or not self.semantic
+            or self.channel_offset < 0
+            or self.channel_count < 1
+            or not self.transfer_function
+            or not self.filter_rule
+        ):
+            raise ValueError("native asset role contract is invalid")
 
-    def iter_level_tiles(
-        self,
-        level: int,
-        max_texels: int,
-        device: torch.device,
-    ) -> Iterator[tuple[int, torch.Tensor]]: ...
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "role_id": self.role_id,
+            "semantic": self.semantic,
+            "channel_offset": self.channel_offset,
+            "channel_count": self.channel_count,
+            "transfer_function": self.transfer_function,
+            "filter_rule": self.filter_rule,
+        }
 
 
 @dataclass(frozen=True)
-class DenseNativeFeaturePyramid:
-    levels: tuple[torch.Tensor, ...]
+class NativeAssetDomain:
+    domain_id: str
+    coordinate_space: str
+    address_mode: str
+    level_shapes: tuple[tuple[int, int], ...]
+    roles: tuple[NativeAssetRole, ...]
 
     def __post_init__(self) -> None:
-        if not self.levels or any(level.ndim != 3 for level in self.levels):
-            raise ValueError("dense native feature levels must have shape [height,width,feature]")
-        feature_count = int(self.levels[0].shape[2])
-        if feature_count < 1 or any(int(level.shape[2]) != feature_count for level in self.levels):
-            raise ValueError("dense native feature pyramid channels must agree")
-        if any(not bool(torch.isfinite(level).all()) for level in self.levels):
-            raise ValueError("dense native feature pyramid must be finite")
-        object.__setattr__(self, "levels", tuple(self.levels))
+        shapes = tuple((int(height), int(width)) for height, width in self.level_shapes)
+        roles = tuple(self.roles)
+        if (
+            not self.domain_id
+            or not self.coordinate_space
+            or self.address_mode not in {"clamp", "wrap"}
+            or not shapes
+            or any(min(shape) < 1 for shape in shapes)
+            or not roles
+        ):
+            raise ValueError("native asset domain contract is invalid")
+        if len({role.role_id for role in roles}) != len(roles):
+            raise ValueError("native asset domain roles must be unique")
+        for previous, current in zip(shapes, shapes[1:]):
+            expected = (max(1, previous[0] // 2), max(1, previous[1] // 2))
+            if current != expected:
+                raise ValueError("native asset mip extents must form one canonical half chain")
+        cursor = 0
+        for role in roles:
+            if role.channel_offset != cursor:
+                raise ValueError("native asset role channel ranges must be dense and ordered")
+            cursor += role.channel_count
+        object.__setattr__(self, "level_shapes", shapes)
+        object.__setattr__(self, "roles", roles)
 
     @property
-    def feature_count(self) -> int:
-        return int(self.levels[0].shape[2])
+    def channel_count(self) -> int:
+        return sum(role.channel_count for role in self.roles)
 
     @property
-    def level_shapes(self) -> tuple[tuple[int, int], ...]:
-        return tuple((int(level.shape[0]), int(level.shape[1])) for level in self.levels)
+    def role_layout_id(self) -> str:
+        return sha256_json([role.to_dict() for role in self.roles])
 
-    def iter_level_tiles(
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "domain_id": self.domain_id,
+            "coordinate_space": self.coordinate_space,
+            "address_mode": self.address_mode,
+            "level_shapes": [list(shape) for shape in self.level_shapes],
+            "roles": [role.to_dict() for role in self.roles],
+        }
+
+
+@dataclass(frozen=True)
+class NativeAssetDescriptor:
+    asset_id: str
+    schema_id: str
+    domains: tuple[NativeAssetDomain, ...]
+
+    def __post_init__(self) -> None:
+        domains = tuple(self.domains)
+        if (
+            not self.asset_id
+            or not self.schema_id
+            or not domains
+            or len({domain.domain_id for domain in domains}) != len(domains)
+        ):
+            raise ValueError("native asset descriptor is invalid")
+        object.__setattr__(self, "domains", domains)
+
+    def domain(self, domain_id: str) -> NativeAssetDomain:
+        for domain in self.domains:
+            if domain.domain_id == domain_id:
+                return domain
+        raise KeyError(f"native asset has no domain {domain_id!r}")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "asset_id": self.asset_id,
+            "schema_id": self.schema_id,
+            "domains": [domain.to_dict() for domain in self.domains],
+        }
+
+
+@dataclass(frozen=True)
+class NativeAssetTileRequest:
+    asset_index: int
+    asset_id: str
+    schema_id: str
+    domain_id: str
+    role_layout_id: str
+    mip_level: int
+    origin_yx: tuple[int, int]
+    core_shape: tuple[int, int]
+    halo: int
+
+    def __post_init__(self) -> None:
+        if (
+            min(self.asset_index, self.mip_level, *self.origin_yx, *self.core_shape, self.halo) < 0
+            or min(self.core_shape) < 1
+            or not self.asset_id
+            or not self.schema_id
+            or not self.domain_id
+            or not self.role_layout_id
+        ):
+            raise ValueError("native asset tile request is invalid")
+
+
+@dataclass
+class _WorkingSetEntry:
+    tensor: torch.Tensor
+    ref_count: int
+    stamp: int
+
+
+class NativeAssetWorkingSetLease:
+    def __init__(
         self,
-        level: int,
-        max_texels: int,
-        device: torch.device,
-    ) -> Iterator[tuple[int, torch.Tensor]]:
-        if max_texels < 1:
-            raise ValueError("native feature materialization tile must be positive")
-        flat = self.levels[level].reshape(-1, self.feature_count)
-        for offset in range(0, len(flat), max_texels):
-            yield offset, flat[offset : offset + max_texels].to(device=device, dtype=torch.float32)
+        tensor: torch.Tensor,
+        release_callback: Callable[[], None],
+    ) -> None:
+        self.tensor = tensor
+        self._release_callback = release_callback
+        self.released = False
+
+    def release(self) -> None:
+        if not self.released:
+            self._release_callback()
+            self.released = True
+
+
+class _WorkingSetCache:
+    def __init__(self, capacity: int) -> None:
+        if capacity < 1:
+            raise ValueError("native asset working-set capacity must be positive")
+        self.capacity = int(capacity)
+        self._entries: dict[tuple[Any, ...], _WorkingSetEntry] = {}
+        self._stamp = 0
+
+    def acquire(
+        self,
+        key: tuple[Any, ...],
+        loader: Callable[[], torch.Tensor],
+    ) -> NativeAssetWorkingSetLease:
+        entry = self._entries.get(key)
+        if entry is None:
+            candidates = [
+                (candidate.stamp, candidate_key)
+                for candidate_key, candidate in self._entries.items()
+                if candidate.ref_count == 0
+            ]
+            if len(self._entries) >= self.capacity:
+                if not candidates:
+                    raise RuntimeError("native asset GPU working set is fully leased")
+                _, evicted = min(candidates)
+                del self._entries[evicted]
+            entry = _WorkingSetEntry(loader(), 0, self._stamp)
+            self._entries[key] = entry
+        self._stamp += 1
+        entry.stamp = self._stamp
+        entry.ref_count += 1
+
+        def release() -> None:
+            current = self._entries.get(key)
+            if current is not entry or current.ref_count < 1:
+                raise RuntimeError("native asset working-set lease lost ownership")
+            current.ref_count -= 1
+
+        return NativeAssetWorkingSetLease(entry.tensor, release)
+
+
+@dataclass(frozen=True)
+class NativeAssetTile:
+    request: NativeAssetTileRequest
+    roles: tuple[NativeAssetRole, ...]
+    values: torch.Tensor
+    lease: NativeAssetWorkingSetLease = field(compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        height, width = self.request.core_shape
+        if self.values.ndim != 3 or self.values.shape[:2] != (
+            height + 2 * self.request.halo,
+            width + 2 * self.request.halo,
+        ):
+            raise ValueError("native asset tile values disagree with core/halo extent")
+        roles = tuple(self.roles)
+        if sum(role.channel_count for role in roles) != self.values.shape[2]:
+            raise ValueError("native asset tile values disagree with role channels")
+        if sha256_json([role.to_dict() for role in roles]) != self.request.role_layout_id:
+            raise ValueError("native asset tile role layout identity mismatch")
+        object.__setattr__(self, "roles", roles)
+
+    @property
+    def asset_index(self) -> int:
+        return self.request.asset_index
+
+    @property
+    def mip_level(self) -> int:
+        return self.request.mip_level
+
+    @property
+    def origin_yx(self) -> tuple[int, int]:
+        return self.request.origin_yx
+
+    @property
+    def core_shape(self) -> tuple[int, int]:
+        return self.request.core_shape
+
+    @property
+    def halo(self) -> int:
+        return self.request.halo
+
+    @property
+    def core(self) -> torch.Tensor:
+        if self.halo == 0:
+            return self.values
+        return self.values[
+            self.halo : self.halo + self.core_shape[0],
+            self.halo : self.halo + self.core_shape[1],
+        ]
+
+    def role_values(self, role_id: str, *, core: bool = False) -> torch.Tensor:
+        source = self.core if core else self.values
+        for role in self.roles:
+            if role.role_id == role_id:
+                begin = role.channel_offset
+                return source[..., begin : begin + role.channel_count]
+        raise KeyError(f"native asset tile has no role {role_id!r}")
+
+    def release(self) -> None:
+        self.lease.release()
+
+
+class NativeAssetCollection(Protocol):
+    """asset/domain/mip/role/schema-aware source tensors with bounded GPU leases."""
+
+    descriptors: tuple[NativeAssetDescriptor, ...]
+    collection_id: str
+
+    def iter_tile_requests(
+        self,
+        asset_index: int,
+        domain_id: str,
+        max_core_texels: int,
+        halo: int,
+    ) -> Iterator[NativeAssetTileRequest]: ...
+
+    def acquire_tile(
+        self, request: NativeAssetTileRequest, device: torch.device
+    ) -> NativeAssetTile: ...
+
+
+def _tile_requests(
+    descriptor: NativeAssetDescriptor,
+    asset_index: int,
+    domain: NativeAssetDomain,
+    max_core_texels: int,
+    halo: int,
+) -> Iterator[NativeAssetTileRequest]:
+    if max_core_texels < 1 or halo < 0:
+        raise ValueError("native asset tile budget/halo is invalid")
+    for mip_level, (height, width) in enumerate(domain.level_shapes):
+        tile_width = min(width, max_core_texels)
+        tile_height = max(1, min(height, max_core_texels // tile_width))
+        for origin_y in range(0, height, tile_height):
+            core_height = min(tile_height, height - origin_y)
+            for origin_x in range(0, width, tile_width):
+                core_width = min(tile_width, width - origin_x)
+                yield NativeAssetTileRequest(
+                    asset_index,
+                    descriptor.asset_id,
+                    descriptor.schema_id,
+                    domain.domain_id,
+                    domain.role_layout_id,
+                    mip_level,
+                    (origin_y, origin_x),
+                    (core_height, core_width),
+                    halo,
+                )
+
+
+def _gather_tile(
+    source: torch.Tensor,
+    request: NativeAssetTileRequest,
+    domain: NativeAssetDomain,
+) -> torch.Tensor:
+    height, width = domain.level_shapes[request.mip_level]
+    origin_y, origin_x = request.origin_yx
+    core_height, core_width = request.core_shape
+    y = torch.arange(origin_y - request.halo, origin_y + core_height + request.halo, device=source.device)
+    x = torch.arange(origin_x - request.halo, origin_x + core_width + request.halo, device=source.device)
+    if domain.address_mode == "wrap":
+        y, x = torch.remainder(y, height), torch.remainder(x, width)
+    else:
+        y, x = torch.clamp(y, 0, height - 1), torch.clamp(x, 0, width - 1)
+    return source.index_select(0, y).index_select(1, x)
+
+
+def _validate_tile_request(
+    descriptors: tuple[NativeAssetDescriptor, ...],
+    request: NativeAssetTileRequest,
+) -> tuple[NativeAssetDescriptor, NativeAssetDomain]:
+    if request.asset_index >= len(descriptors):
+        raise ValueError("native asset tile request asset index is out of range")
+    descriptor = descriptors[request.asset_index]
+    if request.asset_id != descriptor.asset_id or request.schema_id != descriptor.schema_id:
+        raise ValueError("native asset tile request identity mismatch")
+    try:
+        domain = descriptor.domain(request.domain_id)
+    except KeyError as error:
+        raise ValueError("native asset tile request domain is unknown") from error
+    if request.role_layout_id != domain.role_layout_id:
+        raise ValueError("native asset tile request role layout mismatch")
+    if request.mip_level >= len(domain.level_shapes):
+        raise ValueError("native asset tile request mip is out of range")
+    height, width = domain.level_shapes[request.mip_level]
+    origin_y, origin_x = request.origin_yx
+    core_height, core_width = request.core_shape
+    if origin_y + core_height > height or origin_x + core_width > width:
+        raise ValueError("native asset tile request core exceeds its mip extent")
+    return descriptor, domain
+
+
+class DenseNativeAssetCollection:
+    def __init__(
+        self,
+        assets: tuple[tuple[torch.Tensor, ...], ...],
+        asset_ids: tuple[str, ...],
+        schema_id: str,
+        domain_id: str,
+        coordinate_space: str,
+        address_mode: str,
+        roles: tuple[NativeAssetRole, ...],
+        *,
+        working_set_capacity: int = 8,
+    ) -> None:
+        values = tuple(tuple(levels) for levels in assets)
+        if not values or len(values) != len(asset_ids) or len(set(asset_ids)) != len(asset_ids):
+            raise ValueError("dense native asset identities must be nonempty and unique")
+        if any(not levels or any(level.ndim != 3 for level in levels) for levels in values):
+            raise ValueError("dense native asset levels must have shape [height,width,feature]")
+        channel_count = sum(role.channel_count for role in roles)
+        if channel_count < 1 or any(level.shape[2] != channel_count for levels in values for level in levels):
+            raise ValueError("dense native asset channels must agree with roles")
+        if any(not bool(torch.isfinite(level).all()) for levels in values for level in levels):
+            raise ValueError("dense native assets must be finite")
+        self._assets = values
+        self.descriptors = tuple(
+            NativeAssetDescriptor(
+                asset_id,
+                schema_id,
+                (
+                    NativeAssetDomain(
+                        domain_id,
+                        coordinate_space,
+                        address_mode,
+                        tuple((int(level.shape[0]), int(level.shape[1])) for level in levels),
+                        roles,
+                    ),
+                ),
+            )
+            for asset_id, levels in zip(asset_ids, values, strict=True)
+        )
+        self._cache = _WorkingSetCache(working_set_capacity)
+
+    @property
+    def collection_id(self) -> str:
+        return sha256_json(
+            {
+                "schema": "ncls.native-asset-collection@1",
+                "assets": [descriptor.to_dict() for descriptor in self.descriptors],
+                "working_set_capacity": self._cache.capacity,
+            }
+        )
+
+    def iter_tile_requests(
+        self, asset_index: int, domain_id: str, max_core_texels: int, halo: int
+    ) -> Iterator[NativeAssetTileRequest]:
+        descriptor = self.descriptors[asset_index]
+        domain = descriptor.domain(domain_id)
+        yield from _tile_requests(descriptor, asset_index, domain, max_core_texels, halo)
+
+    def acquire_tile(
+        self, request: NativeAssetTileRequest, device: torch.device
+    ) -> NativeAssetTile:
+        _, domain = _validate_tile_request(self.descriptors, request)
+        key = (request.asset_index, request.domain_id, request.mip_level, str(device))
+        lease = self._cache.acquire(
+            key,
+            lambda: self._assets[request.asset_index][request.mip_level].to(
+                device=device, dtype=torch.float32
+            ),
+        )
+        try:
+            values = _gather_tile(lease.tensor, request, domain)
+            return NativeAssetTile(request, domain.roles, values, lease)
+        except BaseException:
+            lease.release()
+            raise
 
 
 def layer_stack_native_feature_layout() -> NativeFeatureLayout:
@@ -292,14 +674,15 @@ def _srgb_to_linear(values: np.ndarray) -> np.ndarray:
 
 
 @dataclass(frozen=True)
-class MaterialXNativeFeaturePyramid:
+class MaterialXNativeAssetCollection:
     """MaterialX spatial fields的紧凑 filtered pyramid；常量不按 texel 重复存储。"""
 
     constants: np.ndarray
     spatial_levels: tuple[np.ndarray, ...]
     layout_id: str
-    _torch_cache: dict[str, tuple[torch.Tensor, tuple[torch.Tensor, ...]]] = field(
-        default_factory=dict, init=False, repr=False, compare=False
+    asset_id: str
+    _cache: _WorkingSetCache = field(
+        default_factory=lambda: _WorkingSetCache(8), init=False, repr=False, compare=False
     )
 
     def __post_init__(self) -> None:
@@ -314,6 +697,8 @@ class MaterialXNativeFeaturePyramid:
         layout = materialx_native_feature_layout()
         if self.layout_id != layout.layout_id:
             raise ValueError("MaterialX native feature layout identity mismatch")
+        if not self.asset_id:
+            raise ValueError("MaterialX native asset identity is required")
         object.__setattr__(self, "constants", constants)
         object.__setattr__(self, "spatial_levels", levels)
 
@@ -326,7 +711,8 @@ class MaterialXNativeFeaturePyramid:
         roughness: Path | None,
         metalness: Path | None,
         normal: Path | None,
-    ) -> "MaterialXNativeFeaturePyramid":
+        asset_id: str,
+    ) -> "MaterialXNativeAssetCollection":
         inputs = np.asarray(constants, dtype=np.float32)
         loaded: dict[str, np.ndarray | None] = {
             "base": None if base_color is None else (
@@ -365,45 +751,86 @@ class MaterialXNativeFeaturePyramid:
         levels = [spatial]
         while levels[-1].shape[0] > 1 or levels[-1].shape[1] > 1:
             levels.append(_downsample_features(levels[-1]))
-        return cls(inputs, tuple(levels), materialx_native_feature_layout().layout_id)
+        return cls(
+            inputs,
+            tuple(levels),
+            materialx_native_feature_layout().layout_id,
+            asset_id,
+        )
 
     @property
-    def feature_count(self) -> int:
-        return 38
-
-    @property
-    def level_shapes(self) -> tuple[tuple[int, int], ...]:
-        return tuple((int(level.shape[0]), int(level.shape[1])) for level in self.spatial_levels)
-
-    def iter_level_tiles(
-        self,
-        level: int,
-        max_texels: int,
-        device: torch.device,
-    ) -> Iterator[tuple[int, torch.Tensor]]:
-        if max_texels < 1:
-            raise ValueError("native feature materialization tile must be positive")
-        constants, levels = self._device_data(device)
-        spatial = levels[level].reshape(-1, 14)
-        for offset in range(0, len(spatial), max_texels):
-            tile = spatial[offset : offset + max_texels].to(dtype=torch.float32)
-            yield offset, torch.cat((constants.expand(len(tile), -1), tile), dim=1)
-
-    def _device_data(
-        self, device: torch.device
-    ) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
-        key = str(device)
-        cached = self._torch_cache.get(key)
-        if cached is None:
-            cached = (
-                torch.as_tensor(self.constants, dtype=torch.float32, device=device),
-                tuple(
-                    torch.as_tensor(level, dtype=torch.float16, device=device)
-                    for level in self.spatial_levels
+    def descriptors(self) -> tuple[NativeAssetDescriptor, ...]:
+        roles = (
+            NativeAssetRole("resolved-inputs", "typed-constants", 0, 24, "linear", "constant"),
+            NativeAssetRole("base-color", "base-color", 24, 3, "linear", "box-mip"),
+            NativeAssetRole("roughness", "roughness", 27, 1, "linear", "box-mip"),
+            NativeAssetRole("metalness", "metalness", 28, 1, "linear", "box-mip"),
+            NativeAssetRole("normal-first", "normal-first-moment", 29, 3, "signed", "lean-box-mip"),
+            NativeAssetRole("normal-second", "normal-second-moment", 32, 6, "linear", "lean-box-mip"),
+        )
+        return (
+            NativeAssetDescriptor(
+                self.asset_id,
+                self.layout_id,
+                (
+                    NativeAssetDomain(
+                        "surface-uv",
+                        "uv0",
+                        "wrap",
+                        tuple(
+                            (int(level.shape[0]), int(level.shape[1]))
+                            for level in self.spatial_levels
+                        ),
+                        roles,
+                    ),
                 ),
+            ),
+        )
+
+    @property
+    def collection_id(self) -> str:
+        return sha256_json(
+            {
+                "schema": "ncls.native-asset-collection@1",
+                "assets": [self.descriptors[0].to_dict()],
+                "working_set_capacity": self._cache.capacity,
+            }
+        )
+
+    def iter_tile_requests(
+        self, asset_index: int, domain_id: str, max_core_texels: int, halo: int
+    ) -> Iterator[NativeAssetTileRequest]:
+        descriptor = self.descriptors[asset_index]
+        domain = descriptor.domain(domain_id)
+        yield from _tile_requests(descriptor, asset_index, domain, max_core_texels, halo)
+
+    def _load_level(self, mip_level: int, device: torch.device) -> torch.Tensor:
+        constants = torch.as_tensor(self.constants, dtype=torch.float32, device=device)
+        spatial = torch.as_tensor(
+            self.spatial_levels[mip_level], dtype=torch.float32, device=device
+        )
+        return torch.cat(
+            (constants.expand(*spatial.shape[:2], len(constants)), spatial), dim=2
+        )
+
+    def acquire_tile(
+        self, request: NativeAssetTileRequest, device: torch.device
+    ) -> NativeAssetTile:
+        _, domain = _validate_tile_request(self.descriptors, request)
+        lease = self._cache.acquire(
+            (request.asset_index, request.domain_id, request.mip_level, str(device)),
+            lambda: self._load_level(request.mip_level, device),
+        )
+        try:
+            return NativeAssetTile(
+                request,
+                domain.roles,
+                _gather_tile(lease.tensor, request, domain),
+                lease,
             )
-            self._torch_cache[key] = cached
-        return cached
+        except BaseException:
+            lease.release()
+            raise
 
     @staticmethod
     def _bilinear_wrap(level: torch.Tensor, uv: torch.Tensor) -> torch.Tensor:
@@ -429,17 +856,26 @@ class MaterialXNativeFeaturePyramid:
     ) -> torch.Tensor:
         if uv.ndim != 2 or uv.shape[1] != 2 or mip_level.shape != (len(uv),):
             raise ValueError("MaterialX native feature samples require aligned uv and mip level")
-        constants, levels = self._device_data(uv.device)
         selected = torch.clamp(
-            torch.round(mip_level).long(), 0, len(levels) - 1
+            torch.round(mip_level).long(), 0, len(self.spatial_levels) - 1
         )
         result = torch.empty(
-            (len(uv), self.feature_count), dtype=torch.float32, device=uv.device
+            (len(uv), 38), dtype=torch.float32, device=uv.device
         )
-        result[:, :24] = constants
-        for index, level in enumerate(levels):
+        # The mip selector lives on the query device. Copy the compact set of used
+        # mip ids once instead of synchronizing once for every level through
+        # ``bool(mask.any())``.
+        used_levels = torch.unique(selected).detach().cpu().tolist()
+        for index in used_levels:
             mask = selected == index
-            result[mask, 24:] = self._bilinear_wrap(level, uv[mask])
+            lease = self._cache.acquire(
+                (0, "surface-uv", index, str(uv.device)),
+                lambda index=index: self._load_level(index, uv.device),
+            )
+            try:
+                result[mask] = self._bilinear_wrap(lease.tensor, uv[mask])
+            finally:
+                lease.release()
         return result
 
     def sample(self, uv: np.ndarray, mip_level: np.ndarray) -> np.ndarray:
@@ -451,7 +887,7 @@ class MaterialXNativeFeaturePyramid:
         )
         if coordinates.ndim != 2 or coordinates.shape[1] != 2 or selected.shape != (len(coordinates),):
             raise ValueError("MaterialX native feature samples require aligned uv and mip level")
-        result = np.empty((len(coordinates), self.feature_count), dtype=np.float32)
+        result = np.empty((len(coordinates), 38), dtype=np.float32)
         result[:, :24] = self.constants
         for index, level in enumerate(self.spatial_levels):
             mask = selected == index

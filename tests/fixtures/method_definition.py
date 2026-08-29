@@ -6,7 +6,13 @@ import torch
 
 from ncls.core.scattering import MaterialPayload, RuntimePayload
 from ncls.core.source import SourceSnapshot
-from ncls.learning.method import MethodDefinition, MethodDescriptor, SourceAdaptationContract, TensorField
+from ncls.learning.method import (
+    ComponentContract,
+    MethodDefinition,
+    MethodDescriptor,
+    SourceAdaptationContract,
+    TensorField,
+)
 from ncls.learning.batches import OnlineTrainingBatch
 
 
@@ -25,6 +31,19 @@ class ContractFixtureMethod(MethodDefinition):
         "ncls.scattering-backend@1", 3,
         {"maximum_prepare_steps": 1, "maximum_evaluate_steps": 2, "maximum_state_bytes": 16, "maximum_reads": 2},
         {"fixture": True},
+        {"fixture": ("weight", "bias")},
+        (
+            ComponentContract(
+                "fixture-core",
+                True,
+                ("fixture",),
+                ("fit",),
+                ("reference-evaluator",),
+                ("l1",),
+                ("program:fixture", "asset:fixture"),
+                ("NclsPackageEvaluate",),
+            ),
+        ),
     )
 
     def create_trainable(self, context: Mapping[str, Any]) -> torch.nn.Module:
@@ -35,9 +54,9 @@ class ContractFixtureMethod(MethodDefinition):
         self,
         model: torch.nn.Module,
         batches: Mapping[str, OnlineTrainingBatch],
-        lifecycle: Mapping[str, Any],
+        phase: Mapping[str, Any],
     ):
-        del lifecycle
+        del phase
         batch = next(iter(batches.values()))
         prediction = model(batch.tensors["wi"])
         loss = torch.mean(torch.abs(prediction - batch.tensors["target_f"]))
@@ -52,16 +71,48 @@ class ContractFixtureMethod(MethodDefinition):
             model.weight.diagonal().copy_(state["fixture.scale"])
             model.bias.copy_(state["fixture.bias"])
 
-    def compile_runtime(self, checkpoint: Mapping[str, Any]) -> RuntimePayload:
+    def compile_program(self, checkpoint: Mapping[str, Any]) -> RuntimePayload:
         del checkpoint
         module = b"struct NclsPackageBackend {};\n"
-        return RuntimePayload("fixture.slang", {"fixture.slang": module}, {}, {}, 3)
+        return RuntimePayload(
+            "fixture.slang",
+            {"fixture.slang": module},
+            {},
+            {},
+            3,
+            sampler_descriptors={
+                "program-sampler": {
+                    "kind": "sampler",
+                    "usage": "gFixtureProgramSampler",
+                    "filter": "point",
+                    "address_mode": "clamp",
+                }
+            },
+        )
 
-    def compile_material(self, snapshot: SourceSnapshot, checkpoint: Mapping[str, Any]) -> MaterialPayload:
+    def compile_asset(self, snapshot: SourceSnapshot, checkpoint: Mapping[str, Any]) -> MaterialPayload:
         del checkpoint
-        return MaterialPayload(snapshot.snapshot_id, {"fixture": b"\0" * 16}, {
-            "fixture": {"dtype": "uint8", "shape": [16], "stride": 1, "alignment": 16, "usage": "fixture"}
-        })
+        return MaterialPayload(
+            snapshot.snapshot_id,
+            {"fixture": b"\0" * 16},
+            {
+                "fixture": {
+                    "dtype": "uint8",
+                    "shape": [16],
+                    "stride": 1,
+                    "alignment": 16,
+                    "usage": "fixture",
+                }
+            },
+            sampler_descriptors={
+                "asset-sampler": {
+                    "kind": "sampler",
+                    "usage": "gFixtureAssetSampler",
+                    "filter": "linear",
+                    "address_mode": "wrap",
+                }
+            },
+        )
 
 
 METHOD_DEFINITION = ContractFixtureMethod()

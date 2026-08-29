@@ -13,7 +13,7 @@ from ncls.references.mdl import (
     resolve_mdl_program_toolchain,
 )
 from ncls.references.backend import create_reference_backend
-from ncls.references.query import ReferenceBackendSession
+from ncls.references.query import _create_texture_payload
 
 
 def _toolchain():
@@ -91,13 +91,13 @@ def test_mdl_punched_atlas_preserves_rgba16_before_cutout_fail_closed(
 def test_generic_falcor_texture_binder_accepts_rgba16_unorm() -> None:
     falcor = pytest.importorskip("falcor")
     backend = create_reference_backend()
-    session = object.__new__(ReferenceBackendSession)
-    session._falcor = falcor
-    session._device = backend._create_device(falcor)  # noqa: SLF001 - typed binder test
+    device = backend._create_device(falcor)  # noqa: SLF001 - typed binder test
     values = np.asarray(
         [[[0, 1, 257, 65535], [65535, 32768, 1024, 9]]], dtype=np.uint16
     )
-    texture = session._texture_payload(  # noqa: SLF001 - typed binder contract test
+    texture = _create_texture_payload(  # noqa: SLF001 - typed binder contract test
+        falcor,
+        device,
         "rgba16",
         values.tobytes(),
         {

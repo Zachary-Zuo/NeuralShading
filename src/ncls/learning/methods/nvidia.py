@@ -15,9 +15,10 @@ from ncls.core.scattering import BackendCapability
 from ncls.bundle.typed_texture import RGBA16F_DDS_DTYPE, encode_rgba16f_dds
 from ncls.core.source import SourceSnapshot
 from ncls.learning.batches import EvaluatorBatch, MethodSamplerBatch, OnlineTrainingBatch
-from ncls.learning.source_adaptation import NativeFeaturePyramid
+from ncls.learning.source_adaptation import NativeAssetCollection
 from ncls.learning.artifact_packing import pack_fp16_parameters
 from ncls.learning.method import (
+    ComponentContract,
     MaterialPayload,
     MethodDefinition,
     MethodDescriptor,
@@ -85,7 +86,7 @@ _TENSOR_SHAPES: tuple[tuple[str, str, tuple[int | str, ...]], ...] = (
     ("latent_texels", "float32", ("latent_texel", 8)),
     ("latent_mip_offsets", "int64", ("mip_plus_one",)),
     ("latent_mip_shapes", "int64", ("mip", 2)),
-    ("lifecycle_stage", "int64", (1,)),
+    ("phase_code", "int64", (1,)),
     ("frame_w", "float32", (12, 8)),
     ("evaluate_w0", "float32", (64, 20)),
     ("evaluate_b0", "float32", (64,)),
@@ -107,7 +108,7 @@ _TENSOR_SHAPES: tuple[tuple[str, str, tuple[int | str, ...]], ...] = (
 
 _PARAMETER_NAMES = tuple(
     name for name, _, _ in _TENSOR_SHAPES
-    if name not in {"latent_texels", "latent_mip_offsets", "latent_mip_shapes", "lifecycle_stage"}
+    if name not in {"latent_texels", "latent_mip_offsets", "latent_mip_shapes", "phase_code"}
 )
 
 _FORMAL_RECIPE_ID = "nvidia-rta2024-materialx-formal-300k-stage100k@1"
@@ -380,6 +381,62 @@ class NvidiaMethodDefinition(MethodDefinition):
             "C_prepare_macs": int(NVIDIA_NEURAL_APPEARANCE_LAYOUT["evaluator"]["frame_macs"] + NVIDIA_NEURAL_APPEARANCE_LAYOUT["sampler"]["prepare_macs"]),
             "C_eval_macs": int(NVIDIA_NEURAL_APPEARANCE_LAYOUT["evaluator"]["evaluate_macs"]),
         },
+        {
+            "encoder": tuple(name for name in _PARAMETER_NAMES if name.startswith("encoder_")),
+            "asset": ("latent_texels",),
+            "evaluator": tuple(
+                name
+                for name in _PARAMETER_NAMES
+                if name == "frame_w" or name.startswith("evaluate_")
+            ),
+            "sampler": tuple(name for name in _PARAMETER_NAMES if name.startswith("sampler_")),
+        },
+        (
+            ComponentContract(
+                "native-encoder",
+                True,
+                ("encoder",),
+                ("bootstrap",),
+                ("reference-evaluator",),
+                ("evaluator_log1p_l1",),
+                ("checkpoint:model_state",),
+                (),
+            ),
+            ComponentContract(
+                "latent-asset",
+                True,
+                ("asset",),
+                ("finetune",),
+                ("reference-evaluator", "method-sampler"),
+                ("evaluator_log1p_l1", "sampler_forward_kl"),
+                (
+                    "asset:latent0.dds",
+                    "asset:latent1.dds",
+                    "asset-sampler:nvidia-latent",
+                ),
+                (),
+            ),
+            ComponentContract(
+                "learned-evaluator",
+                True,
+                ("evaluator",),
+                ("bootstrap", "finetune"),
+                ("reference-evaluator", "method-sampler"),
+                ("evaluator_log1p_l1",),
+                ("program:shared-weights",),
+                ("nclsNvidiaNeuralPrepareFp16", "nclsNvidiaNeuralEvaluateFFp16"),
+            ),
+            ComponentContract(
+                "matched-sampler",
+                True,
+                ("sampler",),
+                ("bootstrap", "finetune"),
+                ("method-sampler",),
+                ("sampler_forward_kl", "sampler_valid_fraction"),
+                ("program:shared-weights",),
+                ("nclsSampleNvidiaNeuralPrepared", "nclsNvidiaNeuralPreparedPdf"),
+            ),
+        ),
     )
 
     def create_trainable(self, context: Mapping[str, Any]) -> nn.Module:
@@ -398,55 +455,84 @@ class NvidiaMethodDefinition(MethodDefinition):
     def validate_training_config(self, config: Mapping[str, Any]) -> None:
         if config.get("correspondence_id") != "nvidia-rta2024-functional-f@2":
             raise ValueError("NVIDIA training requires the frozen functional correspondence")
-        routes = config.get("routes")
-        if not isinstance(routes, list) or {item.get("name") for item in routes} != {"evaluator", "sampler"}:
-            raise ValueError("NVIDIA training requires independent evaluator and sampler routes")
-        if len({int(item.get("seed_offset", -1)) for item in routes}) != 2:
-            raise ValueError("NVIDIA evaluator and sampler routes require independent seeds")
-        routes_by_name = {str(item["name"]): item for item in routes}
-        if routes_by_name["evaluator"].get("kind") != "reference-evaluator" \
-            or routes_by_name["evaluator"].get("options", {}).get("direction_proposal") != "uniform-half-difference@1":
-            raise ValueError("NVIDIA evaluator route requires online half/difference reference samples")
-        if routes_by_name["sampler"].get("kind") != "method-sampler" \
-            or routes_by_name["sampler"].get("options", {}).get("direction_proposal") != "uniform-hemisphere-conditioning@1":
-            raise ValueError("NVIDIA sampler route must sample directions from the current learned proposal")
-        loss = config.get("loss")
-        if loss != {
-            "evaluator": "log1p-l1@1",
-            "sampler": "learned-sampler-forward-kl-score@1",
-        }:
-            raise ValueError("NVIDIA training loss recipe is not the frozen reproduction choice")
-        filtering = config.get("filtering")
-        if not isinstance(filtering, Mapping) or filtering.get("latent_fetch") != "discrete-mip-bilinear-wrap@1":
-            raise ValueError("NVIDIA training requires the frozen latent filtering recipe")
+        phases = config.get("phases")
+        if not isinstance(phases, list) or [item.get("name") for item in phases] != [
+            "bootstrap", "finetune"
+        ]:
+            raise ValueError("NVIDIA training requires bootstrap and finetune phases")
+        expected_groups = {
+            "bootstrap": ["encoder", "evaluator", "sampler"],
+            "finetune": ["asset", "evaluator", "sampler"],
+        }
+        for phase in phases:
+            name = str(phase["name"])
+            if phase.get("parameter_groups") != expected_groups[name]:
+                raise ValueError("NVIDIA phase parameter groups are not the canonical split")
+            if phase.get("loss_terms") != ["evaluator_log1p_l1", "sampler_forward_kl"]:
+                raise ValueError("NVIDIA phase loss terms are not the frozen reproduction choice")
+            routes = phase.get("routes")
+            if not isinstance(routes, list) or {item.get("name") for item in routes} != {
+                "evaluator", "sampler"
+            }:
+                raise ValueError("NVIDIA phases require independent evaluator and sampler routes")
+            if len({int(item.get("seed_offset", -1)) for item in routes}) != 2:
+                raise ValueError("NVIDIA evaluator and sampler routes require independent seeds")
+            routes_by_name = {str(item["name"]): item for item in routes}
+            if (
+                routes_by_name["evaluator"].get("kind") != "reference-evaluator"
+                or routes_by_name["evaluator"].get("options", {}).get("direction_proposal")
+                != "uniform-half-difference@1"
+            ):
+                raise ValueError("NVIDIA evaluator route requires online half/difference samples")
+            if (
+                routes_by_name["sampler"].get("kind") != "method-sampler"
+                or routes_by_name["sampler"].get("options", {}).get("direction_proposal")
+                != "uniform-hemisphere-conditioning@1"
+            ):
+                raise ValueError("NVIDIA sampler route must use the learned proposal")
+            recipes = phase.get("recipes")
+            if (
+                not isinstance(recipes, Mapping)
+                or not isinstance(recipes.get("filtering"), Mapping)
+                or recipes["filtering"].get("latent_fetch")
+                != "discrete-mip-bilinear-wrap@1"
+            ):
+                raise ValueError("NVIDIA phase requires the frozen latent filtering recipe")
+        if phases[0].get("transition") != "materialize-assets" or phases[1].get("transition") is not None:
+            raise ValueError("NVIDIA phase transition graph is invalid")
         if config.get("run_class") != "formal":
             return
-        lifecycle = config.get("lifecycle")
-        schedule = config.get("schedule")
-        optimizer = config.get("optimizer")
-        mollification = config.get("mollification")
         if config.get("recipe_id") != _FORMAL_RECIPE_ID:
             raise ValueError("formal NVIDIA reproduction requires the frozen recipe identity")
         if config.get("source_adaptation_id") != "materialx-standard-surface-spatial@1":
             raise ValueError("formal NVIDIA reproduction requires the frozen spatial source adaptation")
         if dict(config.get("model_context", {})) != _FORMAL_MODEL_CONTEXT:
             raise ValueError("formal NVIDIA reproduction requires the frozen 4096x4096 hierarchy")
-        if lifecycle != {"total_steps": 300_000, "materialization_step": 100_000}:
-            raise ValueError("formal NVIDIA reproduction requires the frozen 300k/stage100k lifecycle")
-        if any(
-            int(item.get("batch_size", -1)) != 65_000
-            or int(item.get("direction_count", -1)) != 1
-            for item in routes
-        ):
-            raise ValueError("formal NVIDIA reproduction requires two independent 65000-sample routes")
-        if optimizer != {
-            "kind": "adam", "betas": [0.9, 0.999], "epsilon": 1e-7, "weight_decay": 0.0
-        }:
-            raise ValueError("formal NVIDIA reproduction requires the published Adam recipe")
-        if schedule != {"kind": "cosine", "start": 1e-3, "end": 1e-4, "total_steps": 300_000}:
-            raise ValueError("formal NVIDIA reproduction requires the published cosine schedule")
-        if mollification != {"steps": 20_000, "start_degrees": 10.0, "samples": 256}:
-            raise ValueError("formal NVIDIA reproduction requires the published cone mollification")
+        if [int(item.get("steps", -1)) for item in phases] != [100_000, 200_000]:
+            raise ValueError("formal NVIDIA reproduction requires the frozen 300k phase graph")
+        for index, phase in enumerate(phases):
+            if any(
+                int(item.get("batch_size", -1)) != 65_000
+                or int(item.get("direction_count", -1)) != 1
+                for item in phase["routes"]
+            ):
+                raise ValueError("formal NVIDIA reproduction requires two 65000-sample routes")
+            if phase.get("optimizer") != {
+                "kind": "adam", "betas": [0.9, 0.999],
+                "epsilon": 1e-7, "weight_decay": 0.0,
+            }:
+                raise ValueError("formal NVIDIA reproduction requires the published Adam recipe")
+            if phase.get("schedule") != {
+                "kind": "cosine", "start": 1e-3, "end": 1e-4,
+                "total_steps": 300_000, "offset": 100_000 * index,
+            }:
+                raise ValueError("formal NVIDIA reproduction requires the published cosine schedule")
+            if phase.get("precision") != {"autocast": "fp32", "gradient_scaler": False}:
+                raise ValueError("formal NVIDIA reproduction requires explicit fp32 precision")
+            if phase.get("recipes", {}).get("mollification") != {
+                "steps": 20_000, "start_degrees": 10.0, "samples": 256,
+            }:
+                raise ValueError("formal NVIDIA reproduction requires cone mollification")
         if config.get("source") != {
             "family_id": "materialx.document@1.39.4",
             "materials": [
@@ -466,8 +552,11 @@ class NvidiaMethodDefinition(MethodDefinition):
             raise ValueError("formal NVIDIA reproduction requires the frozen online query recipe")
         if config.get("seed") != 20260827:
             raise ValueError("formal NVIDIA reproduction requires the frozen initialization/query seed")
-        if dict(config.get("filtering", {})) != _FORMAL_FILTERING:
-            raise ValueError("formal NVIDIA reproduction requires the frozen spatial filtering recipe")
+        if any(
+            dict(phase.get("recipes", {}).get("filtering", {})) != _FORMAL_FILTERING
+            for phase in phases
+        ):
+            raise ValueError("formal NVIDIA reproduction requires frozen spatial filtering")
         if config.get("validation") != {"interval": 50_000, "batches": 1}:
             raise ValueError("formal NVIDIA reproduction requires the frozen validation schedule")
         route_common = {
@@ -485,35 +574,52 @@ class NvidiaMethodDefinition(MethodDefinition):
                 **route_common,
             },
         }
-        if any(
-            dict(routes_by_name[name].get("options", {})) != options
-            for name, options in expected_options.items()
-        ):
-            raise ValueError("formal NVIDIA reproduction requires the frozen route estimators")
+        for phase in phases:
+            routes_by_name = {str(item["name"]): item for item in phase["routes"]}
+            if any(
+                dict(routes_by_name[name].get("options", {})) != options
+                for name, options in expected_options.items()
+            ):
+                raise ValueError("formal NVIDIA reproduction requires frozen route estimators")
 
-    def configure_lifecycle(self, model: nn.Module, lifecycle: Mapping[str, Any]) -> None:
+    def configure_phase(self, model: nn.Module, phase: Mapping[str, Any]) -> None:
         if not isinstance(model, NvidiaNeuralAppearanceModel):
             raise TypeError("NVIDIA method requires NvidiaNeuralAppearanceModel")
-        model.configure_lifecycle(str(lifecycle["stage"]))
+        super().configure_phase(model, phase)
+        name = str(phase["name"])
+        if name not in {"bootstrap", "finetune"}:
+            raise ValueError(f"unsupported NVIDIA training phase {name!r}")
+        model.set_training_phase(name)
 
-    def materialize_latent(
+    def materialize_assets(
         self,
         model: nn.Module,
-        native_feature_pyramid: NativeFeaturePyramid,
+        native_assets: NativeAssetCollection,
     ) -> None:
         if not isinstance(model, NvidiaNeuralAppearanceModel):
             raise TypeError("NVIDIA method requires NvidiaNeuralAppearanceModel")
-        model.materialize(native_feature_pyramid)
+        model.materialize(native_assets)
+
+    def apply_phase_transition(
+        self,
+        model: nn.Module,
+        transition: str,
+        native_assets: NativeAssetCollection,
+    ) -> None:
+        if transition != "materialize-assets":
+            raise ValueError(f"unsupported NVIDIA phase transition {transition!r}")
+        self.materialize_assets(model, native_assets)
 
     def training_objective(
         self,
         model: nn.Module,
         batches: Mapping[str, OnlineTrainingBatch],
-        lifecycle: Mapping[str, Any],
+        phase: Mapping[str, Any],
     ) -> tuple[torch.Tensor, Mapping[str, torch.Tensor | float]]:
         if not isinstance(model, NvidiaNeuralAppearanceModel):
             raise TypeError("NVIDIA method requires NvidiaNeuralAppearanceModel")
-        del lifecycle
+        if phase.get("loss_terms") != ["evaluator_log1p_l1", "sampler_forward_kl"]:
+            raise ValueError("NVIDIA objective received an incompatible phase loss contract")
         if set(batches) != {"evaluator", "sampler"}:
             raise ValueError("NVIDIA objective requires evaluator and sampler batches")
         if not isinstance(batches["evaluator"], EvaluatorBatch) or not isinstance(
@@ -575,8 +681,8 @@ class NvidiaMethodDefinition(MethodDefinition):
                 "latent_texels": torch.cat(levels, dim=0),
                 "latent_mip_offsets": torch.tensor(offsets, dtype=torch.int64),
                 "latent_mip_shapes": torch.tensor(model.mip_shapes, dtype=torch.int64),
-                "lifecycle_stage": torch.tensor(
-                    [0 if model.lifecycle_stage == "bootstrap" else 1], dtype=torch.int64
+                "phase_code": torch.tensor(
+                    [0 if model.phase_name == "bootstrap" else 1], dtype=torch.int64
                 ),
             }
         )
@@ -608,10 +714,10 @@ class NvidiaMethodDefinition(MethodDefinition):
                 height, width = model.mip_shapes[index]
                 values = flat[begin:end].reshape(height, width, 8).permute(2, 0, 1)
                 level.copy_(values.to(level.device))
-        stage_value = int(state["lifecycle_stage"].item())
+        stage_value = int(state["phase_code"].item())
         if stage_value not in {0, 1}:
-            raise ValueError("NVIDIA checkpoint lifecycle stage is invalid")
-        model.configure_lifecycle("bootstrap" if stage_value == 0 else "finetune")
+            raise ValueError("NVIDIA checkpoint phase code is invalid")
+        model.set_training_phase("bootstrap" if stage_value == 0 else "finetune")
 
     def package_validation(
         self,
@@ -642,7 +748,7 @@ class NvidiaMethodDefinition(MethodDefinition):
             },
         }
 
-    def compile_runtime(self, checkpoint: Mapping[str, Any]) -> RuntimePayload:
+    def compile_program(self, checkpoint: Mapping[str, Any]) -> RuntimePayload:
         state = checkpoint.get("model_state")
         training_config = checkpoint.get("training_config")
         if not isinstance(state, Mapping) or not isinstance(training_config, Mapping):
@@ -664,9 +770,9 @@ class NvidiaMethodDefinition(MethodDefinition):
             {"shared-weights": shared},
             {
                 "shared-weights": {
-                    "dtype": "float16",
-                    "shape": [len(shared) // 2],
-                    "stride": 2,
+                    "dtype": "packed-float16x2-uint32@1",
+                    "shape": [len(shared) // 4],
+                    "stride": 4,
                     "alignment": 4,
                     "usage": "gNclsRuntimeWeights",
                 }
@@ -675,7 +781,7 @@ class NvidiaMethodDefinition(MethodDefinition):
             defines,
         )
 
-    def compile_material(
+    def compile_asset(
         self,
         snapshot: SourceSnapshot,
         checkpoint: Mapping[str, Any],
@@ -721,8 +827,8 @@ class NvidiaMethodDefinition(MethodDefinition):
             {"compiled-material": payload},
             {
                 "compiled-material": {
-                    "dtype": "uint8",
-                    "shape": [len(payload)],
+                    "dtype": "ncls-nvidia-compiled-material@1",
+                    "shape": [1],
                     "stride": len(payload),
                     "alignment": 16,
                     "usage": "gNclsCompiledMaterials",
@@ -731,7 +837,6 @@ class NvidiaMethodDefinition(MethodDefinition):
             {
                 "latent0.dds": latent0,
                 "latent1.dds": latent1,
-                "latent-sampler.json": b'{"filter":"linear","mip":"explicit","address":"wrap"}',
             },
             {
                 "latent0.dds": {
@@ -748,13 +853,14 @@ class NvidiaMethodDefinition(MethodDefinition):
                     "alignment": 16,
                     "usage": "gNclsNvidiaLatent1",
                 },
-                "latent-sampler.json": {
-                    "dtype": "sampler-linear-wrap-explicit-lod@1",
-                    "shape": [1],
-                    "stride": 1,
-                    "alignment": 1,
+            },
+            {
+                "nvidia-latent": {
+                    "kind": "sampler",
                     "usage": "gNclsNvidiaLatentSampler",
-                },
+                    "filter": "linear",
+                    "address_mode": "wrap",
+                }
             },
         )
 

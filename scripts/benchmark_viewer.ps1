@@ -29,7 +29,7 @@ if ($presetDocument.format_name -ne "ncls.viewer-benchmark" -or $presetDocument.
 $packages = @{}
 Get-ChildItem -LiteralPath $packageRootPath -Filter manifest.json -File -Recurse | ForEach-Object {
     $manifest = Get-Content -LiteralPath $_.FullName -Encoding UTF8 -Raw | ConvertFrom-Json
-    if ($manifest.format_name -eq "ncls.scattering-package" -and $manifest.format_version -eq 1) {
+    if ($manifest.format_name -eq "ncls.scattering-package" -and $manifest.format_version -eq 2) {
         $packages[[string]$manifest.package_id] = $_.Directory.FullName
     }
 }
@@ -43,9 +43,10 @@ foreach ($combination in $presetDocument.combinations) {
     foreach ($camera in $presetDocument.camera_path) {
         $caseId = "$($camera.id)-$($combination[0])-$($combination[1])"
         $capturePath = Join-Path $outputPath "$caseId.json"
-        $viewerOutput = & $viewer --headless --frames ([uint32]$presetDocument.warmup_frames + [uint32]$presetDocument.measurement_frames) `
-            --slot0-package $packages[$Slot0PackageId] --slot0-mode $combination[0] `
-            --slot1-package $packages[$Slot1PackageId] --slot1-mode $combination[1] --capture $capturePath 2>&1
+        $viewerOutput = & $viewer --bundle-root $packageRootPath --headless `
+            --frames ([uint32]$presetDocument.warmup_frames + [uint32]$presetDocument.measurement_frames) `
+            --slot0-package $Slot0PackageId --slot0-mode $combination[0] `
+            --slot1-package $Slot1PackageId --slot1-mode $combination[1] --capture $capturePath 2>&1
         $viewerOutput | Set-Content -LiteralPath (Join-Path $outputPath "$caseId.log") -Encoding UTF8
         if ($LASTEXITCODE -ne 0) { throw "NclsViewer failed for $caseId" }
         $capture = Get-Content -LiteralPath $capturePath -Encoding UTF8 -Raw | ConvertFrom-Json

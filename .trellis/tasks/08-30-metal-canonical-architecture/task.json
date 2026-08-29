@@ -3,7 +3,7 @@
   "name": "metal-canonical-architecture",
   "title": "Metal canonical architecture migration",
   "description": "递归迁移grouped reference、multi-asset training、MethodDefinition、Config/Checkpoint@4和Package@2，删除旧接口与兼容层",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

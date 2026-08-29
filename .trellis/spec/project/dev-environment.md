@@ -53,7 +53,7 @@ compgen -G 'external/Falcor/build/linux-gcc/bin/Release/python/falcor/falcor_ext
 - Ubuntu/Linux具体版本不预先冻结；`scripts/deploy_reference_linux.sh`记录并提示实际distro/glibc/compiler，是否支持由真实configure/build/device/probe决定。
 - 部署脚本可获取根manifest锁定的`external/`源码与MDL SDK binary package，可创建/更新既有Conda中的`neural-shading`；不得安装Conda、driver或使用`sudo`。
 - 部署永不下载、移动或写入`assets/`。用户复制source assets后，才运行五族真实snapshot与MDL training gate；资产缺失不影响compile deployment和仓库fixture probe成功。
-- Windows公共入口为`scripts/build_reference_backend.ps1`；Linux公共入口为`bash scripts/deploy_reference_linux.sh`。upper tools只运行`ncls reference doctor/probe`或`backend.open()`。
+- Windows公共入口为`scripts/build_reference_backend.ps1`；Linux公共入口为`bash scripts/deploy_reference_linux.sh`。upper tools只运行`ncls reference doctor/probe`或`backend.open(ReferenceExecutionPlan@1)`。
 
 ## Linux多GPU、Falcor device与CUDA 12.8 compatibility合同
 

@@ -12,9 +12,10 @@ from ncls.core.identity import sha256_file, sha256_json
 from ncls.core.material import LayerStackIR, MaterialProgram, canonicalize_layer_stack
 from ncls.core.source import SourceSnapshot
 from ncls.learning.source_adaptation import (
-    DenseNativeFeaturePyramid,
-    MaterialXNativeFeaturePyramid,
-    NativeFeaturePyramid,
+    DenseNativeAssetCollection,
+    MaterialXNativeAssetCollection,
+    NativeAssetCollection,
+    NativeAssetRole,
     encode_layer_stack_native_features,
     encode_mdl_fixed_native_features,
     layer_stack_native_feature_layout,
@@ -64,7 +65,7 @@ class MethodSourceAdapter(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def materialization_features(self) -> NativeFeaturePyramid:
+    def native_assets(self) -> NativeAssetCollection:
         raise NotImplementedError
 
 
@@ -94,6 +95,27 @@ class NvidiaLayerStackSourceAdapter(MethodSourceAdapter):
             values, dtype=torch.float32, device=device
         )
         self._layout_id = layer_stack_native_feature_layout().layout_id
+        self._native_assets = DenseNativeAssetCollection(
+            tuple(
+                (torch.from_numpy(values[index : index + 1, None, :]).clone(),)
+                for index in range(len(self.snapshots))
+            ),
+            tuple(snapshot.snapshot_id for snapshot in self.snapshots),
+            self._layout_id,
+            "constant",
+            "constant",
+            "clamp",
+            (
+                NativeAssetRole(
+                    "encoder-input",
+                    "layer-stack-native-records",
+                    0,
+                    self._feature_table.shape[1],
+                    "linear",
+                    "constant",
+                ),
+            ),
+        )
 
     def sample_tensors(
         self,
@@ -113,10 +135,8 @@ class NvidiaLayerStackSourceAdapter(MethodSourceAdapter):
             {"native_feature_layout_id": self._layout_id},
         )
 
-    def materialization_features(self) -> NativeFeaturePyramid:
-        if len(self.snapshots) != 1:
-            raise RuntimeError("NVIDIA materialization trains one source snapshot per run")
-        return DenseNativeFeaturePyramid((self._feature_table[0:1, None, :].cpu(),))
+    def native_assets(self) -> NativeAssetCollection:
+        return self._native_assets
 
 
 class NvidiaMaterialXSourceAdapter(MethodSourceAdapter):
@@ -138,12 +158,13 @@ class NvidiaMaterialXSourceAdapter(MethodSourceAdapter):
         if not isinstance(inputs, bytes) or not isinstance(paths, Mapping):
             raise ValueError("MaterialX snapshot is missing canonical runtime bindings")
         constants = np.frombuffer(inputs, dtype=np.float32).copy()
-        self._pyramid = MaterialXNativeFeaturePyramid.from_textures(
+        self._assets = MaterialXNativeAssetCollection.from_textures(
             constants,
             base_color=_path(paths.get("base-color")),
             roughness=_path(paths.get("roughness")),
             metalness=_path(paths.get("metalness")),
             normal=_path(paths.get("normal")),
+            asset_id=snapshot.snapshot_id,
         )
         self._layout_id = materialx_native_feature_layout().layout_id
 
@@ -154,7 +175,8 @@ class NvidiaMaterialXSourceAdapter(MethodSourceAdapter):
     ) -> tuple[Mapping[str, torch.Tensor], Mapping[str, str]]:
         count = int(source_index.shape[0])
         uv = torch.rand((count, 2), generator=generator, device=self.device)
-        maximum_mip = len(self._pyramid.level_shapes) - 1
+        level_shapes = self._assets.descriptors[0].domain("surface-uv").level_shapes
+        maximum_mip = len(level_shapes) - 1
         exponential = -torch.log(
             torch.clamp(
                 1.0 - torch.rand(count, generator=generator, device=self.device),
@@ -162,7 +184,7 @@ class NvidiaMaterialXSourceAdapter(MethodSourceAdapter):
             )
         )
         mip_level = torch.clamp(exponential, max=float(maximum_mip))
-        texel_extent = max(self._pyramid.level_shapes[0])
+        texel_extent = max(level_shapes[0])
         footprint = torch.pow(2.0, mip_level) / float(texel_extent)
         uv_dx = torch.stack((footprint, torch.zeros_like(footprint)), dim=1)
         uv_dy = torch.stack((torch.zeros_like(footprint), footprint), dim=1)
@@ -172,13 +194,13 @@ class NvidiaMaterialXSourceAdapter(MethodSourceAdapter):
                 "uv_dx": uv_dx,
                 "uv_dy": uv_dy,
                 "mip_level": mip_level,
-                "native_features": self._pyramid.sample_torch(uv, mip_level),
+                "native_features": self._assets.sample_torch(uv, mip_level),
             },
             {"native_feature_layout_id": self._layout_id},
         )
 
-    def materialization_features(self) -> NativeFeaturePyramid:
-        return self._pyramid
+    def native_assets(self) -> NativeAssetCollection:
+        return self._assets
 
 
 class NvidiaMdlFixedSourceAdapter(MethodSourceAdapter):
@@ -203,6 +225,24 @@ class NvidiaMdlFixedSourceAdapter(MethodSourceAdapter):
         )
         self._layout_id = mdl_fixed_native_feature_layout().layout_id
         self._schema_identity = schema_identity
+        self._native_assets = DenseNativeAssetCollection(
+            ((torch.from_numpy(values[None, None, :]).clone(),),),
+            (self.snapshots[0].snapshot_id,),
+            self._layout_id,
+            "constant",
+            "constant",
+            "clamp",
+            (
+                NativeAssetRole(
+                    "encoder-input",
+                    "mdl-typed-parameters",
+                    0,
+                    self._feature_table.shape[1],
+                    "signed-bounded",
+                    "constant",
+                ),
+            ),
+        )
 
     def sample_tensors(
         self,
@@ -230,8 +270,8 @@ class NvidiaMdlFixedSourceAdapter(MethodSourceAdapter):
             },
         )
 
-    def materialization_features(self) -> NativeFeaturePyramid:
-        return DenseNativeFeaturePyramid((self._feature_table[0:1, None, :].cpu(),))
+    def native_assets(self) -> NativeAssetCollection:
+        return self._native_assets
 
 
 def _path(value: object) -> Path | None:

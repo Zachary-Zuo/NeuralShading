@@ -1,6 +1,6 @@
 # 材质范围
 
-源材质的原生参数、图结构和资源属于GT。LayerStack、OpenPBR、MERL、MaterialX、MDL各自保留source contract与权威reference；除非源本身是层模型，不得先反演成LayerStack。可调source必须通过typed editor保留编辑能力。方法产物经`TrainingCheckpoint@3`与`ScatteringPackage@1`交付。
+源材质的原生参数、图结构和资源属于GT。LayerStack、OpenPBR、MERL、MaterialX、MDL各自保留source contract与权威reference；除非源本身是层模型，不得先反演成LayerStack。可调source必须通过typed editor保留编辑能力。方法产物经`TrainingCheckpoint@4`与三段式`ScatteringPackage@2`交付。
 
 MDL source family 保存 module、exact export signature、class-compiled typed arguments、传递依赖与原生纹理资源。MDL SDK 是语言、标准 closure 与 target code 的上游语义核心；项目 bridge 和当前 Falcor 8 是唯一正式执行路径。锁定 falcor2 使用同版 MDL SDK，只用于 renderer integration parity，不是第二条 GT 或运行时 fallback。
 

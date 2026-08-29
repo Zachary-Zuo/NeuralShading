@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import struct
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 
@@ -198,6 +200,49 @@ class MdlReferenceProgram(FileReferenceProgram):
                 str(path),
             )
             for name, path in required.items()
+        )
+
+    def execution_group_layout(
+        self, materials: Sequence[MaterialPayload]
+    ) -> tuple[tuple[int, int], ...]:
+        argument_offset = 0
+        read_only_offset = 0
+        result = []
+        for material in materials:
+            argument = material.blobs.get("argument-block")
+            read_only = material.blobs.get("ro-data")
+            if argument is None or read_only is None:
+                raise ValueError("MDL group material is missing argument/RO data")
+            if argument_offset % 16 or read_only_offset % 16:
+                raise AssertionError("MDL group data offsets must remain 16-byte aligned")
+            result.append((argument_offset, read_only_offset))
+            argument_offset += len(argument)
+            read_only_offset += len(read_only)
+        return tuple(result)
+
+    def compile_execution_group_bindings(
+        self,
+        materials: Sequence[MaterialPayload],
+        layouts: Sequence[tuple[int, int]],
+    ) -> tuple[Mapping[str, bytes], Mapping[str, Mapping[str, Any]]]:
+        if len(materials) != len(layouts) or not materials:
+            raise ValueError("MDL group bindings require aligned materials/layouts")
+        payload = b"".join(
+            struct.pack("<4I", int(argument), int(read_only), 0, 0)
+            for argument, read_only in layouts
+        )
+        return (
+            {"material-records": payload},
+            {
+                "material-records": {
+                    "kind": "structured-buffer",
+                    "dtype": "uint32",
+                    "shape": [len(materials), 4],
+                    "stride": 16,
+                    "alignment": 16,
+                    "usage": "gMdlMaterialRecords",
+                }
+            },
         )
 
     def compile_runtime(self) -> RuntimePayload:

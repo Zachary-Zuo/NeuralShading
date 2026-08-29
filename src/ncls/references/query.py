@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import io
 import os
 from pathlib import Path
@@ -13,9 +13,8 @@ import pyexr
 import torch
 
 from ncls.core.identity import sha256_json
-from ncls.core.scattering import MaterialPayload, ReferenceProgramDefinition, RuntimePayload
-from ncls.core.source import SourceSnapshot
 from ncls.references.backend import ReferenceBackendDescriptor
+from ncls.references.plan import ReferenceExecutionGroup, ReferenceExecutionPlan
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -26,6 +25,7 @@ QUERY_SHADER = PROJECT_ROOT / "shaders/ncls/reference_query/reference_query.cs.s
 class ScatteringQuery:
     source_index: torch.Tensor
     wo: torch.Tensor
+    execution_group_id: str
     position: torch.Tensor | None = None
     geometric_normal: torch.Tensor | None = None
     shading_normal: torch.Tensor | None = None
@@ -35,6 +35,8 @@ class ScatteringQuery:
     uv_dy: torch.Tensor | None = None
 
     def __post_init__(self) -> None:
+        if not self.execution_group_id:
+            raise ValueError("ScatteringQuery requires an execution_group_id")
         if self.source_index.ndim != 1 or self.source_index.dtype != torch.int64:
             raise ValueError("ScatteringQuery source_index must be int64 [batch]")
         count = int(self.source_index.shape[0])
@@ -71,7 +73,7 @@ class ScatteringQuery:
 
 @dataclass
 class ReferenceQueryLease:
-    owner: "ReferenceBackendSession"
+    owner: Any
     slot_index: int
     released: bool = False
 
@@ -129,13 +131,88 @@ def _texture_extent(kind: str, shape: Sequence[int]) -> dict[str, int]:
     raise ValueError(f"{kind} payload has invalid shape {dimensions}")
 
 
-class ReferenceBackendSession:
-    """通过一个 family-agnostic kernel 调用 canonical scattering backend。"""
+def _create_texture_payload(
+    falcor: Any,
+    device: Any,
+    name: str,
+    payload: bytes,
+    descriptor: Mapping[str, Any],
+):
+    """Materialize one typed reference texture on the concrete Falcor device."""
+
+    kind = str(descriptor["kind"])
+    dtype = str(descriptor["dtype"])
+    if dtype == "float32":
+        values = np.frombuffer(payload, dtype=np.float32).reshape(
+            tuple(int(value) for value in descriptor["shape"])
+        ).copy()
+    elif dtype == "uint8":
+        values = np.frombuffer(payload, dtype=np.uint8).reshape(
+            tuple(int(value) for value in descriptor["shape"])
+        ).copy()
+    elif dtype == "uint16":
+        values = np.frombuffer(payload, dtype=np.uint16).reshape(
+            tuple(int(value) for value in descriptor["shape"])
+        ).copy()
+    elif dtype == "encoded-image":
+        suffix = Path(name).suffix.lower()
+        if suffix == ".exr":
+            # OpenEXR cannot reopen a live NamedTemporaryFile on Windows.
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / f"texture{suffix}"
+                path.write_bytes(payload)
+                values = pyexr.read(path).astype(np.float32)
+        else:
+            with Image.open(io.BytesIO(payload)) as image:
+                scalar = image.mode in {"1", "L", "I", "I;16", "F"}
+                values = np.asarray(
+                    image.convert("L" if scalar else "RGBA"), copy=True
+                )
+        if values.ndim == 2:
+            values = values[..., None]
+        if values.shape[-1] == 1:
+            values = np.repeat(values, 4, axis=-1)
+        elif values.shape[-1] == 3:
+            values = np.concatenate(
+                (values, np.ones((*values.shape[:2], 1), dtype=values.dtype)),
+                axis=-1,
+            )
+        values = np.ascontiguousarray(values)
+    else:
+        raise ValueError(f"unsupported texture payload dtype {dtype!r}")
+    scalar = values.ndim == (3 if kind == "texture3d" else 2)
+    resource_format = (
+        falcor.ResourceFormat.R8Unorm
+        if values.dtype == np.uint8 and scalar
+        else falcor.ResourceFormat.R16Unorm
+        if values.dtype == np.uint16 and scalar
+        else falcor.ResourceFormat.R32Float
+        if values.dtype == np.float32 and scalar
+        else falcor.ResourceFormat.RGBA8UnormSrgb
+        if values.dtype == np.uint8 and descriptor.get("color_space") == "srgb"
+        else falcor.ResourceFormat.RGBA8Unorm
+        if values.dtype == np.uint8
+        else falcor.ResourceFormat.RGBA16Unorm
+        if values.dtype == np.uint16
+        else falcor.ResourceFormat.RGBA32Float
+    )
+    kwargs = {
+        **_texture_extent(kind, values.shape),
+        "format": resource_format,
+        "mip_levels": 1,
+        "bind_flags": falcor.ResourceBindFlags.ShaderResource,
+    }
+    texture = device.create_texture(**kwargs)
+    texture.from_numpy(np.ascontiguousarray(values))
+    return texture
+
+
+class _ReferenceExecutionGroupSession:
+    """一个 group 的 concrete runtime；只由 public plan session 构造。"""
 
     def __init__(
         self,
-        definition: ReferenceProgramDefinition,
-        snapshots: Sequence[SourceSnapshot],
+        group: ReferenceExecutionGroup,
         *,
         backend_descriptor: ReferenceBackendDescriptor,
         falcor: Any,
@@ -144,7 +221,8 @@ class ReferenceBackendSession:
         device: torch.device | str = "cuda:0",
         slot_count: int = 2,
     ) -> None:
-        values = tuple(snapshots)
+        definition = group.definition
+        values = group.snapshots
         if not values or query_capacity < 1 or slot_count < 2:
             raise ValueError("reference backend session requires snapshots, capacity and two slots")
         for snapshot in values:
@@ -155,21 +233,27 @@ class ReferenceBackendSession:
         self.backend_descriptor = backend_descriptor
         self.backend_identity = backend_descriptor.identity
         self.definition = definition
+        self.group = group
         self.snapshots = values
         self.query_capacity = int(query_capacity)
         self.requested_device = requested_device
         self.runtime = definition.compile_runtime()
-        self.materials = tuple(definition.compile_material(value) for value in values)
-        source_modules = [
-            descriptor
-            for material in self.materials
-            for descriptor in material.blob_descriptors.values()
-            if descriptor.get("kind") == "slang-module-source"
-        ]
-        if source_modules and len(self.materials) != 1:
-            raise ValueError(
-                "material-specific source modules currently require one source snapshot"
-            )
+        self.materials = tuple(record.material for record in group.records)
+        source_modules: dict[str, tuple[bytes, Mapping[str, Any]]] = {}
+        for material in self.materials:
+            for name, payload in material.blobs.items():
+                descriptor = material.blob_descriptors[name]
+                if descriptor.get("kind") != "slang-module-source":
+                    continue
+                module_name = str(descriptor["module_name"])
+                previous = source_modules.get(module_name)
+                current = (payload, descriptor)
+                if previous is not None and previous != current:
+                    raise ValueError(
+                        "one reference execution group contains conflicting generated modules"
+                    )
+                source_modules[module_name] = current
+        self._source_modules = source_modules
         self.reference_program_identity = sha256_json(
             {
                 "descriptor": definition.descriptor.to_dict(),
@@ -217,13 +301,10 @@ class ReferenceBackendSession:
                 desc.add_shader_module(str(descriptor["module_name"])).add_string(
                     payload.decode("utf-8"), QUERY_SHADER
                 )
-        for material in self.materials:
-            for name, payload in material.blobs.items():
-                descriptor = material.blob_descriptors[name]
-                if descriptor.get("kind") == "slang-module-source":
-                    desc.add_shader_module(str(descriptor["module_name"])).add_string(
-                        payload.decode("utf-8"), QUERY_SHADER
-                    )
+        for module_name, (payload, _) in self._source_modules.items():
+            desc.add_shader_module(module_name).add_string(
+                payload.decode("utf-8"), QUERY_SHADER
+            )
         desc.add_shader_module("NclsReferenceQuery").add_string(source, QUERY_SHADER)
         desc.cs_entry(entry)
         return self._falcor.ComputePass(self._device, desc)
@@ -238,45 +319,93 @@ class ReferenceBackendSession:
         )
         names = set().union(*(material.blobs.keys() for material in self.materials))
         for name in names:
-            payloads = [material.blobs[name] for material in self.materials if name in material.blobs]
-            descriptors = [
-                material.blob_descriptors[name]
+            values = [
+                (material.blobs.get(name), material.blob_descriptors.get(name))
                 for material in self.materials
-                if name in material.blob_descriptors
             ]
-            if descriptors and descriptors[0].get("kind") != "slang-module-source":
-                self._bind_payload_data(
-                    result,
-                    {name: b"".join(payloads)},
-                    {name: descriptors[0]},
-                    aggregate=len(payloads) > 1,
-                )
-        for material in self.materials:
+            if any(payload is None or descriptor is None for payload, descriptor in values):
+                raise ValueError("execution group material blob table is not invariant")
+            first_descriptor = values[0][1]
+            if any(descriptor != first_descriptor for _, descriptor in values[1:]):
+                raise ValueError("execution group contains conflicting material blob layouts")
+            if first_descriptor.get("kind") == "slang-module-source":
+                continue
+            payloads = [payload for payload, _ in values]
             self._bind_payload_data(
                 result,
-                material.resources,
-                material.resource_descriptors,
+                {name: b"".join(payloads)},
+                {name: first_descriptor},
+                aggregate=len(payloads) > 1,
+            )
+        resource_names = set().union(*(material.resources.keys() for material in self.materials))
+        for name in resource_names:
+            values = [
+                (material.resources.get(name), material.resource_descriptors.get(name))
+                for material in self.materials
+            ]
+            if any(payload is None or descriptor is None for payload, descriptor in values):
+                raise ValueError("execution group resource table is not material-invariant")
+            first_payload, first_descriptor = values[0]
+            if any(
+                payload != first_payload or descriptor != first_descriptor
+                for payload, descriptor in values[1:]
+            ):
+                raise ValueError("execution group contains conflicting resource bindings")
+            self._bind_payload_data(
+                result,
+                {name: first_payload},
+                {name: first_descriptor},
                 aggregate=False,
             )
-        sampler_descriptors = {
-            **self.runtime.sampler_descriptors,
-            **{
-                name: descriptor
+        layouts = tuple(
+            (record.argument_block_offset, record.read_only_data_offset)
+            for record in self.group.records
+        )
+        group_blobs, group_descriptors = self.definition.compile_execution_group_bindings(
+            self.materials, layouts
+        )
+        self._bind_payload_data(
+            result,
+            group_blobs,
+            group_descriptors,
+            aggregate=False,
+        )
+        sampler_descriptors: dict[str, Mapping[str, Any]] = {}
+        for name, descriptor in (
+            *self.runtime.sampler_descriptors.items(),
+            *(
+                item
                 for material in self.materials
-                for name, descriptor in material.sampler_descriptors.items()
-            },
-        }
+                for item in material.sampler_descriptors.items()
+            ),
+        ):
+            previous = sampler_descriptors.get(name)
+            if previous is not None and previous != descriptor:
+                raise ValueError("execution group contains conflicting sampler descriptors")
+            sampler_descriptors[name] = descriptor
+        sampler_usages: set[str] = set()
         for descriptor in sampler_descriptors.values():
             usage = str(descriptor["usage"])
-            if usage in result:
-                continue
+            if usage in result or usage in sampler_usages:
+                raise ValueError("typed reference sampler usage is duplicated")
+            sampler_usages.add(usage)
             mode = str(descriptor.get("address_mode", "clamp"))
             address = (
                 self._falcor.TextureAddressingMode.Wrap
                 if mode == "wrap"
                 else self._falcor.TextureAddressingMode.Clamp
             )
+            filter_name = str(descriptor.get("filter", "linear"))
+            filtering = (
+                self._falcor.TextureFilteringMode.Point
+                if filter_name == "point"
+                else self._falcor.TextureFilteringMode.Linear
+            )
             sampler = self._device.create_sampler(
+                mag_filter=filtering,
+                min_filter=filtering,
+                mip_filter=filtering,
+                max_anisotropy=16 if filter_name == "anisotropic" else 1,
                 address_mode_u=address,
                 address_mode_v=address,
                 address_mode_w=address,
@@ -304,7 +433,9 @@ class ReferenceBackendSession:
             if kind == "structured-buffer":
                 resource = self._structured_payload(payload, descriptor, aggregate=aggregate)
             elif kind in {"texture2d", "texture3d"}:
-                resource = self._texture_payload(name, payload, descriptor)
+                resource = _create_texture_payload(
+                    self._falcor, self._device, name, payload, descriptor
+                )
             else:
                 raise ValueError(f"unsupported typed reference binding kind {kind!r}")
             self._resources.append(resource)
@@ -324,6 +455,7 @@ class ReferenceBackendSession:
         dtype = str(descriptor["dtype"])
         numpy_dtype = {
             "uint8": np.uint8,
+            "uint32": np.uint32,
             "float32": np.float32,
         }.get(dtype)
         if numpy_dtype is None:
@@ -335,76 +467,6 @@ class ReferenceBackendSession:
                 raise ValueError("structured reference payload shape mismatch")
         resource.from_numpy(values)
         return resource
-
-    def _texture_payload(
-        self, name: str, payload: bytes, descriptor: Mapping[str, Any]
-    ):
-        kind = str(descriptor["kind"])
-        dtype = str(descriptor["dtype"])
-        if dtype == "float32":
-            values = np.frombuffer(payload, dtype=np.float32).reshape(
-                tuple(int(value) for value in descriptor["shape"])
-            ).copy()
-        elif dtype == "uint8":
-            values = np.frombuffer(payload, dtype=np.uint8).reshape(
-                tuple(int(value) for value in descriptor["shape"])
-            ).copy()
-        elif dtype == "uint16":
-            values = np.frombuffer(payload, dtype=np.uint16).reshape(
-                tuple(int(value) for value in descriptor["shape"])
-            ).copy()
-        elif dtype == "encoded-image":
-            suffix = Path(name).suffix.lower()
-            if suffix == ".exr":
-                # OpenEXR cannot reopen a live NamedTemporaryFile on Windows.
-                with tempfile.TemporaryDirectory() as directory:
-                    path = Path(directory) / f"texture{suffix}"
-                    path.write_bytes(payload)
-                    values = pyexr.read(path).astype(np.float32)
-            else:
-                with Image.open(io.BytesIO(payload)) as image:
-                    scalar = image.mode in {"1", "L", "I", "I;16", "F"}
-                    values = np.asarray(
-                        image.convert("L" if scalar else "RGBA"), copy=True
-                    )
-            if values.ndim == 2:
-                values = values[..., None]
-            if values.shape[-1] == 1:
-                values = np.repeat(values, 4, axis=-1)
-            elif values.shape[-1] == 3:
-                values = np.concatenate(
-                    (values, np.ones((*values.shape[:2], 1), dtype=values.dtype)),
-                    axis=-1,
-                )
-            values = np.ascontiguousarray(values)
-        else:
-            raise ValueError(f"unsupported texture payload dtype {dtype!r}")
-        scalar = values.ndim == (3 if kind == "texture3d" else 2)
-        resource_format = (
-            self._falcor.ResourceFormat.R8Unorm
-            if values.dtype == np.uint8 and scalar
-            else self._falcor.ResourceFormat.R16Unorm
-            if values.dtype == np.uint16 and scalar
-            else self._falcor.ResourceFormat.R32Float
-            if values.dtype == np.float32 and scalar
-            else
-            self._falcor.ResourceFormat.RGBA8UnormSrgb
-            if values.dtype == np.uint8 and descriptor.get("color_space") == "srgb"
-            else self._falcor.ResourceFormat.RGBA8Unorm
-            if values.dtype == np.uint8
-            else self._falcor.ResourceFormat.RGBA16Unorm
-            if values.dtype == np.uint16
-            else self._falcor.ResourceFormat.RGBA32Float
-        )
-        kwargs = {
-            **_texture_extent(kind, values.shape),
-            "format": resource_format,
-            "mip_levels": 1,
-            "bind_flags": self._falcor.ResourceBindFlags.ShaderResource,
-        }
-        texture = self._device.create_texture(**kwargs)
-        texture.from_numpy(np.ascontiguousarray(values))
-        return texture
 
     def _shared_buffer(self, *, writable: bool = False):
         flags = self._falcor.ResourceBindFlags.ShaderResource | self._falcor.ResourceBindFlags.Shared
@@ -457,6 +519,14 @@ class ReferenceBackendSession:
         if self._active.get(lease.slot_index) is not lease:
             raise RuntimeError("reference query lease does not own its slot")
         del self._active[lease.slot_index]
+
+    @property
+    def active_lease_count(self) -> int:
+        return len(self._active)
+
+    def assert_idle(self) -> None:
+        if self._active:
+            raise RuntimeError("reference execution group has active query leases")
 
     @staticmethod
     def _float4(value: torch.Tensor, channels: int) -> torch.Tensor:
@@ -619,11 +689,6 @@ class ReferenceBackendSession:
         )
         return ReferencePdfResult(pdf[..., 0], pdf[..., 1], event[..., 1] > 0.5, lease)
 
-    def end_iteration(self) -> None:
-        if self._active:
-            raise RuntimeError("cannot end a reference frame with active query leases")
-        self._device.end_frame()
-
     def close(self) -> None:
         if self._active:
             raise RuntimeError("cannot close reference backend session with active query leases")
@@ -634,6 +699,144 @@ class ReferenceBackendSession:
         self._static_bindings = {}
         self._resources = []
         self._device = None
+        self._closed = True
+
+
+class ReferenceBackendSession:
+    """执行 `ReferenceExecutionPlan@1` 的 family-agnostic session pool。"""
+
+    def __init__(
+        self,
+        plan: ReferenceExecutionPlan,
+        *,
+        backend_descriptor: ReferenceBackendDescriptor,
+        falcor: Any,
+        device_handle: Any,
+        query_capacity: int,
+        device: torch.device | str = "cuda:0",
+        slot_count: int = 2,
+    ) -> None:
+        if not isinstance(plan, ReferenceExecutionPlan):
+            raise TypeError("ReferenceBackendSession requires ReferenceExecutionPlan@1")
+        self.plan = plan
+        self.backend_descriptor = backend_descriptor
+        self.backend_identity = backend_descriptor.identity
+        self.snapshots = plan.snapshots
+        self.query_capacity = int(query_capacity)
+        self.requested_device = torch.device(device)
+        self.reference_program_identity = sha256_json(
+            {
+                "reference_execution_plan_identity": plan.identity,
+                "reference_backend_identity": self.backend_identity,
+            }
+        )
+        self._device_handle = device_handle
+        sessions: dict[str, _ReferenceExecutionGroupSession] = {}
+        try:
+            for group in plan.groups:
+                sessions[group.group_id] = _ReferenceExecutionGroupSession(
+                    group,
+                    backend_descriptor=backend_descriptor,
+                    falcor=falcor,
+                    device_handle=device_handle,
+                    query_capacity=query_capacity,
+                    device=device,
+                    slot_count=slot_count,
+                )
+        except BaseException:
+            for session in sessions.values():
+                session.close()
+            raise
+        self._sessions = sessions
+        devices = {session.device for session in self._sessions.values()}
+        if len(devices) != 1:
+            raise RuntimeError("reference execution groups mapped to different CUDA devices")
+        self.device = next(iter(devices))
+        self._global_to_local: dict[str, torch.Tensor] = {}
+        for group in plan.groups:
+            mapping = torch.full(
+                (len(plan.snapshots),),
+                -1,
+                dtype=torch.int64,
+                device=self.device,
+            )
+            global_indices = torch.tensor(
+                group.global_source_indices,
+                dtype=torch.int64,
+                device=self.device,
+            )
+            mapping[global_indices] = torch.arange(
+                len(group.records), dtype=torch.int64, device=self.device
+            )
+            self._global_to_local[group.group_id] = mapping
+        self._closed = False
+
+    @property
+    def reference_execution_plan_identity(self) -> str:
+        return self.plan.identity
+
+    def _route(
+        self, query: ScatteringQuery
+    ) -> tuple[_ReferenceExecutionGroupSession, ScatteringQuery]:
+        if self._closed:
+            raise RuntimeError("reference backend session is closed")
+        try:
+            session = self._sessions[query.execution_group_id]
+            mapping = self._global_to_local[query.execution_group_id]
+        except KeyError as error:
+            raise ValueError(
+                f"query references unknown execution group {query.execution_group_id!r}"
+            ) from error
+        local_source_index = mapping.index_select(0, query.source_index)
+        valid = torch.all(local_source_index >= 0)
+        if valid.device.type == "cuda":
+            torch._assert_async(valid)
+        elif not bool(valid):
+            raise ValueError("query source_index is not owned by its execution group")
+        return session, replace(query, source_index=local_source_index)
+
+    def evaluate(
+        self,
+        query: ScatteringQuery,
+        wi: torch.Tensor,
+        seeds: torch.Tensor,
+        *,
+        evaluation_samples: int = 1,
+    ) -> ReferenceEvaluateResult:
+        session, local_query = self._route(query)
+        return session.evaluate(
+            local_query, wi, seeds, evaluation_samples=evaluation_samples
+        )
+
+    def sample(
+        self, query: ScatteringQuery, seeds: torch.Tensor
+    ) -> ReferenceSampleResult:
+        session, local_query = self._route(query)
+        return session.sample(local_query, seeds)
+
+    def pdf(
+        self, query: ScatteringQuery, wi: torch.Tensor, seeds: torch.Tensor
+    ) -> ReferencePdfResult:
+        session, local_query = self._route(query)
+        return session.pdf(local_query, wi, seeds)
+
+    def end_iteration(self) -> None:
+        if self._closed:
+            raise RuntimeError("reference backend session is closed")
+        for session in self._sessions.values():
+            session.assert_idle()
+        self._device_handle.end_frame()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        for session in self._sessions.values():
+            session.assert_idle()
+        for session in self._sessions.values():
+            session.close()
+        self._sessions = {}
+        self._global_to_local = {}
+        self._device_handle = None
         self._closed = True
 
 

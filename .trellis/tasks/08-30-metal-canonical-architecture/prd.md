@@ -32,13 +32,13 @@
 
 ## 验收标准
 
-- [ ] [需求交付｜父任务R4] 新canonical接口覆盖reference plan、asset collection、phase training、component conformance和三部分package，公共数据流只有一条；
-- [ ] [工程正确性｜项目迁移合同] 五个reference、NVIDIA、configs/tests/spec/docs/package/viewer全部使用新接口，旧public symbols/format/schema/reader/alias/converter/fallback静态扫描为零；
-- [ ] [数值实现正确性｜现有oracle] 迁移后的NVIDIA Python/Slang/package与五个reference不放宽既有parity、sample/PDF、finite和lease判据；
-- [ ] [需求交付｜父任务R6] runner具备phase-local groups、mixed precision、低同步gradient audit、metrics cadence和multi-slot prefetch合同；
-- [ ] [需求交付｜父任务跨平台合同] upper modules无OS/device/build-path分支，同一v4 config可被Windows D3D12/CUDA与Linux Vulkan/CUDA backend解析；
-- [ ] [实现正确性｜package v2合同] program/asset/instance hashes、typed resources、atomic binding与tamper rejection完整，旧v1 package明确拒绝；
-- [ ] [回归正确性｜项目测试合同] unit、GPU/reference、NVIDIA training/package、viewer Release build与Falcor clean通过。
+- [x] [需求交付｜父任务R4] 新canonical接口覆盖reference plan、asset collection、phase training、component conformance和三部分package，公共数据流只有一条；
+- [x] [工程正确性｜项目迁移合同] 五个reference、NVIDIA、configs/tests/spec/docs/package/viewer全部使用新接口，旧public symbols/format/schema/reader/alias/converter/fallback静态扫描为零；
+- [x] [数值实现正确性｜现有oracle] 迁移后的NVIDIA Python/Slang/package与五个reference不放宽既有parity、sample/PDF、finite和lease判据；
+- [x] [需求交付｜父任务R6] runner具备phase-local groups、mixed precision、低同步gradient audit、metrics cadence和multi-slot prefetch合同；
+- [x] [需求交付｜父任务跨平台合同] upper modules无OS/device/build-path分支，同一v4 config可被Windows D3D12/CUDA与Linux Vulkan/CUDA backend解析；
+- [x] [实现正确性｜package v2合同] program/asset/instance hashes、typed resources、atomic binding与tamper rejection完整，旧v1 package明确拒绝；
+- [x] [回归正确性｜项目测试合同] unit、GPU/reference、NVIDIA training/package、viewer Release build与Falcor clean通过。
 
 ## 阻塞问题
 

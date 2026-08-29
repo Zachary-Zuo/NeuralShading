@@ -32,7 +32,9 @@ uint nclsMdlEventFlags(uint eventType)
 
 Shading_state_material nclsPrepareMdlTargetState(
     NclsSurfaceInteraction surface,
-    float3 viewWorld)
+    float3 viewWorld,
+    uint argumentBlockOffset,
+    uint readOnlyDataOffset)
 {
     Shading_state_material state = (Shading_state_material)0;
     state.normal = normalize(surface.shadingFrame.normal);
@@ -44,8 +46,8 @@ Shading_state_material nclsPrepareMdlTargetState(
     state.tangent_v[0] = normalize(surface.shadingFrame.bitangent);
     state.object_id = int(surface.primitiveId);
     state.meters_per_scene_unit = 1.0;
-    state.arg_block_offset = 0;
-    state.ro_data_segment_offset = 0;
+    state.arg_block_offset = int(argumentBlockOffset);
+    state.ro_data_segment_offset = int(readOnlyDataOffset);
     state.renderer_state.view_direction = normalize(viewWorld);
     state.world_to_object = float4x4(
         1.0, 0.0, 0.0, 0.0,
@@ -84,18 +86,25 @@ NclsScatteringPdf nclsMdlTargetPdfPair(
 
 struct NclsMdlCompiledMaterial
 {
+    uint argumentBlockOffset;
+    uint readOnlyDataOffset;
+    uint resourceTableOffset;
     uint reserved;
 };
+
+StructuredBuffer<NclsMdlCompiledMaterial> gMdlMaterialRecords;
 
 struct NclsMdlReferenceState : INclsScatteringState
 {
     NclsScatteringContext context;
+    NclsMdlCompiledMaterial material;
 
     NclsScatteringEval evaluate<S : ISampleGenerator>(float3 wiWorld, inout S sg)
     {
         NclsScatteringEval result = {};
         const Shading_state_material targetState = nclsPrepareMdlTargetState(
-            context.surface, context.woWorld);
+            context.surface, context.woWorld,
+            material.argumentBlockOffset, material.readOnlyDataOffset);
         // MDL target-code evaluate returns f * |dot(material Ns, wi)|.  The
         // public scattering contract reconstructs transport response with the
         // input NclsShadingFrame, so remove that input-frame cosine here.  This
@@ -126,7 +135,8 @@ struct NclsMdlReferenceState : INclsScatteringState
     {
         result = {};
         const Shading_state_material targetState = nclsPrepareMdlTargetState(
-            context.surface, context.woWorld);
+            context.surface, context.woWorld,
+            material.argumentBlockOffset, material.readOnlyDataOffset);
         Bsdf_sample_data data = (Bsdf_sample_data)0;
         data.ior1 = float3(1.0);
         data.ior2 = ior(targetState);
@@ -158,7 +168,8 @@ struct NclsMdlReferenceState : INclsScatteringState
     NclsScatteringPdf pdf(float3 wiWorld)
     {
         const Shading_state_material targetState = nclsPrepareMdlTargetState(
-            context.surface, context.woWorld);
+            context.surface, context.woWorld,
+            material.argumentBlockOffset, material.readOnlyDataOffset);
         return nclsMdlTargetPdfPair(targetState, context.woWorld, wiWorld);
     }
 };
@@ -170,7 +181,7 @@ struct NclsMdlReferenceBackend : INclsScatteringBackend
 
     State prepare(NclsScatteringContext context, CompiledMaterial material)
     {
-        return {context};
+        return {context, material};
     }
 };
 
@@ -181,7 +192,7 @@ typedef NclsMdlReferenceState NclsPackageState;
 NclsPackageBackend nclsCreatePackageBackend() { return {}; }
 NclsPackageCompiledMaterial nclsLoadPackageMaterial(uint index)
 {
-    return {index};
+    return gMdlMaterialRecords[index];
 }
 #endif
 

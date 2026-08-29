@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ncls.scattering-package@2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format_name", "format_version", "package_id", "program_id", "asset_id", "instance_id", "program_kind", "program_key", "program_version", "program_descriptor_sha256", "source_family_id", "source_contract_version", "source_snapshot_id", "scattering_contract_version", "runtime_abi", "capabilities", "program", "asset", "instance", "validation", "provenance", "files", "content_hashes"],
+  "properties": {
+    "format_name": {"const": "ncls.scattering-package"},
+    "format_version": {"const": 2},
+    "package_id": {"$ref": "#/$defs/hash"},
+    "program_id": {"$ref": "#/$defs/hash"},
+    "asset_id": {"$ref": "#/$defs/hash"},
+    "instance_id": {"$ref": "#/$defs/hash"},
+    "program_kind": {"enum": ["reference", "method"]},
+    "program_key": {"type": "string", "minLength": 1},
+    "program_version": {"type": "integer", "minimum": 1},
+    "program_descriptor_sha256": {"$ref": "#/$defs/hash"},
+    "source_family_id": {"type": "string", "minLength": 1},
+    "source_contract_version": {"type": "integer", "minimum": 1},
+    "source_snapshot_id": {"$ref": "#/$defs/hash"},
+    "scattering_contract_version": {"const": 1},
+    "runtime_abi": {"type": "string", "minLength": 1},
+    "capabilities": {"type": "integer", "minimum": 1},
+    "program": {
+      "type": "object", "additionalProperties": false,
+      "required": ["module", "defines", "blobs", "samplers"],
+      "properties": {
+        "module": {"type": "string", "minLength": 1},
+        "defines": {"type": "object"},
+        "blobs": {"$ref": "#/$defs/typedGroup"},
+        "samplers": {"$ref": "#/$defs/samplerGroup"}
+      }
+    },
+    "asset": {
+      "type": "object", "additionalProperties": false,
+      "required": ["blobs", "resources", "samplers"],
+      "properties": {
+        "blobs": {"$ref": "#/$defs/typedGroup"},
+        "resources": {"$ref": "#/$defs/typedGroup"},
+        "samplers": {"$ref": "#/$defs/samplerGroup"}
+      }
+    },
+    "instance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["bindings", "parameters"],
+      "properties": {
+        "bindings": {
+          "type": "object", "additionalProperties": false,
+          "required": ["program_id", "asset_id"],
+          "properties": {
+            "program_id": {"$ref": "#/$defs/hash"},
+            "asset_id": {"$ref": "#/$defs/hash"}
+          }
+        },
+        "parameters": {
+          "type": "object", "additionalProperties": false,
+          "required": ["compiled_material_index"],
+          "properties": {"compiled_material_index": {"type": "integer", "minimum": 0}}
+        }
+      }
+    },
+    "validation": {"type": "object"},
+    "provenance": {"type": "object"},
+    "files": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}},
+    "content_hashes": {"type": "object", "additionalProperties": {"$ref": "#/$defs/hash"}}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "typedGroup": {"type": "object", "additionalProperties": {"$ref": "#/$defs/typedDescriptor"}},
+    "samplerGroup": {"type": "object", "additionalProperties": {"$ref": "#/$defs/samplerDescriptor"}},
+    "samplerDescriptor": {
+      "type": "object",
+      "required": ["kind", "usage", "filter", "address_mode"],
+      "properties": {
+        "kind": {"const": "sampler"},
+        "usage": {"type": "string", "minLength": 1},
+        "filter": {"enum": ["point", "linear", "anisotropic"]},
+        "address_mode": {"enum": ["clamp", "wrap"]}
+      },
+      "additionalProperties": false
+    },
+    "typedDescriptor": {
+      "type": "object",
+      "required": ["dtype", "shape", "stride", "alignment", "usage"],
+      "properties": {
+        "dtype": {"type": "string", "minLength": 1},
+        "shape": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}},
+        "stride": {"type": "integer", "minimum": 1},
+        "alignment": {"type": "integer", "minimum": 1},
+        "usage": {"type": "string", "minLength": 1},
+        "kind": {"type": "string"},
+        "module_name": {"type": "string"},
+        "format": {"type": "string"},
+        "color_space": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

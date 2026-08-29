@@ -3,30 +3,25 @@
 本项目只有一条从源材质到训练和部署的正式路径：
 
 ```text
-source locator
-  → SourceFamilyDefinition.load_snapshot()
-  → SourceSnapshot
-  → canonical ReferenceProgramDefinition
-  → ReferenceBackendCapability.open()
-  → ReferenceBackendSession (prepare/evaluate/sample/pdf)
+source locator → SourceSnapshot
+  → ReferenceExecutionPlan@1
+  → ReferenceBackendSession[grouped prepare/evaluate/sample/pdf]
   → OnlineTrainingProducer
-       ├─ EvaluatorBatch(target_f)
-       └─ MethodSamplerBatch(sample_u)
-  → TrainingRunner → TrainingCheckpoint@3
-  → MethodDefinition → ScatteringPackage@1
-  → ScatteringBinding → ComparisonSlot[2]
+       ├─ AssetTileBatch@1
+       ├─ EvaluatorBatch@3
+       └─ MethodSamplerBatch@3
+  → TrainingConfig@4 phase graph
+  → TrainingRunner → TrainingCheckpoint@4
+  → MethodDefinition.compile_program/asset/instance
+  → ScatteringPackage@2
+  → ProgramRuntime + AssetBinding + InstanceBinding
+  → ComparisonSlot[2]
 ```
 
-LayerStack、OpenPBR、MERL、MaterialX 与 MDL 保留各自原生语义和reference。每个reference都实现同一个`prepare/evaluate/sample/pdf`合同，并保留自己的backend-specific `ScatteringState`、closure与proposal；公共backend/session不识别source family，也不实现替代BRDF。pbrt coated crosscheck与falcor2 MDL oracle只用于隔离验证。
+LayerStack、OpenPBR、MERL、MaterialX与MDL保留各自原生语义和reference。source family拥有locator、typed edit与snapshot identity；reference definition把snapshot编入execution group，公共backend/session不识别family。platform与Falcor device只由`ReferenceBackendCapability`拥有，upper layers不选择D3D12/Vulkan或构造底层session。
 
-`ReferenceBackendCapability`是Windows/Linux唯一底层入口。它从`references/reference-backend-toolchains.json`解析Falcor、Slang、平台device和各program provider，`doctor()`给出统一状态，`open()`返回session。上层不导入Falcor、不选择D3D12/Vulkan，也不拼接平台构建路径。`ReferenceBackendDescriptor`将跨平台语义identity与平台build identity同时写入query/checkpoint identity。
+`NativeAssetCollection@1`统一表达多asset、domain、mip与tile+halo traversal；单texel source只是1×1 asset。训练数据由reference在GPU上按typed route即时产生，不存在离线batch/corpus产品。invalid reference行在GPU上压实补采，不变成黑色GT。
 
-`SourceSnapshot`是source state唯一真相。source family拥有locator解析、原生编辑与snapshot identity；reference program只负责把snapshot编译为canonical module和typed resources。method/source adapter只生成模型所需的native features、UV、LOD、footprint与materialization pyramid，不拥有reference math。
+`MethodDescriptor@2`登记parameter groups、required components、active phases、batch dependencies、Python outputs、runtime artifacts和Slang entry points。runner按phase启用参数、optimizer/schedule/precision，使用低同步gradient audit与有界prefetch；generic conformance统一检查execution、gradient/update和artifact coverage。
 
-训练数据在GPU上按route即时产生，不存在离线batch/corpus产品。evaluator route调用source `evaluate()`并直接取得线性RGB `f`；method-sampler route只产生conditioning与`sample_u`，由当前learned sampler执行sample/PDF并用learned evaluator构造loss。source的`sample/pdf`仍是reference PT和数值验证的强制能力，但不是NVIDIA sampler的teacher。
-
-Falcor shared output以CUDA tensor零拷贝消费，并由lease保护slot。material-local normal等因素可能让部分通用方向在局部domain中invalid；producer会在GPU上压实valid行并继续补采，记录拒绝统计，而不会把invalid行变成黑色GT、做response clamp或终止整个batch。
-
-`ScatteringPackage@1`分别计算`program_runtime_id`、`material_asset_id`与`package_id`。typed descriptor保留buffer、texture、动态Slang module与sampler的绑定语义。viewer只加载package；`source-reference`是显式内建的权威source transport请求，不是伪装成package id的磁盘包。
-
-viewer包含两个对称`ComparisonSlot`。每侧独立选择package或`source-reference`，并根据capability选择PT/deferred mode；package PT与deferred G-buffer构造同一个scattering context，neural transport调用package `prepare/sample/pdf/evaluate`。
+`ScatteringPackage@2`独立计算program、asset、instance与package identity。viewer只在全部identity、typed resource与parity校验通过后原子替换slot binding；`source-reference`是显式权威transport请求，不是假package。

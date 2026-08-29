@@ -1,6 +1,6 @@
 # NclsViewer
 
-`NclsViewer` 是 Windows/D3D12 的 `ScatteringPackage@1` 部署验证器。界面固定包含两个宽度相同的 `ComparisonSlot`；每个 slot 独立绑定一个 package，并选择 `path-tracing` 或 `deferred`。slot 加载、ABI、资源或 capability 失败只影响本侧，camera aspect 和另一侧 extent 不变。
+`NclsViewer` 是 Windows/D3D12 的 `ScatteringPackage@2` 部署验证器。每个package以`ProgramRuntimeCache + AssetBinding + InstanceBinding`原子装入slot，program可按identity复用，asset/instance不会部分替换。界面固定包含两个宽度相同的`ComparisonSlot`；每侧独立选择`path-tracing`或`deferred`。加载、ABI、资源或capability失败只影响本侧，camera aspect和另一侧extent不变。
 
 viewer 不解释 NVIDIA、LayerStack 或其他 program 的私有结构。C++ loader 校验 package 的三个 identity、module closure、typed buffer/texture/sampler descriptor 与 content hash，随后创建通用 `ScatteringBinding`。source 侧由 `SceneReferenceProgram` 选择 concrete canonical backend；积分器本身看不到 source family。NVIDIA latent 的两张 RGBA16F DDS mip chain 由 descriptor 绑定，不需要把 method shader 预编入 viewer。
 

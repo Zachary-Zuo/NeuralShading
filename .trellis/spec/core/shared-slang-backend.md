@@ -29,7 +29,7 @@ PREPARE | EVALUATE | SAMPLE | PDF
 - proposal、closure、resource layout 与 backend-specific `State` 都是程序私有实现。renderer 只能调用 canonical state 方法，不读取 source family、program key 或私有字段。
 - heterogeneous scene composer 只能选择 concrete backend、准备资源无关的公共状态并把调用转发给对应 canonical state；不得在 composer 或 renderer 中重新实现某个材质族的 evaluate/sample/pdf。
 - 受 Slang/DXC resource aggregate lowering 限制，MaterialX 等含 resource handle 的 state 把 handle 字段放在 value 字段之后。scene composer 的持久 state 只保存 resource-free prepared data，在调用点用全局绑定重建 concrete state；这是一种编译期布局约束，不是第二套 scattering ABI。
-- neural package 额外实现稳定 `NclsPackage*` host ABI；source reference 不伪装成 `ScatteringPackage@1`。训练、Falcor parity、package 与 viewer 对同一程序复用同一 module closure，反射 offset 来自编译器，运行循环静态有界。
+- neural package 额外实现稳定`NclsPackage*` host ABI；source reference不伪装成`ScatteringPackage@2`。训练、Falcor parity、package与viewer对同一program复用同一module closure，反射offset来自编译器，运行循环静态有界。
 
 ## 4. Validation & Error Matrix
 

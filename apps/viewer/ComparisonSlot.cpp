@@ -11,7 +11,7 @@ void ComparisonSlot::bind(const ViewerProgram* candidate)
     diagnostic.clear();
     if (!candidate) { status = SlotStatus::Empty; return; }
     const uint32_t required = mode == SlotMode::PathTracing ? (4u | 8u) : (1u | 2u);
-    if ((candidate->capabilities & required) != required)
+    if (!candidate->program || (candidate->program->capabilities & required) != required)
     {
         status = SlotStatus::Unsupported;
         diagnostic = "selected package lacks capabilities required by slot mode";

@@ -102,9 +102,10 @@ def test_mdl_fixed_uniform_adapter_is_bounded_finite_and_one_by_one() -> None:
     assert bool(torch.isfinite(tensors["native_features"]).all())
     assert provenance["native_feature_layout_id"] == layout.layout_id
     assert len(provenance["mdl_parameter_schema_identity"]) == 64
-    pyramid = adapter.materialization_features()
-    assert pyramid.level_shapes == ((1, 1),)
-    assert pyramid.feature_count == layout.channel_count
+    assets = adapter.native_assets()
+    domain = assets.descriptors[0].domain("constant")
+    assert domain.level_shapes == ((1, 1),)
+    assert domain.channel_count == layout.channel_count
 
 
 def test_mdl_fixed_uniform_adapter_rejects_spatial_or_unbounded_inputs() -> None:

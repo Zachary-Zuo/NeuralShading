@@ -3,11 +3,29 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
-from ncls.core.identity import require_sha256, sha256_json
+from ncls.core.identity import require_sha256, sha256_bytes, sha256_json
 from ncls.core.scattering.contract import BackendCapability, REQUIRED_PATH_TRACING_CAPABILITIES
 from ncls.core.source import SourceSnapshot
+
+
+def _validate_sampler_descriptors(
+    values: Mapping[str, Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    result = {str(name): dict(value) for name, value in values.items()}
+    required = {"kind", "usage", "filter", "address_mode"}
+    for name, descriptor in result.items():
+        if (
+            not name
+            or set(descriptor) != required
+            or descriptor["kind"] != "sampler"
+            or not str(descriptor["usage"])
+            or descriptor["filter"] not in {"point", "linear", "anisotropic"}
+            or descriptor["address_mode"] not in {"clamp", "wrap"}
+        ):
+            raise ValueError("typed sampler descriptor is invalid")
+    return result
 
 
 @dataclass(frozen=True)
@@ -36,7 +54,7 @@ class RuntimePayload:
         object.__setattr__(
             self,
             "sampler_descriptors",
-            {name: dict(value) for name, value in self.sampler_descriptors.items()},
+            _validate_sampler_descriptors(self.sampler_descriptors),
         )
 
 
@@ -53,7 +71,7 @@ class MaterialPayload:
         require_sha256("material payload source_snapshot_id", self.source_snapshot_id)
         if set(self.blobs) != set(self.blob_descriptors):
             raise ValueError("material blob descriptors must cover blobs exactly")
-        if set(self.resources) != set(self.resource_descriptors) and self.resource_descriptors:
+        if set(self.resources) != set(self.resource_descriptors):
             raise ValueError("material resource descriptors must cover resources exactly")
         object.__setattr__(self, "blobs", dict(self.blobs))
         object.__setattr__(self, "blob_descriptors", {name: dict(value) for name, value in self.blob_descriptors.items()})
@@ -62,7 +80,7 @@ class MaterialPayload:
         object.__setattr__(
             self,
             "sampler_descriptors",
-            {name: dict(value) for name, value in self.sampler_descriptors.items()},
+            _validate_sampler_descriptors(self.sampler_descriptors),
         )
 
 
@@ -139,6 +157,60 @@ class ReferenceProgramDefinition(ABC):
 
         del platform_id, project_root
         return ()
+
+    def execution_group_key(
+        self, snapshot: SourceSnapshot, material: MaterialPayload
+    ) -> str:
+        """返回可共用一次 runtime、generated module 与资源表的 group 身份。"""
+
+        self.validate_snapshot(snapshot)
+        if material.source_snapshot_id != snapshot.snapshot_id:
+            raise ValueError("reference material payload belongs to another snapshot")
+        module_sources = {
+            name: {
+                "sha256": sha256_bytes(material.blobs[name]),
+                "descriptor": dict(descriptor),
+            }
+            for name, descriptor in material.blob_descriptors.items()
+            if descriptor.get("kind") == "slang-module-source"
+        }
+        resources = {
+            name: {
+                "sha256": sha256_bytes(payload),
+                "descriptor": dict(material.resource_descriptors[name]),
+            }
+            for name, payload in material.resources.items()
+        }
+        return sha256_json(
+            {
+                "reference_program_descriptor": self.descriptor.descriptor_sha256,
+                "runtime_abi": self.descriptor.runtime_abi,
+                "material_modules": module_sources,
+                "resource_table": resources,
+                "samplers": {
+                    name: dict(value)
+                    for name, value in material.sampler_descriptors.items()
+                },
+            }
+        )
+
+    def execution_group_layout(
+        self, materials: Sequence[MaterialPayload]
+    ) -> tuple[tuple[int, int], ...]:
+        """返回每个 group-local material 的 argument/RO byte offsets。"""
+
+        return tuple((0, 0) for _ in materials)
+
+    def compile_execution_group_bindings(
+        self,
+        materials: Sequence[MaterialPayload],
+        layouts: Sequence[tuple[int, int]],
+    ) -> tuple[Mapping[str, bytes], Mapping[str, Mapping[str, Any]]]:
+        """生成只在一个 execution group 内存在的 typed bindings。"""
+
+        if len(materials) != len(layouts):
+            raise ValueError("reference group materials/layouts must align")
+        return {}, {}
 
     @abstractmethod
     def compile_runtime(self) -> RuntimePayload:

@@ -8,6 +8,7 @@ import torch
 from ncls.core.identity import sha256_json
 from ncls.core.source import create_source_family
 from ncls.learning.batches import (
+    AssetTileBatch,
     EvaluatorBatch,
     MethodSamplerBatch,
     OnlineTrainingBatch,
@@ -15,11 +16,15 @@ from ncls.learning.batches import (
     TrainingRouteRequest,
 )
 from ncls.learning.method import MethodDefinition
-from ncls.learning.source_adaptation import NativeFeaturePyramid
+from ncls.learning.source_adaptation import NativeAssetCollection
 from ncls.learning.source_adapters import create_method_source_adapter
 from ncls.learning.training.config import TrainingConfig
 from ncls.references.programs import get_reference_program_for_source
 from ncls.references.backend import ReferenceBackendCapability, create_reference_backend
+from ncls.references.plan import (
+    ReferenceExecutionGroup,
+    compile_single_program_plan,
+)
 from ncls.references.query import ReferenceBackendSession, ScatteringQuery
 
 
@@ -97,13 +102,22 @@ class OnlineTrainingProducer:
             family.descriptor.source_contract_version,
             source_descriptor=family.descriptor,
         )
+        self.plan = compile_single_program_plan(
+            reference,
+            snapshots,
+            query_recipe=config.online_query,
+        )
         capacity = max(
-            route.batch_size * route.direction_count for route in config.routes
+            (
+                route.batch_size * route.direction_count
+                for route in config.all_routes
+                if route.kind != "asset-tile"
+            ),
+            default=1,
         )
         self.backend = backend or create_reference_backend()
         self.session: ReferenceBackendSession = self.backend.open(
-            reference,
-            snapshots,
+            self.plan,
             query_capacity=capacity,
             device=self.device,
         )
@@ -118,6 +132,7 @@ class OnlineTrainingProducer:
             },
         )
         self.reference_program_identity = self.session.reference_program_identity
+        self.reference_execution_plan_identity = self.plan.identity
         self.reference_backend_identity = self.session.backend_identity
         self.adapter = create_method_source_adapter(
             definition.descriptor.method_key, snapshots, self.device
@@ -129,15 +144,18 @@ class OnlineTrainingProducer:
                 "source": dict(config.source),
                 "source_snapshot_ids": list(self.source_snapshot_ids),
                 "reference_program_identity": self.reference_program_identity,
+                "reference_execution_plan_identity": self.reference_execution_plan_identity,
                 "reference_backend_identity": self.reference_backend_identity,
                 "adapter_identity": self.adapter.identity,
                 "online_query": dict(config.online_query),
-                "routes": [route.to_dict() for route in config.routes],
+                "routes": [route.to_dict() for route in config.all_routes],
                 "seed": config.seed,
             }
         )
         self._generators: dict[str, torch.Generator] = {}
         self._request_count: dict[str, int] = {}
+        self._group_cursor: dict[str, int] = {}
+        self._asset_tile_cursor: dict[str, int] = {}
         self._closed = False
 
     def _generator(self, request: TrainingRouteRequest) -> torch.Generator:
@@ -148,18 +166,29 @@ class OnlineTrainingProducer:
             self._generators[request.name] = generator
         return generator
 
+    def _select_group(self, request: TrainingRouteRequest) -> ReferenceExecutionGroup:
+        cursor = self._group_cursor.get(request.name, 0)
+        self._group_cursor[request.name] = cursor + 1
+        return self.plan.groups[cursor % len(self.plan.groups)]
+
     def _conditioning(
-        self, request: TrainingRouteRequest
+        self, request: TrainingRouteRequest, group: ReferenceExecutionGroup
     ) -> tuple[TrainingConditioning, torch.Generator, torch.Tensor | None]:
         generator = self._generator(request)
-        source_index = torch.randint(
+        local_source_index = torch.randint(
             0,
-            len(self.snapshots),
+            len(group.records),
             (request.batch_size,),
             generator=generator,
             device=self.device,
             dtype=torch.int64,
         )
+        group_indices = torch.tensor(
+            group.global_source_indices,
+            dtype=torch.int64,
+            device=self.device,
+        )
+        source_index = group_indices.index_select(0, local_source_index)
         if request.kind == "reference-evaluator":
             proposal = request.options.get("direction_proposal")
             if proposal != "uniform-half-difference@1" or request.direction_count != 1:
@@ -194,6 +223,8 @@ class OnlineTrainingProducer:
                 "query_stream_identity": self.query_stream_identity,
                 "reference_program_identity": self.reference_program_identity,
                 "reference_backend_identity": self.reference_backend_identity,
+                "reference_execution_plan_identity": self.reference_execution_plan_identity,
+                "reference_execution_group_id": group.group_id,
                 "source_adapter_identity": self.adapter.identity,
                 **provenance,
             },
@@ -206,6 +237,7 @@ class OnlineTrainingProducer:
         return ScatteringQuery(
             tensors["source_index"],
             tensors["wo"],
+            str(conditioning.provenance["reference_execution_group_id"]),
             uv=tensors.get("uv"),
             uv_dx=tensors.get("uv_dx"),
             uv_dy=tensors.get("uv_dy"),
@@ -214,15 +246,85 @@ class OnlineTrainingProducer:
     def next_batch(self, request: TrainingRouteRequest) -> OnlineTrainingBatch:
         if self._closed:
             raise RuntimeError("online training producer is closed")
+        if request.kind == "asset-tile":
+            return self._asset_tile_batch(request)
+        group = self._select_group(request)
         if request.kind == "method-sampler":
-            conditioning, generator, _ = self._conditioning(request)
+            conditioning, generator, _ = self._conditioning(request, group)
             sample_u = torch.rand(
                 (request.batch_size, 2), generator=generator, device=self.device
             )
             return MethodSamplerBatch(conditioning, sample_u)
-        return self._evaluator_batch(request)
+        return self._evaluator_batch(request, group)
 
-    def _evaluator_batch(self, request: TrainingRouteRequest) -> EvaluatorBatch:
+    def _asset_tile_batch(self, request: TrainingRouteRequest) -> AssetTileBatch:
+        assets = self.adapter.native_assets()
+        max_core_texels = int(request.options.get("max_core_texels", 65_536))
+        halo = int(request.options.get("halo", 0))
+        if max_core_texels < 1 or halo < 0:
+            raise ValueError("asset-tile route budget and halo are invalid")
+
+        def one_cycle():
+            for asset_index, descriptor in enumerate(assets.descriptors):
+                for domain in descriptor.domains:
+                    yield from assets.iter_tile_requests(
+                        asset_index, domain.domain_id, max_core_texels, halo
+                    )
+
+        tile_counts: list[int] = []
+        for descriptor in assets.descriptors:
+            for domain in descriptor.domains:
+                for height, width in domain.level_shapes:
+                    tile_width = min(width, max_core_texels)
+                    tile_height = max(1, min(height, max_core_texels // tile_width))
+                    tile_counts.append(
+                        ((height + tile_height - 1) // tile_height)
+                        * ((width + tile_width - 1) // tile_width)
+                    )
+        cycle_count = sum(tile_counts)
+        if cycle_count < 1:
+            raise RuntimeError("native asset collection produced no tiles")
+        cursor = self._asset_tile_cursor.get(request.name, 0)
+        skip = cursor % cycle_count
+        iterator = one_cycle()
+        for _ in range(skip):
+            next(iterator)
+        selected_requests = []
+        while len(selected_requests) < request.batch_size:
+            try:
+                selected_requests.append(next(iterator))
+            except StopIteration:
+                iterator = one_cycle()
+        selected = []
+        try:
+            for tile_request in selected_requests:
+                selected.append(assets.acquire_tile(tile_request, self.device))
+        except BaseException:
+            for tile in reversed(selected):
+                tile.release()
+            raise
+        self._asset_tile_cursor[request.name] = cursor + request.batch_size
+        request_index = self._request_count.get(request.name, 0)
+        self._request_count[request.name] = request_index + 1
+        return AssetTileBatch(
+            assets.descriptors,
+            tuple(selected),
+            {
+                "producer": "generic-online",
+                "route_name": request.name,
+                "route_kind": request.kind,
+                "request_index": request_index,
+                "global_step": request.global_step,
+                "query_stream_identity": self.query_stream_identity,
+                "native_asset_collection_identity": assets.collection_id,
+                "max_core_texels": max_core_texels,
+                "halo": halo,
+            },
+        )
+
+    def _evaluator_batch(
+        self, request: TrainingRouteRequest, group: ReferenceExecutionGroup
+    ) -> EvaluatorBatch:
         """在 GPU 上压实有效 reference 查询，材质局部 horizon 不构成批次失败。"""
 
         accepted_conditioning: dict[str, list[torch.Tensor]] = {}
@@ -258,7 +360,7 @@ class OnlineTrainingProducer:
                 request.options,
             )
             conditioning, generator, evaluator_wi = self._conditioning(
-                candidate_request
+                candidate_request, group
             )
             if first_conditioning is None:
                 first_conditioning = conditioning
@@ -320,8 +422,12 @@ class OnlineTrainingProducer:
             torch.cat(accepted_f, dim=0)[: request.batch_size],
         )
 
-    def materialization_features(self) -> NativeFeaturePyramid:
-        return self.adapter.materialization_features()
+    @property
+    def native_asset_collection_identity(self) -> str:
+        return self.adapter.native_assets().collection_id
+
+    def native_assets(self) -> NativeAssetCollection:
+        return self.adapter.native_assets()
 
     def state_dict(self) -> Mapping[str, Any]:
         return {
@@ -331,6 +437,8 @@ class OnlineTrainingProducer:
                 for name, generator in self._generators.items()
             },
             "request_count": dict(self._request_count),
+            "group_cursor": dict(self._group_cursor),
+            "asset_tile_cursor": dict(self._asset_tile_cursor),
         }
 
     def load_state_dict(self, state: Mapping[str, Any]) -> None:
@@ -338,6 +446,8 @@ class OnlineTrainingProducer:
             "query_stream_identity",
             "generator_states",
             "request_count",
+            "group_cursor",
+            "asset_tile_cursor",
         }:
             raise ValueError("online query stream state fields are invalid")
         if state["query_stream_identity"] != self.query_stream_identity:
@@ -353,6 +463,14 @@ class OnlineTrainingProducer:
         self._request_count = {
             str(name): int(value)
             for name, value in dict(state["request_count"]).items()
+        }
+        self._group_cursor = {
+            str(name): int(value)
+            for name, value in dict(state["group_cursor"]).items()
+        }
+        self._asset_tile_cursor = {
+            str(name): int(value)
+            for name, value in dict(state["asset_tile_cursor"]).items()
         }
 
     def end_iteration(self) -> None:

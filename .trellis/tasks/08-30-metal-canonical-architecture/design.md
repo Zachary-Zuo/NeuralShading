@@ -12,7 +12,7 @@ source层拥有`SourceSnapshot`与native edit；reference definition把snapshot 
 
 ## Training
 
-`TrainingConfig@4`保存phase list；每phase引用route specs、loss IDs、parameter groups、optimizer/schedule、precision和step budget。batch union为`AssetTileBatch@1 | EvaluatorBatch@3 | MethodSamplerBatch@3`。runner按phase请求所需routes，parameter registry严格匹配descriptor；prefetcher通过backend slots/CUDA events持有lease。
+`TrainingConfig@4`保存phase list；每phase引用route specs、loss IDs、parameter groups、optimizer/schedule、precision和step budget。batch union为`AssetTileBatch@1 | EvaluatorBatch@3 | MethodSamplerBatch@3`。runner按phase请求所需routes，parameter registry严格匹配descriptor；prefetch queue有界预派发已经与Falcor slot解耦的batch，若provider返回live lease则一直持有到对应forward/backward结束。当前Falcor Python dispatch包含显式`wait_for_falcor()`，没有线程安全且可证明有收益的后台overlap证据，因此不虚构CUDA event异步路径；multi-slot仍用于严格的lease所有权和后续真实overlap扩展。
 
 `TrainingCheckpoint@4`严格保存config/descriptor/plan/asset/query identities、phase cursor、model、phase-local optimizer/scheduler/precision、RNG、coverage和validation。没有v3 loader。
 
@@ -23,6 +23,8 @@ source层拥有`SourceSnapshot`与native edit；reference definition把snapshot 
 ## Package 与viewer
 
 `ScatteringPackage@2`manifest有`program/asset/instance`三个严格section及独立identity。Python/C++共享schema/typed resource vocabulary。viewer用`ProgramRuntimeCache`、`AssetBinding`、`InstanceBinding`原子组装slot；不存在v1 reader或旧material section探测。
+
+program与asset分别拥有typed blobs和显式sampler descriptors；两类对象的`usage`共同构成host binding ABI并参与identity，viewer不再假定固定weights/material buffers，也不从纹理dtype推导sampler。module source只属于module closure。默认viewer启动只读取CMake实际复制的`studio-v2.json`，slot CLI显式区分bundle扫描根与manifest package ID。
 
 ## 迁移策略
 

@@ -25,6 +25,13 @@ from .query import (
     ReferenceSampleResult,
     ScatteringQuery,
 )
+from .plan import (
+    ReferenceExecutionGroup,
+    ReferenceExecutionPlan,
+    ReferenceMaterialRecord,
+    compile_reference_execution_plan,
+    compile_single_program_plan,
+)
 from .backend import (
     ReferenceBackendCapability,
     ReferenceBackendDescriptor,
@@ -54,10 +61,15 @@ __all__ = [
     "ReferenceBackendDescriptor",
     "ReferenceBackendReport",
     "ReferenceBackendSession",
+    "ReferenceExecutionGroup",
+    "ReferenceExecutionPlan",
+    "ReferenceMaterialRecord",
     "ReferenceCapabilityStatus",
     "ReferenceEvaluateResult",
     "ReferencePdfResult",
     "ReferenceSampleResult",
     "ScatteringQuery",
+    "compile_reference_execution_plan",
+    "compile_single_program_plan",
     "create_reference_backend",
 ]

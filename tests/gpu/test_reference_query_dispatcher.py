@@ -10,6 +10,7 @@ from ncls.core.material import DiffuseInterface, LayerStackIR
 from ncls.references.programs import get_reference_program_for_source
 from ncls.references.backend import create_reference_backend
 from ncls.references.mdl import resolve_mdl_program_toolchain
+from ncls.references.plan import compile_single_program_plan
 from ncls.references.query import ScatteringQuery
 from ncls.source_materials.families.layer_stack import snapshot_from_layer_stack
 from ncls.core.source import create_source_family
@@ -28,13 +29,17 @@ def test_generic_backend_session_evaluate_sample_pdf_share_one_backend() -> None
     definition = get_reference_program_for_source(
         snapshot.family_id, snapshot.source_contract_version
     )
+    plan = compile_single_program_plan(
+        definition, (snapshot,), query_recipe={"recipe_id": "gpu-test@1"}
+    )
     session = create_reference_backend().open(
-        definition, (snapshot,), query_capacity=256, device="cuda:0"
+        plan, query_capacity=256, device="cuda:0"
     )
     count = 256
     query = ScatteringQuery(
         torch.zeros(count, dtype=torch.int64, device="cuda:0"),
         torch.tensor([[0.0, 0.0, 1.0]], device="cuda:0").expand(count, 3),
+        plan.groups[0].group_id,
     )
     wi = torch.tensor([[[0.3, 0.0, math.sqrt(0.91)]]], device="cuda:0").expand(
         count, 1, 3
@@ -131,13 +136,17 @@ def test_generic_backend_session_supports_registered_source_families(
     definition = get_reference_program_for_source(
         snapshot.family_id, snapshot.source_contract_version
     )
+    plan = compile_single_program_plan(
+        definition, (snapshot,), query_recipe={"recipe_id": "gpu-test@1"}
+    )
     session = create_reference_backend().open(
-        definition, (snapshot,), query_capacity=128, device="cuda:0"
+        plan, query_capacity=128, device="cuda:0"
     )
     count = 128
     query = ScatteringQuery(
         torch.zeros(count, dtype=torch.int64, device="cuda:0"),
         torch.tensor([[0.0, 0.0, 1.0]], device="cuda:0").expand(count, 3),
+        plan.groups[0].group_id,
         uv=torch.tensor([[0.37, 0.63]], device="cuda:0").expand(count, 2),
     )
     wi = torch.tensor([[[0.3, 0.2, math.sqrt(0.87)]]], device="cuda:0").expand(

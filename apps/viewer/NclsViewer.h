@@ -129,8 +129,7 @@ private:
         bool sourceReference = false;
         int32_t programIndex = -1;
         uint32_t uiValue = 0;
-        Falcor::ref<Falcor::Buffer> pWeights;
-        Falcor::ref<Falcor::Buffer> pCompiledMaterials;
+        std::map<std::string, Falcor::ref<Falcor::Buffer>> buffers;
         std::map<std::string, Falcor::ref<Falcor::Texture>> textures;
         std::map<std::string, Falcor::ref<Falcor::Sampler>> samplers;
         Falcor::ref<Falcor::ComputePass> pDeferredPass;
@@ -270,6 +269,7 @@ private:
     uint32_t mComparisonMode = 0;
     float mExposure = 0.f;
     float mDifferenceScale = 8.f;
+    Falcor::float3 mDividerColor{0.85f};
     float mEstimatedRelativeStandardError = 1.f;
     double mAccumulationSeconds = 0.0;
     bool mVisibilityDirty = true;

@@ -6,16 +6,74 @@ import numpy as np
 import pytest
 import torch
 
-from ncls.core.source import create_source_family
+from ncls.core.source import (
+    SourceEditOperation,
+    SourceEditPatch,
+    create_source_family,
+)
 from ncls.paths import PROJECT_ROOT
 from ncls.references.mdl import create_mdl_program_provider
 from ncls.references.programs import get_reference_program_for_source
 from ncls.references.backend import create_reference_backend
+from ncls.references.plan import compile_single_program_plan
 from ncls.references.query import ScatteringQuery
 from tools.reference.mdl_native_protocol import (
     read_native_result_packet,
     write_native_query_packet,
 )
+
+
+@pytest.mark.falcor
+def test_mdl_execution_group_packs_multiple_argument_blocks() -> None:
+    module_root = PROJECT_ROOT / "tests/fixtures/mdl"
+    family = create_source_family("mdl.program@1")
+    first = family.load_snapshot(
+        {
+            "kind": "mdl-export",
+            "module_root": str(module_root),
+            "module": "::constant_diffuse",
+            "export": "constant_diffuse",
+            "arguments": {"tint": [0.17, 0.53, 0.81]},
+        }
+    )
+    second = family.apply_edit(
+        first,
+        SourceEditPatch(
+            first.snapshot_id,
+            (SourceEditOperation("set", "/arguments/tint", [0.73, 0.11, 0.29]),),
+        ),
+    ).snapshot
+    definition = get_reference_program_for_source(first.family_id, first.source_contract_version)
+    plan = compile_single_program_plan(
+        definition,
+        (first, second),
+        query_recipe={"recipe_id": "mdl-grouped-arguments@1"},
+    )
+    assert len(plan.groups) == 1
+    assert [record.argument_block_offset for record in plan.groups[0].records] == [0, 16]
+
+    runtime = create_reference_backend().open(plan, query_capacity=2, device="cuda:0")
+    try:
+        device = torch.device("cuda:0")
+        wo = torch.tensor([[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]], device=device)
+        wi = wo[:, None, :]
+        result = runtime.evaluate(
+            ScatteringQuery(
+                torch.tensor([0, 1], dtype=torch.int64, device=device),
+                wo,
+                plan.groups[0].group_id,
+            ),
+            wi,
+            torch.tensor([[11], [29]], dtype=torch.int64, device=device),
+        )
+        expected = torch.tensor(
+            [[0.17, 0.53, 0.81], [0.73, 0.11, 0.29]], device=device
+        ) / np.pi
+        torch.testing.assert_close(result.f[:, 0], expected, rtol=3e-6, atol=3e-7)
+        result.lease.release()
+        runtime.end_iteration()
+    finally:
+        runtime.close()
 
 
 @pytest.mark.falcor
@@ -85,8 +143,11 @@ def test_mdl_sdk_native_and_current_falcor_match_on_disjoint_diffuse_queries(
     definition = get_reference_program_for_source(
         snapshot.family_id, snapshot.source_contract_version
     )
+    plan = compile_single_program_plan(
+        definition, (snapshot,), query_recipe={"recipe_id": "mdl-crosscheck@1"}
+    )
     runtime = create_reference_backend().open(
-        definition, (snapshot,), query_capacity=len(wo), device="cuda:0"
+        plan, query_capacity=len(wo), device="cuda:0"
     )
     try:
         device = torch.device("cuda:0")
@@ -94,6 +155,7 @@ def test_mdl_sdk_native_and_current_falcor_match_on_disjoint_diffuse_queries(
             ScatteringQuery(
                 torch.zeros(len(wo), dtype=torch.int64, device=device),
                 torch.as_tensor(wo, device=device),
+                plan.groups[0].group_id,
                 position=torch.as_tensor(position, device=device),
                 uv=torch.as_tensor(uv, device=device),
             ),
@@ -157,8 +219,11 @@ def test_mdl_public_f_preserves_geometry_normal_transport_response(
     definition = get_reference_program_for_source(
         snapshot.family_id, snapshot.source_contract_version
     )
+    plan = compile_single_program_plan(
+        definition, (snapshot,), query_recipe={"recipe_id": "mdl-crosscheck@1"}
+    )
     runtime = create_reference_backend().open(
-        definition, (snapshot,), query_capacity=1, device="cuda:0"
+        plan, query_capacity=1, device="cuda:0"
     )
     try:
         device = torch.device("cuda:0")
@@ -166,6 +231,7 @@ def test_mdl_public_f_preserves_geometry_normal_transport_response(
             ScatteringQuery(
                 torch.zeros(1, dtype=torch.int64, device=device),
                 torch.as_tensor(wo, device=device),
+                plan.groups[0].group_id,
                 position=torch.as_tensor(position, device=device),
                 uv=torch.as_tensor(uv, device=device),
             ),

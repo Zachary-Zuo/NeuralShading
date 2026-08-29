@@ -24,14 +24,15 @@ def test_reference_package_module_is_loaded_from_package_path(tmp_path: Path):
         program_version=definition.descriptor.version,
         program_descriptor_sha256=definition.descriptor.descriptor_sha256,
         runtime_abi=definition.descriptor.runtime_abi, source=snapshot,
-        runtime=definition.compile_runtime(), material=definition.compile_material(snapshot),
+        program_payload=definition.compile_runtime(),
+        asset_payload=definition.compile_material(snapshot),
         validation={"status": "contract-compile"}, provenance={"test": True},
     )
     binding = ScatteringPackage.open(root).create_binding()
-    assert binding.program_module.is_relative_to(root.resolve())
+    assert binding.program.module.is_relative_to(root.resolve())
     probe = tmp_path / "probe.cs.slang"
     probe.write_text(
-        '#include "' + binding.program_module.as_posix() + '"\n'
+        '#include "' + binding.program.module.as_posix() + '"\n'
         'RWStructuredBuffer<uint> gOutput;\n[numthreads(1,1,1)]\n'
         'void main(uint3 p:SV_DispatchThreadID){NclsPackageBackend b=nclsCreatePackageBackend();gOutput[0]=1;}\n',
         encoding="utf-8",

@@ -12,6 +12,8 @@ SceneReferenceProgram.prepare(context, sceneMaterial) -> ReferenceState
 ScatteringBinding.prepare(context, packageMaterial) -> PackageState
 State.evaluate/sample/pdf(...)
 ncls.viewer-capture@4 -> slots[2] + single-panel EXR outputs
+ncls.viewer-studio@2 -> scene + slots[2] + camera + lighting + display
+NclsViewer --bundle-root DIR --slot0-package ID --slot0-mode MODE --slot1-package ID --slot1-mode MODE
 ncls.viewer-scene@2 -> scene/material/camera/lighting + reference bounce limits（无 spp target/batch）
 interactive PT dispatch -> exactly 1 new globalSample per ready PT slot
 headless PT dispatch -> min(reference_samples_per_frame, reference_spp - slot.spp)
@@ -30,6 +32,8 @@ headless PT dispatch -> min(reference_samples_per_frame, reference_spp - slot.sp
 - 续路径 ray origin 根据实际 sampled direction 与 geometric normal 的符号选择法线侧，不根据 reflection/transmission event label 猜测偏移侧。
 - MDL 动态 module 只装载 SDK target-code types、项目 runtime callback 与 generated target code；canonical `mdl.slang`、scene composer 和 query 是静态项目 module。
 - 每个 slot 独立 package/mode/status/resource/timing；panel 为相同 `floor(W/2)×H`，奇数像素是 divider。错误只影响当前 slot。
+- `studio-v2.json`是干净构建唯一默认preset；CMake把scene/environment/material复制到runtime data目录，loader按preset URI的filename重定位并验证hash。CLI slot选择传package ID，`--bundle-root`单独传扫描根；不得把package目录冒充ID。
+- package v2的program/asset typed blob与sampler均按`usage`绑定。sampler descriptor的filter/address是运行语义，不得从resource dtype猜测或补默认值；program/asset usage冲突由loader拒绝。
 - source editor 只解释 typed parameter tree。capture v4 保存 `slots[2]`，不含左右角色或可变分割位置。
 - 交互 PT 不拥有 capture spp cap 或可调 batch：每次 dispatch 恰好追加 1 spp，状态不变时持续累积。`globalSample = slot.spp + sampleIndex` 是 source/package 共用的 sample identity；相机、材质或灯光实际变化才 reset 到 0，reset 后当前 dispatch 的 sample 0 必须进入 accumulation，不能因处于拖动状态而计算后丢弃。
 - `reference_spp` target 与 `reference_samples_per_frame` batch 只属于 headless capture。viewer UI 与 `ncls.viewer-scene` 不保存它们；headless 最后一个 dispatch 必须按 remaining 截断。交互手工 capture 记录当前 matched slot spp，不把 1024 伪装成当前值。
@@ -51,6 +55,8 @@ headless PT dispatch -> min(reference_samples_per_frame, reference_spp - slot.sp
 | 相机拖动但当前姿态已 dispatch | 保留新姿态的 1 spp；下一次实际相机变化再 reset |
 | source/package ready PT slot 在交互 capture 时 spp 不一致 | 拒绝 comparison capture，不能伪造 matched spp |
 | Falcor upstream worktree 被 overlay 留脏 | build gate 失败 |
+| runtime只有`studio-v2.json`而viewer读取旧preset名 | Release/headless启动失败；修正canonical runtime文件名，不依赖旧build残留 |
+| slot CLI收到目录而非manifest中的package ID | 选包失败；benchmark必须同时传bundle root与ID |
 
 ## 5. Good / Base / Bad Cases
 
@@ -62,6 +68,7 @@ headless PT dispatch -> min(reference_samples_per_frame, reference_spp - slot.sp
 ## 6. Tests Required
 
 - unit/static：slot 对称性、canonical source routing、无 family branch、4+4 MIS 两侧 multiplier、primary path-pool ownership、双线性 CDF reconstruction、实际方向 ray-origin 选择、capture schema。
+- unit/static：studio v2 canonical字段、CLI slot合同、package typed blob/sampler按usage绑定与旧preset文件名denylist。
 - unit/static：还必须断言交互固定返回 1 spp、host 没有 `mSamplesPerFrame`、viewer scene 没有 batch 字段、source/package shader 没有 `gAccumulate`，并保留 `globalSample = accumulatedSpp + sampleIndex`。
 - GPU：公共 `PathSurface`、source backend sample→pdf/weight、package ABI、continuous/delta MIS math 与 Falcor path sample generator。
 - Release：只用 `scripts/build_viewer.ps1 -Configuration Release` 编译真实 scene specialization，结束后 Falcor clean。
@@ -93,4 +100,12 @@ accumulate = !cameraDragging;
 // 对：交互是一条持续增长的正式 sample sequence；只有 headless 计算 remaining。
 if (!options.headless) return 1u;
 return min(options.captureSamplesPerDispatch, options.captureTargetSpp - slot.spp);
+```
+
+```powershell
+# 错：把package目录传给只接受identity的slot参数。
+NclsViewer --slot0-package artifacts/package-a
+
+# 对：扫描根和manifest package_id是两个独立参数。
+NclsViewer --bundle-root artifacts/exports --slot0-package <package_id>
 ```

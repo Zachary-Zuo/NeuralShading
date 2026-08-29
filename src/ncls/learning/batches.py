@@ -5,8 +5,10 @@ from typing import Any, Literal, Mapping, Protocol, TypeAlias
 
 import torch
 
+from ncls.learning.source_adaptation import NativeAssetDescriptor, NativeAssetTile
 
-TrainingRouteKind = Literal["reference-evaluator", "method-sampler"]
+
+TrainingRouteKind = Literal["asset-tile", "reference-evaluator", "method-sampler"]
 
 
 class BatchLease(Protocol):
@@ -46,7 +48,7 @@ class TrainingRouteRequest:
     options: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not self.name or self.kind not in {"reference-evaluator", "method-sampler"}:
+        if not self.name or self.kind not in {"asset-tile", "reference-evaluator", "method-sampler"}:
             raise ValueError("training route identity or kind is invalid")
         if self.batch_size < 1 or self.direction_count < 1:
             raise ValueError("training route sizes must be positive")
@@ -120,10 +122,10 @@ class EvaluatorBatch:
     target_f: torch.Tensor
     lease: BatchLease | None = field(default=None, compare=False, repr=False)
     schema_name: str = "ncls.evaluator-batch"
-    schema_version: int = 2
+    schema_version: int = 3
 
     def __post_init__(self) -> None:
-        if self.schema_name != "ncls.evaluator-batch" or self.schema_version != 2:
+        if self.schema_name != "ncls.evaluator-batch" or self.schema_version != 3:
             raise ValueError("unsupported EvaluatorBatch schema")
         batch_size = self.conditioning.batch_size
         if self.wi.ndim != 3 or self.wi.shape[0] != batch_size or self.wi.shape[2] != 3:
@@ -158,10 +160,10 @@ class MethodSamplerBatch:
     sample_u: torch.Tensor
     lease: BatchLease | None = field(default=None, compare=False, repr=False)
     schema_name: str = "ncls.method-sampler-batch"
-    schema_version: int = 2
+    schema_version: int = 3
 
     def __post_init__(self) -> None:
-        if self.schema_name != "ncls.method-sampler-batch" or self.schema_version != 2:
+        if self.schema_name != "ncls.method-sampler-batch" or self.schema_version != 3:
             raise ValueError("unsupported MethodSamplerBatch schema")
         if self.sample_u.shape != (self.conditioning.batch_size, 2):
             raise ValueError("MethodSamplerBatch sample_u must have shape [batch,2]")
@@ -182,11 +184,69 @@ class MethodSamplerBatch:
             self.lease.release()
 
 
-OnlineTrainingBatch: TypeAlias = EvaluatorBatch | MethodSamplerBatch
+@dataclass(frozen=True)
+class AssetTileBatch:
+    asset_descriptors: tuple[NativeAssetDescriptor, ...]
+    tiles: tuple[NativeAssetTile, ...]
+    provenance: Mapping[str, Any]
+    lease: BatchLease | None = field(default=None, compare=False, repr=False)
+    schema_name: str = "ncls.asset-tile-batch"
+    schema_version: int = 1
+
+    def __post_init__(self) -> None:
+        if self.schema_name != "ncls.asset-tile-batch" or self.schema_version != 1:
+            raise ValueError("unsupported AssetTileBatch schema")
+        descriptors = tuple(self.asset_descriptors)
+        tiles = tuple(self.tiles)
+        asset_ids = tuple(descriptor.asset_id for descriptor in descriptors)
+        if not descriptors or len(set(asset_ids)) != len(asset_ids) or not tiles:
+            raise ValueError("AssetTileBatch requires unique assets and nonempty tiles")
+        if any(
+            tile.asset_index >= len(descriptors)
+            or tile.request.asset_id != descriptors[tile.asset_index].asset_id
+            or tile.request.schema_id != descriptors[tile.asset_index].schema_id
+            for tile in tiles
+        ):
+            raise ValueError("AssetTileBatch tile asset_index is outside asset_ids")
+        devices = {tile.values.device for tile in tiles}
+        if len(devices) != 1:
+            raise ValueError("AssetTileBatch tiles must share one device")
+        _validate_finite(
+            tuple(tile.values for tile in tiles),
+            "AssetTileBatch contains non-finite values",
+        )
+        object.__setattr__(self, "asset_descriptors", descriptors)
+        object.__setattr__(self, "tiles", tiles)
+        object.__setattr__(self, "provenance", dict(self.provenance))
+
+    @property
+    def device(self) -> torch.device:
+        return self.tiles[0].values.device
+
+    @property
+    def tensors(self) -> dict[str, torch.Tensor]:
+        return {
+            (
+                f"asset_{tile.asset_index}_domain_{tile.request.domain_id}_"
+                f"mip_{tile.mip_level}_tile_{index}_role_{role.role_id}"
+            ): tile.role_values(role.role_id)
+            for index, tile in enumerate(self.tiles)
+            for role in tile.roles
+        }
+
+    def release(self) -> None:
+        for tile in reversed(self.tiles):
+            tile.release()
+        if self.lease is not None:
+            self.lease.release()
+
+
+OnlineTrainingBatch: TypeAlias = AssetTileBatch | EvaluatorBatch | MethodSamplerBatch
 
 
 __all__ = [
     "BatchLease",
+    "AssetTileBatch",
     "EvaluatorBatch",
     "MethodSamplerBatch",
     "OnlineTrainingBatch",

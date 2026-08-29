@@ -10,7 +10,7 @@ from torch import nn
 from ncls.core.identity import require_sha256, sha256_json
 from ncls.core.scattering import MaterialPayload, RuntimePayload
 from ncls.core.source import SourceEditResult, SourceSnapshot
-from ncls.learning.source_adaptation import NativeFeaturePyramid
+from ncls.learning.source_adaptation import NativeAssetCollection
 from ncls.learning.batches import OnlineTrainingBatch
 
 
@@ -69,6 +69,50 @@ class SourceAdaptationContract:
 
 
 @dataclass(frozen=True)
+class ComponentContract:
+    component_id: str
+    required: bool
+    parameter_groups: tuple[str, ...]
+    active_phases: tuple[str, ...]
+    batch_dependencies: tuple[str, ...]
+    python_outputs: tuple[str, ...]
+    runtime_artifacts: tuple[str, ...]
+    slang_entry_points: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not self.component_id:
+            raise ValueError("method component identity is required")
+        for name, values in (
+            ("parameter_groups", self.parameter_groups),
+            ("active_phases", self.active_phases),
+            ("batch_dependencies", self.batch_dependencies),
+            ("python_outputs", self.python_outputs),
+            ("runtime_artifacts", self.runtime_artifacts),
+            ("slang_entry_points", self.slang_entry_points),
+        ):
+            normalized = tuple(str(value) for value in values)
+            if len(set(normalized)) != len(normalized) or any(not value for value in normalized):
+                raise ValueError(f"method component {name} must be unique and nonempty")
+            object.__setattr__(self, name, normalized)
+        if self.required and not (
+            self.parameter_groups or self.python_outputs or self.runtime_artifacts or self.slang_entry_points
+        ):
+            raise ValueError("required method component has no observable implementation contract")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "component_id": self.component_id,
+            "required": self.required,
+            "parameter_groups": list(self.parameter_groups),
+            "active_phases": list(self.active_phases),
+            "batch_dependencies": list(self.batch_dependencies),
+            "python_outputs": list(self.python_outputs),
+            "runtime_artifacts": list(self.runtime_artifacts),
+            "slang_entry_points": list(self.slang_entry_points),
+        }
+
+
+@dataclass(frozen=True)
 class MethodDescriptor:
     method_key: str
     version: int
@@ -81,8 +125,14 @@ class MethodDescriptor:
     capabilities: int
     bounded_execution: Mapping[str, int]
     cost_claims: Mapping[str, int | float | str | bool]
+    parameter_groups: Mapping[str, tuple[str, ...]]
+    components: tuple[ComponentContract, ...]
+    schema_name: str = "ncls.method-descriptor"
+    schema_version: int = 2
 
     def __post_init__(self) -> None:
+        if self.schema_name != "ncls.method-descriptor" or self.schema_version != 2:
+            raise ValueError("unsupported MethodDescriptor schema")
         if not self.method_key or self.version < 1 or not self.display_name or not self.runtime_abi:
             raise ValueError("method descriptor identity fields are invalid")
         require_sha256("method implementation_sha256", self.implementation_sha256)
@@ -95,13 +145,14 @@ class MethodDescriptor:
             str(kind): tuple(fields)
             for kind, fields in self.training_batch_requirements.items()
         }
-        if set(requirements) != {"reference-evaluator", "method-sampler"}:
-            raise ValueError("method descriptor requires both typed training routes")
+        allowed_batches = {"asset-tile", "reference-evaluator", "method-sampler"}
+        if not requirements or not set(requirements).issubset(allowed_batches):
+            raise ValueError("method descriptor contains unsupported typed training routes")
         if any(not fields or len(set(fields)) != len(fields) for fields in requirements.values()):
             raise ValueError("method typed route fields must be nonempty and unique")
-        if "target_f" not in requirements["reference-evaluator"]:
+        if "reference-evaluator" in requirements and "target_f" not in requirements["reference-evaluator"]:
             raise ValueError("reference-evaluator requirements must include target_f")
-        if "sample_u" not in requirements["method-sampler"]:
+        if "method-sampler" in requirements and "sample_u" not in requirements["method-sampler"]:
             raise ValueError("method-sampler requirements must include sample_u")
         if any(
             legacy in fields
@@ -116,11 +167,35 @@ class MethodDescriptor:
         required_bounds = {"maximum_prepare_steps", "maximum_evaluate_steps", "maximum_state_bytes", "maximum_reads"}
         if set(self.bounded_execution) != required_bounds or any(int(value) < 1 for value in self.bounded_execution.values()):
             raise ValueError(f"bounded_execution fields must be exactly {sorted(required_bounds)}")
+        groups = {str(name): tuple(str(value) for value in values) for name, values in self.parameter_groups.items()}
+        if not groups or any(not name or not values or len(set(values)) != len(values) for name, values in groups.items()):
+            raise ValueError("method parameter groups must be nonempty and contain unique parameter names")
+        flattened = [name for names in groups.values() for name in names]
+        if len(set(flattened)) != len(flattened):
+            raise ValueError("method trainable parameters must belong to exactly one parameter group")
+        components = tuple(self.components)
+        if not components or len({component.component_id for component in components}) != len(components):
+            raise ValueError("method descriptor requires unique component contracts")
+        for component in components:
+            if not set(component.parameter_groups).issubset(groups):
+                raise ValueError("method component references an unknown parameter group")
+            if not set(component.batch_dependencies).issubset(requirements):
+                raise ValueError("method component references an unknown typed batch")
+        required_groups = {
+            group
+            for component in components
+            if component.required
+            for group in component.parameter_groups
+        }
+        if required_groups != set(groups):
+            raise ValueError("every method parameter group must belong to a required component")
         object.__setattr__(self, "supported_sources", tuple(self.supported_sources))
         object.__setattr__(self, "training_batch_requirements", requirements)
         object.__setattr__(self, "tensor_state_schema", tuple(self.tensor_state_schema))
         object.__setattr__(self, "bounded_execution", dict(self.bounded_execution))
         object.__setattr__(self, "cost_claims", dict(self.cost_claims))
+        object.__setattr__(self, "parameter_groups", groups)
+        object.__setattr__(self, "components", components)
 
     @property
     def descriptor_sha256(self) -> str:
@@ -128,6 +203,8 @@ class MethodDescriptor:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema_name": self.schema_name,
+            "schema_version": self.schema_version,
             "method_key": self.method_key,
             "version": self.version,
             "display_name": self.display_name,
@@ -142,6 +219,8 @@ class MethodDescriptor:
             "capabilities": self.capabilities,
             "bounded_execution": dict(self.bounded_execution),
             "cost_claims": dict(self.cost_claims),
+            "parameter_groups": {name: list(values) for name, values in self.parameter_groups.items()},
+            "components": [component.to_dict() for component in self.components],
         }
 
     def adaptation_contract(self, snapshot: SourceSnapshot) -> SourceAdaptationContract:
@@ -166,7 +245,7 @@ class MethodDefinition(ABC):
         self,
         model: nn.Module,
         batches: Mapping[str, OnlineTrainingBatch],
-        lifecycle: Mapping[str, Any],
+        phase: Mapping[str, Any],
     ) -> tuple[torch.Tensor, Mapping[str, torch.Tensor | float]]:
         raise NotImplementedError
 
@@ -179,16 +258,24 @@ class MethodDefinition(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def compile_runtime(self, checkpoint: Mapping[str, Any]) -> RuntimePayload:
+    def compile_program(self, checkpoint: Mapping[str, Any]) -> RuntimePayload:
         raise NotImplementedError
 
     @abstractmethod
-    def compile_material(
+    def compile_asset(
         self,
         snapshot: SourceSnapshot,
         checkpoint: Mapping[str, Any],
     ) -> MaterialPayload:
         raise NotImplementedError
+
+    def compile_instance(
+        self,
+        snapshot: SourceSnapshot,
+        checkpoint: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        del snapshot, checkpoint
+        return {"compiled_material_index": 0}
 
     def package_validation(
         self,
@@ -206,15 +293,48 @@ class MethodDefinition(ABC):
     def validate_training_config(self, config: Mapping[str, Any]) -> None:
         del config
 
-    def configure_lifecycle(self, model: nn.Module, lifecycle: Mapping[str, Any]) -> None:
-        del lifecycle
-        for parameter in model.parameters():
-            parameter.requires_grad_(True)
+    def parameter_registry(self, model: nn.Module) -> Mapping[str, tuple[nn.Parameter, ...]]:
+        named = dict(model.named_parameters())
+        declared = {
+            name
+            for values in self.descriptor.parameter_groups.values()
+            for name in values
+        }
+        if set(named) != declared:
+            missing = sorted(declared - set(named))
+            orphan = sorted(set(named) - declared)
+            raise ValueError(
+                f"method parameter registry mismatch; missing={missing}, orphan={orphan}"
+            )
+        return {
+            group: tuple(named[name] for name in names)
+            for group, names in self.descriptor.parameter_groups.items()
+        }
 
-    def materialize_latent(
+    def configure_phase(self, model: nn.Module, phase: Mapping[str, Any]) -> None:
+        active = set(str(value) for value in phase.get("parameter_groups", ()))
+        registry = self.parameter_registry(model)
+        if not active or not active.issubset(registry):
+            raise ValueError("training phase references invalid parameter groups")
+        for group, parameters in registry.items():
+            for parameter in parameters:
+                parameter.requires_grad_(group in active)
+
+    def materialize_assets(
         self,
         model: nn.Module,
-        native_feature_pyramid: NativeFeaturePyramid,
+        native_assets: NativeAssetCollection,
     ) -> None:
-        del model, native_feature_pyramid
-        raise RuntimeError("method does not implement a latent materialization transition")
+        del model, native_assets
+        raise RuntimeError("method does not implement an asset materialization transition")
+
+    def apply_phase_transition(
+        self,
+        model: nn.Module,
+        transition: str,
+        native_assets: NativeAssetCollection,
+    ) -> None:
+        del model, native_assets
+        raise RuntimeError(
+            f"method {self.descriptor.method_key!r} does not implement transition {transition!r}"
+        )

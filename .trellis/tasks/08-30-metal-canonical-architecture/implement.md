@@ -2,16 +2,16 @@
 
 ## 顺序
 
-1. 更新project/core/data/learning/viewer specs和稳定contracts，冻结v4/v2 schemas及旧symbol denylist；
-2. 实现`ReferenceExecutionPlan`与backend/session group routing，递归迁移五个reference和query tests；
-3. 实现`NativeAssetCollection`、三类typed batches与collection adapters，删除`NativeFeaturePyramid`；
-4. 实现`MethodDescriptor@2` component/phase contracts和generic conformance fixtures；
-5. 实现`TrainingConfig@4`、phase runner、parameter groups、precision、prefetch和`TrainingCheckpoint@4`；
-6. 迁移NVIDIA method、四个configs、CLI train/evaluate/export和checkpoint tests；
-7. 实现`ScatteringPackage@2` Python schema/writer/loader及program/asset/instance typed payload；
-8. 迁移NVIDIA exporter、Slang package、C++ viewer loader/cache/bindings和双slot tests；
-9. 删除v3/v1 readers/schemas/aliases/converters/fallbacks及过时docs/tests；
-10. 执行静态denylist、unit、GPU/reference、NVIDIA online training/package/viewer回归和external clean检查。
+- [x] 更新project/core/data/learning/viewer specs和稳定contracts，冻结v4/v2 schemas及旧symbol denylist；
+- [x] 实现`ReferenceExecutionPlan`与backend/session group routing，递归迁移五个reference和query tests；
+- [x] 实现`NativeAssetCollection`、三类typed batches与collection adapters，删除`NativeFeaturePyramid`；
+- [x] 实现`MethodDescriptor@2` component/phase contracts和generic conformance fixtures；
+- [x] 实现`TrainingConfig@4`、phase runner、parameter groups、precision、prefetch和`TrainingCheckpoint@4`；
+- [x] 迁移NVIDIA method、四个configs、CLI train/evaluate/export和checkpoint tests；
+- [x] 实现`ScatteringPackage@2` Python schema/writer/loader及program/asset/instance typed payload；
+- [x] 迁移NVIDIA exporter、Slang package、C++ viewer loader/cache/bindings和双slot tests；
+- [x] 删除v3/v1 readers/schemas/aliases/converters/fallbacks及过时docs/tests；
+- [x] 执行静态denylist、unit、GPU/reference、NVIDIA online training/package/viewer回归和external clean检查。
 
 ## 重点文件
 
@@ -25,7 +25,7 @@
 
 ```powershell
 conda run -n neural-shading python -m pytest tests/unit
-scripts/run_falcor_python.ps1 -Command "python -m pytest tests/gpu"
+scripts/run_falcor_python.ps1 -m pytest tests/gpu -q
 scripts/build_viewer.ps1 -Configuration Release
 rg -n "TrainingConfig@3|TrainingCheckpoint@3|ScatteringPackage@1|NativeFeaturePyramid|ncls.training-config.*3|ncls.training-checkpoint.*3|ncls.scattering-package.*1" src tests configs apps docs .trellis/spec
 git -C external/Falcor status --short
@@ -33,6 +33,10 @@ git diff --check
 ```
 
 denylist命令预期只允许明确的历史说明fixture；正式代码/config/spec为零，test对旧format执行拒绝而不是加载。
+
+## 完成结果
+
+十项执行清单和PRD七项验收均已完成；单次smoke数值、package identity与最终质量门证据见`research/verification-evidence.md`。
 
 ## 回滚点
 

@@ -315,21 +315,26 @@ class ReferenceBackendCapability:
 
     def open(
         self,
-        definition: ReferenceProgramDefinition,
-        snapshots: Sequence[SourceSnapshot],
+        plan: "ReferenceExecutionPlan",
         *,
         query_capacity: int,
         device: object = "cuda:0",
         slot_count: int = 2,
     ):
-        self.doctor((definition,)).require_ready()
+        from ncls.references.plan import ReferenceExecutionPlan
+
+        if not isinstance(plan, ReferenceExecutionPlan):
+            raise TypeError("reference backend open() requires ReferenceExecutionPlan@1")
+        definitions = tuple(
+            {group.definition.descriptor.program_key: group.definition for group in plan.groups}.values()
+        )
+        self.doctor(definitions).require_ready()
         falcor = self._load_falcor()
         device_handle = self._create_device(falcor)
         from ncls.references.query import ReferenceBackendSession
 
         return ReferenceBackendSession(
-            definition,
-            snapshots,
+            plan,
             backend_descriptor=self.descriptor,
             falcor=falcor,
             device_handle=device_handle,

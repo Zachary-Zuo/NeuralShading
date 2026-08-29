@@ -8,7 +8,7 @@ from torch.nn import functional as F
 
 from ncls.learning.slang.runtime import SlangModuleSession
 from ncls.paths import PROJECT_ROOT
-from ncls.learning.source_adaptation import NativeFeaturePyramid
+from ncls.learning.source_adaptation import NativeAssetCollection
 
 
 _CORE_PATH = PROJECT_ROOT / "shaders/ncls/backends/nvidia_neural_appearance/nvidia_neural_appearance_core.slang"
@@ -45,7 +45,7 @@ class NvidiaNeuralAppearanceModel(nn.Module):
         self.latent_width = int(latent_width)
         self.latent_height = int(latent_height)
         self.latent_mip_count = int(latent_mip_count)
-        self.lifecycle_stage = "bootstrap"
+        self.phase_name = "bootstrap"
 
         self.encoder_w0 = _parameter(64, self.native_feature_count)
         self.encoder_b0 = _parameter(64)
@@ -127,15 +127,15 @@ class NvidiaNeuralAppearanceModel(nn.Module):
             )
         return tuple(levels)
 
-    def configure_lifecycle(self, stage: str) -> None:
-        if stage not in {"bootstrap", "finetune"}:
-            raise ValueError(f"unsupported NVIDIA lifecycle stage {stage!r}")
-        self.lifecycle_stage = stage
+    def set_training_phase(self, phase_name: str) -> None:
+        if phase_name not in {"bootstrap", "finetune"}:
+            raise ValueError(f"unsupported NVIDIA training phase {phase_name!r}")
+        self.phase_name = phase_name
         for name, parameter in self.named_parameters():
             if name.startswith("encoder_"):
-                parameter.requires_grad_(stage == "bootstrap")
+                parameter.requires_grad_(phase_name == "bootstrap")
             elif name == "latent_texels":
-                parameter.requires_grad_(stage == "finetune")
+                parameter.requires_grad_(phase_name == "finetune")
             else:
                 parameter.requires_grad_(True)
 
@@ -148,25 +148,48 @@ class NvidiaNeuralAppearanceModel(nn.Module):
         hidden = F.relu(F.linear(hidden, self.encoder_w3, self.encoder_b3))
         return F.linear(hidden, self.encoder_out_w, self.encoder_out_b)
 
-    def materialize(self, native_feature_pyramid: NativeFeaturePyramid) -> None:
-        if len(native_feature_pyramid.level_shapes) != self.latent_mip_count:
-            raise ValueError("native feature pyramid does not match latent mip count")
-        if native_feature_pyramid.feature_count != self.native_feature_count:
-            raise ValueError("native feature pyramid channels disagree with encoder")
-        if native_feature_pyramid.level_shapes != self.mip_shapes:
-            raise ValueError("native feature pyramid extents disagree with latent hierarchy")
+    def materialize(self, native_assets: NativeAssetCollection) -> None:
+        if len(native_assets.descriptors) != 1:
+            raise ValueError("NVIDIA reproduction materializes exactly one native asset")
+        descriptor = native_assets.descriptors[0]
+        if len(descriptor.domains) != 1:
+            raise ValueError("NVIDIA reproduction requires one canonical native domain")
+        domain = descriptor.domains[0]
+        level_shapes = domain.level_shapes
+        if len(level_shapes) != self.latent_mip_count:
+            raise ValueError("native asset collection does not match latent mip count")
+        if domain.channel_count != self.native_feature_count:
+            raise ValueError("native asset channels disagree with encoder")
+        if level_shapes != self.mip_shapes:
+            raise ValueError("native asset extents disagree with latent hierarchy")
         with torch.no_grad():
             offsets = self._mip_offsets_tensor.tolist()
+            destinations = []
             for level_index, (height, width) in enumerate(self.mip_shapes):
                 destination = self.latent_texels[
                     offsets[level_index] : offsets[level_index + 1]
-                ]
-                for offset, features in native_feature_pyramid.iter_level_tiles(
-                    level_index, 262_144, self.latent_texels.device
-                ):
+                ].reshape(height, width, int(self.latent_texels.shape[1]))
+                destinations.append(destination)
+            for request in native_assets.iter_tile_requests(
+                0, domain.domain_id, 262_144, 0
+            ):
+                tile = native_assets.acquire_tile(request, self.latent_texels.device)
+                try:
+                    features = tile.core.reshape(-1, domain.channel_count)
                     encoded = self.encode(features)
-                    destination[offset : offset + len(features)].copy_(encoded)
-        self.configure_lifecycle("finetune")
+                    origin_y, origin_x = tile.origin_yx
+                    core_height, core_width = tile.core_shape
+                    destinations[tile.mip_level][
+                        origin_y : origin_y + core_height,
+                        origin_x : origin_x + core_width,
+                    ].copy_(
+                        encoded.reshape(
+                            core_height, core_width, int(self.latent_texels.shape[1])
+                        )
+                    )
+                finally:
+                    tile.release()
+        self.set_training_phase("finetune")
 
     @staticmethod
     def _bilinear_wrap(level: torch.Tensor, uv: torch.Tensor) -> torch.Tensor:
@@ -215,7 +238,7 @@ class NvidiaNeuralAppearanceModel(nn.Module):
     def latent_for_batch(self, tensors: dict[str, torch.Tensor] | torch.Tensor) -> torch.Tensor:
         if isinstance(tensors, torch.Tensor):
             return tensors
-        if self.lifecycle_stage == "bootstrap":
+        if self.phase_name == "bootstrap":
             return self.encode(tensors["native_features"])
         return self.fetch_latent(tensors["uv"], tensors["mip_level"])
 

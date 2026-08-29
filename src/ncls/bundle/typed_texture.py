@@ -78,7 +78,9 @@ def inspect_rgba16f_dds(payload: bytes) -> tuple[int, int, int]:
 
 def validate_typed_resource(payload: bytes, descriptor: Mapping[str, Any]) -> None:
     if descriptor.get("dtype") != RGBA16F_DDS_DTYPE:
-        return
+        raise ValueError(
+            f"unsupported ScatteringPackage typed resource dtype {descriptor.get('dtype')!r}"
+        )
     width, height, mip_count = inspect_rgba16f_dds(payload)
     if descriptor.get("shape") != [width, height, mip_count, 4]:
         raise ValueError("RGBA16F DDS descriptor shape disagrees with file contents")

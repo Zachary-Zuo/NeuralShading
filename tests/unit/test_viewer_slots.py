@@ -15,8 +15,8 @@ def test_fixed_panels_preserve_equal_extent_for_even_and_odd_widths():
 def test_slot_failure_never_changes_peer_or_extent():
     peer = ComparisonSlot(mode=SlotMode.PATH_TRACING)
     failed = ComparisonSlot(mode=SlotMode.DEFERRED).activate(
-        package_id="a" * 64, program_runtime_id="b" * 64, material_asset_id="c" * 64,
-        source_snapshot_id="d" * 64, capabilities=1,
+        package_id="a" * 64, program_id="b" * 64, asset_id="c" * 64,
+        instance_id="d" * 64, source_snapshot_id="e" * 64, capabilities=1,
     )
     assert failed.status == SlotStatus.UNSUPPORTED and peer.status == SlotStatus.EMPTY
     assert panel_extents(801, 600)[0][2:] == panel_extents(801, 600)[1][2:]
@@ -215,3 +215,24 @@ def test_interactive_path_tracing_is_one_unbounded_sample_sequence() -> None:
         assert "gAccumulate" not in shader
         assert f"const uint globalSample = {spp_name} + sampleIndex;" in shader
         assert "gResetAccumulation != 0u" in shader
+
+
+def test_release_viewer_uses_v2_studio_and_package_id_slot_cli() -> None:
+    viewer = Path("apps/viewer/NclsViewer.cpp").read_text(encoding="utf-8")
+    benchmark = Path("scripts/benchmark_viewer.ps1").read_text(encoding="utf-8")
+    composite = Path("apps/viewer/shaders/Composite.cs.slang").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'data/ncls-viewer/studio-v2.json"' in viewer
+    assert 'data/ncls-viewer/studio-v1.json"' not in viewer
+    for option in (
+        "--slot0-package", "--slot1-package", "--slot0-mode", "--slot1-mode"
+    ):
+        assert option in viewer
+    assert "--bundle-root $packageRootPath" in benchmark
+    assert "--slot0-package $Slot0PackageId" in benchmark
+    assert "--slot1-package $Slot1PackageId" in benchmark
+    assert "--slot0-package $packages[$Slot0PackageId]" not in benchmark
+    assert 'constants["gDividerColor"] = mDividerColor;' in viewer
+    assert "else { comparisonLinear = gDividerColor;" in composite

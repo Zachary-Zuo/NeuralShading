@@ -201,7 +201,7 @@ NclsMethodState nclsUnpackMethodState(
         nclsNvidiaNeuralParams(weights)};
 }
 
-// ScatteringPackage@1 的稳定 host 绑定面；viewer 不解释 NVIDIA 私有布局。
+// ScatteringPackage@2 的稳定 host 绑定面；viewer 不解释 NVIDIA 私有布局。
 StructuredBuffer<uint> gNclsRuntimeWeights;
 StructuredBuffer<NclsNvidiaNeuralCompiledMaterial> gNclsCompiledMaterials;
 Texture2D<float4> gNclsNvidiaLatent0;

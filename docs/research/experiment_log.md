@@ -2,7 +2,7 @@
 
 每个正式 run（标准档及以上）一行；快速档 smoke 不入表。可比性、结论强度与对照要求见 [`experiment_framework.md`](experiment_framework.md) §7。详细数值与逐项报告留在 `artifacts/`，本表只保留能回答「现在做到哪了」的最小信息。
 
-下表是迁移前与迁移过程中的历史证据，其中HDF5/corpus行不属于当前online pipeline，不能与新run作matched比较，也不为它们保留reader、config或磁盘数据。新的正式run应以source snapshot、reference/query identity和`TrainingCheckpoint@3`登记。
+下表是迁移前与迁移过程中的历史证据，其中HDF5/corpus及旧checkpoint字段仅用于说明历史，不属于当前online pipeline，也不保留reader、config或磁盘数据。新的正式run必须以source snapshot、reference plan/query/asset identity和`TrainingCheckpoint@4`登记。
 
 | 日期 | run ID | 候选+配置 | 数据版本 | 预算档 | seeds | 方向 L1 (med/p95) | 能量误差 (med/p95) | 结论 | artifacts |
 |---|---|---|---|---|---|---|---|---|---|

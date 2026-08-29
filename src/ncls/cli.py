@@ -19,6 +19,7 @@ from ncls.core.material import (
 )
 from ncls.core.source import create_source_family
 from ncls.learning.batches import TrainingRouteRequest
+from ncls.learning.conformance import MethodArtifactInventory, validate_artifact_coverage
 from ncls.learning.methods import get_method, method_descriptors
 from ncls.learning.producer import OnlineTrainingProducer
 from ncls.learning.training import (
@@ -105,7 +106,7 @@ def _learn_train(config_path: Path, output: Path, resume_path: Path | None) -> i
                 if not line.strip():
                     continue
                 value = json.loads(line)
-                if float(value.get("step", -1)) <= resume.step:
+                if float(value.get("step", -1)) <= resume.global_step:
                     retained_metric_lines.append(
                         json.dumps(value, ensure_ascii=False, separators=(",", ":"))
                     )
@@ -135,7 +136,7 @@ def _learn_train(config_path: Path, output: Path, resume_path: Path | None) -> i
         def save_periodic(checkpoint) -> None:
             metric_stream.flush()
             path = output.with_name(
-                f"{output.stem}.step{checkpoint.step:08d}{output.suffix}"
+                f"{output.stem}.step{checkpoint.global_step:08d}{output.suffix}"
             )
             save_checkpoint(path, checkpoint)
 
@@ -159,7 +160,7 @@ def _learn_train(config_path: Path, output: Path, resume_path: Path | None) -> i
                     "checkpoint": output.name,
                     "metrics": metrics_path.name,
                     "metric_records": metric_count,
-                    "final_step": result.checkpoint.step,
+                    "final_step": result.checkpoint.global_step,
                     "elapsed_seconds": time.perf_counter() - started,
                 },
                 ensure_ascii=False,
@@ -172,7 +173,7 @@ def _learn_train(config_path: Path, output: Path, resume_path: Path | None) -> i
         if "metric_stream" in locals() and not metric_stream.closed:
             metric_stream.close()
         producer.close()
-    print(f"TrainingCheckpoint@3 {digest}: {output}")
+    print(f"TrainingCheckpoint@4 {digest}: {output}")
     return 0
 
 
@@ -191,6 +192,10 @@ def _learn_evaluate(config_path: Path, checkpoint_path: Path, batches: int) -> i
     producer = OnlineTrainingProducer(definition, config)
     if (
         checkpoint.reference_program_identity != producer.reference_program_identity
+        or checkpoint.reference_execution_plan_identity
+        != producer.reference_execution_plan_identity
+        or checkpoint.native_asset_collection_identity
+        != producer.native_asset_collection_identity
         or checkpoint.query_stream_identity != producer.query_stream_identity
         or checkpoint.source_snapshot_ids != producer.source_snapshot_ids
     ):
@@ -200,30 +205,44 @@ def _learn_evaluate(config_path: Path, checkpoint_path: Path, batches: int) -> i
     try:
         model = definition.create_trainable(config.model_context).to(producer.device)
         definition.restore_training_state(model, checkpoint.model_state)
-        definition.configure_lifecycle(model, checkpoint.lifecycle_state)
+        phase_index = min(checkpoint.phase_index, len(config.phases) - 1)
+        phase = config.phases[phase_index]
+        definition.configure_phase(model, phase.to_dict())
         model.eval()
         with torch.no_grad():
             for index in range(batches):
                 route_batches = {}
                 try:
-                    for route in config.routes:
+                    for route in phase.routes:
                         request = TrainingRouteRequest(
                             f"evaluation:{route.name}",
                             route.kind,
                             route.batch_size,
                             route.direction_count,
-                            checkpoint.step,
+                            checkpoint.global_step,
                             config.seed + route.seed_offset + index,
                             {
                                 **dict(route.options),
-                                "filtering": dict(config.filtering),
-                                "mollification": dict(config.mollification),
+                                "recipes": dict(phase.recipes),
                                 "validation": True,
                             },
                         )
                         route_batches[route.name] = producer.next_batch(request)
                     loss, _ = definition.training_objective(
-                        model, route_batches, checkpoint.lifecycle_state
+                        model,
+                        route_batches,
+                        {
+                            "name": phase.name,
+                            "phase_index": phase_index,
+                            "phase_step": checkpoint.phase_step,
+                            "phase_steps": phase.steps,
+                            "global_step": checkpoint.global_step,
+                            "total_steps": config.total_steps,
+                            "parameter_groups": list(phase.parameter_groups),
+                            "loss_terms": list(phase.loss_terms),
+                            "recipes": dict(phase.recipes),
+                            "validation": True,
+                        },
                     )
                     losses.append(float(loss))
                 finally:
@@ -252,10 +271,17 @@ def _learn_export(
     if snapshot.snapshot_id not in checkpoint.source_snapshot_ids:
         raise ValueError("export source snapshot does not occur in the checkpoint")
     payload = checkpoint.to_payload()
-    runtime = definition.compile_runtime(payload)
-    material = definition.compile_material(snapshot, payload)
+    runtime = definition.compile_program(payload)
+    material = definition.compile_asset(snapshot, payload)
+    instance = definition.compile_instance(snapshot, payload)
+    validate_artifact_coverage(
+        definition.descriptor,
+        MethodArtifactInventory.from_payloads(
+            runtime, material, checkpoint_model_state=bool(checkpoint.model_state)
+        ),
+    )
     validation = dict(definition.package_validation(snapshot, payload))
-    validation["checkpoint_step"] = checkpoint.step
+    validation["checkpoint_step"] = checkpoint.global_step
     manifest = write_scattering_package(
         output,
         program_kind="method",
@@ -264,16 +290,17 @@ def _learn_export(
         program_descriptor_sha256=definition.descriptor.descriptor_sha256,
         runtime_abi=definition.descriptor.runtime_abi,
         source=snapshot,
-        runtime=runtime,
-        material=material,
+        program_payload=runtime,
+        asset_payload=material,
         validation=validation,
+        instance_parameters=instance,
         provenance={
             "checkpoint_sha256": checkpoint_path.with_suffix(
                 checkpoint_path.suffix + ".sha256"
             ).read_text(encoding="ascii").strip()
         },
     )
-    print(f"ScatteringPackage@1 {manifest.package_id}: {output}")
+    print(f"ScatteringPackage@2 {manifest.package_id}: {output}")
     return 0
 
 
@@ -281,7 +308,10 @@ def _package_validate(path: Path) -> int:
     package = ScatteringPackage.open(path)
     binding = package.create_binding()
     print(f"ScatteringPackage OK: {package.manifest.package_id}")
-    print(f"runtime={binding.program_runtime_id} material={binding.material_asset_id}")
+    print(
+        f"program={binding.program.program_id} asset={binding.asset.asset_id} "
+        f"instance={binding.instance.instance_id}"
+    )
     return 0
 
 
@@ -338,6 +368,7 @@ def _reference_probe() -> int:
         discover_reference_programs,
         get_reference_program_for_source,
     )
+    from ncls.references.plan import compile_single_program_plan
     from ncls.references.query import ScatteringQuery
     from ncls.source_materials.families.layer_stack import snapshot_from_layer_stack
 
@@ -372,15 +403,17 @@ def _reference_probe() -> int:
         definition = get_reference_program_for_source(
             snapshot.family_id, snapshot.source_contract_version
         )
-        session = backend.open(
-            definition, (snapshot,), query_capacity=1, device="cuda:0"
+        plan = compile_single_program_plan(
+            definition, (snapshot,), query_recipe={"recipe_id": "cli-probe@1"}
         )
+        session = backend.open(plan, query_capacity=1, device="cuda:0")
         try:
             device = torch.device("cuda:0")
             result = session.evaluate(
                 ScatteringQuery(
                     torch.zeros(1, dtype=torch.int64, device=device),
                     torch.tensor([[0.0, 0.0, 1.0]], device=device),
+                    plan.groups[0].group_id,
                 ),
                 torch.tensor(
                     [[[0.3, 0.0, math.sqrt(0.91)]]], device=device
@@ -445,19 +478,19 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("output", type=Path)
     train.add_argument("--resume", type=Path)
     evaluate = learn_commands.add_parser(
-        "evaluate", help="评测 TrainingCheckpoint@3"
+        "evaluate", help="评测 TrainingCheckpoint@4"
     )
     evaluate.add_argument("config", type=Path)
     evaluate.add_argument("checkpoint", type=Path)
     evaluate.add_argument("--batches", type=int, default=8)
     export = learn_commands.add_parser(
-        "export", help="从 checkpoint 的 source locator 编译 ScatteringPackage@1"
+        "export", help="从 checkpoint 的 source locator 编译 ScatteringPackage@2"
     )
     export.add_argument("checkpoint", type=Path)
     export.add_argument("output", type=Path)
     export.add_argument("--material-index", type=int, default=0)
 
-    package = commands.add_parser("package", help="ScatteringPackage@1 工具")
+    package = commands.add_parser("package", help="ScatteringPackage@2 工具")
     package_commands = package.add_subparsers(
         dest="package_command", required=True
     )

@@ -44,7 +44,8 @@ def test_evaluator_batch_compacts_reference_horizon_rejections() -> None:
     generator = torch.Generator().manual_seed(9)
     cursor = 0
 
-    def conditioning(request):
+    def conditioning(request, group):
+        del group
         nonlocal cursor
         values = torch.arange(cursor, cursor + request.batch_size, dtype=torch.float32)
         cursor += request.batch_size
@@ -56,7 +57,11 @@ def test_evaluator_batch_compacts_reference_horizon_rejections() -> None:
                 "source_index": torch.zeros(request.batch_size, dtype=torch.int64),
                 "wo": wo,
             },
-            {"route_name": request.name, "request_index": len(producer.session.leases)},
+            {
+                "route_name": request.name,
+                "request_index": len(producer.session.leases),
+                "reference_execution_group_id": "fixture-group",
+            },
         )
         return result, generator, wo
 
@@ -64,7 +69,7 @@ def test_evaluator_batch_compacts_reference_horizon_rejections() -> None:
     request = TrainingRouteRequest(
         "evaluator", "reference-evaluator", 4, 1, 0, 7, {}
     )
-    batch = producer._evaluator_batch(request)
+    batch = producer._evaluator_batch(request, SimpleNamespace())
 
     torch.testing.assert_close(
         batch.conditioning.tensors["wo"][:, 0],
