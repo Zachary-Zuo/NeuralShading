@@ -1,0 +1,31 @@
+{
+  "id": "metal-reference-foundation",
+  "name": "metal-reference-foundation",
+  "title": "Metal source registry 与 grouped reference",
+  "description": "全量 opaque registry、execution-group reference、typed state pool 与 footprint GT",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "Zachary",
+  "assignee": "Zachary",
+  "createdAt": "2026-08-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "08-30-vmaterial-metal-neural-system",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "execution_mode": "continuous",
+    "continuous_authorized": "true",
+    "authorization_parent": "08-30-vmaterial-metal-neural-system",
+    "commit_policy": "preauthorized-scoped-local-no-push"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "id": "metal-runtime-deployment",
+  "name": "metal-runtime-deployment",
+  "title": "Metal runtime package 与交互 viewer",
+  "description": "量化 MethodBundle/Slang parity、bundle replacement 与 typed edit",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "Zachary",
+  "assignee": "Zachary",
+  "createdAt": "2026-08-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "08-30-vmaterial-metal-neural-system",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "execution_mode": "continuous",
+    "continuous_authorized": "true",
+    "authorization_parent": "08-30-vmaterial-metal-neural-system",
+    "commit_policy": "preauthorized-scoped-local-no-push"
+  }
+}
