@@ -1,0 +1,4 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/project/research-execution.md", "reason": "审查验收来源、需求保真、失败分类和报告边界"}
+{"file": ".trellis/spec/project/method-constraints.md", "reason": "审查方法假设的静态有界部署可能性"}
+{"file": "docs/research/experiment_framework.md", "reason": "审查 matched 对照、指标与假设证伪设计"}

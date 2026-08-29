@@ -1,0 +1,3 @@
+# Task-local source PDFs, code snapshots, rendered pages and worker scratch are never committed.
+*
+!.gitignore
