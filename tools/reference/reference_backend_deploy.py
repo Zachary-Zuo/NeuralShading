@@ -152,6 +152,29 @@ def _sdk_required_paths(sdk: MdlSdkLayout, project_root: Path) -> tuple[Path, ..
     )
 
 
+def _copy_target_code_types_source(
+    sdk: MdlSdkLayout, *, project_root: Path, target_root: Path
+) -> None:
+    source_name = sdk.target_code_types_source
+    source_sha256 = sdk.target_code_types_source_sha256
+    if source_name is None or source_sha256 is None:
+        return
+    source = _contained(project_root, project_root / source_name)
+    if not source.is_file():
+        raise RuntimeError(f"MDL target-code source is missing: {source}")
+    actual = _sha256(source)
+    if actual != source_sha256:
+        raise RuntimeError(
+            "MDL target-code source SHA-256 mismatch: "
+            f"expected {source_sha256}, got {actual}"
+        )
+    destination = _contained(target_root, target_root / sdk.target_code_types)
+    if destination.exists():
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, destination)
+
+
 def _sdk_state(sdk: MdlSdkLayout, project_root: Path) -> DeploymentStep:
     external = project_root / "external"
     target = _contained(external, project_root / sdk.archive.root)
@@ -218,6 +241,11 @@ def _ensure_sdk(sdk: MdlSdkLayout, project_root: Path) -> DeploymentStep:
                 os.chmod(destination, member.mode & 0o777)
             else:
                 raise RuntimeError(f"unsupported archive member: {member.name}")
+    _copy_target_code_types_source(
+        sdk,
+        project_root=project_root,
+        target_root=partial_target,
+    )
     os.replace(partial_target, target)
     final = _sdk_state(sdk, project_root)
     if final.status == "invalid":
@@ -304,6 +332,10 @@ def _environment_report() -> dict[str, object]:
         "git": _first_line(_optional_run(["git", "--version"])),
         "conda": _first_line(_optional_run(["conda", "--version"])),
         "conda_environment": os.environ.get("CONDA_DEFAULT_ENV"),
+        "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+        "falcor_gpu_index": os.environ.get(
+            "NCLS_FALCOR_GPU_INDEX", os.environ.get("CUDA_VISIBLE_DEVICES", "0")
+        ),
         "python": sys.version,
     }
 

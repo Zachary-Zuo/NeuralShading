@@ -91,7 +91,7 @@
     },
     "mdlSdk": {
       "type": "object",
-      "required": ["build", "archive", "library", "plugins", "runtime_library_directory", "target_code_types"],
+      "required": ["build", "archive", "library", "plugins", "runtime_library_directory", "target_code_types", "target_code_types_source", "target_code_types_source_sha256"],
       "additionalProperties": false,
       "properties": {
         "build": {"type": "string", "minLength": 1},
@@ -104,7 +104,9 @@
           "items": {"$ref": "#/$defs/relativePath"}
         },
         "runtime_library_directory": {"$ref": "#/$defs/relativePath"},
-        "target_code_types": {"$ref": "#/$defs/relativePath"}
+        "target_code_types": {"$ref": "#/$defs/relativePath"},
+        "target_code_types_source": {"type": ["string", "null"], "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!assets(?:/|$)).+$"},
+        "target_code_types_source_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
       }
     },
     "mdlBridge": {

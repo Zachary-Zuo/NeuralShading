@@ -171,6 +171,8 @@ class MdlSdkLayout:
     plugins: tuple[str, ...]
     runtime_library_directory: str
     target_code_types: str
+    target_code_types_source: str | None = None
+    target_code_types_source_sha256: str | None = None
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "MdlSdkLayout":
@@ -184,6 +186,8 @@ class MdlSdkLayout:
                 "plugins",
                 "runtime_library_directory",
                 "target_code_types",
+                "target_code_types_source",
+                "target_code_types_source_sha256",
             },
         )
         plugins_value = value["plugins"]
@@ -192,6 +196,25 @@ class MdlSdkLayout:
         plugins = tuple(_project_relative("MDL plugin", item) for item in plugins_value)
         if len(set(plugins)) != len(plugins):
             raise ValueError("MDL SDK plugins must be unique")
+        target_code_types_source = value["target_code_types_source"]
+        target_code_types_source_sha256 = value["target_code_types_source_sha256"]
+        if (target_code_types_source is None) != (target_code_types_source_sha256 is None):
+            raise ValueError(
+                "MDL target-code source and SHA-256 must be provided together"
+            )
+        source_path = (
+            _project_relative("MDL target-code source", target_code_types_source)
+            if target_code_types_source is not None
+            else None
+        )
+        source_sha256 = (
+            require_sha256(
+                "MDL target-code source",
+                str(target_code_types_source_sha256),
+            )
+            if target_code_types_source_sha256 is not None
+            else None
+        )
         return cls(
             str(value["build"]),
             BinaryArchive.from_dict(_mapping("MDL archive", value["archive"])),
@@ -199,6 +222,8 @@ class MdlSdkLayout:
             plugins,
             _project_relative("MDL runtime directory", value["runtime_library_directory"]),
             _project_relative("MDL target-code types", value["target_code_types"]),
+            source_path,
+            source_sha256,
         )
 
 

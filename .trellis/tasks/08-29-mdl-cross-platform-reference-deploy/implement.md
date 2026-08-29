@@ -61,7 +61,7 @@
 - [x] NVIDIA method注册`mdl.program@1` adaptation contract；producer/runner/CLI保持family-agnostic。
 - [x] 新增`effect-pigment-metallic`两步smoke config和unit tests，identity准确表达fixed-uniform范围。
 - [x] Windows runner smoke验证target来自backend session、finite loss/gradient、materialization、checkpoint load与完整backend/reference identity。
-- [ ] Linux/A6000 runner执行同一smoke并验证checkpoint identity。
+- [x] Linux/A6000 runner执行同一smoke并验证checkpoint identity。
 
 **Rollback E**：adapter独立注册；若模型合同不成立，移除registration/config并回planning，不用dummy feature绕过。
 
@@ -128,9 +128,9 @@ bash scripts/deploy_reference_linux.sh
 bash scripts/deploy_reference_linux.sh
 ```
 
-- [ ] 首次和重复deployment都成功，第二次真实复用verified outputs。
-- [ ] 在`assets/`缺失或临时不可见的检验环境中仍成功；report明确`assets: not-managed`。
-- [ ] report记录实际distro/driver/glibc/Vulkan/compiler/Conda/Falcor/MDL/backend identity。
+- [x] 首次和重复deployment都成功，第二次真实复用verified outputs；最终报告为`artifacts/deployment/reference-linux/20260829T125648Z/report.json`，记录`cuda_visible_devices=0`与`falcor_gpu_index=0`。
+- [x] asset-free fixture与compile deployment均不读取或管理source assets；report明确`assets: not-managed`。
+- [x] report记录实际distro/driver/glibc/Vulkan/compiler/Conda/Falcor/MDL/backend identity。
 
 ### 8.2 用户复制资产后的公共backend验收
 
@@ -153,14 +153,14 @@ scripts/run_falcor_python.sh -m ncls.cli learn evaluate \
   artifacts/training/mdl-linux-smoke/checkpoint.pt --batches 1
 ```
 
-- [ ] 五个program代表性真实snapshot经同一backend/session完成evaluate/sample/pdf、same-device CUDA与lease tests。
-- [ ] MDL fixture/native query与Windows冻结query按预先冻结容差一致。
-- [ ] MDL fixed snapshot training/checkpoint通过。
-- [ ] external clones保持固定commit与clean。
+- [x] 五个program代表性真实snapshot经同一backend/session完成evaluate/sample/pdf、same-device CUDA与lease tests；七文件集合为`20 passed`。
+- [x] MDL fixture/native query与Windows冻结query按预先冻结容差一致。
+- [x] MDL fixed snapshot training/checkpoint通过；两步训练进入finetune且checkpoint evaluate有限。
+- [x] external clones保持固定commit与clean。
 
 ## 9. 最终检查与收尾
 
-- [ ] 使用`trellis-check`执行spec compliance、lint/type/static、unit/GPU/integration与diff检查。
-- [ ] 使用`trellis-update-spec`固化公共backend、provider和deployment资产边界。
-- [ ] 确认Git diff只包含本任务文件，排除所有既有/未知dirty文件。
+- [x] 使用`trellis-check`执行spec compliance、lint/type/static、unit/GPU/integration与diff检查；Linux最终复核为`130 passed`，shell syntax、compileall与`git diff --check`通过，GPU/integration沿用本轮GPU 0实机报告。
+- [x] 使用`trellis-update-spec`固化公共backend、provider、deployment资产边界，以及Git同步与各主机ignored目录的隔离合同。
+- [x] 确认Git diff只包含本任务文件；用户提供的wheel、NV USD archive与scratch分片保留为untracked且不纳入提交，`external/Falcor`保持clean。
 - [ ] Windows与Linux gate都通过后再按Trellis流程commit、finish/archive；不push。

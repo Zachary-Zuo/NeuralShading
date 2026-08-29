@@ -21,6 +21,8 @@ from ncls.references.programs import discover_reference_programs
 
 
 QUERY_SHADER = PROJECT_ROOT / "shaders/ncls/reference_query/reference_query.cs.slang"
+_FALCOR_DEVICE_CACHE: dict[tuple[object, str, int], object] = {}
+_SOFTWARE_ADAPTER_NAMES = ("llvmpipe", "lavapipe", "microsoft basic render", "warp")
 
 
 @dataclass(frozen=True)
@@ -288,7 +290,28 @@ class ReferenceBackendCapability:
             "d3d12": falcor.DeviceType.D3D12,
             "vulkan": falcor.DeviceType.Vulkan,
         }[self.descriptor.device_api]
-        return falcor.Device(type=device_type)
+        raw_gpu_index = os.environ.get("NCLS_FALCOR_GPU_INDEX", "0")
+        try:
+            gpu_index = int(raw_gpu_index)
+        except ValueError as error:
+            raise RuntimeError("NCLS_FALCOR_GPU_INDEX must be a nonnegative integer") from error
+        if gpu_index < 0 or str(gpu_index) != raw_gpu_index:
+            raise RuntimeError("NCLS_FALCOR_GPU_INDEX must be a nonnegative integer")
+        cache_key = (falcor, self.descriptor.device_api, gpu_index)
+        cached = _FALCOR_DEVICE_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+        device = falcor.Device(type=device_type, gpu=gpu_index)
+        adapter_name = str(
+            getattr(getattr(device, "info", None), "adapter_name", "")
+        )
+        if any(value in adapter_name.lower() for value in _SOFTWARE_ADAPTER_NAMES):
+            raise RuntimeError(
+                "reference backend requires a hardware graphics adapter; "
+                f"Falcor selected {adapter_name!r}"
+            )
+        _FALCOR_DEVICE_CACHE[cache_key] = device
+        return device
 
     def open(
         self,

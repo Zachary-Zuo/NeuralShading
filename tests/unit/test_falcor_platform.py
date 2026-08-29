@@ -19,8 +19,9 @@ class _FakeFalcor:
         Vulkan = "vulkan"
 
     class Device:
-        def __init__(self, *, type: str) -> None:
+        def __init__(self, *, type: str, gpu: int) -> None:
             self.type = type
+            self.gpu = gpu
 
 
 @pytest.mark.parametrize(
@@ -36,6 +37,53 @@ def test_reference_backend_device_selects_platform_api(
         platform_name=platform, machine="x86_64", project_root=tmp_path
     )
     assert backend._create_device(_FakeFalcor).type == expected  # noqa: SLF001
+
+
+def test_reference_backend_reuses_process_device(tmp_path) -> None:
+    backend = create_reference_backend(
+        platform_name="linux", machine="x86_64", project_root=tmp_path
+    )
+    first = backend._create_device(_FakeFalcor)  # noqa: SLF001
+    second = backend._create_device(_FakeFalcor)  # noqa: SLF001
+    assert second is first
+
+
+def test_reference_backend_selects_explicit_physical_gpu(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("NCLS_FALCOR_GPU_INDEX", "3")
+    backend = create_reference_backend(
+        platform_name="linux", machine="x86_64", project_root=tmp_path
+    )
+    assert backend._create_device(_FakeFalcor).gpu == 3  # noqa: SLF001
+
+
+@pytest.mark.parametrize("value", ("-1", "0,1", "GPU-deadbeef"))
+def test_reference_backend_rejects_invalid_gpu_index(
+    tmp_path, monkeypatch, value: str
+) -> None:
+    monkeypatch.setenv("NCLS_FALCOR_GPU_INDEX", value)
+    backend = create_reference_backend(
+        platform_name="linux", machine="x86_64", project_root=tmp_path
+    )
+    with pytest.raises(RuntimeError, match="nonnegative integer"):
+        backend._create_device(_FakeFalcor)  # noqa: SLF001
+
+
+def test_reference_backend_rejects_software_adapter(tmp_path) -> None:
+    class SoftwareFalcor(_FakeFalcor):
+        class Device:
+            def __init__(self, *, type: str, gpu: int) -> None:
+                class Info:
+                    adapter_name = "llvmpipe"
+
+                self.type = type
+                self.gpu = gpu
+                self.info = Info()
+
+    backend = create_reference_backend(
+        platform_name="linux", machine="x86_64", project_root=tmp_path
+    )
+    with pytest.raises(RuntimeError, match="hardware graphics adapter"):
+        backend._create_device(SoftwareFalcor)  # noqa: SLF001
 
 
 def test_reference_backend_rejects_unsupported_platform(tmp_path) -> None:

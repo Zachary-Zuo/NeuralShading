@@ -64,6 +64,37 @@ def test_linux_deployment_preflight_precedes_environment_and_fetch() -> None:
     assert preflight < environment < fetch
 
 
+def test_linux_falcor_build_repairs_windows_copy_metadata() -> None:
+    script = (PROJECT_ROOT / "scripts/build_falcor_python_linux.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "git -C \"${falcor_root}\" ls-files -s -z" in script
+    assert "chmod a+x \"${falcor_root}/${path}\"" in script
+    assert "find \"${nvtt_root}\" -maxdepth 1 -type f -name 'libnvtt.so.*'" in script
+    assert "ln -s \"${versioned_libraries[0]}\" \"${nvtt_link}\"" in script
+
+
+def test_linux_falcor_launcher_keeps_conda_runtime_libraries_consistent() -> None:
+    launcher = (PROJECT_ROOT / "scripts/run_falcor_python.sh").read_text(
+        encoding="utf-8"
+    )
+    deployment = (PROJECT_ROOT / "scripts/deploy_reference_linux.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "print(sys.prefix)" in launcher
+    assert 'NCLS_FALCOR_GPU_INDEX="${CUDA_VISIBLE_DEVICES}"' in launcher
+    assert "Set CUDA_VISIBLE_DEVICES instead of NCLS_FALCOR_GPU_INDEX" in launcher
+    assert "must name exactly one physical GPU index" in launcher
+    assert 'cuda_compat="${conda_prefix}/cuda-compat"' in launcher
+    assert "| sed -n '1p'" in launcher
+    assert "| head -n 1" not in launcher
+    assert 'driver_major="${driver_version%%.*}"' in launcher
+    assert '"${driver_major}" -lt 570' in launcher
+    assert "${falcor_bin}:${cuda_compat}:${conda_prefix}/lib" in launcher
+    assert '"defaults::cuda-compat=12.8.1"' in deployment
+    assert "--prune" not in deployment
+
+
 def test_portable_mdl_provider_has_one_loader_boundary_and_explicit_plugins() -> None:
     source = (
         PROJECT_ROOT / "tools/reference/mdl_sdk_bridge/main.cpp"

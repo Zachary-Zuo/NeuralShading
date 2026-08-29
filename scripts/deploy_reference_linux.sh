@@ -53,11 +53,14 @@ if ! conda env list | awk '{print $1}' | grep -Fxq neural-shading; then
     conda env create -f "${project_root}/environment.yml"
 else
     environment_ready=1
-    conda env update -n neural-shading -f "${project_root}/environment.yml" --prune
+    conda env update -n neural-shading -f "${project_root}/environment.yml"
 fi
 environment_ready=1
 conda run --no-capture-output -n neural-shading python -m pip install \
     -r "${project_root}/requirements-torch-cu128.txt"
+# Runtime-compiled CUDA 12.8 PTX needs its matching user-space compatibility
+# layer when the host kernel module exposes an older CUDA generation.
+conda install -n neural-shading "defaults::cuda-compat=12.8.1" -y
 
 current_step="fetch-locked-dependencies"
 mkdir -p "${project_root}/build/reference-backend"
@@ -68,6 +71,11 @@ PYTHONPATH="${project_root}/src" conda run --no-capture-output -n neural-shading
     --output "${fetch_report}"
 
 current_step="falcor-setup"
+packman_bin="${project_root}/external/Falcor/tools/packman/packman"
+if [[ -f "${packman_bin}" && ! -x "${packman_bin}" ]]; then
+    # Windows copies can lose the executable bit on this upstream shell entry point.
+    chmod +x "${packman_bin}"
+fi
 if [[ ! -x "${project_root}/external/Falcor/tools/.packman/cmake/bin/cmake" ]]; then
     (cd "${project_root}/external/Falcor" && bash setup.sh)
 fi

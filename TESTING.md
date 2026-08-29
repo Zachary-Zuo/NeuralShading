@@ -101,7 +101,7 @@ external\Falcor\build\windows-vs2022\bin\Release\slangc.exe `
 
 覆盖 Python/Slang ABI、方向和余弦语义、`prepare/evaluate`、sampling-capable backend 的 `sample/pdf`、各向异性、解析 diffuse、互易性、多层执行、统计量，以及各源材质 reference 的真实执行。P0 的正式大语料按 family/role 分 shard，不再用“全部材质写入同一 HDF5”作为架构测试。
 
-### 统一 Reference Backend：Windows完成，Linux/A6000待实机验证
+### 统一 Reference Backend：Windows与Ubuntu/A6000均已实机验证
 
 Windows公共入口只编译/检查toolchain并运行无source-assets的仓库fixture probe：
 
@@ -122,30 +122,40 @@ Windows公共入口只编译/检查toolchain并运行无source-assets的仓库fi
   artifacts/training/mdl-windows-smoke/checkpoint.pt --batches 1
 ```
 
-Linux发行版与具体toolchain版本不预先冻结；迁移到A6000服务器后记录真实环境并连续运行两次部署，第二次必须复用已校验输出：
+Linux支持仍由实际构建和probe决定，不把这次结果外推到其他发行版。2026-08-29已在Ubuntu 22.04.5、10张RTX A6000、driver 550.78、glibc 2.35、GCC 11.4.0上完成GPU 0验证；锁定的Falcor commit为`9dc819c162b2070335c65060436041690b7937f8`。连续运行部署时，后一份成功报告为`artifacts/deployment/reference-linux/20260829T125648Z/report.json`，全部external、Falcor build和MDL provider均为`reused`：
 
 ```bash
-bash scripts/deploy_reference_linux.sh
-bash scripts/deploy_reference_linux.sh
+CUDA_VISIBLE_DEVICES=0 bash scripts/deploy_reference_linux.sh
+CUDA_VISIBLE_DEVICES=0 bash scripts/deploy_reference_linux.sh
 ```
 
-部署脚本可获取根manifest锁定的`external/`源码和MDL SDK binary package、创建或更新已有Conda中的`neural-shading`环境并完成编译；不安装Conda/driver、不使用`sudo`，也不下载、移动或写入`assets/`。因此`assets/`缺失时compile deployment仍应成功。用户自行复制资产后再运行：
+部署脚本可获取根manifest锁定的`external/`源码和MDL SDK binary package、创建或更新已有Conda中的`neural-shading`环境并完成编译；不安装Conda/driver、不使用`sudo`，也不下载、移动或写入`assets/`。Linux额外固定安装`cuda-compat=12.8.1`；当宿主driver主版本低于570时，launcher从该Conda环境加载CUDA 12.8用户态compatibility库，使SlangPy运行时编译的PTX与项目固定toolchain一致。570及以上driver不启用这层覆盖。
+
+多GPU机器只通过`CUDA_VISIBLE_DEVICES=<单个物理序号>`选择GPU；launcher把同一序号交给Falcor Vulkan，Torch/SlangPy使用重映射后的`cuda:0`。用户自行复制资产后先构建validation-only的OpenPBR C++ probe，再运行完整GPU集合：
 
 ```bash
-bash scripts/run_falcor_python.sh -m ncls.cli reference doctor
-bash scripts/run_falcor_python.sh -m pytest \
-  tests/gpu/test_reference_backend_contracts.py \
+conda run -n neural-shading cmake -S tools/reference/openpbr_probe \
+  -B build/openpbr-probe -G Ninja -DCMAKE_BUILD_TYPE=Release
+conda run -n neural-shading cmake --build build/openpbr-probe \
+  --config Release --target ncls_openpbr_probe --parallel 16
+CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls.cli reference doctor
+CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m pytest \
   tests/gpu/test_reference_query_dispatcher.py \
-  tests/gpu/test_mdl_native_crosscheck.py -q
-bash scripts/run_falcor_python.sh -m ncls.cli learn train \
+  tests/gpu/test_reference_backend_contracts.py \
+  tests/gpu/test_mdl_native_crosscheck.py \
+  tests/gpu/test_mdl_hlsl_feasibility.py \
+  tests/gpu/test_merl_reference_gpu.py \
+  tests/gpu/test_openpbr_reference_gpu.py \
+  tests/gpu/test_layer_stack_ir_gpu.py -q
+CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls.cli learn train \
   configs/learning/nvidia-rta2024-mdl-effect-pigment-smoke.json \
   artifacts/training/mdl-linux-smoke/checkpoint.pt
-bash scripts/run_falcor_python.sh -m ncls.cli learn evaluate \
+CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls.cli learn evaluate \
   configs/learning/nvidia-rta2024-mdl-effect-pigment-smoke.json \
   artifacts/training/mdl-linux-smoke/checkpoint.pt --batches 1
 ```
 
-Linux/Vulkan、A6000、driver/glibc/compiler/Falcor/MDL实际版本只能在该实机gate后登记为已验证。完整边界见`docs/reference_backend_deployment.md`。
+本次完整GPU集合结果为`20 passed`；固定MDL训练完成`bootstrap -> finetune`两步并能重新加载checkpoint执行一批evaluate。完整边界见`docs/reference_backend_deployment.md`。
 
 ## Neural material 方法的分阶段门槛
 

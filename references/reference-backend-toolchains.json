@@ -78,7 +78,9 @@
         "library": "bin/libmdl_sdk.dll",
         "plugins": ["bin/nv_openimageio.dll", "bin/dds.dll"],
         "runtime_library_directory": "bin",
-        "target_code_types": "examples/mdl_sdk/dxr/content/mdl_target_code_types.hlsl"
+        "target_code_types": "examples/mdl_sdk/dxr/content/mdl_target_code_types.hlsl",
+        "target_code_types_source": null,
+        "target_code_types_source_sha256": null
       },
       "mdl_bridge": {
         "executable": "build/mdl-sdk-bridge/Release/ncls_mdl_sdk_bridge.exe",
@@ -110,7 +112,9 @@
         "library": "lib/libmdl_sdk.so",
         "plugins": ["lib/nv_openimageio.so", "lib/dds.so"],
         "runtime_library_directory": "lib",
-        "target_code_types": "examples/mdl_sdk/dxr/content/mdl_target_code_types.hlsl"
+        "target_code_types": "examples/mdl_sdk/dxr/content/mdl_target_code_types.hlsl",
+        "target_code_types_source": "references/mdl-vmaterials2-v1/mdl_target_code_types.hlsl",
+        "target_code_types_source_sha256": "14bd130882a7e2380db8b1bbf9d620a056499c321a7b809a67eb7735c2255395"
       },
       "mdl_bridge": {
         "executable": "build/mdl-sdk-bridge/Release/ncls_mdl_sdk_bridge",

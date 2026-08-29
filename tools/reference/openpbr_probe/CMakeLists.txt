@@ -14,6 +14,13 @@ endforeach()
 
 add_executable(ncls_openpbr_probe main.cpp)
 target_include_directories(ncls_openpbr_probe PRIVATE "${OPENPBR_SOURCE}" "${GLM_SOURCE}")
+set_target_properties(ncls_openpbr_probe PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/Release"
+)
+if(NOT WIN32)
+    # Keep the validation-only probe path identical across Windows and Linux.
+    set_target_properties(ncls_openpbr_probe PROPERTIES SUFFIX ".exe")
+endif()
 if(MSVC)
     target_compile_options(ncls_openpbr_probe PRIVATE /utf-8)
 endif()

@@ -9,6 +9,7 @@ import torch
 from ncls.core.material import DiffuseInterface, LayerStackIR
 from ncls.references.programs import get_reference_program_for_source
 from ncls.references.backend import create_reference_backend
+from ncls.references.mdl import resolve_mdl_program_toolchain
 from ncls.references.query import ScatteringQuery
 from ncls.source_materials.families.layer_stack import snapshot_from_layer_stack
 from ncls.core.source import create_source_family
@@ -120,9 +121,10 @@ def test_generic_backend_session_supports_registered_source_families(
         PROJECT_ROOT / "assets/source-materials/merl-brdf/v1/complete.json"
     ).is_file():
         pytest.skip("MERL source material asset is not downloaded")
-    if family_id == "mdl.program@1" and not (
-        PROJECT_ROOT / "build/mdl-sdk-bridge/Release/ncls_mdl_sdk_bridge.exe"
-    ).is_file():
+    if (
+        family_id == "mdl.program@1"
+        and not resolve_mdl_program_toolchain().bridge_executable.is_file()
+    ):
         pytest.skip("MDL SDK bridge is not built")
     family = create_source_family(family_id)
     snapshot = family.load_snapshot(locator)

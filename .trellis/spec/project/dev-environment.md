@@ -55,6 +55,81 @@ compgen -G 'external/Falcor/build/linux-gcc/bin/Release/python/falcor/falcor_ext
 - 部署永不下载、移动或写入`assets/`。用户复制source assets后，才运行五族真实snapshot与MDL training gate；资产缺失不影响compile deployment和仓库fixture probe成功。
 - Windows公共入口为`scripts/build_reference_backend.ps1`；Linux公共入口为`bash scripts/deploy_reference_linux.sh`。upper tools只运行`ncls reference doctor/probe`或`backend.open()`。
 
+## Linux多GPU、Falcor device与CUDA 12.8 compatibility合同
+
+### 1. Scope / Trigger
+
+在原生Linux多GPU机器运行deployment、Falcor reference query或SlangPy online训练时适用。它防止Falcor Vulkan与Torch/SlangPy落到不同物理GPU，也防止Falcor反复创建设备后静默退回软件Vulkan，或旧宿主driver拒绝CUDA 12.8运行时PTX。
+
+### 2. Signatures
+
+```bash
+CUDA_VISIBLE_DEVICES=<单个物理GPU序号> bash scripts/deploy_reference_linux.sh
+CUDA_VISIBLE_DEVICES=<单个物理GPU序号> bash scripts/run_falcor_python.sh <python-args>
+```
+
+公共backend内部读取`NCLS_FALCOR_GPU_INDEX`并调用`falcor.Device(type=<API>, gpu=<物理序号>)`；该内部变量只能由Linux launcher从`CUDA_VISIBLE_DEVICES`派生，用户不单独设置。
+
+### 3. Contracts
+
+- `CUDA_VISIBLE_DEVICES`若存在，必须是一个十进制非负整数，表示物理GPU序号；不接受逗号列表、UUID或空列表。
+- launcher把该值写入`NCLS_FALCOR_GPU_INDEX`。Falcor使用物理序号，Torch/SlangPy只看到一张卡并使用重映射后的`cuda:0`。
+- 同一Python进程按`(Falcor module, device API, physical GPU index)`复用一个Falcor device；session关闭只释放session资源，不销毁进程级device。
+- backend拒绝`llvmpipe`、`lavapipe`、WARP和Microsoft Basic Render等软件adapter，不把其结果登记为GPU证据。
+- Linux deployment固定安装`defaults::cuda-compat=12.8.1`。宿主driver主版本低于570时，launcher在`LD_LIBRARY_PATH`中优先放`${CONDA_PREFIX}/cuda-compat`；570及以上使用系统driver库。
+- deployment report必须记录`cuda_visible_devices`和`falcor_gpu_index`；两者在指定GPU运行时相等。
+- Git同步只传播受管的manifest、脚本、源码和文档。被根仓库忽略的`external/`、`build/`、`assets/`与`artifacts/`是每台主机各自维护的本地状态；Ubuntu上的移动、权限修复或构建不会改变Windows副本。
+- 受管manifest必须同时保留Windows的`external/Falcor/build/windows-vs2022`和Linux的`external/Falcor/build/linux-gcc`相对布局。不得因为某台Ubuntu临时持有从Windows复制来的ignored目录，就改写、移动或删除Windows布局声明。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+|---|---|
+| `CUDA_VISIBLE_DEVICES=0,1`、UUID或负数 | launcher在启动Python前失败 |
+| 只设置`NCLS_FALCOR_GPU_INDEX` | launcher拒绝，要求改用`CUDA_VISIBLE_DEVICES` |
+| 两个变量值不一致 | launcher拒绝 |
+| Falcor选择软件adapter | backend抛出`RuntimeError`，不继续query |
+| driver 550加载CUDA 12.8 PTX | 使用Conda compatibility库；SlangPy CUDA device必须实际创建成功 |
+| driver 570及以上 | 不覆盖系统`libcuda` |
+| Ubuntu移动或修复ignored目录 | 只影响当前Ubuntu；不得宣称Windows路径已迁移或已修复 |
+| 受管配置把Windows build root改成Linux路径或写入主机绝对路径 | 静态检查失败；恢复两个平台各自的仓库相对路径 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：`CUDA_VISIBLE_DEVICES=3`时Falcor使用物理GPU 3，Torch/SlangPy使用进程内`cuda:0`，report两字段均记录`3`。
+- Good：manifest同时登记`windows-vs2022`与`linux-gcc`；每台机器只生成和维护自己的ignored build output。
+- Base：未设置GPU变量时单GPU机器沿用Falcor与Torch默认GPU 0。
+- Bad：只限制Torch可见域却让Falcor始终使用物理GPU 0；在选择GPU 3时会形成跨卡interop。
+- Bad：每个测试/session新建一个Falcor device；Falcor 8 Linux可能在多次创建后退回`llvmpipe`而继续运行。
+- Bad：在Ubuntu移动从Windows复制来的ignored目录，然后把该本机操作当作Windows路径迁移证据。
+
+### 6. Tests Required
+
+- unit：平台API选择、显式物理序号、非法序号、进程级复用和软件adapter拒绝。
+- shell/static：launcher拒绝多值和内部变量单独设置；Conda compatibility版本固定；多GPU驱动探针不得用会触发`pipefail`的`head`提前关闭管道。
+- Linux GPU：在`CUDA_VISIBLE_DEVICES=0`下同时断言Torch只见一张卡、Falcor adapter为目标NVIDIA卡、七文件GPU集合无skip，并完成SlangPy训练/evaluate。
+- deployment：成功报告断言`cuda_visible_devices == falcor_gpu_index == "0"`且所有verified output可复用。
+- 跨机边界：静态断言toolchain manifest保留两个平台的仓库相对build root，受管文件不含开发机绝对路径；`git check-ignore`确认本机构建与external内容不进入同步范围。
+
+### 7. Wrong vs Correct
+
+```bash
+# 错：Torch只看到物理GPU 3，但Falcor仍按默认物理GPU 0创建Vulkan device
+CUDA_VISIBLE_DEVICES=3 python -m ncls.cli learn train ...
+
+# 对：统一launcher把物理序号同时交给Falcor，并为Torch映射为cuda:0
+CUDA_VISIBLE_DEVICES=3 bash scripts/run_falcor_python.sh -m ncls.cli learn train ...
+```
+
+```jsonc
+// 错：用Ubuntu本机构建目录覆盖Windows布局
+{"windows": {"build_root": "external/Falcor/build/linux-gcc"}}
+
+// 对：受管manifest保留各平台相对布局，生成物由各自主机维护
+{"windows": {"build_root": "external/Falcor/build/windows-vs2022"},
+ "linux": {"build_root": "external/Falcor/build/linux-gcc"}}
+```
+
 ## 静态状态下的交接
 
 - 本应运行的命令与期望结果写进根目录 `TESTING.md` 对应小节（Setup / 命令 / 期望 / 静态分析覆盖不到的边界 / 已知 `type: ignore`）。只写本次改动相关的部分，不重复全项目测试计划。
