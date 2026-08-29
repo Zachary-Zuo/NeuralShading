@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 13
-- **Last Active**: 2026-08-28
+- **Total Sessions**: 14
+- **Last Active**: 2026-08-29
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~302 | Active |
+| `journal-1.md` | ~323 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 14 | 2026-08-29 | 完成 Neural Shading 与 Appearance 文献深度研究 | `4f54a53` | `main` |
 | 13 | 2026-08-28 | 补齐 vMaterials preset catalog 与 capability audit | `d8d9795`, `5b9672c` | `main` |
 | 12 | 2026-08-28 | 统一材质 Reference 在线训练数据回路 | `cf01d33`, `8ea0e60` | `main` |
 | 11 | 2026-08-28 | 完成 PT 椒盐噪点与交互累积根迁移 | `2804c11`, `7e55750`, `5c81551`, `d24a3f4` | `main` |
