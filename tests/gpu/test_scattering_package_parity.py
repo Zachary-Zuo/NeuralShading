@@ -8,7 +8,7 @@ falcor = pytest.importorskip("falcor")
 
 from ncls.bundle import ScatteringPackage, write_scattering_package
 from ncls.core.material import DiffuseInterface, LayerStackIR
-from ncls.references.falcor import create_falcor_device
+from ncls.references.backend import create_reference_backend
 from ncls.references.programs.layer_stack import REFERENCE_PROGRAM_DEFINITION
 from ncls.source_materials.families.layer_stack import snapshot_from_layer_stack
 
@@ -36,7 +36,7 @@ def test_reference_package_module_is_loaded_from_package_path(tmp_path: Path):
         'void main(uint3 p:SV_DispatchThreadID){NclsPackageBackend b=nclsCreatePackageBackend();gOutput[0]=1;}\n',
         encoding="utf-8",
     )
-    device = create_falcor_device(falcor)
+    device = create_reference_backend()._create_device(falcor)  # noqa: SLF001
     compute = falcor.ComputePass(device, file=probe, cs_entry="main")
     output = device.create_structured_buffer(struct_size=4, element_count=1,
         bind_flags=falcor.ResourceBindFlags.UnorderedAccess | falcor.ResourceBindFlags.ShaderResource)

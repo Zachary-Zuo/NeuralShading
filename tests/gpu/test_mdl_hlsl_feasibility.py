@@ -8,26 +8,28 @@ import numpy as np
 import pytest
 
 from ncls.paths import PROJECT_ROOT
-from ncls.references.mdl import MdlSdkCompilerBridge
-from ncls.references.query import ReferenceQueryDispatcher
+from ncls.references.mdl import (
+    create_mdl_program_provider,
+    resolve_mdl_program_toolchain,
+)
+from ncls.references.backend import create_reference_backend
+from ncls.references.query import ReferenceBackendSession
 
 
-MDL_SDK_NAME = "MDL-SDK-2025.0.0-387700.1252-nt-x86-64"
-
-
-def _sdk_root() -> Path:
-    root = PROJECT_ROOT / "external" / MDL_SDK_NAME
-    if not (root / "bin" / "libmdl_sdk.dll").is_file():
+def _toolchain():
+    descriptor = resolve_mdl_program_toolchain()
+    if not descriptor.sdk_library.is_file():
         pytest.skip("锁定的 MDL SDK binary package 未获取")
-    return root
+    return descriptor
 
 
 @pytest.mark.falcor
 def test_mdl_bridge_rejects_emission_outside_v1_capability(tmp_path: Path) -> None:
-    """Bridge 的 source capability 边界独立于统一 query dispatcher。"""
+    """Bridge 的 source capability 边界独立于统一 backend session。"""
 
-    sdk_root = _sdk_root()
-    executable = PROJECT_ROOT / "build/mdl-sdk-bridge/Release/ncls_mdl_sdk_bridge.exe"
+    toolchain = _toolchain()
+    sdk_root = toolchain.sdk_root
+    executable = toolchain.bridge_executable
     if not executable.is_file():
         pytest.skip("项目 MDL SDK bridge 尚未构建；先运行 scripts/build_mdl_reference.ps1")
     environment = os.environ.copy()
@@ -38,6 +40,9 @@ def test_mdl_bridge_rejects_emission_outside_v1_capability(tmp_path: Path) -> No
             "compile",
             "--sdk-root",
             str(sdk_root),
+            "--sdk-library",
+            str(toolchain.sdk_library),
+            *(value for plugin in toolchain.plugin_libraries for value in ("--plugin", str(plugin))),
             "--module-root",
             str(PROJECT_ROOT / "tests/fixtures/mdl"),
             "--material",
@@ -64,7 +69,7 @@ def test_mdl_punched_atlas_preserves_rgba16_before_cutout_fail_closed(
     )
     if not (module_root / "vMaterials_2/Leather/Suede_Leather.mdl").is_file():
         pytest.skip("vMaterials 2.4.0 source pack is not available")
-    bridge = MdlSdkCompilerBridge(module_root)
+    bridge = create_mdl_program_provider(module_root)
     artifact = bridge._run(  # noqa: SLF001 - bridge capability integration test
         "::vMaterials_2::Leather::Suede_Leather",
         "Suede_Leather_Punched",
@@ -85,15 +90,14 @@ def test_mdl_punched_atlas_preserves_rgba16_before_cutout_fail_closed(
 @pytest.mark.falcor
 def test_generic_falcor_texture_binder_accepts_rgba16_unorm() -> None:
     falcor = pytest.importorskip("falcor")
-    from ncls.references.falcor import create_falcor_device
-
-    dispatcher = object.__new__(ReferenceQueryDispatcher)
-    dispatcher._falcor = falcor
-    dispatcher._device = create_falcor_device(falcor)
+    backend = create_reference_backend()
+    session = object.__new__(ReferenceBackendSession)
+    session._falcor = falcor
+    session._device = backend._create_device(falcor)  # noqa: SLF001 - typed binder test
     values = np.asarray(
         [[[0, 1, 257, 65535], [65535, 32768, 1024, 9]]], dtype=np.uint16
     )
-    texture = dispatcher._texture_payload(  # noqa: SLF001 - typed binder contract test
+    texture = session._texture_payload(  # noqa: SLF001 - typed binder contract test
         "rgba16",
         values.tobytes(),
         {

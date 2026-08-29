@@ -2,12 +2,12 @@
   "schema_name": "ncls.reference-package",
   "schema_version": 1,
   "reference_id": "ncls.openpbr@1.1.1",
-  "source_material_family_id": "openpbr.surface@1.1.1",
+  "source_material_family_id": "openpbr.material@1.1.1",
   "role": "ground-truth",
   "native_representation": "openpbr-1.1.1-resolved-inputs",
   "query_contract": {
     "domain": "local-surface-bsdf",
-    "measure": "linear-rgb-bsdf-times-absolute-light-cosine",
+    "measure": "linear-rgb-bsdf",
     "directions": "openpbr-tangent-frame",
     "parameter_sources": ["constant", "texture"]
   },

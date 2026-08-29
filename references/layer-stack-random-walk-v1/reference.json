@@ -7,7 +7,7 @@
   "native_representation": "ncls.layer-stack-ir@1",
   "query_contract": {
     "domain": "local-surface-reflection",
-    "measure": "rgb-bsdf-times-positive-light-cosine",
+    "measure": "linear-rgb-bsdf",
     "directions": "right-handed-tangent-frame-positive-z-hemisphere"
   },
   "implementations": [

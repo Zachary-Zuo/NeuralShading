@@ -42,11 +42,18 @@ compgen -G 'external/Falcor/build/linux-gcc/bin/Release/python/falcor/falcor_ext
 | 状态 | 条件 | 允许 | 禁止 |
 |---|---|---|---|
 | **完整 Windows** | G ∧ E ∧ FW ∧ W | `TESTING.md` 中的全部命令：`tests/unit`、`tests/gpu`、`tests/integration`、`ncls learn / bundle` 全链路、`scripts/build_viewer.ps1`、`scripts/benchmark_viewer.ps1` 与正式online训练 | — |
-| **Linux reference** | G ∧ E ∧ FL ∧ L | `tests/unit`、`slangpy` 测试、CUDA online训练/评测，以及经 `scripts/run_falcor_python.sh` 的 headless LayerStack/MERL/OpenPBR/MaterialX reference query | Windows viewer、D3D12-only GPU测试、尚未迁移的pbrt Windows probe |
+| **Linux reference** | G ∧ E ∧ FL ∧ L | `tests/unit`、`slangpy`、CUDA online训练/评测，以及经统一backend的headless LayerStack/MERL/OpenPBR/MaterialX/MDL reference query | Windows viewer、尚未迁移的pbrt Windows probe |
 | **仅 GPU** | G ∧ E，缺少当前平台对应的 FW/FL | `tests/unit`、`slangpy` marker 的测试、`ncls learn train / evaluate / compare / benchmark`、SlangPy spike | 任何 `falcor` marker 的测试与 Falcor launcher、viewer、正式 LayerStack reference 采集 |
 | **静态** | 其余（当前本机：WSL2 + `RTX 3060 Laptop`，无 conda、无 `external/`） | 读代码、字节码编译检查、`git diff --check`、写代码与文档 | 运行任何项目代码；宣称"已验证 / 已通过 / 已复现" |
 
 `environment.yml` 声明的 `neural-shading` 是唯一运行时真相；`base`、系统 Python、`.venv` 都不是。
+
+## Reference backend 部署边界
+
+- Ubuntu/Linux具体版本不预先冻结；`scripts/deploy_reference_linux.sh`记录并提示实际distro/glibc/compiler，是否支持由真实configure/build/device/probe决定。
+- 部署脚本可获取根manifest锁定的`external/`源码与MDL SDK binary package，可创建/更新既有Conda中的`neural-shading`；不得安装Conda、driver或使用`sudo`。
+- 部署永不下载、移动或写入`assets/`。用户复制source assets后，才运行五族真实snapshot与MDL training gate；资产缺失不影响compile deployment和仓库fixture probe成功。
+- Windows公共入口为`scripts/build_reference_backend.ps1`；Linux公共入口为`bash scripts/deploy_reference_linux.sh`。upper tools只运行`ncls reference doctor/probe`或`backend.open()`。
 
 ## 静态状态下的交接
 

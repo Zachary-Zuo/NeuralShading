@@ -9,9 +9,12 @@ mdl.program@1 SourceSnapshot
   -> tools/reference/mdl_sdk_bridge
   -> ncls.mdl-compiled-artifact@1
   -> NclsMdlGenerated + shaders/ncls/reference_backends/mdl.slang
-  -> generic ReferenceQueryDispatcher
+  -> ReferenceBackendCapability.open()
+  -> generic ReferenceBackendSession
   -> 当前锁定 Falcor 8 / online evaluator 与 sampler routes
 ```
+
+公共backend同时覆盖LayerStack、MERL、OpenPBR、MaterialX与MDL，并在Windows选择D3D12、Linux选择Vulkan。MDL SDK bridge仅是`mdl.program@1`的内部program provider；SDK library、plugins、target-code与bridge路径都由根`references/reference-backend-toolchains.json`解析，上层没有MDL专用backend或兼容入口。
 
 锁定的 falcor2 + 同版 MDL SDK 只用于进程外 parity。它不得被 formal provider、collector、live batch、training runner 或产品 CLI 当作 fallback；oracle output 只进入 `artifacts/reference-parity/mdl/`。两条验证实现共享 MDL SDK closure 数学，所以 falcor2 parity 主要检查 shading state、方向、argument block、RO data、2D/3D 资源和 filtering 接线；解析 fixtures 负责提供不共享的数学不变量。
 
@@ -47,13 +50,14 @@ conda run -n neural-shading python tools/reference/generate_mdl_vmaterials_manif
 
 ## V1 合同与验收状态
 
-V1 canonical backend 完整实现 `prepare/evaluate/sample/pdf`；`evaluate()` 返回线性 RGB `f`，不含 cosine，renderer 或 response adapter 在消费点显式乘 `|n_s · wi|`。纹理坐标使用原生 UV；当前 viewer catalog 仍固定 explicit LOD 0，online query 则按统一 shading context 传递 UV derivatives，不能为 MDL 增加专用 producer。
+V1 canonical backend 完整实现 `prepare/evaluate/sample/pdf`；`evaluate()` 返回线性 RGB `f`，不含 cosine，renderer 或 response adapter 在消费点显式乘输入 `NclsShadingFrame` 的 `|n_s · wi|`。MDL `geometry.normal` 或 normal map 引入的 material-local cosine 比值保留在等价 `f` 中，因此乘回输入 frame cosine 后逐值恢复 MDL 原生 response。纹理坐标使用原生 UV；当前 viewer catalog 仍固定 explicit LOD 0，online query 则按统一 shading context 传递 UV derivatives，不能为 MDL 增加专用 producer。
 
 typed editor 已覆盖标量、布尔、颜色/向量、enum、SDK hard/soft range metadata 与受约束的 `texture_2d` 资源。每次编辑都产生新的 canonical snapshot，并由 MDL SDK 重新构造 argument block；资源 URI 必须位于 pack 内且 hash 会进入 snapshot identity。
 
 当前不声明 emission、volume、displacement、measured BSDF、light profile 或非不透明 cutout；遇到未支持 closure/resource shape 或静态上限时必须 fail closed。输入 pixel type 单独按 typed format 审计，不能拿 capability unsupported 掩盖纹理降级。`ncls.mdl-vmaterials2@1` 已通过解析 fixture、MDL SDK native backend 对 current Falcor 8、以及隔离 falcor2 对 car paint/copper 的冻结 formal parity。可再生证据分别位于：
 
 - `artifacts/reference-parity/mdl/native-fixtures-v2/report.json`：7 个 disjoint fixture query，response/PDF 最大相对误差分别为 `2.0645e-7` / `1.6723e-7`；
-- `artifacts/reference-parity/mdl/formal-stb-v6/report.json`：两种 vMaterials、264 个 query，全部通过冻结门槛，最大 response/PDF 相对误差不超过 `1.2201e-7`。
+- `tests/gpu/test_mdl_native_crosscheck.py`：额外用倾斜 `geometry.normal` fixture 验证 `public f × input-frame cosine` 与 SDK native response 一致；
+- `artifacts/reference-parity/mdl/windows-unified-backend-formal-framecosfix/report.json`：统一 backend 上的两种 vMaterials、264 个 query，全部通过原冻结门槛；carpaint/copper response 最大绝对误差分别为 `5.9605e-8` / `7.4506e-9`，PDF 全部通过。
 
 正式纹理解码固定独立 `external/stb` commit `013ac3beddff3dbffafd5177e7972067cd2b5083`，`stb_image.h` SHA-256 为 `594c2fe35d49488b4382dbfaec8f98366defca819d916ac95becf3e75f4200b3`。这是项目 formal dependency；它不来自 falcor2，固定同一 decoder 语义是为了消除 JPEG 解码差异，而不是把 oracle 引入正式路径。viewer 现在验证并消费相同 artifact、decoded texture 与 V1 capability，已登记为 ready；独立 renderer `image_parity` 仍保持 pending，不由逐方向 parity 或单边 capture 代替。

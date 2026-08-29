@@ -54,7 +54,7 @@ def test_oracle_tree_does_not_import_formal_reference_dispatcher() -> None:
         for module in _imports(path):
             if module == "ncls.references.query" or module.startswith("ncls.references.query."):
                 violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}: import {module}")
-    assert not violations, "oracle imported the formal dispatcher:\n" + "\n".join(violations)
+    assert not violations, "oracle imported the formal backend session:\n" + "\n".join(violations)
 
 
 def test_viewer_route_is_formal_artifact_only_and_has_fail_closed_checks() -> None:

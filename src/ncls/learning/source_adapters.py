@@ -16,8 +16,10 @@ from ncls.learning.source_adaptation import (
     MaterialXNativeFeaturePyramid,
     NativeFeaturePyramid,
     encode_layer_stack_native_features,
+    encode_mdl_fixed_native_features,
     layer_stack_native_feature_layout,
     materialx_native_feature_layout,
+    mdl_fixed_native_feature_layout,
 )
 
 
@@ -179,6 +181,59 @@ class NvidiaMaterialXSourceAdapter(MethodSourceAdapter):
         return self._pyramid
 
 
+class NvidiaMdlFixedSourceAdapter(MethodSourceAdapter):
+    method_key = "nvidia-neural-appearance"
+    family_id = "mdl.program@1"
+    source_contract_version = 1
+    adapter_id = "nvidia.mdl-fixed-uniform@1"
+    implementation_sha256 = sha256_file(Path(__file__))
+
+    def __init__(
+        self, snapshots: Sequence[SourceSnapshot], device: torch.device
+    ) -> None:
+        super().__init__(snapshots, device)
+        if len(self.snapshots) != 1:
+            raise RuntimeError("NVIDIA MDL fixed-uniform training requires one snapshot")
+        from ncls.source_materials.mdl import MdlMaterialSource
+
+        source = MdlMaterialSource.from_snapshot(self.snapshots[0])
+        values, schema_identity = encode_mdl_fixed_native_features(source.arguments)
+        self._feature_table = torch.as_tensor(
+            values[None, :], dtype=torch.float32, device=device
+        )
+        self._layout_id = mdl_fixed_native_feature_layout().layout_id
+        self._schema_identity = schema_identity
+
+    def sample_tensors(
+        self,
+        source_index: torch.Tensor,
+        generator: torch.Generator,
+    ) -> tuple[Mapping[str, torch.Tensor], Mapping[str, str]]:
+        del generator
+        if bool((source_index != 0).any()):
+            raise ValueError("MDL fixed-uniform adapter accepts only source index zero")
+        count = int(source_index.shape[0])
+        zeros = torch.zeros((count, 2), dtype=torch.float32, device=self.device)
+        return (
+            {
+                "uv": zeros,
+                "uv_dx": zeros.clone(),
+                "uv_dy": zeros.clone(),
+                "mip_level": torch.zeros(
+                    count, dtype=torch.float32, device=self.device
+                ),
+                "native_features": self._feature_table.expand(count, -1),
+            },
+            {
+                "native_feature_layout_id": self._layout_id,
+                "mdl_parameter_schema_identity": self._schema_identity,
+            },
+        )
+
+    def materialization_features(self) -> NativeFeaturePyramid:
+        return DenseNativeFeaturePyramid((self._feature_table[0:1, None, :].cpu(),))
+
+
 def _path(value: object) -> Path | None:
     return None if value is None else Path(str(value)).resolve()
 
@@ -197,6 +252,11 @@ _ADAPTERS: dict[
         NvidiaMaterialXSourceAdapter.family_id,
         NvidiaMaterialXSourceAdapter.source_contract_version,
     ): NvidiaMaterialXSourceAdapter,
+    (
+        NvidiaMdlFixedSourceAdapter.method_key,
+        NvidiaMdlFixedSourceAdapter.family_id,
+        NvidiaMdlFixedSourceAdapter.source_contract_version,
+    ): NvidiaMdlFixedSourceAdapter,
 }
 
 

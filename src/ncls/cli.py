@@ -27,6 +27,7 @@ from ncls.learning.training import (
     load_checkpoint,
     save_checkpoint,
 )
+from ncls.references.backend import create_reference_backend
 
 
 def _load_program(path: Path) -> MaterialProgram:
@@ -284,6 +285,139 @@ def _package_validate(path: Path) -> int:
     return 0
 
 
+def _reference_doctor(as_json: bool) -> int:
+    report = create_reference_backend().doctor()
+    descriptor = report.descriptor
+    payload = {
+        "schema_name": "ncls.reference-backend-report",
+        "schema_version": 1,
+        "ready": report.ready,
+        "backend": {
+            "backend_key": descriptor.backend_key,
+            "version": descriptor.version,
+            "platform_id": descriptor.platform_id,
+            "falcor_revision": descriptor.falcor_revision,
+            "slang_revision": descriptor.slang_revision,
+            "device_api": descriptor.device_api,
+            "semantic_identity": descriptor.semantic_identity,
+            "build_identity": descriptor.build_identity,
+            "identity": descriptor.identity,
+        },
+        "assets": "not-managed",
+        "statuses": [
+            {
+                "requirement_id": value.requirement_id,
+                "category": value.category,
+                "status": value.status,
+                "detail": value.detail,
+            }
+            for value in report.statuses
+        ],
+    }
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(
+            f"ReferenceBackend {descriptor.backend_key}@{descriptor.version} "
+            f"platform={descriptor.platform_id} ready={str(report.ready).lower()}"
+        )
+        for value in report.statuses:
+            print(
+                f"{value.status}\t{value.category}\t"
+                f"{value.requirement_id}\t{value.detail}"
+            )
+        print("assets=not-managed")
+    return 0 if report.ready else 1
+
+
+def _reference_probe() -> int:
+    import math
+
+    from ncls.core.material import DiffuseInterface, LayerStackIR
+    from ncls.references.programs import (
+        discover_reference_programs,
+        get_reference_program_for_source,
+    )
+    from ncls.references.query import ScatteringQuery
+    from ncls.source_materials.families.layer_stack import snapshot_from_layer_stack
+
+    backend = create_reference_backend()
+    backend.doctor().require_ready()
+    runtime_programs = []
+    for definition in discover_reference_programs():
+        runtime = definition.compile_runtime()
+        runtime_programs.append(
+            {
+                "program_key": definition.descriptor.program_key,
+                "program_version": definition.descriptor.version,
+                "program_module": runtime.program_module,
+                "capabilities": runtime.capabilities,
+            }
+        )
+    layer_snapshot = snapshot_from_layer_stack(
+        LayerStackIR((DiffuseInterface((0.6, 0.3, 0.1)),), ())
+    )
+    mdl_family = create_source_family("mdl.program@1")
+    mdl_snapshot = mdl_family.load_snapshot(
+        {
+            "kind": "mdl-export",
+            "module_root": str(Path(__file__).resolve().parents[2] / "tests/fixtures/mdl"),
+            "module": "::constant_diffuse",
+            "export": "constant_diffuse",
+            "arguments": {"tint": [0.8, 0.2, 0.1]},
+        }
+    )
+    results = []
+    for snapshot in (layer_snapshot, mdl_snapshot):
+        definition = get_reference_program_for_source(
+            snapshot.family_id, snapshot.source_contract_version
+        )
+        session = backend.open(
+            definition, (snapshot,), query_capacity=1, device="cuda:0"
+        )
+        try:
+            device = torch.device("cuda:0")
+            result = session.evaluate(
+                ScatteringQuery(
+                    torch.zeros(1, dtype=torch.int64, device=device),
+                    torch.tensor([[0.0, 0.0, 1.0]], device=device),
+                ),
+                torch.tensor(
+                    [[[0.3, 0.0, math.sqrt(0.91)]]], device=device
+                ),
+                torch.zeros((1, 1), dtype=torch.int64, device=device),
+            )
+            try:
+                if not bool(result.valid.all()) or not bool(torch.isfinite(result.f).all()):
+                    raise RuntimeError("reference backend probe returned an invalid result")
+            finally:
+                result.lease.release()
+            session.end_iteration()
+            results.append(
+                {
+                    "program_key": definition.descriptor.program_key,
+                    "reference_program_identity": session.reference_program_identity,
+                }
+            )
+        finally:
+            session.close()
+    print(
+        json.dumps(
+            {
+                "schema_name": "ncls.reference-backend-probe",
+                "schema_version": 1,
+                "backend_identity": backend.descriptor.identity,
+                "assets": "not-managed",
+                "runtime_programs": runtime_programs,
+                "query_programs": results,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ncls", description="NeuralShading 统一 pipeline 工具"
@@ -331,6 +465,18 @@ def build_parser() -> argparse.ArgumentParser:
         "validate", help="验证 schema、URI 与内容 hash"
     )
     validate_package.add_argument("path", type=Path)
+
+    reference = commands.add_parser("reference", help="统一 reference backend 工具")
+    reference_commands = reference.add_subparsers(
+        dest="reference_command", required=True
+    )
+    doctor = reference_commands.add_parser(
+        "doctor", help="检查五个 canonical reference program 的底层能力"
+    )
+    doctor.add_argument("--json", action="store_true")
+    reference_commands.add_parser(
+        "probe", help="用仓库 fixture 验证 device、LayerStack 与 MDL compile/query"
+    )
     return parser
 
 
@@ -353,9 +499,15 @@ def main(argv: list[str] | None = None) -> int:
             args.checkpoint, args.output, args.material_index
         ),
         ("package", "validate"): lambda: _package_validate(args.path),
+        ("reference", "doctor"): lambda: _reference_doctor(args.json),
+        ("reference", "probe"): _reference_probe,
     }
     command = getattr(args, f"{args.command}_command")
     return int(dispatch[(args.command, command)]())
 
 
 __all__ = ["build_parser", "main"]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

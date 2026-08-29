@@ -128,16 +128,14 @@ class MdlFamilyDefinition(SourceFamilyDefinition):
         if value or not isinstance(arguments, Mapping):
             raise ValueError(f"unexpected MDL locator fields: {sorted(value)}")
 
-        from ncls.core.identity import sha256_file, sha256_json
+        from ncls.core.identity import sha256_json
         from ncls.references.mdl import (
-            CODEGEN_OPTIONS,
-            MDL_SDK_BUILD,
             MdlCompiledArtifact,
-            MdlSdkCompilerBridge,
+            create_mdl_program_provider,
         )
         from ncls.source_materials.mdl import snapshot_from_mdl_artifact
 
-        bridge = MdlSdkCompilerBridge(module_root)
+        compiler = create_mdl_program_provider(module_root)
         cache_key = sha256_json(
             {
                 "module_root": str(module_root),
@@ -146,16 +144,15 @@ class MdlFamilyDefinition(SourceFamilyDefinition):
                 "arguments": dict(arguments),
                 "pack_id": pack_id,
                 "pack_version": pack_version,
-                "bridge": sha256_file(bridge.executable),
-                "mdl_sdk": MDL_SDK_BUILD,
-                "codegen_options": CODEGEN_OPTIONS,
+                "semantic_identity": compiler.descriptor.semantic_identity,
+                "build_identity": compiler.descriptor.build_identity,
             }
         )
-        output = bridge.cache_root / "source-locators" / cache_key
+        output = compiler.cache_root / "source-locators" / cache_key
         artifact = (
             MdlCompiledArtifact.load(output)
             if output.is_dir()
-            else bridge.inspect(module, export, arguments, output=output)
+            else compiler.inspect(module, export, arguments, output=output)
         )
         return snapshot_from_mdl_artifact(
             artifact,

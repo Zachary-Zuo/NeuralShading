@@ -9,17 +9,20 @@ from ncls.core.scattering import (
     BackendCapability,
     MaterialPayload,
     ReferenceProgramDescriptor,
+    ReferenceProgramProviderStatus,
     RuntimePayload,
 )
 from ncls.core.source import SourceSnapshot
 from ncls.references.mdl import (
     CODEGEN_OPTIONS,
     MDL_SDK_BUILD,
-    MDL_SDK_DIRECTORY,
+    MdlProgramProviderOverrides,
     STB_COMMIT,
     STB_IMAGE_SHA256,
-    MdlSdkCompilerBridge,
+    create_mdl_program_provider,
+    resolve_mdl_program_toolchain,
 )
+from ncls.references.backend_manifest import load_reference_backend_manifest
 from ncls.source_materials.mdl import MdlMaterialSource
 
 from .base import FileReferenceProgram, PROJECT_ROOT, implementation_identity, slang_module_closure
@@ -52,6 +55,7 @@ _IMPLEMENTATION = sha256_json(
         "slang": "2024.1.34",
         "stb": {"commit": STB_COMMIT, "stb_image_sha256": STB_IMAGE_SHA256},
         "codegen_options": CODEGEN_OPTIONS,
+        "mdl_program_provider": "ncls.mdl-sdk-program-provider@1",
     }
 )
 
@@ -165,6 +169,37 @@ class MdlReferenceProgram(FileReferenceProgram):
         },
     )
 
+    def preflight_provider(
+        self, *, platform_id: str, project_root: Path
+    ) -> tuple[ReferenceProgramProviderStatus, ...]:
+        manifest = load_reference_backend_manifest()
+        platform = manifest.for_platform(platform_id)
+        descriptor = resolve_mdl_program_toolchain(
+            MdlProgramProviderOverrides(
+                platform_id=platform_id,
+                sdk_root=project_root / platform.mdl_sdk.archive.root,
+                executable=project_root / platform.mdl_bridge.executable,
+                cache_root=project_root / "build/mdl-reference/cache",
+            )
+        )
+        required = {
+            "mdl-sdk-library": descriptor.sdk_library,
+            "mdl-target-code-types": descriptor.target_code_types,
+            "mdl-program-provider": descriptor.bridge_executable,
+            **{
+                f"mdl-resource-plugin-{index}": path
+                for index, path in enumerate(descriptor.plugin_libraries)
+            },
+        }
+        return tuple(
+            ReferenceProgramProviderStatus(
+                name,
+                "ready" if path.is_file() else "missing",
+                str(path),
+            )
+            for name, path in required.items()
+        )
+
     def compile_runtime(self) -> RuntimePayload:
         closure = slang_module_closure(BACKEND_SHADER)
         return RuntimePayload(
@@ -178,7 +213,8 @@ class MdlReferenceProgram(FileReferenceProgram):
     def compile_material(self, snapshot: SourceSnapshot) -> MaterialPayload:
         self.validate_snapshot(snapshot)
         source = MdlMaterialSource.from_snapshot(snapshot)
-        artifact = MdlSdkCompilerBridge(source.module_root).compile_snapshot(snapshot)
+        compiler = create_mdl_program_provider(source.module_root)
+        artifact = compiler.compile_snapshot(snapshot)
         artifact.require_runtime_supported()
         texture_descriptors = artifact.manifest.get("textures", [])
         if any(
@@ -189,12 +225,7 @@ class MdlReferenceProgram(FileReferenceProgram):
         ro_segments = artifact.manifest.get("ro_data", [])
         if len(ro_segments) > 1:
             raise ValueError("MDL reference supports at most one read-only data segment")
-        sdk_types = (
-            PROJECT_ROOT
-            / "external"
-            / MDL_SDK_DIRECTORY
-            / "examples/mdl_sdk/dxr/content/mdl_target_code_types.hlsl"
-        )
+        sdk_types = compiler.descriptor.target_code_types
         if not sdk_types.is_file():
             raise FileNotFoundError("锁定的 MDL SDK 未获取；无法构建 MDL reference runtime")
         generated_source = "\n".join(

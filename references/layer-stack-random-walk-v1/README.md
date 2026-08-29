@@ -12,17 +12,18 @@
 
 项目维护的正式实现位于：
 
-- `src/ncls/data/directions.py`；
-- `src/ncls/data/falcor.py`；
-- `src/ncls/data/priors.py`；
-- `src/ncls/data/reference.py`；
+- `src/ncls/references/programs/layer_stack.py`；
+- `src/ncls/references/backend.py`与`src/ncls/references/query.py`；
 - `shaders/ncls/contracts/layer_stack_ir.slang`；
 - `shaders/ncls/reference/sampling.slang`；
 - `shaders/ncls/reference/interfaces.slang`；
 - `shaders/ncls/reference/random_walk_reference.slang`；
-- `shaders/ncls/data/reference_layer_stack.cs.slang`。
+- `shaders/ncls/reference_backends/layer_stack.slang`；
+- `shaders/ncls/reference_query/reference_query.cs.slang`。
 
-`LayerStackProvider` 对上述文件内容计算 `implementation_sha256`。路径变化本身不是语义正确性的证据；修改实现后必须产生新 hash，并由 corpus/报告记录实际使用的 reference identity。旧的 `reference_tile.cs.slang` 与 `src/ncls/data/generator.py` 已不属于当前实现，文档不得继续把它们列入 provenance。
+`LayerStackReferenceProgram`对program source和shader计算`implementation_sha256`；公共`ReferenceBackendDescriptor`另记录Falcor/Slang的semantic/build identity。路径变化本身不是语义正确性的证据；修改实现后必须产生新hash，并由checkpoint/报告记录实际使用的reference identity。
+
+它与MERL、OpenPBR、MaterialX和MDL共用`ReferenceBackendCapability.open()`及同一种`ReferenceBackendSession`。Windows由backend选择D3D12，Linux选择Vulkan，上层不包含平台分支。`evaluate()`返回线性RGB `f`，不含cosine；需要`f·|cosθi|`的消费点显式计算。
 
 ## 验证边界
 

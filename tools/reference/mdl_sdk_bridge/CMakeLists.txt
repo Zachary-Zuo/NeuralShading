@@ -17,7 +17,11 @@ endif()
 add_executable(ncls_mdl_sdk_bridge main.cpp)
 target_compile_features(ncls_mdl_sdk_bridge PRIVATE cxx_std_20)
 target_include_directories(ncls_mdl_sdk_bridge PRIVATE "${MDL_SDK_ROOT}/include" "${STB_ROOT}")
-target_compile_definitions(ncls_mdl_sdk_bridge PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(ncls_mdl_sdk_bridge PRIVATE ${CMAKE_DL_LIBS})
+
+if(WIN32)
+    target_compile_definitions(ncls_mdl_sdk_bridge PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
 
 if(MSVC)
     target_compile_options(ncls_mdl_sdk_bridge PRIVATE /W4 /EHsc /permissive-)

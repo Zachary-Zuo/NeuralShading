@@ -8,7 +8,7 @@
 
 ## Falcor 直接呈现
 
-正式运行时由 `NclsViewer` 直接读取原始 `.mtlx` 和原始纹理，解析 `standard_surface` 的 literal/连接、base color、roughness、metalness、切线 normal 与源颜色空间，并在 Falcor/D3D12 reference shader 中求值。项目没有先把它们烘焙成简单 PBR、`LayerStackIR` 或任何拟合 backend；Python adapter 只负责登记、检查和编辑原生图，不是最终 renderer。
+正式运行时由 `NclsViewer` 或公共reference backend直接读取原始 `.mtlx` 和原始纹理，解析 `standard_surface` 的 literal/连接、base color、roughness、metalness、切线 normal 与源颜色空间，并在Windows/D3D12或Linux/Vulkan的同一Falcor reference program中求值。项目没有先把它们烘焙成简单 PBR、`LayerStackIR` 或任何拟合 backend；Python adapter 只负责登记、检查和编辑原生图，不是最终 renderer。
 
 独立验收使用上游 MaterialX 1.39.4 `GlslShaderGenerator` + `GlslRenderer` float framebuffer 作为另一条实现。在共同的 256×128 分段 UV sphere、240×240 相机和方向光下：
 

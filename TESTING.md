@@ -101,41 +101,51 @@ external\Falcor\build\windows-vs2022\bin\Release\slangc.exe `
 
 覆盖 Python/Slang ABI、方向和余弦语义、`prepare/evaluate`、sampling-capable backend 的 `sample/pdf`、各向异性、解析 diffuse、互易性、多层执行、统计量，以及各源材质 reference 的真实执行。P0 的正式大语料按 family/role 分 shard，不再用“全部材质写入同一 HDF5”作为架构测试。
 
-### Ubuntu 22.04 + RTX A6000 待实机验证
+### 统一 Reference Backend：Windows完成，Linux/A6000待实机验证
 
-本轮只在 Windows/RTX 4090 上完成了 D3D12 回归，无法据此宣称 Linux/Vulkan 已经实测通过。A6000 服务器首次部署后执行：
+Windows公共入口只编译/检查toolchain并运行无source-assets的仓库fixture probe：
+
+```powershell
+.\scripts\build_reference_backend.ps1 -Configuration Release
+.\scripts\run_falcor_python.ps1 -m ncls.cli reference doctor
+.\scripts\run_falcor_python.ps1 -m ncls.cli reference probe
+```
+
+固定MDL状态的两步online training在用户已复制vMaterials资产后执行：
+
+```powershell
+.\scripts\run_falcor_python.ps1 -m ncls.cli learn train `
+  configs/learning/nvidia-rta2024-mdl-effect-pigment-smoke.json `
+  artifacts/training/mdl-windows-smoke/checkpoint.pt
+.\scripts\run_falcor_python.ps1 -m ncls.cli learn evaluate `
+  configs/learning/nvidia-rta2024-mdl-effect-pigment-smoke.json `
+  artifacts/training/mdl-windows-smoke/checkpoint.pt --batches 1
+```
+
+Linux发行版与具体toolchain版本不预先冻结；迁移到A6000服务器后记录真实环境并连续运行两次部署，第二次必须复用已校验输出：
 
 ```bash
-nvidia-smi
-conda env create -f environment.yml
-conda run -n neural-shading python -m pip install -r requirements-torch-cu128.txt
+bash scripts/deploy_reference_linux.sh
+bash scripts/deploy_reference_linux.sh
+```
 
-(cd external/Falcor && ./setup.sh)
-bash scripts/build_falcor_python_linux.sh
-bash scripts/run_falcor_python.sh -c \
-  "import falcor; d=falcor.Device(type=falcor.DeviceType.Vulkan); print(d.info.adapter_name)"
+部署脚本可获取根manifest锁定的`external/`源码和MDL SDK binary package、创建或更新已有Conda中的`neural-shading`环境并完成编译；不安装Conda/driver、不使用`sudo`，也不下载、移动或写入`assets/`。因此`assets/`缺失时compile deployment仍应成功。用户自行复制资产后再运行：
 
-conda run -n neural-shading python -m pytest \
-  tests/unit/test_falcor_platform.py -q
+```bash
+bash scripts/run_falcor_python.sh -m ncls.cli reference doctor
 bash scripts/run_falcor_python.sh -m pytest \
-  tests/integration/reference/test_reference_physics_gpu.py -q
+  tests/gpu/test_reference_backend_contracts.py \
+  tests/gpu/test_reference_query_dispatcher.py \
+  tests/gpu/test_mdl_native_crosscheck.py -q
+bash scripts/run_falcor_python.sh -m ncls.cli learn train \
+  configs/learning/nvidia-rta2024-mdl-effect-pigment-smoke.json \
+  artifacts/training/mdl-linux-smoke/checkpoint.pt
+bash scripts/run_falcor_python.sh -m ncls.cli learn evaluate \
+  configs/learning/nvidia-rta2024-mdl-effect-pigment-smoke.json \
+  artifacts/training/mdl-linux-smoke/checkpoint.pt --batches 1
 ```
 
-通过判据：平台选择测试全部通过；Falcor 明确创建 Vulkan device；三项 LayerStack reference physics 测试通过；运行后 `external/Falcor` 仍为干净工作树。随后才执行一个 validation state 的采集冒烟：
-
-```bash
-bash scripts/run_falcor_python.sh -m ncls.cli data collect-state \
-  --config configs/corpus/layer-stack-v1.json \
-  --structure-family layers-01-diffuse-variant-00 \
-  --state-index 3 \
-  --role validation \
-  --output data/reference-responses/smoke/layer-stack-v1-validation-linux-vulkan.h5
-
-conda run -n neural-shading python -m ncls.cli data validate \
-  data/reference-responses/smoke/layer-stack-v1-validation-linux-vulkan.h5
-```
-
-这些命令只验收 headless reference 采集适配，不验收论文的 GPU-resident online training；后者尚未实现，不能用 HDF5 离线训练结果替代完成声明。
+Linux/Vulkan、A6000、driver/glibc/compiler/Falcor/MDL实际版本只能在该实机gate后登记为已验证。完整边界见`docs/reference_backend_deployment.md`。
 
 ## Neural material 方法的分阶段门槛
 

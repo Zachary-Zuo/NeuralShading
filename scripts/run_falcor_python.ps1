@@ -3,12 +3,22 @@ param(
     [string[]]$PythonArgs
 )
 
-$projectRoot = Split-Path -Parent $PSScriptRoot
+$projectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 $projectSrc = Join-Path $projectRoot "src"
-$falcorBin = Join-Path $projectRoot "external\Falcor\build\windows-vs2022\bin\Release"
-$falcorModule = Join-Path $falcorBin "python"
+if (-not (Get-Command conda -ErrorAction SilentlyContinue)) {
+    throw "PATH 中没有 conda"
+}
 
-if (-not (Test-Path -LiteralPath (Join-Path $falcorModule "falcor\falcor_ext.cp310-win_amd64.pyd"))) {
+$layoutJson = & conda run -n neural-shading python `
+    (Join-Path $projectRoot "tools/reference/reference_backend_deploy.py") layout `
+    --platform-id windows-x86_64@1 --project-root $projectRoot
+if ($LASTEXITCODE -ne 0) { throw "无法读取 reference backend manifest" }
+$layout = $layoutJson | Where-Object { $_.Trim() } | Select-Object -First 1 | ConvertFrom-Json
+$falcorBin = [string]$layout.falcor_runtime_library_root
+$falcorModule = [string]$layout.falcor_python_module_root
+$falcorExtension = [string]$layout.falcor_extension
+
+if (-not (Test-Path -LiteralPath $falcorExtension)) {
     throw "FalcorPython Release build was not found. Build target FalcorPython first."
 }
 

@@ -8,6 +8,7 @@ import pytest
 
 from ncls.core.scattering import ScatteringEvent
 from ncls.references import deterministic_directional_metrics, load_reference_acceptance
+from ncls.references.backend import create_reference_backend
 from ncls.source_materials import (
     OpenPBRMaterial,
     OpenPBRReference,
@@ -108,7 +109,7 @@ def test_openpbr_slang_runtime_matches_adobe_cpp_reference() -> None:
     native_reference = OpenPBRReference(executable)
     acceptance = load_reference_acceptance(PROJECT_ROOT / "references" / "acceptance.json")
 
-    device = falcor.Device(type=falcor.DeviceType.D3D12)
+    device = create_reference_backend()._create_device(falcor)  # noqa: SLF001
     compute = falcor.ComputePass(
         device,
         file=PROJECT_ROOT / "tests" / "gpu" / "kernels" / "openpbr_reference.cs.slang",
@@ -183,7 +184,7 @@ def test_openpbr_native_sample_and_stable_pdf_contract(
     )
     flat = np.ascontiguousarray(resolve_openpbr_inputs(material))
 
-    device = falcor.Device(type=falcor.DeviceType.D3D12)
+    device = create_reference_backend()._create_device(falcor)  # noqa: SLF001
     compute = falcor.ComputePass(
         device,
         file=PROJECT_ROOT / "tests" / "gpu" / "kernels" / "openpbr_scattering_contract.cs.slang",

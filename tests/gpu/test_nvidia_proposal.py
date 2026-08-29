@@ -7,14 +7,14 @@ import pytest
 
 falcor = pytest.importorskip("falcor")
 
-from ncls.references.falcor import create_falcor_device
+from ncls.references.backend import create_reference_backend
 
 KERNEL_ROOT = Path(__file__).resolve().with_name("kernels")
 
 
 @pytest.mark.falcor
 def test_nvidia_two_lobe_sample_reports_its_exact_mixture_pdf() -> None:
-    device = create_falcor_device(falcor)
+    device = create_reference_backend()._create_device(falcor)  # noqa: SLF001
     compute = falcor.ComputePass(
         device,
         file=KERNEL_ROOT / "nvidia_proposal_sample_pdf.cs.slang",

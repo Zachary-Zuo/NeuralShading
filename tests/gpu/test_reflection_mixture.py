@@ -5,6 +5,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from ncls.references.backend import create_reference_backend
+
 
 falcor = pytest.importorskip("falcor")
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -37,7 +39,7 @@ def _run(device, mode: int) -> tuple[np.ndarray, np.ndarray]:
 
 @pytest.mark.falcor
 def test_reflection_mixture_sample_pdf_and_missing_mass_match_on_gpu() -> None:
-    device = falcor.Device(type=falcor.DeviceType.D3D12)
+    device = create_reference_backend()._create_device(falcor)  # noqa: SLF001
     sampled, checked = _run(device, 0)
     valid = (checked[:, 1] == 1.0) & (checked[:, 2] == 0.0)
     null = (checked[:, 1] == 1.0) & (checked[:, 2] == 1.0)

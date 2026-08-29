@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator, Protocol
+from typing import Any, Iterator, Mapping, Protocol
 
 import numpy as np
 from PIL import Image
@@ -12,6 +12,21 @@ import torch
 from ncls.core.identity import sha256_json
 from ncls.core.material import MAX_INTERFACES, MAX_MEDIA, HomogeneousMedium, LayerStackIR, pack_layer_interface
 from ncls.core.material.abi_layout import INTERFACE_STRUCT
+
+
+MDL_FIXED_PARAMETER_SLOTS = 64
+MDL_FIXED_PARAMETER_TYPES = (
+    "bool",
+    "int",
+    "float",
+    "double",
+    "enum",
+    "color",
+    "float2",
+    "float3",
+    "float4",
+)
+MDL_FIXED_SLOT_CHANNELS = 1 + len(MDL_FIXED_PARAMETER_TYPES) + 4
 
 
 @dataclass(frozen=True)
@@ -136,6 +151,115 @@ def materialx_native_feature_layout() -> NativeFeatureLayout:
             NativeFeatureField("normal-second-moment", 6, "lean-box-mip"),
         ),
         True,
+    )
+
+
+def mdl_fixed_native_feature_layout() -> NativeFeatureLayout:
+    return NativeFeatureLayout(
+        "mdl.program@1",
+        1,
+        (
+            NativeFeatureField(
+                "nvidia.mdl-fixed-uniform@1/parameter-slots",
+                MDL_FIXED_PARAMETER_SLOTS * MDL_FIXED_SLOT_CHANNELS,
+                "constant",
+            ),
+        ),
+        False,
+    )
+
+
+def _mdl_scalar(
+    value: object,
+    descriptor: Mapping[str, Any],
+    *,
+    color: bool,
+) -> float:
+    result = float(value)
+    if not np.isfinite(result):
+        raise ValueError("MDL fixed-uniform parameters must be finite")
+    minimum = descriptor.get("minimum")
+    maximum = descriptor.get("maximum")
+    if minimum is not None and maximum is not None:
+        lower, upper = float(minimum), float(maximum)
+        if not np.isfinite((lower, upper)).all() or not upper > lower:
+            raise ValueError("MDL fixed-uniform parameter bounds are invalid")
+        return float(2.0 * np.clip((result - lower) / (upper - lower), 0.0, 1.0) - 1.0)
+    if color:
+        return float(2.0 * np.clip(result, 0.0, 1.0) - 1.0)
+    return float(np.tanh(result))
+
+
+def encode_mdl_fixed_native_features(
+    arguments: Mapping[str, Mapping[str, Any]],
+) -> tuple[np.ndarray, str]:
+    """把单个无空间纹理 MDL snapshot 编成有界、固定宽度的常量特征。"""
+
+    ordered = tuple(sorted((str(name), dict(value)) for name, value in arguments.items()))
+    if len(ordered) > MDL_FIXED_PARAMETER_SLOTS:
+        raise ValueError(
+            f"MDL fixed-uniform adapter supports at most {MDL_FIXED_PARAMETER_SLOTS} parameters"
+        )
+    values = np.zeros(
+        (MDL_FIXED_PARAMETER_SLOTS, MDL_FIXED_SLOT_CHANNELS), dtype=np.float32
+    )
+    schema = []
+    for index, (name, descriptor) in enumerate(ordered):
+        mdl_type = str(descriptor.get("mdl_type", ""))
+        if mdl_type not in MDL_FIXED_PARAMETER_TYPES:
+            raise ValueError(
+                f"MDL fixed-uniform adapter does not support parameter {name!r} of type {mdl_type!r}"
+            )
+        values[index, 0] = 1.0
+        values[index, 1 + MDL_FIXED_PARAMETER_TYPES.index(mdl_type)] = 1.0
+        raw = descriptor.get("value")
+        if mdl_type == "bool":
+            if not isinstance(raw, bool):
+                raise ValueError(f"MDL bool parameter {name!r} has an invalid value")
+            encoded = (1.0 if raw else -1.0,)
+        elif mdl_type == "enum":
+            if not isinstance(raw, Mapping) or "name" not in raw:
+                raise ValueError(f"MDL enum parameter {name!r} has an invalid value")
+            choices = tuple(str(item["name"]) for item in descriptor.get("choices", ()))
+            if str(raw["name"]) not in choices:
+                raise ValueError(f"MDL enum parameter {name!r} is outside its choices")
+            choice_index = choices.index(str(raw["name"]))
+            encoded = (
+                0.0
+                if len(choices) == 1
+                else 2.0 * choice_index / float(len(choices) - 1) - 1.0,
+            )
+        else:
+            components = {
+                "color": 3,
+                "float2": 2,
+                "float3": 3,
+                "float4": 4,
+            }.get(mdl_type, 1)
+            raw_values = raw if isinstance(raw, (tuple, list)) else (raw,)
+            if len(raw_values) != components:
+                raise ValueError(f"MDL parameter {name!r} has the wrong component count")
+            encoded = tuple(
+                _mdl_scalar(value, descriptor, color=mdl_type == "color")
+                for value in raw_values
+            )
+        value_offset = 1 + len(MDL_FIXED_PARAMETER_TYPES)
+        values[index, value_offset : value_offset + len(encoded)] = encoded
+        schema.append(
+            {
+                "name": name,
+                "mdl_type": mdl_type,
+                "choices": [
+                    str(item["name"]) for item in descriptor.get("choices", ())
+                ],
+            }
+        )
+    result = values.reshape(-1)
+    layout = mdl_fixed_native_feature_layout()
+    if result.shape != (layout.channel_count,) or not np.isfinite(result).all():
+        raise AssertionError("MDL fixed-uniform feature layout disagrees with encoder")
+    return result, sha256_json(
+        {"schema": "nvidia.mdl-fixed-parameter-schema@1", "parameters": schema}
     )
 
 

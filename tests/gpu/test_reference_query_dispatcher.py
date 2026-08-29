@@ -8,7 +8,8 @@ import torch
 
 from ncls.core.material import DiffuseInterface, LayerStackIR
 from ncls.references.programs import get_reference_program_for_source
-from ncls.references.query import ReferenceQueryDispatcher, ScatteringQuery
+from ncls.references.backend import create_reference_backend
+from ncls.references.query import ScatteringQuery
 from ncls.source_materials.families.layer_stack import snapshot_from_layer_stack
 from ncls.core.source import create_source_family
 
@@ -19,14 +20,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.falcor
-def test_generic_dispatcher_evaluate_sample_pdf_share_one_backend() -> None:
+def test_generic_backend_session_evaluate_sample_pdf_share_one_backend() -> None:
     snapshot = snapshot_from_layer_stack(
         LayerStackIR((DiffuseInterface((0.6, 0.3, 0.1)),), ())
     )
     definition = get_reference_program_for_source(
         snapshot.family_id, snapshot.source_contract_version
     )
-    dispatcher = ReferenceQueryDispatcher(
+    session = create_reference_backend().open(
         definition, (snapshot,), query_capacity=256, device="cuda:0"
     )
     count = 256
@@ -39,7 +40,7 @@ def test_generic_dispatcher_evaluate_sample_pdf_share_one_backend() -> None:
     )
     seeds = torch.arange(count, dtype=torch.int64, device="cuda:0")[:, None]
 
-    evaluated = dispatcher.evaluate(query, wi, seeds)
+    evaluated = session.evaluate(query, wi, seeds)
     torch.testing.assert_close(
         evaluated.f,
         (
@@ -50,23 +51,23 @@ def test_generic_dispatcher_evaluate_sample_pdf_share_one_backend() -> None:
     )
     assert bool(evaluated.valid.all())
     evaluated.lease.release()
-    dispatcher.end_iteration()
+    session.end_iteration()
 
-    sampled = dispatcher.sample(query, seeds)
+    sampled = session.sample(query, seeds)
     assert bool(sampled.valid.all())
     sampled_wi = sampled.wi[:, None, :].clone()
     sampled_weight = sampled.weight.clone()
     sampled_pdf = sampled.pdf_forward.clone()
     sampled.lease.release()
-    dispatcher.end_iteration()
+    session.end_iteration()
 
-    density = dispatcher.pdf(query, sampled_wi, seeds)
+    density = session.pdf(query, sampled_wi, seeds)
     assert bool(density.valid.all())
     torch.testing.assert_close(density.forward[:, 0], sampled_pdf, rtol=2e-6, atol=2e-7)
     density.lease.release()
-    dispatcher.end_iteration()
+    session.end_iteration()
 
-    evaluated_sample = dispatcher.evaluate(query, sampled_wi, seeds)
+    evaluated_sample = session.evaluate(query, sampled_wi, seeds)
     expected_weight = (
         evaluated_sample.f[:, 0]
         * torch.abs(sampled_wi[:, 0, 2:3])
@@ -74,8 +75,8 @@ def test_generic_dispatcher_evaluate_sample_pdf_share_one_backend() -> None:
     )
     torch.testing.assert_close(sampled_weight, expected_weight, rtol=3e-5, atol=3e-6)
     evaluated_sample.lease.release()
-    dispatcher.end_iteration()
-    dispatcher.close()
+    session.end_iteration()
+    session.close()
 
 
 @pytest.mark.falcor
@@ -112,7 +113,7 @@ def test_generic_dispatcher_evaluate_sample_pdf_share_one_backend() -> None:
         ),
     ),
 )
-def test_generic_dispatcher_supports_registered_source_families(
+def test_generic_backend_session_supports_registered_source_families(
     family_id: str, locator: dict[str, str]
 ) -> None:
     if family_id == "merl.measured-brdf@1" and not (
@@ -128,7 +129,7 @@ def test_generic_dispatcher_supports_registered_source_families(
     definition = get_reference_program_for_source(
         snapshot.family_id, snapshot.source_contract_version
     )
-    dispatcher = ReferenceQueryDispatcher(
+    session = create_reference_backend().open(
         definition, (snapshot,), query_capacity=128, device="cuda:0"
     )
     count = 128
@@ -142,21 +143,21 @@ def test_generic_dispatcher_supports_registered_source_families(
     )
     seeds = torch.arange(count, dtype=torch.int64, device="cuda:0")[:, None]
 
-    evaluated = dispatcher.evaluate(query, wi, seeds)
+    evaluated = session.evaluate(query, wi, seeds)
     assert bool(evaluated.valid.all())
     assert bool(torch.isfinite(evaluated.f).all())
     evaluated.lease.release()
-    dispatcher.end_iteration()
+    session.end_iteration()
 
-    sampled = dispatcher.sample(query, seeds)
+    sampled = session.sample(query, seeds)
     valid = sampled.valid.clone()
     assert float(valid.to(torch.float32).mean()) > 0.5
     sampled_wi = sampled.wi[:, None, :].clone()
     sampled_pdf = sampled.pdf_forward.clone()
     sampled.lease.release()
-    dispatcher.end_iteration()
+    session.end_iteration()
 
-    density = dispatcher.pdf(query, sampled_wi, seeds)
+    density = session.pdf(query, sampled_wi, seeds)
     assert bool(density.valid.all())
     continuous = valid & (sampled_pdf > 0.0)
     torch.testing.assert_close(
@@ -166,5 +167,5 @@ def test_generic_dispatcher_supports_registered_source_families(
         atol=2e-6,
     )
     density.lease.release()
-    dispatcher.end_iteration()
-    dispatcher.close()
+    session.end_iteration()
+    session.close()

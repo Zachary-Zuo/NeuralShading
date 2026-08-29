@@ -7,7 +7,7 @@ from pathlib import Path
 from ncls.core.identity import sha256_file, write_json_atomic
 from ncls.core.source import create_source_family
 from ncls.paths import PROJECT_ROOT
-from ncls.references.mdl import MdlSdkCompilerBridge
+from ncls.references.mdl import create_mdl_program_provider
 
 
 ASSET_IDS = (
@@ -50,7 +50,7 @@ def prepare_catalog(output: Path, default_asset_id: str = ASSET_IDS[0]) -> dict[
         / str(manifest["module_root"])
     ).resolve()
     family = create_source_family("mdl.program@1")
-    bridge = MdlSdkCompilerBridge(module_root)
+    bridge = create_mdl_program_provider(module_root)
     snapshots = {}
     artifacts = {}
     for asset_id in ASSET_IDS:

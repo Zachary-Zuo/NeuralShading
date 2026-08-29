@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Mapping
 
 from ncls.core.identity import require_sha256, sha256_json
@@ -110,6 +111,17 @@ class ReferenceProgramDescriptor:
         return sha256_json(self.to_dict())
 
 
+@dataclass(frozen=True)
+class ReferenceProgramProviderStatus:
+    requirement_id: str
+    status: str
+    detail: str
+
+    def __post_init__(self) -> None:
+        if not self.requirement_id or self.status not in {"ready", "missing", "invalid"}:
+            raise ValueError("reference program provider status is invalid")
+
+
 class ReferenceProgramDefinition(ABC):
     descriptor: ReferenceProgramDescriptor
 
@@ -119,6 +131,14 @@ class ReferenceProgramDefinition(ABC):
             or snapshot.source_contract_version != self.descriptor.source_contract_version
         ):
             raise ValueError("source snapshot is incompatible with reference program")
+
+    def preflight_provider(
+        self, *, platform_id: str, project_root: Path
+    ) -> tuple[ReferenceProgramProviderStatus, ...]:
+        """报告 program 私有编译器要求；不得检查或获取 source assets。"""
+
+        del platform_id, project_root
+        return ()
 
     @abstractmethod
     def compile_runtime(self) -> RuntimePayload:

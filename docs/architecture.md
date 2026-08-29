@@ -7,7 +7,8 @@ source locator
   → SourceFamilyDefinition.load_snapshot()
   → SourceSnapshot
   → canonical ReferenceProgramDefinition
-  → ReferenceQueryDispatcher (prepare/evaluate/sample/pdf)
+  → ReferenceBackendCapability.open()
+  → ReferenceBackendSession (prepare/evaluate/sample/pdf)
   → OnlineTrainingProducer
        ├─ EvaluatorBatch(target_f)
        └─ MethodSamplerBatch(sample_u)
@@ -16,7 +17,9 @@ source locator
   → ScatteringBinding → ComparisonSlot[2]
 ```
 
-LayerStack、OpenPBR、MERL、MaterialX 与 MDL 保留各自原生语义和reference。每个reference都实现同一个`prepare/evaluate/sample/pdf`合同，并保留自己的backend-specific `ScatteringState`、closure与proposal；统一dispatcher不识别source family，也不实现替代BRDF。pbrt只用于外部crosscheck。
+LayerStack、OpenPBR、MERL、MaterialX 与 MDL 保留各自原生语义和reference。每个reference都实现同一个`prepare/evaluate/sample/pdf`合同，并保留自己的backend-specific `ScatteringState`、closure与proposal；公共backend/session不识别source family，也不实现替代BRDF。pbrt coated crosscheck与falcor2 MDL oracle只用于隔离验证。
+
+`ReferenceBackendCapability`是Windows/Linux唯一底层入口。它从`references/reference-backend-toolchains.json`解析Falcor、Slang、平台device和各program provider，`doctor()`给出统一状态，`open()`返回session。上层不导入Falcor、不选择D3D12/Vulkan，也不拼接平台构建路径。`ReferenceBackendDescriptor`将跨平台语义identity与平台build identity同时写入query/checkpoint identity。
 
 `SourceSnapshot`是source state唯一真相。source family拥有locator解析、原生编辑与snapshot identity；reference program只负责把snapshot编译为canonical module和typed resources。method/source adapter只生成模型所需的native features、UV、LOD、footprint与materialization pyramid，不拥有reference math。
 

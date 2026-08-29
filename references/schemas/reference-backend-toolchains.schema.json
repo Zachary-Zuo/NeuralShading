@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ncls.reference-backend-toolchains@1",
+  "title": "Cross-platform canonical reference build inputs",
+  "type": "object",
+  "required": ["schema_name", "schema_version", "asset_policy", "backend", "source_providers", "platforms", "programs"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_name": {"const": "ncls.reference-backend-toolchains"},
+    "schema_version": {"const": 1},
+    "asset_policy": {"const": "external-only-no-source-assets"},
+    "backend": {
+      "type": "object",
+      "required": ["backend_key", "version", "falcor_revision", "slang_revision", "execution_provider"],
+      "additionalProperties": false,
+      "properties": {
+        "backend_key": {"const": "ncls.falcor-reference-backend"},
+        "version": {"const": 1},
+        "falcor_revision": {"$ref": "#/$defs/gitRevision"},
+        "slang_revision": {"type": "string", "minLength": 1},
+        "execution_provider": {"type": "string", "minLength": 1}
+      }
+    },
+    "source_providers": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/gitProvider"}
+    },
+    "platforms": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/platform"}
+    },
+    "programs": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/program"}
+    }
+  },
+  "$defs": {
+    "gitRevision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!assets(?:/|$)).+$"
+    },
+    "gitProvider": {
+      "type": "object",
+      "required": ["provider_id", "path", "url", "revision", "submodules"],
+      "additionalProperties": false,
+      "properties": {
+        "provider_id": {"type": "string", "minLength": 1},
+        "path": {"type": "string", "pattern": "^external/[^/].*$"},
+        "url": {"type": "string", "pattern": "^https://github\\.com/.+\\.git$"},
+        "revision": {"$ref": "#/$defs/gitRevision"},
+        "submodules": {"enum": ["none", "upstream-locked", "recursive-upstream-locked"]}
+      }
+    },
+    "archive": {
+      "type": "object",
+      "required": ["name", "type", "url", "size", "sha256", "root"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "type": {"enum": ["zip", "tar.gz"]},
+        "url": {"type": "string", "pattern": "^https://github\\.com/NVIDIA/MDL-SDK/releases/download/"},
+        "size": {"type": "integer", "minimum": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "root": {"type": "string", "pattern": "^external/[^/].*$"}
+      }
+    },
+    "falcor": {
+      "type": "object",
+      "required": ["device_api", "build_root", "runtime_library_root", "python_module_root", "python_extension"],
+      "additionalProperties": false,
+      "properties": {
+        "device_api": {"enum": ["d3d12", "vulkan"]},
+        "build_root": {"$ref": "#/$defs/relativePath"},
+        "runtime_library_root": {"$ref": "#/$defs/relativePath"},
+        "python_module_root": {"$ref": "#/$defs/relativePath"},
+        "python_extension": {"$ref": "#/$defs/relativePath"}
+      }
+    },
+    "mdlSdk": {
+      "type": "object",
+      "required": ["build", "archive", "library", "plugins", "runtime_library_directory", "target_code_types"],
+      "additionalProperties": false,
+      "properties": {
+        "build": {"type": "string", "minLength": 1},
+        "archive": {"$ref": "#/$defs/archive"},
+        "library": {"$ref": "#/$defs/relativePath"},
+        "plugins": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/relativePath"}
+        },
+        "runtime_library_directory": {"$ref": "#/$defs/relativePath"},
+        "target_code_types": {"$ref": "#/$defs/relativePath"}
+      }
+    },
+    "mdlBridge": {
+      "type": "object",
+      "required": ["executable", "generator", "configuration"],
+      "additionalProperties": false,
+      "properties": {
+        "executable": {"$ref": "#/$defs/relativePath"},
+        "generator": {"type": "string", "minLength": 1},
+        "configuration": {"const": "Release"}
+      }
+    },
+    "platform": {
+      "type": "object",
+      "required": ["platform_id", "os", "architecture", "falcor", "mdl_sdk", "mdl_bridge"],
+      "additionalProperties": false,
+      "properties": {
+        "platform_id": {"enum": ["windows-x86_64@1", "linux-x86_64@1"]},
+        "os": {"enum": ["windows", "linux"]},
+        "architecture": {"const": "x86_64"},
+        "falcor": {"$ref": "#/$defs/falcor"},
+        "mdl_sdk": {"$ref": "#/$defs/mdlSdk"},
+        "mdl_bridge": {"$ref": "#/$defs/mdlBridge"}
+      }
+    },
+    "program": {
+      "type": "object",
+      "required": ["program_key", "version", "providers"],
+      "additionalProperties": false,
+      "properties": {
+        "program_key": {
+          "enum": [
+            "ncls.layer-stack-random-walk",
+            "ncls.merl-brdf",
+            "ncls.openpbr",
+            "ncls.materialx-polyhaven",
+            "ncls.mdl-vmaterials2"
+          ]
+        },
+        "version": {"const": 1},
+        "providers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

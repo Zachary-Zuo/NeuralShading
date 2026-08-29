@@ -3,6 +3,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from ncls.references.backend import create_reference_backend
+
 from ncls.core.material import (
     ABI_MAGIC,
     ABI_VERSION,
@@ -28,7 +30,7 @@ def test_layer_stack_ir_cpu_slang_layout() -> None:
         ),
         (HomogeneousMedium((0.1, 0.2, 0.3), (0.4, 0.5, 0.6), 0.25, 0.7),),
     )
-    device = falcor.Device(type=falcor.DeviceType.D3D12)
+    device = create_reference_backend()._create_device(falcor)  # noqa: SLF001
     stack_buffer = device.create_structured_buffer(
         struct_size=BINARY_SIZE,
         element_count=1,

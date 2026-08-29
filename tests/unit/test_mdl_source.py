@@ -214,6 +214,11 @@ def test_mdl_compiled_artifact_validates_schema_and_argument_block(tmp_path: Pat
         },
         "compiler_identity": {
             "mdl_sdk": MDL_SDK_BUILD,
+            "platform_id": "windows-x86_64@1",
+            "semantic_identity": "b" * 64,
+            "build_identity": "c" * 64,
+            "backend_manifest_sha256": "d" * 64,
+            "sdk_archive_sha256": "e" * 64,
             "bridge_executable_sha256": "a" * 64,
             "stb_commit": STB_COMMIT,
             "stb_image_sha256": STB_IMAGE_SHA256,

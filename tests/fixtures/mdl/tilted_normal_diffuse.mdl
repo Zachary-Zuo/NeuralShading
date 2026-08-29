@@ -1,0 +1,14 @@
+mdl 1.7;
+
+import ::df::*;
+
+export material tilted_normal_diffuse(
+    color tint = color(0.8, 0.2, 0.1)
+) = material(
+    surface: material_surface(
+        scattering: df::diffuse_reflection_bsdf(tint: tint)
+    ),
+    geometry: material_geometry(
+        normal: float3(0.6, 0.0, 0.8)
+    )
+);

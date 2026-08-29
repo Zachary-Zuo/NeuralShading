@@ -71,6 +71,22 @@ def test_registry_tracks_each_integration_capability_independently() -> None:
     assert entries["ncls.mdl-vmaterials2@1"].capabilities["numerical_parity"] == "ready"
 
 
+def test_ground_truth_registry_uses_the_canonical_source_family_ids() -> None:
+    entries = load_reference_registry(PROJECT_ROOT / "references")
+    ground_truth = {
+        entry.source_material_family_id
+        for entry in entries
+        if entry.role == "ground-truth"
+    }
+    assert ground_truth == {
+        "ncls.layer-stack@1",
+        "merl.measured-brdf@1",
+        "openpbr.material@1.1.1",
+        "materialx.document@1.39.4",
+        "mdl.program@1",
+    }
+
+
 def test_reference_manifest_roots_have_one_canonical_mapping() -> None:
     assert resolve_reference_path(PROJECT_ROOT, "project", "src/ncls") == PROJECT_ROOT / "src" / "ncls"
     assert resolve_reference_path(PROJECT_ROOT, "external", "MaterialX") == PROJECT_ROOT / "external" / "MaterialX"

@@ -7,3 +7,5 @@
 查询结果保留源材质的线性模型颜色空间；官方示例为 ACEScg，PNG 预览只在显示阶段转为 linear sRGB。当前固定波长模式使用 Adobe reference 的 RGB 代表波长；需要消除厚薄膜或色散的固定 RGB aliasing 时，后续数据采集必须记录随机波长策略。
 
 当前接入范围包括完整 resolved input 参数、官方常量材质的可编辑 round-trip、直接纹理 binding、`eval/sample/pdf` CPU reference 和离线预览。任意 MaterialX `GraphBinding` 会被原样保留，但在没有显式图求值器时不会冒充已求值常量。volume、emission 和 opacity 保留原生字段；非局部体积/BSSRDF 呈现需要独立 renderer capability。
+
+canonical GPU路径通过`ReferenceBackendCapability.open()`创建与其他四族相同的session，使用typed resolved-input buffer和锁定LUT执行`prepare/evaluate/sample/pdf`。`evaluate()`返回线性RGB BSDF `f`而不含cosine；Windows/Linux平台分别由backend选择D3D12/Vulkan。部署只获取manifest锁定的OpenPBR、openpbr-bsdf与GLM源码，不下载source material资产。

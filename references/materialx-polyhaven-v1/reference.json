@@ -2,12 +2,12 @@
   "schema_name": "ncls.reference-package",
   "schema_version": 1,
   "reference_id": "ncls.materialx-polyhaven@1",
-  "source_material_family_id": "materialx.textured-surface@1",
+  "source_material_family_id": "materialx.document@1.39.4",
   "role": "ground-truth",
   "native_representation": "materialx-document-with-native-textures",
   "query_contract": {
     "domain": "spatially-varying-local-surface",
-    "measure": "materialx-generated-surface-response",
+    "measure": "linear-rgb-bsdf",
     "directions": "materialx-tangent-frame",
     "coordinates": "native-materialx-texcoord-and-unit-metadata"
   },

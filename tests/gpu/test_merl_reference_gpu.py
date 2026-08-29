@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from ncls.references import deterministic_directional_metrics, load_reference_acceptance
+from ncls.references.backend import create_reference_backend
 from ncls.source_materials import MerlBrdfReference, MerlMaterial
 
 
@@ -37,7 +38,7 @@ def test_merl_falcor_runtime_matches_native_table_reference() -> None:
     views = _hemisphere_directions(generator, query_count)
     lights = _hemisphere_directions(generator, query_count)
     acceptance = load_reference_acceptance(PROJECT_ROOT / "references" / "acceptance.json")
-    device = falcor.Device(type=falcor.DeviceType.D3D12)
+    device = create_reference_backend()._create_device(falcor)  # noqa: SLF001
     compute = falcor.ComputePass(
         device,
         file=PROJECT_ROOT / "tests" / "gpu" / "kernels" / "merl_reference.cs.slang",

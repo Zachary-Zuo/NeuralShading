@@ -23,6 +23,7 @@ from .program import (
     MaterialPayload,
     ReferenceProgramDefinition,
     ReferenceProgramDescriptor,
+    ReferenceProgramProviderStatus,
     RuntimePayload,
 )
 
@@ -38,6 +39,7 @@ __all__ = [
     "MaterialPayload",
     "ReferenceProgramDefinition",
     "ReferenceProgramDescriptor",
+    "ReferenceProgramProviderStatus",
     "RuntimePayload",
     "ScatteringEval",
     "ScatteringEvent",

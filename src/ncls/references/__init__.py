@@ -19,11 +19,18 @@ from .acceptance import (
     load_reference_acceptance,
 )
 from .query import (
+    ReferenceBackendSession,
     ReferenceEvaluateResult,
     ReferencePdfResult,
-    ReferenceQueryDispatcher,
     ReferenceSampleResult,
     ScatteringQuery,
+)
+from .backend import (
+    ReferenceBackendCapability,
+    ReferenceBackendDescriptor,
+    ReferenceBackendReport,
+    ReferenceCapabilityStatus,
+    create_reference_backend,
 )
 
 __all__ = [
@@ -43,9 +50,14 @@ __all__ = [
     "deterministic_directional_metrics",
     "linear_hdr_image_metrics",
     "load_reference_acceptance",
+    "ReferenceBackendCapability",
+    "ReferenceBackendDescriptor",
+    "ReferenceBackendReport",
+    "ReferenceBackendSession",
+    "ReferenceCapabilityStatus",
     "ReferenceEvaluateResult",
     "ReferencePdfResult",
-    "ReferenceQueryDispatcher",
     "ReferenceSampleResult",
     "ScatteringQuery",
+    "create_reference_backend",
 ]

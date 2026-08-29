@@ -15,7 +15,11 @@
 #pragma warning(pop)
 #endif
 
+#if defined(_WIN32)
 #include <Windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -44,6 +48,8 @@ struct Options
 {
     std::string command;
     fs::path sdkRoot;
+    fs::path sdkLibrary;
+    std::vector<fs::path> plugins;
     fs::path moduleRoot;
     fs::path outputDirectory;
     std::string module;
@@ -674,29 +680,83 @@ size_t decodedBytesPerPixel(std::string_view pixelType)
     return 0;
 }
 
+class SharedLibrary
+{
+public:
+    explicit SharedLibrary(const fs::path& path)
+    {
+#if defined(_WIN32)
+        m_module = LoadLibraryW(path.c_str());
+#else
+        m_module = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+#endif
+        if (!m_module)
+            fail("unable to load shared library: " + path.string() + errorSuffix());
+    }
+
+    SharedLibrary(const SharedLibrary&) = delete;
+    SharedLibrary& operator=(const SharedLibrary&) = delete;
+
+    ~SharedLibrary()
+    {
+        if (!m_module)
+            return;
+#if defined(_WIN32)
+        FreeLibrary(m_module);
+#else
+        dlclose(m_module);
+#endif
+    }
+
+    void* symbol(const char* name) const
+    {
+#if defined(_WIN32)
+        return reinterpret_cast<void*>(GetProcAddress(m_module, name));
+#else
+        dlerror();
+        return dlsym(m_module, name);
+#endif
+    }
+
+private:
+    static std::string errorSuffix()
+    {
+#if defined(_WIN32)
+        return " (Windows error " + std::to_string(GetLastError()) + ")";
+#else
+        const char* message = dlerror();
+        return message ? std::string(" (") + message + ")" : std::string();
+#endif
+    }
+
+#if defined(_WIN32)
+    HMODULE m_module = nullptr;
+#else
+    void* m_module = nullptr;
+#endif
+};
+
 class MdlRuntime
 {
 public:
-    explicit MdlRuntime(const fs::path& sdkRoot)
+    MdlRuntime(
+        const fs::path& sdkLibrary,
+        const std::vector<fs::path>& pluginPaths)
+        : m_module(sdkLibrary)
     {
-        const fs::path library = sdkRoot / "bin" / "libmdl_sdk.dll";
-        m_module = LoadLibraryW(library.c_str());
-        if (!m_module)
-            fail("unable to load MDL SDK: " + library.string());
-        void* symbol = reinterpret_cast<void*>(GetProcAddress(m_module, "mi_factory"));
+        void* symbol = m_module.symbol("mi_factory");
         if (!symbol)
             fail("MDL SDK does not export mi_factory");
         m_neuray = mi::neuraylib::mi_factory<mi::neuraylib::INeuray>(symbol);
         if (!m_neuray)
             fail("MDL SDK headers do not match the loaded binary");
 
-        mi::base::Handle<mi::neuraylib::IPlugin_configuration> plugins(
+        mi::base::Handle<mi::neuraylib::IPlugin_configuration> pluginConfiguration(
             m_neuray->get_api_component<mi::neuraylib::IPlugin_configuration>()
         );
-        for (const char* plugin : {"nv_openimageio.dll", "dds.dll"})
+        for (const fs::path& path : pluginPaths)
         {
-            const fs::path path = sdkRoot / "bin" / plugin;
-            if (plugins->load_plugin_library(path.string().c_str()) != 0)
+            if (pluginConfiguration->load_plugin_library(path.string().c_str()) != 0)
                 fail("unable to load MDL resource plugin: " + path.string());
         }
     }
@@ -706,8 +766,6 @@ public:
         if (m_started && m_neuray)
             m_neuray->shutdown(true);
         m_neuray = nullptr;
-        if (m_module)
-            FreeLibrary(m_module);
     }
 
     mi::neuraylib::INeuray* get() const { return m_neuray.get(); }
@@ -732,7 +790,7 @@ public:
     }
 
 private:
-    HMODULE m_module = nullptr;
+    SharedLibrary m_module;
     mi::base::Handle<mi::neuraylib::INeuray> m_neuray;
     bool m_started = false;
 };
@@ -748,7 +806,7 @@ void discover(const Options& options)
     }
     fs::create_directories(options.outputDirectory);
 
-    MdlRuntime runtime(options.sdkRoot);
+    MdlRuntime runtime(options.sdkLibrary, options.plugins);
     runtime.start(options.sdkRoot, options.moduleRoot);
     mi::neuraylib::INeuray* neuray = runtime.get();
     mi::base::Handle<mi::neuraylib::IDatabase> database(
@@ -1078,7 +1136,7 @@ void compile(const Options& options)
     }
     fs::create_directories(options.outputDirectory);
 
-    MdlRuntime runtime(options.sdkRoot);
+    MdlRuntime runtime(options.sdkLibrary, options.plugins);
     runtime.start(options.sdkRoot, options.moduleRoot);
     mi::neuraylib::INeuray* neuray = runtime.get();
     mi::base::Handle<mi::neuraylib::IDatabase> database(neuray->get_api_component<mi::neuraylib::IDatabase>());
@@ -1422,6 +1480,8 @@ Options parseOptions(int argc, char** argv)
             options.command = argument;
         }
         else if (argument == "--sdk-root") options.sdkRoot = fs::absolute(next());
+        else if (argument == "--sdk-library") options.sdkLibrary = fs::absolute(next());
+        else if (argument == "--plugin") options.plugins.push_back(fs::absolute(next()));
         else if (argument == "--module-root") options.moduleRoot = fs::absolute(next());
         else if (argument == "--module") options.module = next();
         else if (argument == "--material") options.material = next();
@@ -1440,6 +1500,7 @@ Options parseOptions(int argc, char** argv)
         else fail("unknown argument: " + argument);
     }
     const bool commonMissing = options.command.empty() || options.sdkRoot.empty()
+        || options.sdkLibrary.empty() || options.plugins.empty()
         || options.moduleRoot.empty() || options.outputDirectory.empty();
     const bool discoverInvalid = options.command == "discover"
         && (options.module.empty() || !options.material.empty() || !options.arguments.empty()
@@ -1448,7 +1509,7 @@ Options parseOptions(int argc, char** argv)
         && (options.material.empty() || !options.module.empty()
             || (options.command == "native-evaluate" && options.skipTexturePayloads));
     if (commonMissing || discoverInvalid || compileInvalid)
-        fail("usage: ncls_mdl_sdk_bridge discover --sdk-root PATH --module-root PATH --module ::module --output-dir PATH | ncls_mdl_sdk_bridge compile --sdk-root PATH --module-root PATH --material ::module::material --output-dir PATH [--argument name=value] [--skip-texture-payloads] | ncls_mdl_sdk_bridge native-evaluate --sdk-root PATH --module-root PATH --material ::module::material --output-dir PATH [--argument name=value] --native-queries FILE --native-output FILE");
+        fail("usage: ncls_mdl_sdk_bridge COMMAND --sdk-root PATH --sdk-library FILE --plugin FILE [--plugin FILE] --module-root PATH --output-dir PATH ...");
     return options;
 }
 

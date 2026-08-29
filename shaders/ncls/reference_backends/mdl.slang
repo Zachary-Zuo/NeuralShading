@@ -96,7 +96,12 @@ struct NclsMdlReferenceState : INclsScatteringState
         NclsScatteringEval result = {};
         const Shading_state_material targetState = nclsPrepareMdlTargetState(
             context.surface, context.woWorld);
-        const float lightCosine = abs(dot(targetState.normal, wiWorld));
+        // MDL target-code evaluate returns f * |dot(material Ns, wi)|.  The
+        // public scattering contract reconstructs transport response with the
+        // input NclsShadingFrame, so remove that input-frame cosine here.  This
+        // keeps geometry.normal / normal-map semantics inside the equivalent f
+        // instead of applying the material-normal cosine twice.
+        const float lightCosine = abs(dot(context.surface.shadingFrame.normal, wiWorld));
         if (lightCosine <= 1e-8f) return result;
         Bsdf_evaluate_data data = (Bsdf_evaluate_data)0;
         data.ior1 = float3(1.0);

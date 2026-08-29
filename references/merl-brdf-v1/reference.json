@@ -7,7 +7,7 @@
   "native_representation": "merl-dense-isotropic-brdf-table",
   "query_contract": {
     "domain": "local-surface-reflection",
-    "measure": "linear-rgb-brdf-times-positive-light-cosine",
+    "measure": "linear-rgb-brdf",
     "directions": "right-handed-tangent-frame-positive-z-hemisphere",
     "interpolation": "official-nearest-index-parameterization"
   },

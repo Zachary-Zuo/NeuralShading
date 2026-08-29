@@ -17,7 +17,8 @@ from ncls.core.material import (
     RoughDielectricInterface,
 )
 from ncls.references.programs import get_reference_program_for_source
-from ncls.references.query import ReferenceQueryDispatcher, ScatteringQuery
+from ncls.references.backend import create_reference_backend
+from ncls.references.query import ScatteringQuery
 from ncls.source_materials.families.layer_stack import snapshot_from_layer_stack
 
 
@@ -176,7 +177,7 @@ def _run_case(
     definition = get_reference_program_for_source(
         snapshot.family_id, snapshot.source_contract_version
     )
-    dispatcher = ReferenceQueryDispatcher(
+    session = create_reference_backend().open(
         definition,
         (snapshot,),
         query_capacity=len(light_directions),
@@ -206,7 +207,7 @@ def _run_case(
                     dtype=torch.int64,
                     device=device,
                 )[None, :]
-                result = dispatcher.evaluate(
+                result = session.evaluate(
                     query, wi, seeds, evaluation_samples=sample_count
                 )
                 torch._assert_async(result.valid.all())
@@ -215,13 +216,13 @@ def _run_case(
                     * torch.abs(wi[0, :, 2:3])
                 ).cpu().numpy().copy()
                 result.lease.release()
-                dispatcher.end_iteration()
+                session.end_iteration()
                 chunk_means.append(response)
                 chunk_weights.append(sample_count)
                 remaining -= sample_count
                 chunk_index += 1
     finally:
-        dispatcher.close()
+        session.close()
     falcor_response = np.average(
         np.stack(chunk_means), axis=0, weights=np.asarray(chunk_weights)
     )

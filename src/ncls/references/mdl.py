@@ -7,15 +7,21 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 import uuid
 
-from ncls.core.identity import canonical_json, sha256_file, sha256_json
+from ncls.core.identity import canonical_json, require_sha256, sha256_file, sha256_json
 from ncls.paths import PROJECT_ROOT
+from ncls.references.backend_manifest import (
+    REFERENCE_BACKEND_MANIFEST,
+    ReferencePlatformToolchain,
+    current_reference_platform_id,
+    load_reference_backend_manifest,
+)
 
 
-MDL_SDK_BUILD = "2025.0.0-387700.1252"
-MDL_SDK_DIRECTORY = f"MDL-SDK-{MDL_SDK_BUILD}-nt-x86-64"
+_BACKEND_MANIFEST = load_reference_backend_manifest()
+MDL_SDK_BUILD = _BACKEND_MANIFEST.platforms[0].mdl_sdk.build
 ARTIFACT_SCHEMA = "ncls.mdl-compiled-artifact@1"
 DISCOVERY_SCHEMA = "ncls.mdl-module-discovery@1"
 STB_COMMIT = "013ac3beddff3dbffafd5177e7972067cd2b5083"
@@ -36,6 +42,142 @@ CODEGEN_OPTIONS = {
     "texture_runtime_with_derivs": False,
     "use_renderer_adapt_normal": True,
 }
+
+
+@dataclass(frozen=True)
+class MdlProgramProviderOverrides:
+    """测试或显式部署注入；上层 source/reference 不直接使用。"""
+
+    platform_id: str | None = None
+    sdk_root: Path | None = None
+    executable: Path | None = None
+    cache_root: Path | None = None
+    manifest_path: Path = REFERENCE_BACKEND_MANIFEST
+
+
+@dataclass(frozen=True)
+class MdlProgramToolchainDescriptor:
+    platform_id: str
+    sdk_build: str
+    sdk_root: Path
+    sdk_library: Path
+    plugin_libraries: tuple[Path, ...]
+    runtime_library_root: Path
+    target_code_types: Path
+    bridge_executable: Path
+    cache_root: Path
+    archive_sha256: str
+    backend_manifest_sha256: str
+    semantic_identity: str
+    build_identity: str
+    bridge_executable_sha256: str | None
+
+
+@dataclass(frozen=True)
+class MdlCapabilityReport:
+    platform_id: str
+    ready: bool
+    missing: tuple[str, ...]
+    semantic_identity: str
+    build_identity: str
+
+
+class MdlProgramProvider(Protocol):
+    descriptor: MdlProgramToolchainDescriptor
+    module_root: Path
+    cache_root: Path
+
+    def discover_module(self, module: str, *, output: Path) -> "MdlModuleDiscovery": ...
+
+    def inspect(
+        self,
+        module: str,
+        material: str,
+        arguments: Mapping[str, Any] | None = None,
+        *,
+        output: Path,
+    ) -> "MdlCompiledArtifact": ...
+
+    def compile_snapshot(self, snapshot: "SourceSnapshot") -> "MdlCompiledArtifact": ...
+
+
+def _toolchain_semantic_identity(
+    backend_manifest_sha256: str,
+    record: ReferencePlatformToolchain,
+) -> str:
+    return sha256_json(
+        {
+            "schema": "ncls.mdl-compiler-semantic@1",
+            "sdk_build": MDL_SDK_BUILD,
+            "backend_manifest_sha256": backend_manifest_sha256,
+            "portable_bridge": {
+                "main_cpp": sha256_file(
+                    PROJECT_ROOT / "tools/reference/mdl_sdk_bridge/main.cpp"
+                ),
+                "cmake": sha256_file(
+                    PROJECT_ROOT / "tools/reference/mdl_sdk_bridge/CMakeLists.txt"
+                ),
+            },
+            "artifact_schema": sha256_file(
+                PROJECT_ROOT
+                / "references/mdl-vmaterials2-v1/schemas/mdl-compiled-artifact.schema.json"
+            ),
+            "stb": {
+                "commit": STB_COMMIT,
+                "stb_image_sha256": STB_IMAGE_SHA256,
+            },
+            "codegen_options": CODEGEN_OPTIONS,
+            "target_code_types_path": record.mdl_sdk.target_code_types,
+        }
+    )
+
+
+def resolve_mdl_program_toolchain(
+    overrides: MdlProgramProviderOverrides | None = None,
+) -> MdlProgramToolchainDescriptor:
+    values = overrides or MdlProgramProviderOverrides()
+    manifest = load_reference_backend_manifest(values.manifest_path)
+    platform_id = values.platform_id or current_reference_platform_id()
+    record = manifest.for_platform(platform_id)
+    sdk = record.mdl_sdk
+    if sdk.build != MDL_SDK_BUILD:
+        raise ValueError("reference backend manifest changed the pinned MDL SDK build")
+    sdk_root = (
+        values.sdk_root or PROJECT_ROOT / sdk.archive.root
+    ).resolve()
+    executable = (
+        values.executable or PROJECT_ROOT / record.mdl_bridge.executable
+    ).resolve()
+    cache_root = (
+        values.cache_root or PROJECT_ROOT / "build/mdl-reference/cache"
+    ).resolve()
+    executable_sha256 = sha256_file(executable) if executable.is_file() else None
+    semantic_identity = _toolchain_semantic_identity(
+        manifest.sha256, record
+    )
+    build_identity = sha256_json(
+        {
+            "schema": "ncls.mdl-compiler-build@1",
+            "platform": record.to_identity_dict(),
+            "bridge_executable_sha256": executable_sha256,
+        }
+    )
+    return MdlProgramToolchainDescriptor(
+        platform_id,
+        sdk.build,
+        sdk_root,
+        sdk_root / sdk.library,
+        tuple(sdk_root / path for path in sdk.plugins),
+        sdk_root / sdk.runtime_library_directory,
+        sdk_root / sdk.target_code_types,
+        executable,
+        cache_root,
+        sdk.archive.sha256,
+        manifest.sha256,
+        semantic_identity,
+        build_identity,
+        executable_sha256,
+    )
 
 
 def _contained(root: Path, path: Path) -> Path:
@@ -126,9 +268,36 @@ class MdlCompiledArtifact:
             or compiler_identity.get("stb_commit") != STB_COMMIT
             or compiler_identity.get("stb_image_sha256") != STB_IMAGE_SHA256
             or compiler_identity.get("codegen_options") != CODEGEN_OPTIONS
-            or len(bridge_digest) != 64
-            or any(character not in "0123456789abcdef" for character in bridge_digest)
         ):
+            raise ValueError("MDL compiled artifact has an invalid compiler identity")
+        try:
+            _require_hex("MDL bridge executable hash", bridge_digest, 64)
+            _require_hex(
+                "MDL semantic compiler identity",
+                compiler_identity.get("semantic_identity"),
+                64,
+            )
+            _require_hex(
+                "MDL build compiler identity",
+                compiler_identity.get("build_identity"),
+                64,
+            )
+            _require_hex(
+                "reference backend manifest hash",
+                compiler_identity.get("backend_manifest_sha256"),
+                64,
+            )
+            _require_hex(
+                "MDL SDK archive hash",
+                compiler_identity.get("sdk_archive_sha256"),
+                64,
+            )
+        except ValueError as error:
+            raise ValueError("MDL compiled artifact has an invalid compiler identity") from error
+        if compiler_identity.get("platform_id") not in {
+            "windows-x86_64@1",
+            "linux-x86_64@1",
+        }:
             raise ValueError("MDL compiled artifact has an invalid compiler identity")
         if manifest.get("diagnostics"):
             raise ValueError(f"MDL compiled artifact contains diagnostics: {manifest['diagnostics']}")
@@ -276,30 +445,75 @@ class MdlModuleDiscovery:
         return cls(resolved, module, materials, bridge_digest)
 
 
-class MdlSdkCompilerBridge:
-    """锁定 MDL SDK 的进程边界；正式 provider 不依赖 falcor2。"""
+class MdlSdkProgramProvider:
+    """锁定 MDL SDK 的内部 program provider；正式 reference 不依赖 falcor2。"""
 
     def __init__(
         self,
         module_root: Path,
         *,
-        sdk_root: Path | None = None,
-        executable: Path | None = None,
-        cache_root: Path | None = None,
+        overrides: MdlProgramProviderOverrides | None = None,
     ) -> None:
         self.module_root = module_root.resolve()
-        self.sdk_root = (sdk_root or PROJECT_ROOT / "external" / MDL_SDK_DIRECTORY).resolve()
-        self.executable = (
-            executable
-            or PROJECT_ROOT / "build" / "mdl-sdk-bridge" / "Release" / "ncls_mdl_sdk_bridge.exe"
-        ).resolve()
-        self.cache_root = (cache_root or PROJECT_ROOT / "build" / "mdl-reference" / "cache").resolve()
-        if not self.module_root.is_dir():
-            raise FileNotFoundError(f"MDL module root is missing: {self.module_root}")
-        if not (self.sdk_root / "bin" / "libmdl_sdk.dll").is_file():
-            raise FileNotFoundError("锁定的 MDL SDK 未获取；运行 scripts/fetch_mdl_sdk.ps1")
-        if not self.executable.is_file():
-            raise FileNotFoundError("MDL SDK bridge 未构建；运行 scripts/build_mdl_reference.ps1")
+        self.descriptor = resolve_mdl_program_toolchain(overrides)
+        self.sdk_root = self.descriptor.sdk_root
+        self.executable = self.descriptor.bridge_executable
+        self.cache_root = self.descriptor.cache_root
+        report = self.preflight()
+        if not report.ready:
+            raise FileNotFoundError(
+                "MDL compiler capability is incomplete for "
+                f"{report.platform_id}: {', '.join(report.missing)}"
+            )
+
+    def preflight(self) -> MdlCapabilityReport:
+        descriptor = self.descriptor
+        required = (
+            self.module_root,
+            descriptor.sdk_root,
+            descriptor.sdk_library,
+            *descriptor.plugin_libraries,
+            descriptor.target_code_types,
+            descriptor.bridge_executable,
+        )
+        missing = tuple(str(path) for path in required if not path.exists())
+        return MdlCapabilityReport(
+            descriptor.platform_id,
+            not missing,
+            missing,
+            descriptor.semantic_identity,
+            descriptor.build_identity,
+        )
+
+    @property
+    def compiler_identity(self) -> dict[str, Any]:
+        descriptor = self.descriptor
+        bridge_digest = descriptor.bridge_executable_sha256
+        if bridge_digest is None:
+            raise RuntimeError("MDL bridge executable disappeared after capability resolution")
+        return {
+            "mdl_sdk": descriptor.sdk_build,
+            "platform_id": descriptor.platform_id,
+            "semantic_identity": descriptor.semantic_identity,
+            "build_identity": descriptor.build_identity,
+            "backend_manifest_sha256": descriptor.backend_manifest_sha256,
+            "sdk_archive_sha256": descriptor.archive_sha256,
+            "bridge_executable_sha256": bridge_digest,
+            "stb_commit": STB_COMMIT,
+            "stb_image_sha256": STB_IMAGE_SHA256,
+            "codegen_options": CODEGEN_OPTIONS,
+        }
+
+    def _environment(self) -> dict[str, str]:
+        environment = os.environ.copy()
+        runtime_root = str(self.descriptor.runtime_library_root)
+        environment["PATH"] = runtime_root + os.pathsep + environment.get("PATH", "")
+        if self.descriptor.platform_id.startswith("linux-"):
+            current = environment.get("LD_LIBRARY_PATH", "")
+            environment["LD_LIBRARY_PATH"] = runtime_root + (
+                os.pathsep + current if current else ""
+            )
+        return environment
 
     def discover_module(self, module: str, *, output: Path) -> MdlModuleDiscovery:
         if output.exists():
@@ -309,6 +523,9 @@ class MdlSdkCompilerBridge:
             "discover",
             "--sdk-root",
             str(self.sdk_root),
+            "--sdk-library",
+            str(self.descriptor.sdk_library),
+            *(value for plugin in self.descriptor.plugin_libraries for value in ("--plugin", str(plugin))),
             "--module-root",
             str(self.module_root),
             "--module",
@@ -316,8 +533,7 @@ class MdlSdkCompilerBridge:
             "--output-dir",
             str(output.resolve()),
         ]
-        environment = os.environ.copy()
-        environment["PATH"] = str(self.sdk_root / "bin") + os.pathsep + environment.get("PATH", "")
+        environment = self._environment()
         result = subprocess.run(
             command,
             cwd=PROJECT_ROOT,
@@ -361,6 +577,9 @@ class MdlSdkCompilerBridge:
             "native-evaluate" if native_queries is not None else "compile",
             "--sdk-root",
             str(self.sdk_root),
+            "--sdk-library",
+            str(self.descriptor.sdk_library),
+            *(value for plugin in self.descriptor.plugin_libraries for value in ("--plugin", str(plugin))),
             "--module-root",
             str(self.module_root),
             "--material",
@@ -376,8 +595,7 @@ class MdlSdkCompilerBridge:
             command.append("--skip-texture-payloads")
         for name in sorted(arguments):
             command.extend(("--argument", f"{name}={_argument_text(arguments[name])}"))
-        environment = os.environ.copy()
-        environment["PATH"] = str(self.sdk_root / "bin") + os.pathsep + environment.get("PATH", "")
+        environment = self._environment()
         result = subprocess.run(
             command,
             cwd=PROJECT_ROOT,
@@ -393,13 +611,7 @@ class MdlSdkCompilerBridge:
             raise RuntimeError(f"MDL SDK bridge failed: {message}")
         manifest_path = output / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest["compiler_identity"] = {
-            "mdl_sdk": MDL_SDK_BUILD,
-            "bridge_executable_sha256": sha256_file(self.executable),
-            "stb_commit": STB_COMMIT,
-            "stb_image_sha256": STB_IMAGE_SHA256,
-            "codegen_options": CODEGEN_OPTIONS,
-        }
+        manifest["compiler_identity"] = self.compiler_identity
         manifest["files_sha256"] = {
             path.relative_to(output).as_posix(): sha256_file(path)
             for path in sorted(output.rglob("*"))
@@ -467,9 +679,8 @@ class MdlSdkCompilerBridge:
         key = sha256_json(
             {
                 "snapshot_id": snapshot.snapshot_id,
-                "bridge": sha256_file(self.executable),
-                "mdl_sdk": MDL_SDK_BUILD,
-                "options": CODEGEN_OPTIONS,
+                "semantic_identity": self.descriptor.semantic_identity,
+                "build_identity": self.descriptor.build_identity,
             }
         )
         target = self.cache_root / key
@@ -494,6 +705,14 @@ class MdlSdkCompilerBridge:
             if temporary.is_dir():
                 shutil.rmtree(temporary)
             raise
+
+
+def create_mdl_program_provider(
+    module_root: Path,
+    *,
+    overrides: MdlProgramProviderOverrides | None = None,
+) -> MdlProgramProvider:
+    return MdlSdkProgramProvider(module_root, overrides=overrides)
 
 
 def canonical_mdl_payload(value: Mapping[str, Any]) -> bytes:

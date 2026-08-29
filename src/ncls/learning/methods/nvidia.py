@@ -344,6 +344,7 @@ class NvidiaMethodDefinition(MethodDefinition):
         (
             SourceAdaptationContract("ncls.layer-stack@1", 1, ("/",), "recompile"),
             SourceAdaptationContract("materialx.document@1.39.4", 1, ("/",), "recompile"),
+            SourceAdaptationContract("mdl.program@1", 1, ("/arguments",), "recompile"),
         ),
         {
             "reference-evaluator": (

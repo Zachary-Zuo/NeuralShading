@@ -30,7 +30,7 @@ static project modules:
 - 2D texture 使用 bridge-decoded payload、origin、pixel type 与 gamma；BSDF-data texture 使用 artifact 的 Float32 3D payload。argument block/RO data 按 16-byte row 上传。
 - viewer 使用 `ProgramDesc::addShaderModule("NclsMdlGenerated").addString(...)`；generated HLSL 不进入根仓库，也不链接 MDL SDK runtime DLL。
 - V1 同一 scene specialization 只允许一个 material-specific generated MDL program。MDL 路径延续必须调用同一 target code 的 `surface_scattering_sample`，环境光 MIS 必须调用同一 target code 的 `surface_scattering_pdf`；`sample.weight` 直接使用 SDK 定义的 `bsdf_over_pdf = f |n_s·wi| / pdf`，不得再次乘 cosine 或除 PDF。
-- runtime`ReferenceProgramDescriptor`必须公开并完整实现`prepare/evaluate/sample/pdf`，缺任一入口即fail closed。训练通过generic `ReferenceQueryDispatcher`调用同一canonical state；不存在MDL provider、专用query shader或窄化的第二套capability plane。纹理过滤能力必须与typed resource/context实际传入的footprint一致。
+- runtime`ReferenceProgramDescriptor`必须公开并完整实现`prepare/evaluate/sample/pdf`，缺任一入口即fail closed。训练通过公共`ReferenceBackendSession`调用同一canonical state；MDL SDK compiler只作为该program的内部provider，不存在MDL专用公共backend、专用query shader或窄化的第二套capability plane。纹理过滤能力必须与typed resource/context实际传入的footprint一致。
 - 禁止用 radiance/throughput clamp 修复 firefly。若同 replay 的孤立高亮随 spp 持续进入，先比较 source response、实际采样 PDF、MIS PDF 与 `bsdf_over_pdf` 的极端尾部。
 - preset 切换必须先 validate/build，再原子替换 source/resources/pass。shader/resource 失败保留上一材质。
 - capture 记录 `mdl_asset_id`、`mdl_compiled_artifact_sha256`、SDK 和 filtering。单边 capture 不是独立 image parity。

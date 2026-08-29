@@ -15,6 +15,7 @@ from ncls.core.material import (
     pack_layer_stack,
 )
 from ncls.core.scattering import ScatteringEvent
+from ncls.references.backend import create_reference_backend
 from ncls.source_materials import MerlBrdfReference, MerlMaterial
 
 
@@ -36,7 +37,7 @@ def _views() -> np.ndarray:
 
 
 def _make_probe(entry: str):
-    device = falcor.Device(type=falcor.DeviceType.D3D12)
+    device = create_reference_backend()._create_device(falcor)  # noqa: SLF001
     compute = falcor.ComputePass(device, file=KERNEL, cs_entry=entry)
     srv = falcor.ResourceBindFlags.ShaderResource
     uav = falcor.ResourceBindFlags.UnorderedAccess

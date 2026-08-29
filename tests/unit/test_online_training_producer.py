@@ -17,7 +17,7 @@ class _Lease:
         self.released = True
 
 
-class _RejectingDispatcher:
+class _RejectingSession:
     def __init__(self) -> None:
         self.masks = (
             torch.tensor([True, False, True, False]),
@@ -40,7 +40,7 @@ def test_evaluator_batch_compacts_reference_horizon_rejections() -> None:
     producer = OnlineTrainingProducer.__new__(OnlineTrainingProducer)
     producer.device = torch.device("cpu")
     producer.config = SimpleNamespace(online_query={"evaluation_samples": 1})
-    producer.dispatcher = _RejectingDispatcher()
+    producer.session = _RejectingSession()
     generator = torch.Generator().manual_seed(9)
     cursor = 0
 
@@ -56,7 +56,7 @@ def test_evaluator_batch_compacts_reference_horizon_rejections() -> None:
                 "source_index": torch.zeros(request.batch_size, dtype=torch.int64),
                 "wo": wo,
             },
-            {"route_name": request.name, "request_index": len(producer.dispatcher.leases)},
+            {"route_name": request.name, "request_index": len(producer.session.leases)},
         )
         return result, generator, wo
 
@@ -74,4 +74,4 @@ def test_evaluator_batch_compacts_reference_horizon_rejections() -> None:
     assert batch.provenance["candidate_count"] == 7
     assert batch.provenance["rejected_count"] == 3
     assert batch.provenance["rejection_rounds"] == 3
-    assert all(lease.released for lease in producer.dispatcher.leases)
+    assert all(lease.released for lease in producer.session.leases)

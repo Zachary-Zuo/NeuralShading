@@ -14,10 +14,11 @@ from ncls.references.mdl import (
     MDL_SDK_BUILD,
     STB_COMMIT,
     STB_IMAGE_SHA256,
-    MdlSdkCompilerBridge,
+    create_mdl_program_provider,
 )
 from ncls.references.programs import get_reference_program_for_source
-from ncls.references.query import ReferenceQueryDispatcher, ScatteringQuery
+from ncls.references.backend import create_reference_backend
+from ncls.references.query import ScatteringQuery
 from mdl_native_protocol import (
     read_native_result_packet,
     write_native_query_packet,
@@ -85,7 +86,7 @@ def main() -> int:
     output.mkdir(parents=True)
 
     module_root = PROJECT_ROOT / "tests/fixtures/mdl"
-    bridge = MdlSdkCompilerBridge(module_root)
+    bridge = create_mdl_program_provider(module_root)
     wo, wi, position, uv = _queries()
     tint = np.asarray((0.17, 0.53, 0.81), dtype=np.float32)
     query_path = output / "query.bin"
@@ -115,7 +116,7 @@ def main() -> int:
     definition = get_reference_program_for_source(
         snapshot.family_id, snapshot.source_contract_version
     )
-    runtime = ReferenceQueryDispatcher(
+    runtime = create_reference_backend().open(
         definition, (snapshot,), query_capacity=len(wo), device="cuda:0"
     )
     try:

@@ -22,10 +22,11 @@ from ncls.references.mdl import (
     MDL_SDK_BUILD,
     STB_COMMIT,
     STB_IMAGE_SHA256,
-    MdlSdkCompilerBridge,
+    create_mdl_program_provider,
 )
 from ncls.references.programs import get_reference_program_for_source
-from ncls.references.query import ReferenceQueryDispatcher, ScatteringQuery
+from ncls.references.backend import create_reference_backend
+from ncls.references.query import ScatteringQuery
 
 from mdl_oracle.protocol import canonical_json
 
@@ -193,7 +194,7 @@ def _formal_result(
     definition = get_reference_program_for_source(
         snapshot.family_id, snapshot.source_contract_version
     )
-    dispatcher = ReferenceQueryDispatcher(
+    session = create_reference_backend().open(
         definition,
         (snapshot,),
         query_capacity=batch * len(lights),
@@ -204,7 +205,7 @@ def _formal_result(
         batch, -1, -1
     )
     try:
-        result = dispatcher.evaluate(
+        result = session.evaluate(
             ScatteringQuery(
                 torch.zeros(batch, dtype=torch.int64, device=device),
                 torch.as_tensor(wo, device=device),
@@ -228,10 +229,10 @@ def _formal_result(
             len(surfaces), len(views), len(lights)
         )
         result.lease.release()
-        dispatcher.end_iteration()
+        session.end_iteration()
         return response, pdf
     finally:
-        dispatcher.close()
+        session.close()
 
 
 def _run_oracle(request_path: Path, output_dir: Path) -> None:
@@ -271,7 +272,7 @@ def _asset_parity(asset_id: str, mode: str, output_root: Path, gate_path: Path) 
     locator = _source_locator(asset_id)
     family = create_source_family("mdl.program@1")
     snapshot = family.load_snapshot(locator)
-    artifact = MdlSdkCompilerBridge(Path(str(locator["module_root"]))).compile_snapshot(snapshot)
+    artifact = create_mdl_program_provider(Path(str(locator["module_root"]))).compile_snapshot(snapshot)
     asset_dir = output_root / asset_id
     asset_dir.mkdir(parents=True, exist_ok=True)
     request = _make_request(snapshot, locator, mode)

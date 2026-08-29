@@ -143,6 +143,15 @@ After implementation:
 
 具体实现与测试入口见 `../viewer/path-surface.md`。
 
+## Typed GPU Texture Shape Boundary
+
+typed payload从program跨到Falcor texture binder时，`shape`的spatial axes固定在前，channel只允许在最后：
+
+- scalar `texture2d`：`[height, width]`；RGBA `texture2d`：`[height, width, 4]`；
+- scalar `texture3d`：`[depth, height, width]`；RGBA `texture3d`：`[depth, height, width, 4]`。
+
+binder必须从前置spatial axes统一推导`width/height/depth`，不得用依赖rank的负索引猜测；上传前同时验证rank、payload element count与format bytes-per-texel。新增texture kind/dtype时，unit test至少覆盖scalar与带channel两种rank，真实GPU test还要包含非相等的`depth/height/width`，避免轴交换被立方体尺寸掩盖。
+
 ## Scattering Estimator Ownership Boundary
 
 当 source/neural backend 的散射状态跨到 renderer 时，“存在同名接口”不等于 renderer 已遵守合同。必须沿真实调用图确认 estimator 的所有组成量属于同一 owner：
@@ -152,6 +161,7 @@ backend.prepare → state.evaluate / state.sample / state.pdf → MIS / throughp
 ```
 
 - [ ] runtime descriptor 是否 fail closed 要求 `prepare/evaluate/sample/pdf`，而不是缺入口后由 renderer 补 generic proposal？
+- [ ] `evaluate().f`与renderer乘回的cosine是否属于同一个input shading frame？source内部若改变normal，是否把`|N_source·wi| / |N_input·wi|`保留在等价`f`中，而不是在source侧除以`N_source`、renderer侧再乘`N_input`？
 - [ ] continuous sample 的实际方向分布、reported PDF、`evaluate` 与 `weight = f·|n_s·wi|/pdf` 是否来自同一 backend？
 - [ ] 上游 API 自带 eval/sample/pdf 时，是否把 direction/event/PDF/weight 当作不可拆分的 native sample tuple 验证？极窄掠射方向若因已舍入 `wi` 重建 half-vector而出现独立 query 漂移，是否保留 native tuple，并分别验证 independent evaluate↔pdf，而不是用后者重建 sample？
 - [ ] direct-light MIS 与 BSDF-hit MIS 是否调用同一 state PDF，并在 multiple-sample NEE 下使用相同的 `n·p_light`？

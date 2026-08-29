@@ -40,7 +40,24 @@
     "textures": {"type": "array"},
     "compiler_identity": {
       "type": "object",
-      "required": ["mdl_sdk", "bridge_executable_sha256", "stb_commit", "stb_image_sha256", "codegen_options"]
+      "required": [
+        "mdl_sdk", "platform_id", "semantic_identity", "build_identity",
+        "backend_manifest_sha256", "sdk_archive_sha256",
+        "bridge_executable_sha256", "stb_commit", "stb_image_sha256", "codegen_options"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "mdl_sdk": {"const": "2025.0.0-387700.1252"},
+        "platform_id": {"enum": ["windows-x86_64@1", "linux-x86_64@1"]},
+        "semantic_identity": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "build_identity": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "backend_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "sdk_archive_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "bridge_executable_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "stb_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "stb_image_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "codegen_options": {"type": "object"}
+      }
     },
     "files_sha256": {
       "type": "object",

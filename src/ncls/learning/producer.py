@@ -19,7 +19,8 @@ from ncls.learning.source_adaptation import NativeFeaturePyramid
 from ncls.learning.source_adapters import create_method_source_adapter
 from ncls.learning.training.config import TrainingConfig
 from ncls.references.programs import get_reference_program_for_source
-from ncls.references.query import ReferenceQueryDispatcher, ScatteringQuery
+from ncls.references.backend import ReferenceBackendCapability, create_reference_backend
+from ncls.references.query import ReferenceBackendSession, ScatteringQuery
 
 
 def _uniform_hemisphere(
@@ -78,7 +79,7 @@ class OnlineTrainingProducer:
         definition: MethodDefinition,
         config: TrainingConfig,
         *,
-        dispatcher: ReferenceQueryDispatcher | None = None,
+        backend: ReferenceBackendCapability | None = None,
     ) -> None:
         self.device = torch.device(config.device)
         if self.device.type != "cuda" or not torch.cuda.is_available():
@@ -99,14 +100,15 @@ class OnlineTrainingProducer:
         capacity = max(
             route.batch_size * route.direction_count for route in config.routes
         )
-        self.dispatcher = dispatcher or ReferenceQueryDispatcher(
+        self.backend = backend or create_reference_backend()
+        self.session: ReferenceBackendSession = self.backend.open(
             reference,
             snapshots,
             query_capacity=capacity,
             device=self.device,
         )
-        if self.dispatcher.snapshots != snapshots:
-            raise ValueError("online producer dispatcher snapshots disagree with source locators")
+        if self.session.snapshots != snapshots:
+            raise ValueError("online producer backend session disagrees with source locators")
         self.snapshots = snapshots
         self.source_snapshot_ids = tuple(snapshot.snapshot_id for snapshot in snapshots)
         self.source_contracts = (
@@ -115,7 +117,8 @@ class OnlineTrainingProducer:
                 "source_contract_version": family.descriptor.source_contract_version,
             },
         )
-        self.reference_program_identity = self.dispatcher.reference_program_identity
+        self.reference_program_identity = self.session.reference_program_identity
+        self.reference_backend_identity = self.session.backend_identity
         self.adapter = create_method_source_adapter(
             definition.descriptor.method_key, snapshots, self.device
         )
@@ -126,6 +129,7 @@ class OnlineTrainingProducer:
                 "source": dict(config.source),
                 "source_snapshot_ids": list(self.source_snapshot_ids),
                 "reference_program_identity": self.reference_program_identity,
+                "reference_backend_identity": self.reference_backend_identity,
                 "adapter_identity": self.adapter.identity,
                 "online_query": dict(config.online_query),
                 "routes": [route.to_dict() for route in config.routes],
@@ -189,6 +193,7 @@ class OnlineTrainingProducer:
                 "global_step": request.global_step,
                 "query_stream_identity": self.query_stream_identity,
                 "reference_program_identity": self.reference_program_identity,
+                "reference_backend_identity": self.reference_backend_identity,
                 "source_adapter_identity": self.adapter.identity,
                 **provenance,
             },
@@ -268,7 +273,7 @@ class OnlineTrainingProducer:
                 device=self.device,
                 dtype=torch.int64,
             )
-            result = self.dispatcher.evaluate(
+            result = self.session.evaluate(
                 self._query(conditioning),
                 wi,
                 seeds,
@@ -351,12 +356,12 @@ class OnlineTrainingProducer:
         }
 
     def end_iteration(self) -> None:
-        self.dispatcher.end_iteration()
+        self.session.end_iteration()
 
     def close(self) -> None:
         if self._closed:
             return
-        self.dispatcher.close()
+        self.session.close()
         self._closed = True
 
 

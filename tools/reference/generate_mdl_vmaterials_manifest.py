@@ -17,7 +17,8 @@ from ncls.references.mdl import (
     MDL_SDK_BUILD,
     MdlCompiledArtifact,
     MdlModuleDiscovery,
-    MdlSdkCompilerBridge,
+    MdlProgramProvider,
+    create_mdl_program_provider,
 )
 from ncls.source_materials.mdl import module_path, snapshot_from_mdl_artifact
 from ncls.source_materials.mdl_catalog import MdlVmaterialsCatalog
@@ -100,7 +101,7 @@ def _relative_resource(module_root: Path, filename: str) -> str:
         raise ValueError(f"MDL resource escapes module root: {path}") from error
 
 
-def _load_artifact(bridge: MdlSdkCompilerBridge, output: Path, *, module: str, exact_export: str) -> MdlCompiledArtifact:
+def _load_artifact(bridge: MdlProgramProvider, output: Path, *, module: str, exact_export: str) -> MdlCompiledArtifact:
     artifact = MdlCompiledArtifact.load(output)
     if artifact.manifest.get("module") != module or artifact.manifest.get("material") != exact_export:
         raise ValueError(f"MDL preset artifact identity mismatch: {output}")
@@ -111,7 +112,7 @@ def _load_artifact(bridge: MdlSdkCompilerBridge, output: Path, *, module: str, e
     return artifact
 
 
-def _ensure_discovery(bridge: MdlSdkCompilerBridge, artifact_root: Path, spec: FamilySpec, *, refresh_artifacts: bool) -> MdlModuleDiscovery:
+def _ensure_discovery(bridge: MdlProgramProvider, artifact_root: Path, spec: FamilySpec, *, refresh_artifacts: bool) -> MdlModuleDiscovery:
     output = artifact_root / "discoveries" / spec.family_id
     bridge_digest = sha256_file(bridge.executable)
     if output.exists():
@@ -128,7 +129,7 @@ def _ensure_discovery(bridge: MdlSdkCompilerBridge, artifact_root: Path, spec: F
     return discovery
 
 
-def _ensure_artifact(bridge: MdlSdkCompilerBridge, artifact_root: Path, spec: FamilySpec, exact_export: str, *, refresh_artifacts: bool) -> MdlCompiledArtifact:
+def _ensure_artifact(bridge: MdlProgramProvider, artifact_root: Path, spec: FamilySpec, exact_export: str, *, refresh_artifacts: bool) -> MdlCompiledArtifact:
     output = artifact_root / "presets" / spec.family_id / _preset_id(exact_export)
     if output.exists():
         return _load_artifact(bridge, output, module=spec.module, exact_export=exact_export)
@@ -373,7 +374,7 @@ def main() -> int:
     for spec in FAMILIES:
         module_path(module_root, spec.module)
     artifact_root.mkdir(parents=True, exist_ok=True)
-    bridge = MdlSdkCompilerBridge(module_root)
+    bridge = create_mdl_program_provider(module_root)
     discoveries = {
         spec.family_id: _ensure_discovery(bridge, artifact_root, spec, refresh_artifacts=args.refresh_artifacts)
         for spec in FAMILIES

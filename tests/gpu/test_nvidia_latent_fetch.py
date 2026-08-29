@@ -7,7 +7,7 @@ import pytest
 
 falcor = pytest.importorskip("falcor")
 
-from ncls.references.falcor import create_falcor_device
+from ncls.references.backend import create_reference_backend
 
 KERNEL_ROOT = Path(__file__).resolve().with_name("kernels")
 
@@ -30,7 +30,7 @@ def _texture(device, offset: float):
 
 @pytest.mark.falcor
 def test_nvidia_runtime_fetch_uses_stochastic_adjacent_mip_and_wrap_bilinear() -> None:
-    device = create_falcor_device(falcor)
+    device = create_reference_backend()._create_device(falcor)  # noqa: SLF001
     compute = falcor.ComputePass(
         device,
         file=KERNEL_ROOT / "nvidia_latent_fetch.cs.slang",

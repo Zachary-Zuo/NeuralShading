@@ -7,14 +7,14 @@ import pytest
 
 falcor = pytest.importorskip("falcor")
 
-from ncls.references.falcor import create_falcor_device
+from ncls.references.backend import create_reference_backend
 
 KERNEL_ROOT = Path(__file__).resolve().with_name("kernels")
 
 
 @pytest.mark.falcor
 def test_environment_multiple_sample_mis_uses_both_sample_counts_and_delta_measure() -> None:
-    device = create_falcor_device(falcor)
+    device = create_reference_backend()._create_device(falcor)  # noqa: SLF001
     compute = falcor.ComputePass(
         device,
         file=KERNEL_ROOT / "viewer_path_environment.cs.slang",

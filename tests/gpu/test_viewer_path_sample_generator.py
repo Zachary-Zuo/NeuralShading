@@ -7,7 +7,7 @@ import pytest
 
 falcor = pytest.importorskip("falcor")
 
-from ncls.references.falcor import create_falcor_device
+from ncls.references.backend import create_reference_backend
 
 KERNEL_ROOT = Path(__file__).resolve().with_name("kernels")
 
@@ -33,7 +33,7 @@ def run_probe(device) -> np.ndarray:
 
 @pytest.mark.falcor
 def test_path_sample_generator_is_finite_bounded_deterministic_and_per_path() -> None:
-    device = create_falcor_device(falcor)
+    device = create_reference_backend()._create_device(falcor)  # noqa: SLF001
     first = run_probe(device)
     second = run_probe(device)
     device.end_frame()

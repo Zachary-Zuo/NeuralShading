@@ -15,7 +15,7 @@ import torch
 from ncls.core.identity import sha256_json
 from ncls.core.scattering import MaterialPayload, ReferenceProgramDefinition, RuntimePayload
 from ncls.core.source import SourceSnapshot
-from ncls.references.falcor import create_falcor_device, import_falcor
+from ncls.references.backend import ReferenceBackendDescriptor
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -71,7 +71,7 @@ class ScatteringQuery:
 
 @dataclass
 class ReferenceQueryLease:
-    owner: "ReferenceQueryDispatcher"
+    owner: "ReferenceBackendSession"
     slot_index: int
     released: bool = False
 
@@ -118,7 +118,18 @@ class _QuerySlot:
     tensors: dict[str, torch.Tensor]
 
 
-class ReferenceQueryDispatcher:
+def _texture_extent(kind: str, shape: Sequence[int]) -> dict[str, int]:
+    dimensions = tuple(int(value) for value in shape)
+    if kind == "texture2d" and len(dimensions) in {2, 3}:
+        height, width = dimensions[:2]
+        return {"width": width, "height": height}
+    if kind == "texture3d" and len(dimensions) in {3, 4}:
+        depth, height, width = dimensions[:3]
+        return {"width": width, "height": height, "depth": depth}
+    raise ValueError(f"{kind} payload has invalid shape {dimensions}")
+
+
+class ReferenceBackendSession:
     """通过一个 family-agnostic kernel 调用 canonical scattering backend。"""
 
     def __init__(
@@ -126,18 +137,23 @@ class ReferenceQueryDispatcher:
         definition: ReferenceProgramDefinition,
         snapshots: Sequence[SourceSnapshot],
         *,
+        backend_descriptor: ReferenceBackendDescriptor,
+        falcor: Any,
+        device_handle: Any,
         query_capacity: int,
         device: torch.device | str = "cuda:0",
         slot_count: int = 2,
     ) -> None:
         values = tuple(snapshots)
         if not values or query_capacity < 1 or slot_count < 2:
-            raise ValueError("reference dispatcher requires snapshots, capacity and two slots")
+            raise ValueError("reference backend session requires snapshots, capacity and two slots")
         for snapshot in values:
             definition.validate_snapshot(snapshot)
         requested_device = torch.device(device)
         if requested_device.type != "cuda" or not torch.cuda.is_available():
-            raise RuntimeError("ReferenceQueryDispatcher requires a CUDA device")
+            raise RuntimeError("ReferenceBackendSession requires a CUDA device")
+        self.backend_descriptor = backend_descriptor
+        self.backend_identity = backend_descriptor.identity
         self.definition = definition
         self.snapshots = values
         self.query_capacity = int(query_capacity)
@@ -158,10 +174,11 @@ class ReferenceQueryDispatcher:
             {
                 "descriptor": definition.descriptor.to_dict(),
                 "source_snapshot_ids": [value.snapshot_id for value in values],
+                "reference_backend_identity": self.backend_identity,
             }
         )
-        self._falcor = import_falcor()
-        self._device = create_falcor_device(self._falcor)
+        self._falcor = falcor
+        self._device = device_handle
         self._passes = {
             name: self._create_pass(entry)
             for name, entry in (
@@ -380,14 +397,11 @@ class ReferenceQueryDispatcher:
             else self._falcor.ResourceFormat.RGBA32Float
         )
         kwargs = {
-            "width": int(values.shape[-2] if kind == "texture3d" else values.shape[1]),
-            "height": int(values.shape[-3] if kind == "texture3d" else values.shape[0]),
+            **_texture_extent(kind, values.shape),
             "format": resource_format,
             "mip_levels": 1,
             "bind_flags": self._falcor.ResourceBindFlags.ShaderResource,
         }
-        if kind == "texture3d":
-            kwargs["depth"] = int(values.shape[0])
         texture = self._device.create_texture(**kwargs)
         texture.from_numpy(np.ascontiguousarray(values))
         return texture
@@ -431,7 +445,7 @@ class ReferenceQueryDispatcher:
 
     def _acquire(self) -> tuple[int, ReferenceQueryLease]:
         if self._closed:
-            raise RuntimeError("reference dispatcher is closed")
+            raise RuntimeError("reference backend session is closed")
         for index in range(len(self._slots)):
             if index not in self._active:
                 lease = ReferenceQueryLease(self, index)
@@ -466,7 +480,7 @@ class ReferenceQueryDispatcher:
             direction_count = 1
         count = query.batch_size * direction_count
         if count > self.query_capacity:
-            raise ValueError("reference query exceeds dispatcher capacity")
+            raise ValueError("reference query exceeds backend session capacity")
 
         def repeat(value: torch.Tensor) -> torch.Tensor:
             return value.repeat_interleave(direction_count, dim=0)
@@ -612,7 +626,7 @@ class ReferenceQueryDispatcher:
 
     def close(self) -> None:
         if self._active:
-            raise RuntimeError("cannot close reference dispatcher with active query leases")
+            raise RuntimeError("cannot close reference backend session with active query leases")
         if self._closed:
             return
         self._slots = ()
@@ -626,7 +640,7 @@ class ReferenceQueryDispatcher:
 __all__ = [
     "ReferenceEvaluateResult",
     "ReferencePdfResult",
-    "ReferenceQueryDispatcher",
+    "ReferenceBackendSession",
     "ReferenceQueryLease",
     "ReferenceSampleResult",
     "ScatteringQuery",
