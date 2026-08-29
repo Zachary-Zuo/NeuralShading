@@ -20,6 +20,15 @@ from .materialx import (
     MaterialXSourceMaterial,
 )
 from .mdl_catalog import MdlVmaterialsCatalog
+from .mdl_metal import (
+    MDL_METAL_EXPECTED_COUNTS,
+    MDL_METAL_REGISTRY_SCHEMA,
+    MdlMetalExport,
+    MdlMetalRegistry,
+    MdlMetalStatePool,
+    MdlMetalTypedStateRecipe,
+    PARAMETER_RESPONSIBILITIES,
+)
 
 __all__ = [
     "ConstantBinding",
@@ -35,6 +44,13 @@ __all__ = [
     "MaterialXReference",
     "MaterialXSourceMaterial",
     "MdlVmaterialsCatalog",
+    "MDL_METAL_EXPECTED_COUNTS",
+    "MDL_METAL_REGISTRY_SCHEMA",
+    "MdlMetalExport",
+    "MdlMetalRegistry",
+    "MdlMetalStatePool",
+    "MdlMetalTypedStateRecipe",
+    "PARAMETER_RESPONSIBILITIES",
     "OpenPBRMaterial",
     "OpenPBRReference",
     "resolve_openpbr_inputs",

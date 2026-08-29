@@ -8,6 +8,10 @@
 #define NCLS_REFERENCE_MAX_EVALUATION_SAMPLES 256
 #endif
 
+#ifndef NCLS_REFERENCE_MAX_FOOTPRINT_SAMPLES
+#define NCLS_REFERENCE_MAX_FOOTPRINT_SAMPLES 64
+#endif
+
 struct NclsReferenceQuerySampleGenerator : ISampleGenerator
 {
     uint state;
@@ -36,8 +40,28 @@ RWStructuredBuffer<float4> gNclsQuerySampleDirectionPdf;
 RWStructuredBuffer<float4> gNclsQuerySampleWeightEta;
 uniform uint gNclsQueryCount;
 uniform uint gNclsEvaluationSamples;
+uniform uint gNclsFootprintSamples;
+uniform uint gNclsSourceExecutionMode;
 
-NclsScatteringContext nclsReferenceQueryContext(uint index)
+float nclsRadicalInverseBase2(uint bits)
+{
+    bits = (bits << 16u) | (bits >> 16u);
+    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+    return float(bits) * 2.3283064365386963e-10f;
+}
+
+float2 nclsFootprintOffset(uint sampleIndex, uint sampleCount)
+{
+    if (sampleCount == 1u) return float2(0.0f);
+    return float2(
+        (float(sampleIndex) + 0.5f) / float(sampleCount) - 0.5f,
+        nclsRadicalInverseBase2(sampleIndex) - 0.5f);
+}
+
+NclsScatteringContext nclsReferenceQueryContext(uint index, float2 footprintOffset)
 {
     const float3 normal = normalize(gNclsQueryShadingNormal[index].xyz);
     const float3 tangent = normalize(gNclsQueryTangent[index].xyz);
@@ -51,7 +75,9 @@ NclsScatteringContext nclsReferenceQueryContext(uint index)
     surface.position = gNclsQueryPosition[index].xyz;
     surface.geometricNormal = normalize(gNclsQueryGeometricNormal[index].xyz);
     surface.shadingFrame = frame;
-    surface.uv = gNclsQueryUv[index].xy;
+    surface.uv = gNclsQueryUv[index].xy
+        + uvDerivatives.xy * footprintOffset.x
+        + uvDerivatives.zw * footprintOffset.y;
     surface.uvDx = uvDerivatives.xy;
     surface.uvDy = uvDerivatives.zw;
     surface.materialInstanceId = meta.x;
@@ -74,43 +100,88 @@ void evaluateReference(uint3 dispatchThreadID : SV_DispatchThreadID)
     if (index >= gNclsQueryCount) return;
     const uint4 meta = gNclsQueryMeta[index];
     const NclsPackageBackend backend = nclsCreatePackageBackend();
-    NclsPackageState state = backend.prepare(
-        nclsReferenceQueryContext(index), nclsLoadPackageMaterial(meta.x));
     float3 sum = float3(0.0f);
-    NclsScatteringPdf firstPdf = {};
+    NclsScatteringPdf sumPdf = {};
     uint firstEvent = 0u;
     uint valid = 1u;
     [loop]
-    for (uint sampleIndex = 0u; sampleIndex < NCLS_REFERENCE_MAX_EVALUATION_SAMPLES; ++sampleIndex)
+    for (uint footprintIndex = 0u; footprintIndex < NCLS_REFERENCE_MAX_FOOTPRINT_SAMPLES; ++footprintIndex)
     {
-        if (sampleIndex >= gNclsEvaluationSamples) break;
-        NclsReferenceQuerySampleGenerator sampleGenerator = {
-            meta.y ^ (sampleIndex * 0x9e3779b9u)};
-        const NclsScatteringEval value = state.evaluate(
-            normalize(gNclsQueryWi[index].xyz), sampleGenerator);
-        if (value.valid == 0u || !all(isfinite(value.f)) || any(value.f < 0.0f))
+        if (footprintIndex >= gNclsFootprintSamples) break;
+        const float2 offset = nclsFootprintOffset(footprintIndex, gNclsFootprintSamples);
+        NclsPackageState state = backend.prepare(
+            nclsReferenceQueryContext(index, offset), nclsLoadPackageMaterial(meta.x));
+        float3 stochasticSum = float3(0.0f);
+        NclsScatteringPdf footprintPdf = {};
+        uint footprintEvent = 0u;
+        [loop]
+        for (uint sampleIndex = 0u; sampleIndex < NCLS_REFERENCE_MAX_EVALUATION_SAMPLES; ++sampleIndex)
+        {
+            if (sampleIndex >= gNclsEvaluationSamples) break;
+            if (gNclsSourceExecutionMode == 0u && sampleIndex > 0u)
+            {
+                state = backend.prepare(
+                    nclsReferenceQueryContext(index, offset),
+                    nclsLoadPackageMaterial(meta.x));
+            }
+            NclsReferenceQuerySampleGenerator sampleGenerator = {
+                meta.y ^ (footprintIndex * 0x85ebca6bu) ^ (sampleIndex * 0x9e3779b9u)};
+            const NclsScatteringEval value = state.evaluate(
+                normalize(gNclsQueryWi[index].xyz), sampleGenerator);
+            if (
+                value.valid == 0u
+                || !all(isfinite(value.f))
+                || any(value.f < 0.0f)
+                || !isfinite(value.pdf.forward)
+                || !isfinite(value.pdf.reverse)
+                || value.pdf.forward < 0.0f
+                || value.pdf.reverse < 0.0f)
+            {
+                valid = 0u;
+                break;
+            }
+            if (sampleIndex == 0u)
+            {
+                footprintPdf = value.pdf;
+                footprintEvent = value.eventFlags;
+            }
+            else if (
+                value.eventFlags != footprintEvent
+                || value.pdf.forward != footprintPdf.forward
+                || value.pdf.reverse != footprintPdf.reverse)
+            {
+                valid = 0u;
+                break;
+            }
+            stochasticSum += value.f;
+        }
+        if (valid == 0u) break;
+        if (footprintIndex == 0u)
+        {
+            firstEvent = footprintEvent;
+        }
+        else if (footprintEvent != firstEvent)
         {
             valid = 0u;
             break;
         }
-        if (sampleIndex == 0u)
-        {
-            firstPdf = value.pdf;
-            firstEvent = value.eventFlags;
-        }
-        else if (
-            value.eventFlags != firstEvent
-            || value.pdf.forward != firstPdf.forward
-            || value.pdf.reverse != firstPdf.reverse)
-        {
-            valid = 0u;
-            break;
-        }
-        sum += value.f;
+        sum += stochasticSum / float(gNclsEvaluationSamples);
+        sumPdf.forward += footprintPdf.forward;
+        sumPdf.reverse += footprintPdf.reverse;
     }
-    const float3 mean = valid != 0u ? sum / float(gNclsEvaluationSamples) : float3(0.0f);
+    const float invalidValue = asfloat(0x7fc00000u);
+    const float3 mean = valid != 0u
+        ? sum / float(gNclsFootprintSamples)
+        : float3(invalidValue);
+    const float inverseFootprintCount = 1.0f / float(gNclsFootprintSamples);
     gNclsQueryFValid[index] = float4(mean, float(valid));
-    gNclsQueryPdf[index] = float4(firstPdf.forward, firstPdf.reverse, 0.0f, 0.0f);
+    gNclsQueryPdf[index] = valid != 0u
+        ? float4(
+            sumPdf.forward * inverseFootprintCount,
+            sumPdf.reverse * inverseFootprintCount,
+            0.0f,
+            0.0f)
+        : float4(invalidValue);
     gNclsQueryEventValid[index] = float4(float(firstEvent), float(valid), 0.0f, 0.0f);
 }
 
@@ -122,7 +193,7 @@ void sampleReference(uint3 dispatchThreadID : SV_DispatchThreadID)
     const uint4 meta = gNclsQueryMeta[index];
     const NclsPackageBackend backend = nclsCreatePackageBackend();
     NclsPackageState state = backend.prepare(
-        nclsReferenceQueryContext(index), nclsLoadPackageMaterial(meta.x));
+        nclsReferenceQueryContext(index, float2(0.0f)), nclsLoadPackageMaterial(meta.x));
     NclsReferenceQuerySampleGenerator sampleGenerator = {meta.y};
     NclsScatteringSample value = {};
     const bool sampled = state.sample(value, sampleGenerator);
@@ -141,7 +212,7 @@ void pdfReference(uint3 dispatchThreadID : SV_DispatchThreadID)
     const uint4 meta = gNclsQueryMeta[index];
     const NclsPackageBackend backend = nclsCreatePackageBackend();
     NclsPackageState state = backend.prepare(
-        nclsReferenceQueryContext(index), nclsLoadPackageMaterial(meta.x));
+        nclsReferenceQueryContext(index, float2(0.0f)), nclsLoadPackageMaterial(meta.x));
     const NclsScatteringPdf value = state.pdf(normalize(gNclsQueryWi[index].xyz));
     const uint valid = isfinite(value.forward) && isfinite(value.reverse)
         && value.forward >= 0.0f && value.reverse >= 0.0f ? 1u : 0u;

@@ -4,7 +4,11 @@ from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence
 
 from ncls.core.identity import require_sha256, sha256_bytes, sha256_json
-from ncls.core.scattering import MaterialPayload, ReferenceProgramDefinition
+from ncls.core.scattering import (
+    MaterialPayload,
+    ReferenceProgramDefinition,
+    resource_payload_sha256,
+)
 from ncls.core.source import SourceSnapshot
 
 
@@ -45,7 +49,7 @@ class ReferenceMaterialRecord:
                 },
                 "resources": {
                     name: {
-                        "sha256": sha256_bytes(payload),
+                        "sha256": resource_payload_sha256(payload),
                         "descriptor": dict(self.material.resource_descriptors[name]),
                     }
                     for name, payload in self.material.resources.items()

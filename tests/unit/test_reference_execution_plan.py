@@ -7,10 +7,13 @@ from ncls.core.identity import sha256_bytes
 from ncls.core.material import DiffuseInterface, LayerStackIR
 from ncls.core.scattering import (
     BackendCapability,
+    FileResourcePayload,
     MaterialPayload,
     ReferenceProgramDefinition,
     ReferenceProgramDescriptor,
     RuntimePayload,
+    read_resource_payload,
+    resource_payload_sha256,
 )
 from ncls.core.source import SourceSnapshot
 from ncls.references import query as query_module
@@ -145,7 +148,7 @@ def test_multi_group_session_ends_one_shared_frame_and_closes_atomically(monkeyp
         query_capacity=1,
         device="cpu",
     )
-    groups = tuple(session._sessions.values())
+    groups = tuple(session._session(group.group_id) for group in plan.groups)
 
     session.end_iteration()
     assert device.end_frame_count == 1
@@ -157,3 +160,58 @@ def test_multi_group_session_ends_one_shared_frame_and_closes_atomically(monkeyp
     groups[1].active_lease_count = 0
     session.close()
     assert all(group.closed for group in groups)
+
+
+def test_multi_group_session_materializes_lazily_and_evicts_only_idle_lru(monkeypatch) -> None:
+    definition = _SplitGroupDefinition()
+    snapshots = tuple(
+        SourceSnapshot(
+            "unit.family@1",
+            1,
+            "unit.schema@1",
+            str(index) * 64,
+            payload,
+        )
+        for index, payload in ((1, b"first"), (2, b"second"))
+    )
+    plan = compile_reference_execution_plan(
+        ((definition, snapshot) for snapshot in snapshots),
+        query_recipe={"recipe_id": "unit-lazy-group@1"},
+    )
+    monkeypatch.setattr(query_module, "_ReferenceExecutionGroupSession", _FakeGroupSession)
+    session = ReferenceBackendSession(
+        plan,
+        backend_descriptor=SimpleNamespace(identity="b" * 64),
+        falcor=object(),
+        device_handle=_FakeDevice(),
+        query_capacity=1,
+        device="cpu",
+        max_resident_groups=1,
+    )
+    assert session.resident_group_ids == ()
+    first = session._session(plan.groups[0].group_id)
+    assert session.resident_group_ids == (plan.groups[0].group_id,)
+    first.active_lease_count = 1
+    with pytest.raises(RuntimeError, match="active leases"):
+        session._session(plan.groups[1].group_id)
+    first.active_lease_count = 0
+    second = session._session(plan.groups[1].group_id)
+    assert first.closed
+    assert not second.closed
+    assert session.resident_group_ids == (plan.groups[1].group_id,)
+    session.close()
+
+
+def test_file_resource_payload_is_content_addressed_lazy_and_detects_tamper(tmp_path) -> None:
+    first_path = tmp_path / "first.bin"
+    second_path = tmp_path / "second.bin"
+    first_path.write_bytes(b"large-resource")
+    second_path.write_bytes(b"large-resource")
+    first = FileResourcePayload.from_path(first_path)
+    second = FileResourcePayload.from_path(second_path)
+    assert first == second
+    assert resource_payload_sha256(first) == resource_payload_sha256(b"large-resource")
+    assert read_resource_payload(first) == b"large-resource"
+    first_path.write_bytes(b"changed-resourc")
+    with pytest.raises(ValueError, match="changed after plan compilation"):
+        read_resource_payload(first)

@@ -18,6 +18,7 @@ from ncls.learning.batches import (
 from ncls.learning.method import MethodDefinition
 from ncls.learning.source_adaptation import NativeAssetCollection
 from ncls.learning.source_adapters import create_method_source_adapter
+from ncls.learning.source_states import expand_source_states
 from ncls.learning.training.config import TrainingConfig
 from ncls.references.programs import get_reference_program_for_source
 from ncls.references.backend import ReferenceBackendCapability, create_reference_backend
@@ -90,10 +91,16 @@ class OnlineTrainingProducer:
         if self.device.type != "cuda" or not torch.cuda.is_available():
             raise RuntimeError("online training producer requires a CUDA device")
         family = create_source_family(str(config.source["family_id"]))
-        snapshots = tuple(
+        base_snapshots = tuple(
             family.load_snapshot(material["locator"])
             for material in config.source["materials"]
         )
+        expanded_states = expand_source_states(
+            family,
+            base_snapshots,
+            config.online_query.get("typed_state_recipe"),
+        )
+        snapshots = expanded_states.snapshots
         for snapshot in snapshots:
             family.validate_snapshot(snapshot)
             definition.descriptor.adaptation_contract(snapshot)
@@ -102,10 +109,15 @@ class OnlineTrainingProducer:
             family.descriptor.source_contract_version,
             source_descriptor=family.descriptor,
         )
+        plan_recipe = {
+            **config.online_query,
+            "typed_state_pool_identity": expanded_states.identity,
+            "typed_state_recipe_schema": expanded_states.recipe_schema,
+        }
         self.plan = compile_single_program_plan(
             reference,
             snapshots,
-            query_recipe=config.online_query,
+            query_recipe=plan_recipe,
         )
         capacity = max(
             (
@@ -124,6 +136,9 @@ class OnlineTrainingProducer:
         if self.session.snapshots != snapshots:
             raise ValueError("online producer backend session disagrees with source locators")
         self.snapshots = snapshots
+        self.base_source_snapshot_ids = expanded_states.base_snapshot_ids
+        self.typed_state_pool_identity = expanded_states.identity
+        self.typed_state_recipe_schema = expanded_states.recipe_schema
         self.source_snapshot_ids = tuple(snapshot.snapshot_id for snapshot in snapshots)
         self.source_contracts = (
             {
@@ -147,7 +162,7 @@ class OnlineTrainingProducer:
                 "reference_execution_plan_identity": self.reference_execution_plan_identity,
                 "reference_backend_identity": self.reference_backend_identity,
                 "adapter_identity": self.adapter.identity,
-                "online_query": dict(config.online_query),
+                "online_query": plan_recipe,
                 "routes": [route.to_dict() for route in config.all_routes],
                 "seed": config.seed,
             }
@@ -343,6 +358,18 @@ class OnlineTrainingProducer:
                 self.config.online_query.get("evaluation_samples", 1),
             )
         )
+        footprint_samples = int(
+            request.options.get(
+                "footprint_samples",
+                self.config.online_query.get("footprint_samples", 1),
+            )
+        )
+        source_execution_mode = str(
+            request.options.get(
+                "source_execution_mode",
+                self.config.online_query.get("source_execution_mode", "authoritative@1"),
+            )
+        )
         while accepted_count < request.batch_size:
             if rejection_rounds >= maximum_rounds:
                 raise RuntimeError(
@@ -380,6 +407,8 @@ class OnlineTrainingProducer:
                 wi,
                 seeds,
                 evaluation_samples=evaluation_samples,
+                footprint_samples=footprint_samples,
+                source_execution_mode=source_execution_mode,
             )
             try:
                 selected = torch.nonzero(
@@ -409,6 +438,9 @@ class OnlineTrainingProducer:
             "candidate_count": candidate_count,
             "rejected_count": candidate_count - request.batch_size,
             "rejection_rounds": rejection_rounds,
+            "evaluation_samples": evaluation_samples,
+            "footprint_samples": footprint_samples,
+            "source_execution_mode": source_execution_mode,
         }
         compacted = TrainingConditioning(
             first_conditioning.source_family_id,
@@ -432,6 +464,7 @@ class OnlineTrainingProducer:
     def state_dict(self) -> Mapping[str, Any]:
         return {
             "query_stream_identity": self.query_stream_identity,
+            "typed_state_pool_identity": self.typed_state_pool_identity,
             "generator_states": {
                 name: generator.get_state()
                 for name, generator in self._generators.items()
@@ -444,6 +477,7 @@ class OnlineTrainingProducer:
     def load_state_dict(self, state: Mapping[str, Any]) -> None:
         if set(state) != {
             "query_stream_identity",
+            "typed_state_pool_identity",
             "generator_states",
             "request_count",
             "group_cursor",
@@ -452,6 +486,8 @@ class OnlineTrainingProducer:
             raise ValueError("online query stream state fields are invalid")
         if state["query_stream_identity"] != self.query_stream_identity:
             raise ValueError("online query stream state identity mismatch")
+        if state["typed_state_pool_identity"] != self.typed_state_pool_identity:
+            raise ValueError("online typed-state pool identity mismatch")
         generators: dict[str, torch.Generator] = {}
         for name, generator_state in dict(state["generator_states"]).items():
             if not isinstance(generator_state, torch.Tensor):

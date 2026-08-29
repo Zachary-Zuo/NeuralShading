@@ -18,6 +18,23 @@ mdl.program@1 SourceSnapshot
 
 锁定的 falcor2 + 同版 MDL SDK 只用于进程外 parity。它不得被 formal provider、collector、live batch、training runner 或产品 CLI 当作 fallback；oracle output 只进入 `artifacts/reference-parity/mdl/`。两条验证实现共享 MDL SDK closure 数学，所以 falcor2 parity 主要检查 shading state、方向、argument block、RO data、2D/3D 资源和 filtering 接线；解析 fixtures 负责提供不共享的数学不变量。
 
+## Metal opaque registry
+
+`metal-opaque-v1.json` 是 Metal 系统的独立 source registry，不并入下述通用 neural cohort catalog。它由同一个锁定 MDL SDK inspection 生成并 fail closed 校验：覆盖 837 个 authored exports，其中 692 个 opaque exports进入训练范围，145 个带 `geometry.cutout_opacity` 的 exports只登记精确 locator 与拒绝原因；去重表包含 178 个 opaque graphs、52 个 texture sets和64种 authored typed schemas。
+
+每个 opaque leaf保留 exact overload locator、typed默认值与argument offset、六组参数责任、metal/finish/recipe兼容关系，以及最多9个texture slots。纹理 slot记录source hash、原始pixel type、有效gamma、channel role、normal/mip/filter规则；MDL SDK提供的BSDF multiple-scattering table作为provider-owned静态资源显式登记，不伪装成authored texture。运行时通过`ReferenceExecutionPlan@1`按generated module与资源绑定分组，同group只聚合argument/RO states；大资源用内容寻址文件payload留在provider cache，直到对应lazy group首次执行才读取。
+
+```powershell
+# 日常检查只依赖tracked registry与本地原始source closure。
+.\scripts\build_mdl_metal_registry.ps1
+
+# 刷新会先用锁定SDK重新执行module discovery与全部837个class inspections；ignored cache可断点复用。
+.\scripts\build_mdl_metal_registry.ps1 -Refresh `
+  -InspectionRoot artifacts/mdl-metal-inspection-v1
+```
+
+`tools/reference/diagnose_mdl_metal.py`把full-registry storage/compile inventory和可选的小子集Falcor query计时写入`artifacts/`。账本只报告observed值，不设置当前阶段的效率hard gate；authoritative footprint与`prepare-hoisted-pdf-reuse@1`对照拥有不同的operation accounting，并共享完全相同的source locator、query和输出合同。
+
 ## vMaterials 2.4.0 首批 neural cohort
 
 接下来的 neural 适配以 11 个 module、172 个 authored exports 为首批 cohort：

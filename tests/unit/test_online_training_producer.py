@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from ncls.learning.batches import TrainingConditioning, TrainingRouteRequest
@@ -26,8 +27,17 @@ class _RejectingSession:
         )
         self.leases: list[_Lease] = []
 
-    def evaluate(self, query, wi, seeds, *, evaluation_samples):
-        del seeds, evaluation_samples
+    def evaluate(
+        self,
+        query,
+        wi,
+        seeds,
+        *,
+        evaluation_samples,
+        footprint_samples,
+        source_execution_mode,
+    ):
+        del seeds, evaluation_samples, footprint_samples, source_execution_mode
         mask = self.masks[len(self.leases)]
         assert len(mask) == query.batch_size
         lease = _Lease()
@@ -80,3 +90,31 @@ def test_evaluator_batch_compacts_reference_horizon_rejections() -> None:
     assert batch.provenance["rejected_count"] == 3
     assert batch.provenance["rejection_rounds"] == 3
     assert all(lease.released for lease in producer.session.leases)
+
+
+def test_online_query_resume_rejects_typed_state_pool_drift_before_restoring_cursors() -> None:
+    producer = OnlineTrainingProducer.__new__(OnlineTrainingProducer)
+    producer.device = torch.device("cpu")
+    producer.query_stream_identity = "a" * 64
+    producer.typed_state_pool_identity = "b" * 64
+    producer._generators = {}
+    producer._request_count = {"evaluator": 3}
+    producer._group_cursor = {"evaluator": 2}
+    producer._asset_tile_cursor = {"asset": 7}
+    state = producer.state_dict()
+    changed = {**state, "typed_state_pool_identity": "c" * 64}
+    with pytest.raises(ValueError, match="typed-state pool identity mismatch"):
+        producer.load_state_dict(changed)
+    assert producer._request_count == {"evaluator": 3}
+    restored = OnlineTrainingProducer.__new__(OnlineTrainingProducer)
+    restored.device = torch.device("cpu")
+    restored.query_stream_identity = producer.query_stream_identity
+    restored.typed_state_pool_identity = producer.typed_state_pool_identity
+    restored._generators = {}
+    restored._request_count = {}
+    restored._group_cursor = {}
+    restored._asset_tile_cursor = {}
+    restored.load_state_dict(state)
+    assert restored._request_count == producer._request_count
+    assert restored._group_cursor == producer._group_cursor
+    assert restored._asset_tile_cursor == producer._asset_tile_cursor

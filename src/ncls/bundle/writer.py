@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ncls.core.identity import safe_relative_uri, sha256_bytes, sha256_json, write_json_atomic
-from ncls.core.scattering import MaterialPayload, RuntimePayload
+from ncls.core.scattering import MaterialPayload, RuntimePayload, read_resource_payload
 from ncls.core.source import SourceSnapshot
 
 from .manifest import FORMAT_NAME, FORMAT_VERSION, ScatteringPackageManifest
@@ -102,9 +102,10 @@ def write_scattering_package(
     for name, payload in sorted(asset_payload.resources.items()):
         safe_relative_uri(name)
         logical, uri = f"asset/resource/{name}", f"assets/resources/{name}"
-        files[logical], contents[uri] = uri, payload
+        materialized = read_resource_payload(payload)
+        files[logical], contents[uri] = uri, materialized
         descriptor = asset_payload.resource_descriptors[name]
-        validate_typed_resource(payload, descriptor)
+        validate_typed_resource(materialized, descriptor)
         asset_resources[logical] = _typed_descriptor(descriptor)
     documents = (
         ("provenance/source", "provenance/source.json", source.to_identity_dict()),

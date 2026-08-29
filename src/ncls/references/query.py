@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from collections import OrderedDict
 import io
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ import pyexr
 import torch
 
 from ncls.core.identity import sha256_json
+from ncls.core.scattering import read_resource_payload
 from ncls.references.backend import ReferenceBackendDescriptor
 from ncls.references.plan import ReferenceExecutionGroup, ReferenceExecutionPlan
 
@@ -180,6 +182,51 @@ def _create_texture_payload(
         values = np.ascontiguousarray(values)
     else:
         raise ValueError(f"unsupported texture payload dtype {dtype!r}")
+    if descriptor.get("source_layout") == "mdl-decoded-texture@1":
+        if values.ndim != 3 or values.shape[2] not in {1, 2, 3, 4}:
+            raise ValueError("MDL decoded texture source has an invalid channel layout")
+        origin = descriptor.get("data_origin")
+        if origin == "lower_left":
+            values = values[::-1].copy()
+        elif origin != "top_left":
+            raise ValueError("MDL decoded texture source has an invalid row origin")
+        if values.shape[2] == 1:
+            values = values[..., 0]
+        elif values.shape[2] < 4:
+            one = (
+                np.iinfo(values.dtype).max
+                if np.issubdtype(values.dtype, np.integer)
+                else 1.0
+            )
+            expanded = np.zeros((*values.shape[:2], 4), dtype=values.dtype)
+            expanded[..., : values.shape[2]] = values
+            expanded[..., 3] = one
+            values = expanded
+        gamma = str(descriptor.get("gamma", "linear"))
+        scalar_source = values.ndim == 2
+        hardware_srgb = (
+            gamma == "srgb" and values.dtype == np.uint8 and not scalar_source
+        )
+        if gamma == "srgb" and not hardware_srgb:
+            normalized = values.astype(np.float32)
+            if np.issubdtype(values.dtype, np.integer):
+                normalized /= np.float32(np.iinfo(values.dtype).max)
+            if scalar_source:
+                normalized = np.where(
+                    normalized <= np.float32(0.04045),
+                    normalized / np.float32(12.92),
+                    ((normalized + np.float32(0.055)) / np.float32(1.055))
+                    ** np.float32(2.4),
+                )
+            else:
+                color = normalized[..., :3]
+                normalized[..., :3] = np.where(
+                    color <= np.float32(0.04045),
+                    color / np.float32(12.92),
+                    ((color + np.float32(0.055)) / np.float32(1.055))
+                    ** np.float32(2.4),
+                )
+            values = normalized.astype(np.float32, copy=False)
     scalar = values.ndim == (3 if kind == "texture3d" else 2)
     resource_format = (
         falcor.ResourceFormat.R8Unorm
@@ -353,7 +400,7 @@ class _ReferenceExecutionGroupSession:
                 raise ValueError("execution group contains conflicting resource bindings")
             self._bind_payload_data(
                 result,
-                {name: first_payload},
+                {name: read_resource_payload(first_payload)},
                 {name: first_descriptor},
                 aggregate=False,
             )
@@ -603,9 +650,19 @@ class _ReferenceExecutionGroupSession:
         seeds: torch.Tensor,
         *,
         evaluation_samples: int = 1,
+        footprint_samples: int = 1,
+        source_execution_mode: str = "authoritative@1",
     ) -> tuple[_QuerySlot, ReferenceQueryLease, int, int]:
         if not 1 <= evaluation_samples <= 256:
             raise ValueError("reference evaluation_samples must lie in [1,256]")
+        if not 1 <= footprint_samples <= 64:
+            raise ValueError("reference footprint_samples must lie in [1,64]")
+        execution_modes = {
+            "authoritative@1": 0,
+            "prepare-hoisted-pdf-reuse@1": 1,
+        }
+        if source_execution_mode not in execution_modes:
+            raise ValueError("reference source_execution_mode is unknown")
         rows = self._rows(query, wi, seeds)
         direction_count = 1 if wi is None else int(wi.shape[1])
         count = query.batch_size * direction_count
@@ -622,6 +679,8 @@ class _ReferenceExecutionGroupSession:
                 compute.globals[name] = value
             compute.globals.gNclsQueryCount = count
             compute.globals.gNclsEvaluationSamples = evaluation_samples
+            compute.globals.gNclsFootprintSamples = footprint_samples
+            compute.globals.gNclsSourceExecutionMode = execution_modes[source_execution_mode]
             compute.execute(threads_x=count)
             self._device.render_context.wait_for_falcor()
         except BaseException:
@@ -636,9 +695,17 @@ class _ReferenceExecutionGroupSession:
         seeds: torch.Tensor,
         *,
         evaluation_samples: int = 1,
+        footprint_samples: int = 1,
+        source_execution_mode: str = "authoritative@1",
     ) -> ReferenceEvaluateResult:
         slot, lease, batch, directions = self._dispatch(
-            "evaluate", query, wi, seeds, evaluation_samples=evaluation_samples
+            "evaluate",
+            query,
+            wi,
+            seeds,
+            evaluation_samples=evaluation_samples,
+            footprint_samples=footprint_samples,
+            source_execution_mode=source_execution_mode,
         )
         f_valid = slot.tensors["gNclsQueryFValid"][: batch * directions].reshape(
             batch, directions, 4
@@ -715,6 +782,7 @@ class ReferenceBackendSession:
         query_capacity: int,
         device: torch.device | str = "cuda:0",
         slot_count: int = 2,
+        max_resident_groups: int = 8,
     ) -> None:
         if not isinstance(plan, ReferenceExecutionPlan):
             raise TypeError("ReferenceBackendSession requires ReferenceExecutionPlan@1")
@@ -724,6 +792,9 @@ class ReferenceBackendSession:
         self.snapshots = plan.snapshots
         self.query_capacity = int(query_capacity)
         self.requested_device = torch.device(device)
+        if max_resident_groups < 1:
+            raise ValueError("reference backend max_resident_groups must be positive")
+        self.max_resident_groups = int(max_resident_groups)
         self.reference_program_identity = sha256_json(
             {
                 "reference_execution_plan_identity": plan.identity,
@@ -731,27 +802,11 @@ class ReferenceBackendSession:
             }
         )
         self._device_handle = device_handle
-        sessions: dict[str, _ReferenceExecutionGroupSession] = {}
-        try:
-            for group in plan.groups:
-                sessions[group.group_id] = _ReferenceExecutionGroupSession(
-                    group,
-                    backend_descriptor=backend_descriptor,
-                    falcor=falcor,
-                    device_handle=device_handle,
-                    query_capacity=query_capacity,
-                    device=device,
-                    slot_count=slot_count,
-                )
-        except BaseException:
-            for session in sessions.values():
-                session.close()
-            raise
-        self._sessions = sessions
-        devices = {session.device for session in self._sessions.values()}
-        if len(devices) != 1:
-            raise RuntimeError("reference execution groups mapped to different CUDA devices")
-        self.device = next(iter(devices))
+        self._falcor = falcor
+        self._slot_count = int(slot_count)
+        self._groups = {group.group_id: group for group in plan.groups}
+        self._sessions: OrderedDict[str, _ReferenceExecutionGroupSession] = OrderedDict()
+        self.device = self.requested_device
         self._global_to_local: dict[str, torch.Tensor] = {}
         for group in plan.groups:
             mapping = torch.full(
@@ -772,6 +827,47 @@ class ReferenceBackendSession:
         self._closed = False
 
     @property
+    def resident_group_ids(self) -> tuple[str, ...]:
+        return tuple(self._sessions)
+
+    def _session(self, group_id: str) -> _ReferenceExecutionGroupSession:
+        session = self._sessions.get(group_id)
+        if session is not None:
+            self._sessions.move_to_end(group_id)
+            return session
+        try:
+            group = self._groups[group_id]
+        except KeyError as error:
+            raise ValueError(f"query references unknown execution group {group_id!r}") from error
+        if len(self._sessions) >= self.max_resident_groups:
+            evicted_id = next(
+                (
+                    candidate_id
+                    for candidate_id, candidate in self._sessions.items()
+                    if candidate.active_lease_count == 0
+                ),
+                None,
+            )
+            if evicted_id is None:
+                raise RuntimeError("all resident reference execution groups have active leases")
+            evicted = self._sessions.pop(evicted_id)
+            evicted.close()
+        session = _ReferenceExecutionGroupSession(
+            group,
+            backend_descriptor=self.backend_descriptor,
+            falcor=self._falcor,
+            device_handle=self._device_handle,
+            query_capacity=self.query_capacity,
+            device=self.requested_device,
+            slot_count=self._slot_count,
+        )
+        if session.device != self.device:
+            session.close()
+            raise RuntimeError("reference execution groups mapped to different CUDA devices")
+        self._sessions[group_id] = session
+        return session
+
+    @property
     def reference_execution_plan_identity(self) -> str:
         return self.plan.identity
 
@@ -781,7 +877,7 @@ class ReferenceBackendSession:
         if self._closed:
             raise RuntimeError("reference backend session is closed")
         try:
-            session = self._sessions[query.execution_group_id]
+            session = self._session(query.execution_group_id)
             mapping = self._global_to_local[query.execution_group_id]
         except KeyError as error:
             raise ValueError(
@@ -802,10 +898,17 @@ class ReferenceBackendSession:
         seeds: torch.Tensor,
         *,
         evaluation_samples: int = 1,
+        footprint_samples: int = 1,
+        source_execution_mode: str = "authoritative@1",
     ) -> ReferenceEvaluateResult:
         session, local_query = self._route(query)
         return session.evaluate(
-            local_query, wi, seeds, evaluation_samples=evaluation_samples
+            local_query,
+            wi,
+            seeds,
+            evaluation_samples=evaluation_samples,
+            footprint_samples=footprint_samples,
+            source_execution_mode=source_execution_mode,
         )
 
     def sample(
@@ -836,6 +939,8 @@ class ReferenceBackendSession:
             session.close()
         self._sessions = {}
         self._global_to_local = {}
+        self._groups = {}
+        self._falcor = None
         self._device_handle = None
         self._closed = True
 

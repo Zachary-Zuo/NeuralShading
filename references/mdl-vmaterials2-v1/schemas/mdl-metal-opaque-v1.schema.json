@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ncls.mdl-metal-opaque-registry@1",
+  "title": "NCLS opaque vMaterials 2 Metal registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "identity",
+    "source",
+    "counts",
+    "opaque_exports",
+    "rejected_cutout_exports",
+    "tables"
+  ],
+  "properties": {
+    "schema": {"const": "ncls.mdl-metal-opaque-registry@1"},
+    "identity": {"$ref": "#/$defs/sha256"},
+    "source": {"type": "object"},
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authored_exports", "opaque_exports", "rejected_cutout_exports", "opaque_graphs", "opaque_texture_sets", "parameter_schemas"],
+      "properties": {
+        "authored_exports": {"const": 837},
+        "opaque_exports": {"const": 692},
+        "rejected_cutout_exports": {"const": 145},
+        "opaque_graphs": {"const": 178},
+        "opaque_texture_sets": {"const": 52},
+        "parameter_schemas": {"const": 64}
+      }
+    },
+    "opaque_exports": {"type": "array", "minItems": 692, "maxItems": 692},
+    "rejected_cutout_exports": {"type": "array", "minItems": 145, "maxItems": 145},
+    "tables": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["graphs", "parameter_schemas", "texture_sets", "recipes"],
+      "properties": {
+        "graphs": {"type": "array", "minItems": 178, "maxItems": 178},
+        "parameter_schemas": {"type": "array", "minItems": 64, "maxItems": 64},
+        "texture_sets": {"type": "array", "minItems": 52, "maxItems": 52},
+        "recipes": {"type": "array", "minItems": 1}
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

@@ -5,9 +5,51 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from ncls.core.identity import require_sha256, sha256_bytes, sha256_json
+from ncls.core.identity import require_sha256, sha256_bytes, sha256_file, sha256_json
 from ncls.core.scattering.contract import BackendCapability, REQUIRED_PATH_TRACING_CAPABILITIES
 from ncls.core.source import SourceSnapshot
+
+
+@dataclass(frozen=True)
+class FileResourcePayload:
+    """内容寻址的只读大资源；plan常驻identity，group materialize时才读取。"""
+
+    path: Path = field(compare=False)
+    content_sha256: str
+    size: int
+
+    def __post_init__(self) -> None:
+        path = self.path.resolve()
+        require_sha256("file resource content_sha256", self.content_sha256)
+        if self.size < 0 or not path.is_file() or path.stat().st_size != self.size:
+            raise ValueError("file resource payload path/size is invalid")
+        object.__setattr__(self, "path", path)
+
+    @classmethod
+    def from_path(cls, path: Path) -> "FileResourcePayload":
+        resolved = path.resolve()
+        return cls(resolved, sha256_file(resolved), resolved.stat().st_size)
+
+    def read_bytes(self) -> bytes:
+        payload = self.path.read_bytes()
+        if len(payload) != self.size or sha256_bytes(payload) != self.content_sha256:
+            raise ValueError("file resource payload changed after plan compilation")
+        return payload
+
+
+ResourcePayload = bytes | FileResourcePayload
+
+
+def resource_payload_sha256(payload: ResourcePayload) -> str:
+    return (
+        payload.content_sha256
+        if isinstance(payload, FileResourcePayload)
+        else sha256_bytes(payload)
+    )
+
+
+def read_resource_payload(payload: ResourcePayload) -> bytes:
+    return payload.read_bytes() if isinstance(payload, FileResourcePayload) else payload
 
 
 def _validate_sampler_descriptors(
@@ -63,7 +105,7 @@ class MaterialPayload:
     source_snapshot_id: str
     blobs: Mapping[str, bytes]
     blob_descriptors: Mapping[str, Mapping[str, Any]]
-    resources: Mapping[str, bytes] = field(default_factory=dict)
+    resources: Mapping[str, ResourcePayload] = field(default_factory=dict)
     resource_descriptors: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     sampler_descriptors: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
@@ -73,6 +115,11 @@ class MaterialPayload:
             raise ValueError("material blob descriptors must cover blobs exactly")
         if set(self.resources) != set(self.resource_descriptors):
             raise ValueError("material resource descriptors must cover resources exactly")
+        if any(
+            not isinstance(payload, (bytes, FileResourcePayload))
+            for payload in self.resources.values()
+        ):
+            raise TypeError("material resources must be bytes or FileResourcePayload")
         object.__setattr__(self, "blobs", dict(self.blobs))
         object.__setattr__(self, "blob_descriptors", {name: dict(value) for name, value in self.blob_descriptors.items()})
         object.__setattr__(self, "resources", dict(self.resources))
@@ -176,7 +223,7 @@ class ReferenceProgramDefinition(ABC):
         }
         resources = {
             name: {
-                "sha256": sha256_bytes(payload),
+                "sha256": resource_payload_sha256(payload),
                 "descriptor": dict(material.resource_descriptors[name]),
             }
             for name, payload in material.resources.items()

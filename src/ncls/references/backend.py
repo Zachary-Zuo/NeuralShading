@@ -320,6 +320,7 @@ class ReferenceBackendCapability:
         query_capacity: int,
         device: object = "cuda:0",
         slot_count: int = 2,
+        max_resident_groups: int = 8,
     ):
         from ncls.references.plan import ReferenceExecutionPlan
 
@@ -341,6 +342,7 @@ class ReferenceBackendCapability:
             query_capacity=query_capacity,
             device=device,
             slot_count=slot_count,
+            max_resident_groups=max_resident_groups,
         )
 
 

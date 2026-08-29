@@ -329,9 +329,10 @@ def test_mdl_reference_protocol_schemas_are_versioned_json_schema() -> None:
         "mdl-compiled-artifact.schema.json": "ncls.mdl-compiled-artifact@1",
         "mdl-vmaterials-family-catalog.schema.json": "ncls.mdl-vmaterials-family-catalog@1",
         "mdl-native-protocol.schema.json": "ncls.mdl-native-protocol@1",
-        "mdl-oracle-request.schema.json": "ncls.mdl-oracle-request@1",
-        "mdl-oracle-result.schema.json": "ncls.mdl-oracle-result@1",
-    }
+            "mdl-oracle-request.schema.json": "ncls.mdl-oracle-request@1",
+            "mdl-oracle-result.schema.json": "ncls.mdl-oracle-result@1",
+            "mdl-metal-opaque-v1.schema.json": "ncls.mdl-metal-opaque-registry@1",
+        }
     assert {path.name for path in schema_root.glob("*.json")} == set(expected)
     for name, schema_id in expected.items():
         value = json.loads((schema_root / name).read_text(encoding="utf-8"))

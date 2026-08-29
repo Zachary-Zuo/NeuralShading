@@ -9,6 +9,7 @@ import numpy as np
 from ncls.core.identity import sha256_json
 from ncls.core.scattering import (
     BackendCapability,
+    FileResourcePayload,
     MaterialPayload,
     ReferenceProgramDescriptor,
     ReferenceProgramProviderStatus,
@@ -327,7 +328,7 @@ class MdlReferenceProgram(FileReferenceProgram):
             "alignment": 16,
             "usage": "gMdlRoData",
         }
-        resources: dict[str, bytes] = {}
+        resources: dict[str, bytes | FileResourcePayload] = {}
         resource_descriptors: dict[str, dict[str, object]] = {}
         for texture in texture_descriptors:
             index = int(texture["index"])
@@ -336,19 +337,31 @@ class MdlReferenceProgram(FileReferenceProgram):
                 if data is None:
                     raise ValueError("MDL runtime artifact has no decoded 2D texture payload")
                 path = artifact.root / str(data)
-                suffix, resource, resource_descriptor = _decoded_texture_binding(
-                    path, dict(texture)
-                )
-                name = f"texture-{index}.{suffix}"
-                resources[name] = resource
+                layout = _MDL_PIXEL_LAYOUTS.get(str(texture.get("pixel_type", "")))
+                if layout is None:
+                    raise ValueError("unsupported MDL decoded texture pixel type")
+                dtype, channels = layout
+                name = f"texture-{index}.mdltex"
+                resources[name] = FileResourcePayload.from_path(path)
                 resource_descriptors[name] = {
-                    **resource_descriptor,
+                    "kind": "texture2d",
+                    "dtype": dtype.name,
+                    "shape": [int(texture["height"]), int(texture["width"]), channels],
+                    "stride": dtype.itemsize * channels,
+                    "alignment": max(1, dtype.itemsize),
+                    "format": "mdl-decoded-source",
+                    "color_space": "srgb"
+                    if str(texture.get("gamma", "linear")) == "srgb"
+                    else "linear",
+                    "source_layout": "mdl-decoded-texture@1",
+                    "data_origin": texture.get("data_origin"),
+                    "gamma": texture.get("gamma", "linear"),
                     "usage": f"gMdlTexture2D{index - 1}",
                 }
             else:
                 path = artifact.root / str(texture["data"])
                 name = f"texture-{index}.r32f"
-                resources[name] = path.read_bytes()
+                resources[name] = FileResourcePayload.from_path(path)
                 resource_descriptors[name] = {
                     "kind": "texture3d",
                     "dtype": "float32",

@@ -13,6 +13,10 @@
 9. 补齐current/optimized source成本计数和全量静态账本；
 10. 运行全回归并冻结registry/plan/asset/query IDs供full method使用。
 
+## 执行结果
+
+1–10均已完成。稳定inspection/generator替代task scratch逻辑；registry、typed-state recipe、lazy grouped session、content-addressed file resource、52-set collection、完整footprint积分与report-only ledger均进入canonical路径。验证命令、identity和observed诊断见`research/verification-evidence.md`。
+
 ## 重点文件
 
 - `src/ncls/source_materials/mdl_metal.py`
@@ -28,7 +32,7 @@
 
 ```powershell
 conda run -n neural-shading python -m pytest tests/unit/test_mdl_source.py tests/unit/test_mdl_vmaterials_catalog.py tests/unit/test_online_training_producer.py tests/unit/test_training_checkpoint.py -q
-scripts/run_falcor_python.ps1 -Command "python -m pytest tests/gpu/test_reference_query_dispatcher.py tests/gpu/test_reference_backend_contracts.py tests/gpu/test_mdl_native_crosscheck.py"
+scripts/run_falcor_python.ps1 -m pytest tests/gpu/test_reference_query_dispatcher.py tests/gpu/test_reference_backend_contracts.py tests/gpu/test_mdl_native_crosscheck.py -q
 conda run -n neural-shading python -m pytest tests/integration/reference
 git diff --check
 ```

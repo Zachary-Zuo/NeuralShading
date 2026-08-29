@@ -20,11 +20,14 @@ from .contract import (
     response_cosine,
 )
 from .program import (
+    FileResourcePayload,
     MaterialPayload,
     ReferenceProgramDefinition,
     ReferenceProgramDescriptor,
     ReferenceProgramProviderStatus,
     RuntimePayload,
+    read_resource_payload,
+    resource_payload_sha256,
 )
 
 __all__ = [
@@ -37,10 +40,13 @@ __all__ = [
     "BackendDescriptor",
     "ScatteringContext",
     "MaterialPayload",
+    "FileResourcePayload",
     "ReferenceProgramDefinition",
     "ReferenceProgramDescriptor",
     "ReferenceProgramProviderStatus",
     "RuntimePayload",
+    "read_resource_payload",
+    "resource_payload_sha256",
     "ScatteringEval",
     "ScatteringEvent",
     "ScatteringPdf",
