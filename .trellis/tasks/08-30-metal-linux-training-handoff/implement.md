@@ -2,16 +2,16 @@
 
 ## 顺序
 
-1. 生成并审计full-cohort preflight与stratified component activation manifest；
-2. 实现generic component execution/gradient/update/artifact coverage reporter；
-3. 由registry生成覆盖全部required components/groups与关键source语义的最小stratified训练子集，冻结Windows full-profile smoke的四phase step/batch/cadence和loss下降统计方法；
-4. 执行Windows online run、phase checkpoint/resume与数值/gradient检查；
-5. profile训练热路径、memory、sync与failure分类，修复implementation defect但不扩大预算追门；
-6. 导出diagnostic package并执行Python/QAT/Slang/viewer、bundle/edit和sample/PDF验证；
-7. 从同一semantic config生成Linux smoke/long profiles并执行config-diff/static platform检查；
-8. 编写Linux assets/deploy/preflight/train/resume/monitor/stop/recovery handoff；
-9. 实现long-run review manifest/summary生成器，不挂接formal/ablation命令；
-10. 完成父任务需求映射、Windows回归、Linux shell syntax和external clean检查。
+1. [x] 生成并审计full-cohort preflight与stratified component activation manifest；
+2. [x] 实现generic component execution/gradient/update/artifact coverage reporter；
+3. [x] 由registry生成覆盖全部required components/groups与关键source语义的最小stratified训练子集，冻结Windows full-profile smoke的四phase step/batch/cadence和loss下降统计方法；
+4. [x] 执行Windows online run、phase checkpoint/resume与数值/gradient检查；
+5. [x] profile训练热路径、memory、sync与failure分类，修复implementation defect但不扩大预算追门；
+6. [x] 导出diagnostic package并执行Python/QAT/Slang/viewer、bundle/edit和sample/PDF验证；
+7. [x] 从同一semantic config生成Linux smoke/long profiles并执行config-diff/static platform检查；
+8. [x] 编写Linux assets/deploy/preflight/train/resume/monitor/stop/recovery handoff；
+9. [x] 实现long-run review manifest/summary生成器，不挂接formal/ablation命令；
+10. [x] 完成父任务需求映射、Windows回归、Linux shell syntax和external clean检查。
 
 ## 验证
 

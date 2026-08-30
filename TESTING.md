@@ -286,3 +286,23 @@ git -C external\MaterialX status --short
 ```
 
 所有上游工作树必须为空。`build/`、`data/`、`artifacts/`、`external/` 和缓存不得进入根仓库。
+
+## Metal full-cohort Linux单GPU待验证
+
+当前Windows证据只覆盖RTX 4090上的3-export stratified正确性run，不能替代以下原生Linux gate。目标机必须先具备`assets/source-materials/mdl-vmaterials2/2.4.0/Materials`与锁定的Linux Falcor/MDL构建：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 bash scripts/deploy_reference_linux.sh
+conda run -n neural-shading python tools/learning/build_metal_training_configs.py
+conda run -n neural-shading python tools/learning/preflight_metal_fused.py \
+  --output artifacts/metal-linux-training/full-cohort-preflight.json
+CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls.cli learn train \
+  configs/learning/metal-fused-full-linux-smoke.json \
+  artifacts/metal-linux-training/smoke/checkpoint.pt
+conda run -n neural-shading python -m tools.learning.build_metal_linux_handoff \
+  --output artifacts/metal-linux-training/handoff.json
+```
+
+期望：config check报告`source_count=692`、四个phase与`distributed=false`；preflight报告692 exports、178 groups、52 texture sets、20 required components；smoke review为complete，全部metric finite、gradient/update coverage完整，并包含nonzero `runtime_fp16_quantization_trace`及profile分项。静态分析覆盖不到Linux Vulkan adapter选择、A6000实际VRAM/ETA与692-source session资源，因此这些值只能由目标机review回填。
+
+smoke成功后才按[Metal Linux训练交接](docs/metal_linux_training.md)以long config自身的`--stop-at-step 16`checkpoint启动/恢复120000步训练。训练结束只审阅自动生成的review、基础evaluate和代表性package；不自动执行formal、追加seed、消融或Pareto。

@@ -70,3 +70,5 @@ CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls.cli learn evalu
 ```
 
 2026-08-29的已验证环境为Ubuntu 22.04.5、10张RTX A6000、driver 550.78、glibc 2.35、GCC 11.4.0、Conda 24.1.2、Falcor `9dc819c162b2070335c65060436041690b7937f8`与MDL SDK `2025.0.0-387700.1252`。GPU 0上的七文件集合为`20 passed`，固定MDL两步训练与checkpoint evaluate通过；最终重复部署报告为`artifacts/deployment/reference-linux/20260829T125648Z/report.json`，其中`cuda_visible_devices`与`falcor_gpu_index`均为`0`。这个结论只覆盖该实机环境，Windows结果仍不能替代Linux证据。
+
+vMaterials 2 Metal完整方法在reference backend与source assets就绪后，继续执行[Metal Linux训练交接](metal_linux_training.md)中的692-export preflight、四phase smoke与long run。该交接保持单进程单GPU，不把上面的NVIDIA两步smoke当作Metal训练证据。

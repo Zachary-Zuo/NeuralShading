@@ -135,6 +135,15 @@ def quantize_runtime_model(
     return model
 
 
+def fake_quantize_fp16_ste(value: torch.Tensor) -> torch.Tensor:
+    """Round a floating tensor to deployed FP16 while retaining master gradients."""
+
+    if not value.is_floating_point():
+        raise TypeError("Metal runtime fake quantization requires a floating tensor")
+    rounded = value.to(torch.float16).to(value.dtype)
+    return value + (rounded - value).detach()
+
+
 def _copy_f32(words: np.ndarray, offset: int, value: torch.Tensor | np.ndarray) -> None:
     array = (
         value.detach().cpu().float().contiguous().numpy()
@@ -449,6 +458,7 @@ __all__ = [
     "evaluate_metal_cooked_asset",
     "metal_runtime_parameter_names",
     "metal_weight_define",
+    "fake_quantize_fp16_ste",
     "pack_metal_asset",
     "pack_metal_compiled_material",
     "pack_metal_program",

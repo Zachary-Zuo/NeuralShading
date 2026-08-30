@@ -61,6 +61,7 @@ class _PreparedStep:
     global_step: int
     batches: dict[str, OnlineTrainingBatch]
     iteration_ended: bool
+    preparation_seconds: float
 
 
 class _CosinePhaseScheduler:
@@ -294,11 +295,13 @@ class TrainingRunner:
         return all(getattr(batch, "lease", None) is None for batch in batches.values())
 
     def _prepare_step(self, phase: TrainingPhase, step: int) -> _PreparedStep:
+        started = time.perf_counter()
         batches = self._batches(phase, step)
+        preparation_seconds = time.perf_counter() - started
         detached = self._is_detached(batches)
         if detached:
             self.producer.end_iteration()
-        return _PreparedStep(step, batches, detached)
+        return _PreparedStep(step, batches, detached, preparation_seconds)
 
     def _release_prepared(self, prepared: _PreparedStep) -> None:
         for batch in reversed(tuple(prepared.batches.values())):
@@ -514,7 +517,7 @@ class TrainingRunner:
         rows: list[Mapping[str, float]] = []
         for _ in range(int(self.config.validation["batches"])):
             batches = self._batches(phase, global_step, validation=True)
-            prepared = _PreparedStep(global_step, batches, False)
+            prepared = _PreparedStep(global_step, batches, False, 0.0)
             try:
                 with torch.no_grad(), self._autocast(phase):
                     loss, metrics = self.definition.training_objective(
@@ -694,6 +697,22 @@ class TrainingRunner:
                     }
                     if audit else {}
                 )
+                will_log = (
+                    global_step + 1 == target_step
+                    or phase_step + 1 == phase.steps
+                    or (phase_step + 1) % phase.log_interval == 0
+                )
+                timing: dict[str, float] = {
+                    "profile/batch_prepare_wall_seconds": prepared.preparation_seconds,
+                    "profile/explicit_syncs": 0.0,
+                }
+                cuda_events: tuple[torch.cuda.Event, ...] | None = None
+                if self.producer.device.type == "cuda" and (audit or will_log):
+                    cuda_events = tuple(
+                        torch.cuda.Event(enable_timing=True) for _ in range(4)
+                    )
+                    cuda_events[0].record()
+                forward_started = time.perf_counter()
                 try:
                     optimizer.zero_grad(set_to_none=True)
                     with self._autocast(phase):
@@ -702,6 +721,9 @@ class TrainingRunner:
                             prepared.batches,
                             self._phase_context(phase_index, phase_step, global_step),
                         )
+                    if cuda_events is not None:
+                        cuda_events[1].record()
+                    forward_finished = time.perf_counter()
                     validate_objective_outputs(
                         self.definition.descriptor, phase.name, metrics
                     )
@@ -713,6 +735,9 @@ class TrainingRunner:
                     elif not bool(finite_loss):
                         raise RuntimeError("training objective returned a non-finite loss")
                     scaler.scale(loss).backward()
+                    if cuda_events is not None:
+                        cuda_events[2].record()
+                    backward_finished = time.perf_counter()
                     scaler.unscale_(optimizer)
                     gradients = [
                         parameter.grad for _, parameter in active if parameter.grad is not None
@@ -729,6 +754,37 @@ class TrainingRunner:
                     scaler.step(optimizer)
                     scaler.update()
                     scheduler.step()
+                    if cuda_events is not None:
+                        cuda_events[3].record()
+                        cuda_events[3].synchronize()
+                        timing.update(
+                            {
+                                "profile/forward_gpu_seconds": (
+                                    cuda_events[0].elapsed_time(cuda_events[1]) / 1000.0
+                                ),
+                                "profile/backward_gpu_seconds": (
+                                    cuda_events[1].elapsed_time(cuda_events[2]) / 1000.0
+                                ),
+                                "profile/optimizer_gpu_seconds": (
+                                    cuda_events[2].elapsed_time(cuda_events[3]) / 1000.0
+                                ),
+                                "profile/explicit_syncs": 1.0,
+                            }
+                        )
+                    else:
+                        timing.update(
+                            {
+                                "profile/forward_wall_seconds": (
+                                    forward_finished - forward_started
+                                ),
+                                "profile/backward_wall_seconds": (
+                                    backward_finished - forward_finished
+                                ),
+                                "profile/optimizer_wall_seconds": (
+                                    time.perf_counter() - backward_finished
+                                ),
+                            }
+                        )
                     if audit:
                         self._gradient_audit(
                             phase, registry, snapshots, coverage, global_step
@@ -770,6 +826,7 @@ class TrainingRunner:
                             if isinstance(value, torch.Tensor)
                             else float(value)
                         )
+                    row.update(timing)
                     metric_rows.append(row)
                     if self.metric_callback is not None:
                         self.metric_callback(row)
@@ -816,12 +873,23 @@ class TrainingRunner:
                         validation_phase_step = self.config.phases[-1].steps
                     else:
                         validation_phase_index, validation_phase_step = self.config.locate_step(global_step)
+                    validation_started = time.perf_counter()
                     new_rows = self._validation_rows(
                         model,
                         validation_phase_index,
                         validation_phase_step,
                         global_step,
                     )
+                    validation_seconds = time.perf_counter() - validation_started
+                    new_rows = [
+                        {
+                            **row,
+                            "profile/validation_wall_seconds": (
+                                validation_seconds if index == 0 else 0.0
+                            ),
+                        }
+                        for index, row in enumerate(new_rows)
+                    ]
                     validation_rows.extend(new_rows)
                     if self.metric_callback is not None:
                         for row in new_rows:

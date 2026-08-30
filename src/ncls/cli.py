@@ -25,8 +25,11 @@ from ncls.learning.producer import OnlineTrainingProducer
 from ncls.learning.training import (
     TrainingConfig,
     TrainingRunner,
+    build_training_review,
     load_checkpoint,
+    load_metric_rows,
     save_checkpoint,
+    write_training_review,
 )
 from ncls.references.backend import create_reference_backend
 
@@ -82,13 +85,20 @@ def _learn_list() -> int:
     return 0
 
 
-def _learn_train(config_path: Path, output: Path, resume_path: Path | None) -> int:
+def _learn_train(
+    config_path: Path,
+    output: Path,
+    resume_path: Path | None,
+    stop_at_step: int | None,
+) -> int:
     config = TrainingConfig.load(config_path)
     definition = get_method(config.method_key)
     producer = OnlineTrainingProducer(definition, config)
     metrics_path = output.with_name(f"{output.stem}.metrics.jsonl")
     summary_path = output.with_name(f"{output.stem}.summary.json")
+    review_path = output.with_name(f"{output.stem}.review.json")
     metric_count = 0
+    checkpoint_write_seconds: list[float] = []
     started = time.perf_counter()
     try:
         resume = (
@@ -138,7 +148,9 @@ def _learn_train(config_path: Path, output: Path, resume_path: Path | None) -> i
             path = output.with_name(
                 f"{output.stem}.step{checkpoint.global_step:08d}{output.suffix}"
             )
+            checkpoint_started = time.perf_counter()
             save_checkpoint(path, checkpoint)
+            checkpoint_write_seconds.append(time.perf_counter() - checkpoint_started)
 
         result = TrainingRunner(
             definition,
@@ -146,29 +158,45 @@ def _learn_train(config_path: Path, output: Path, resume_path: Path | None) -> i
             config,
             checkpoint_callback=save_periodic,
             metric_callback=record_metric,
-        ).run(resume=resume)
+        ).run(resume=resume, stop_at_step=stop_at_step)
+        checkpoint_started = time.perf_counter()
         digest = save_checkpoint(output, result.checkpoint)
+        checkpoint_write_seconds.append(time.perf_counter() - checkpoint_started)
         metric_stream.flush()
         metric_stream.close()
+        elapsed_seconds = time.perf_counter() - started
+        summary = {
+            "schema_name": "ncls.training-run-summary",
+            "schema_version": 2,
+            "training_config_sha256": config.sha256,
+            "checkpoint_sha256": digest,
+            "checkpoint": output.name,
+            "metrics": metrics_path.name,
+            "review": review_path.name,
+            "metric_records": metric_count,
+            "final_step": result.checkpoint.global_step,
+            "planned_final_step": config.total_steps,
+            "complete": result.checkpoint.global_step == config.total_steps,
+            "elapsed_seconds": elapsed_seconds,
+            "checkpoint_write_seconds": checkpoint_write_seconds,
+        }
         summary_path.write_text(
-            json.dumps(
-                {
-                    "schema_name": "ncls.training-run-summary",
-                    "schema_version": 2,
-                    "training_config_sha256": config.sha256,
-                    "checkpoint_sha256": digest,
-                    "checkpoint": output.name,
-                    "metrics": metrics_path.name,
-                    "metric_records": metric_count,
-                    "final_step": result.checkpoint.global_step,
-                    "elapsed_seconds": time.perf_counter() - started,
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
+            json.dumps(summary, ensure_ascii=False, indent=2)
             + "\n",
             encoding="utf-8",
         )
+        review = build_training_review(
+            config,
+            definition.descriptor,
+            result.checkpoint,
+            checkpoint_sha256=digest,
+            checkpoint_bytes=output.stat().st_size,
+            metric_rows=load_metric_rows(metrics_path, config_sha256=config.sha256),
+            metrics_bytes=metrics_path.stat().st_size,
+            elapsed_seconds=elapsed_seconds,
+            checkpoint_write_seconds=checkpoint_write_seconds,
+        )
+        write_training_review(review_path, review)
     finally:
         if "metric_stream" in locals() and not metric_stream.closed:
             metric_stream.close()
@@ -477,6 +505,11 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("config", type=Path)
     train.add_argument("output", type=Path)
     train.add_argument("--resume", type=Path)
+    train.add_argument(
+        "--stop-at-step",
+        type=int,
+        help="在给定global step写出可恢复checkpoint后正常退出",
+    )
     evaluate = learn_commands.add_parser(
         "evaluate", help="评测 TrainingCheckpoint@4"
     )
@@ -523,7 +556,7 @@ def main(argv: list[str] | None = None) -> int:
         ("material", "pack"): lambda: _material_pack(args.path, args.output),
         ("learn", "list"): _learn_list,
         ("learn", "train"): lambda: _learn_train(
-            args.config, args.output, args.resume
+            args.config, args.output, args.resume, args.stop_at_step
         ),
         ("learn", "evaluate"): lambda: _learn_evaluate(
             args.config, args.checkpoint, args.batches

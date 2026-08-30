@@ -3,7 +3,7 @@
   "name": "metal-linux-training-handoff",
   "title": "Metal Windows validation and Linux handoff",
   "description": "Windows full-profile数值、梯度、短程收敛与部署验证，以及Linux单GPU长训练交付",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

@@ -4,7 +4,7 @@
   "method_key": "metal-fused-neural-material",
   "run_class": "smoke",
   "correspondence_id": "metal-fused-full-method@1",
-  "recipe_id": "metal-fused-full-windows-stratified-12step@1",
+  "recipe_id": "metal-fused-full-stratified-smoke-16step@1",
   "source_adaptation_id": "metal-fused.mdl-vmaterials2-metal@1",
   "source": {
     "family_id": "mdl.program@1",
@@ -13,8 +13,28 @@
         "locator": {
           "kind": "mdl-export",
           "module_root": "assets/source-materials/mdl-vmaterials2/2.4.0/Materials",
-          "module": "::vMaterials_2::Metal::Steel_Painted_Cracked",
-          "export": "::vMaterials_2::Metal::Steel_Painted_Cracked::Steel_Painted_Russet_Cracked_Dirty(bool,color,float,float,float,float,float,float,bool,float,float,float,float2,float,float2,int,bool,float,bool)",
+          "module": "::vMaterials_2::Metal::Steel_Painted",
+          "export": "::vMaterials_2::Metal::Steel_Painted::Steel_Painted_Dark_Blue(bool,color,float,float,float,float,float,float,bool,float,float,float2,float,float2,int,bool,float,bool)",
+          "pack_id": "nvidia.vmaterials2",
+          "pack_version": "2.4.0"
+        }
+      },
+      {
+        "locator": {
+          "kind": "mdl-export",
+          "module_root": "assets/source-materials/mdl-vmaterials2/2.4.0/Materials",
+          "module": "::vMaterials_2::Metal::Brass_Sheet",
+          "export": "::vMaterials_2::Metal::Brass_Sheet::Brass_Sheet_Yellow_Splotchy_Streaks(bool,float,float,float,float,float,float,float,float,float,float2,float,float2,int,bool,float,bool)",
+          "pack_id": "nvidia.vmaterials2",
+          "pack_version": "2.4.0"
+        }
+      },
+      {
+        "locator": {
+          "kind": "mdl-export",
+          "module_root": "assets/source-materials/mdl-vmaterials2/2.4.0/Materials",
+          "module": "::vMaterials_2::Metal::Iron_Pitted_Steel",
+          "export": "::vMaterials_2::Metal::Iron_Pitted_Steel::medium_pitted_steel(::vMaterials_2::Metal::Iron_Pitted_Steel::pit_textures,float,float,float,float,float2,float,float2,int)",
           "pack_id": "nvidia.vmaterials2",
           "pack_version": "2.4.0"
         }
@@ -29,7 +49,7 @@
     "typed_state_recipe": {
       "schema": "ncls.mdl-metal-typed-state-recipe@1",
       "registry": "references/mdl-vmaterials2-v1/metal-opaque-v1.json",
-      "recipe_id": "metal-fused-windows-smoke-states@1",
+      "recipe_id": "metal-fused-stratified-states@1",
       "split": "train",
       "seed": 20260830,
       "states_per_export": 2,
@@ -66,7 +86,7 @@
           "direction_count": 1,
           "seed_offset": 0,
           "options": {
-            "asset_indices": [41],
+            "asset_indices": [6, 50, 22],
             "max_core_texels": 64,
             "halo": 8
           }
@@ -104,7 +124,7 @@
         "kind": "cosine",
         "start": 0.0003,
         "end": 0.0001,
-        "total_steps": 12,
+        "total_steps": 16,
         "offset": 0
       },
       "precision": {"autocast": "fp32", "gradient_scaler": false},
@@ -125,7 +145,7 @@
           "direction_count": 1,
           "seed_offset": 0,
           "options": {
-            "asset_indices": [41],
+            "asset_indices": [6, 50, 22],
             "max_core_texels": 64,
             "halo": 8
           }
@@ -190,7 +210,7 @@
         "kind": "cosine",
         "start": 0.0003,
         "end": 0.0001,
-        "total_steps": 12,
+        "total_steps": 16,
         "offset": 4
       },
       "precision": {"autocast": "bfloat16", "gradient_scaler": false},
@@ -261,10 +281,123 @@
         "kind": "cosine",
         "start": 0.0002,
         "end": 0.00005,
-        "total_steps": 12,
+        "total_steps": 16,
         "offset": 8
       },
       "precision": {"autocast": "bfloat16", "gradient_scaler": false},
+      "checkpoint_boundary": true,
+      "transition": null,
+      "log_interval": 1,
+      "gradient_audit_interval": 4,
+      "prefetch_depth": 1
+    },
+    {
+      "name": "qat-refine",
+      "steps": 4,
+      "routes": [
+        {
+          "name": "asset",
+          "kind": "asset-tile",
+          "batch_size": 6,
+          "direction_count": 1,
+          "seed_offset": 0,
+          "options": {
+            "asset_indices": [6, 50, 22],
+            "max_core_texels": 64,
+            "halo": 8
+          }
+        },
+        {
+          "name": "evaluator",
+          "kind": "reference-evaluator",
+          "batch_size": 1,
+          "direction_count": 1,
+          "seed_offset": 1,
+          "options": {
+            "direction_proposal": "uniform-half-difference@1",
+            "evaluation_samples": 1,
+            "footprint_samples": 1,
+            "source_execution_mode": "authoritative@1",
+            "asset_tile_coherent": true,
+            "spatial_tile_extent": 0.015625,
+            "source_patch_size": 8,
+            "maximum_rejection_rounds": 64
+          }
+        },
+        {
+          "name": "sampler",
+          "kind": "method-sampler",
+          "batch_size": 1,
+          "direction_count": 1,
+          "seed_offset": 3,
+          "options": {
+            "direction_proposal": "uniform-hemisphere-conditioning@1",
+            "asset_tile_coherent": true,
+            "spatial_tile_extent": 0.015625,
+            "source_patch_size": 8
+          }
+        }
+      ],
+      "parameter_groups": [
+        "codec_role_stems",
+        "codec_encoder",
+        "codec_decoder",
+        "codec_semantic_heads",
+        "asset_adapter",
+        "quantization",
+        "typed_compiler",
+        "prepared_model",
+        "angular_bank",
+        "analytic_core",
+        "hybrid_evaluator",
+        "proposal_sampler"
+      ],
+      "loss_terms": [
+        "codec-full",
+        "response-robust",
+        "linear-energy",
+        "peak-support",
+        "reciprocity",
+        "analytic-core-preservation",
+        "teacher-response",
+        "compiler-functional-distillation",
+        "proposal-forward-kl",
+        "proposal-density-fit",
+        "proposal-mode-coverage",
+        "proposal-weight-tail",
+        "sample-pdf-identity",
+        "runtime-fp16-qat"
+      ],
+      "recipes": {
+        "profile_id": "metal_fused_full_v1",
+        "codec": "role-shared-unet-dual-head@1",
+        "mip": "independent-adjacent-decoded-state@1",
+        "quantization": "int8-per-channel-ste@1",
+        "appearance": "analytic-positive-hybrid@1",
+        "direction": "raw-half-learned-angular@1",
+        "compiler": "pure-typed-set-attention@1",
+        "filtering": "adjacent-decoded-state@1",
+        "proposal": "eleven-component-folded-analytic-mixture@1",
+        "target": "evaluator-luminance-times-abs-cosine@1",
+        "hemisphere": "renderer-shading-z-positive-folded-preimage@1",
+        "random_tuple": "cdf-remapped-float2@1",
+        "runtime_quantization": "fp16-runtime-ste-int8-grid-qat-sensitive-fp32@1"
+      },
+      "optimizer": {
+        "kind": "adam",
+        "betas": [0.9, 0.99],
+        "epsilon": 1e-8,
+        "weight_decay": 0.000001
+      },
+      "optimizer_state_policy": "carry-overlap",
+      "schedule": {
+        "kind": "cosine",
+        "start": 0.0001,
+        "end": 0.00002,
+        "total_steps": 16,
+        "offset": 12
+      },
+      "precision": {"autocast": "fp32", "gradient_scaler": false},
       "checkpoint_boundary": true,
       "transition": null,
       "log_interval": 1,
@@ -274,6 +407,6 @@
   ],
   "seed": 20260830,
   "device": "cuda:0",
-  "validation": {"interval": 12, "batches": 1},
+  "validation": {"interval": 16, "batches": 1},
   "checkpoint_selection": "tail_guard"
 }

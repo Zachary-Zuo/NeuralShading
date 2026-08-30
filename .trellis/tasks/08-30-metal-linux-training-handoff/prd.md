@@ -37,16 +37,16 @@
 
 ## 验收标准
 
-- [ ] [数值实现正确性｜父任务Windows gate] full profile四phase无NaN/Inf、负f、非法PDF或silent clamp，所有required groups有finite非零gradient和update；
-- [ ] [数值实现正确性｜optimization contract] 预冻结window/bootstrap判据显示短run loss统计可信下降，phase resume后query/optimizer/precision state连续；
-- [ ] [需求交付｜用户高效正确性验证] 最小stratified训练子集覆盖全部required components/groups与关键source语义，且没有tiny/disabled/mock替代；full cohort preflight独立闭合；
-- [ ] [需求交付｜父任务online contract] target无host response readback，训练不读写batch corpus，热路径无逐parameter/metric同步；
-- [ ] [需求交付｜父任务完整性] 全cohort preflight、component execution/gradient/artifact coverage和program/asset/instance export闭合；
-- [ ] [数值实现正确性｜deployment oracle] diagnostic package的Python→QAT→Slang→viewer与sample/PDF invariants通过预冻结tolerance；
-- [ ] [需求交付｜用户Linux handoff] platform-neutral smoke/long configs、hashes、commands、VRAM/ETA、resume/monitor/stop/recovery说明齐全；
-- [ ] [需求交付｜用户单GPU边界] Linux命令只接受一个可见GPU，无DDP旁路；实际Linux Metal smoke是长训启动前的handoff gate，不由Windows结果冒充；
-- [ ] [需求交付｜用户结果审阅顺序] long run完成后的自动产物只包含首轮效果/健康/基础成本摘要，不排队formal/ablation/Pareto；
-- [ ] [工程正确性｜项目回归合同] unit/GPU/viewer Release、Linux shell/static config检查和Falcor clean通过。
+- [x] [数值实现正确性｜父任务Windows gate] full profile四phase无NaN/Inf、负f、非法PDF或silent clamp，所有required groups有finite非零gradient和update；
+- [x] [数值实现正确性｜optimization contract] 预冻结window/bootstrap判据显示短run loss统计可信下降，phase resume后query/optimizer/precision state连续；
+- [x] [需求交付｜用户高效正确性验证] 最小stratified训练子集覆盖全部required components/groups与关键source语义，且没有tiny/disabled/mock替代；full cohort preflight独立闭合；
+- [x] [需求交付｜父任务online contract] target无host response readback，训练不读写batch corpus，热路径无逐parameter/metric同步；
+- [x] [需求交付｜父任务完整性] 全cohort preflight、component execution/gradient/artifact coverage和program/asset/instance export闭合；
+- [x] [数值实现正确性｜deployment oracle] diagnostic package的Python→QAT→Slang→viewer与sample/PDF invariants通过预冻结tolerance；
+- [x] [需求交付｜用户Linux handoff] platform-neutral smoke/long configs、hashes、commands、VRAM/ETA、resume/monitor/stop/recovery说明齐全；
+- [x] [需求交付｜用户单GPU边界] Linux命令只接受一个可见GPU，无DDP旁路；实际Linux Metal smoke是长训启动前的handoff gate，不由Windows结果冒充；
+- [x] [需求交付｜用户结果审阅顺序] long run完成后的自动产物只包含首轮效果/健康/基础成本摘要，不排队formal/ablation/Pareto；
+- [x] [工程正确性｜项目回归合同] unit/GPU/viewer Release、Linux shell/static config检查和Falcor clean通过。
 
 ## 阻塞问题
 
