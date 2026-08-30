@@ -48,10 +48,10 @@ bool nclsMetalFusedProposalValid(NclsMetalFusedProposal proposal)
     if (proposal.valid == 0u) return false;
     float totalWeight = 0.0f;
     float totalEnergyClue = 0.0f;
-    [unroll]
+    [loop]
     for (uint component = 0u; component < NCLS_METAL_PROPOSAL_COMPONENT_COUNT; ++component)
     {
-        [unroll]
+        [loop]
         for (uint field = 0u; field < NCLS_METAL_PROPOSAL_STATE_WIDTH; ++field)
             if (!isfinite(proposal.state[component][field])) return false;
         const float weight = proposal.state[component][NCLS_METAL_PROPOSAL_FIELD_NORMALIZED_WEIGHT];
@@ -77,10 +77,10 @@ bool nclsMetalFusedProposalValid(NclsMetalFusedProposal proposal)
         || proposal.state[NCLS_METAL_PROPOSAL_COMPONENT_COUNT - 1u]
             [NCLS_METAL_PROPOSAL_FIELD_ACTIVE] <= 0.5f)
         return false;
-    [unroll]
+    [loop]
     for (uint frame = 0u; frame < NCLS_METAL_PROPOSAL_FRAME_COUNT; ++frame)
     {
-        [unroll]
+        [loop]
         for (uint axis = 0u; axis < 3u; ++axis)
             if (!nclsIsFiniteFloat3(proposal.frames[frame][axis])) return false;
         if (dot(proposal.frames[frame][0], proposal.frames[frame][0]) <= 1e-12f
@@ -93,7 +93,7 @@ bool nclsMetalFusedProposalValid(NclsMetalFusedProposal proposal)
 float nclsMetalProposalTotalWeight(NclsMetalFusedProposal proposal)
 {
     float total = 0.0f;
-    [unroll]
+    [loop]
     for (uint component = 0u; component < NCLS_METAL_PROPOSAL_COMPONENT_COUNT; ++component)
         total += proposal.state[component][NCLS_METAL_PROPOSAL_FIELD_NORMALIZED_WEIGHT];
     return total;
@@ -217,7 +217,7 @@ float nclsMetalFusedProposalPdf(
         return 0.0f;
     const float totalWeight = nclsMetalProposalTotalWeight(proposal);
     float weightedPdf = 0.0f;
-    [unroll]
+    [loop]
     for (uint component = 0u; component < NCLS_METAL_PROPOSAL_COMPONENT_COUNT; ++component)
     {
         weightedPdf += proposal.state[component]
@@ -278,7 +278,7 @@ NclsMetalFusedProposalSample nclsSampleMetalFusedProposal(
     const float target = u.x * totalWeight;
     float previous = 0.0f;
     uint selected = NCLS_METAL_PROPOSAL_COMPONENT_COUNT - 1u;
-    [unroll]
+    [loop]
     for (uint component = 0u; component < NCLS_METAL_PROPOSAL_COMPONENT_COUNT; ++component)
     {
         const float current = previous + proposal.state[component]

@@ -31,12 +31,12 @@
 
 ## 验收标准
 
-- [ ] [实现正确性｜Package@2 ABI] program/asset/instance hashes/layout/resources/capabilities验证完整，tamper/unknown/v1 format fail closed；
-- [ ] [数值正确性｜parent runtime] fixed probe和随机query上Python FP32→quantized→Slang→viewer差异落入由precision oracle预先推导的tolerance；
-- [ ] [需求交付｜parent R2/R3] bundle切换不重训、不重新编译shader；typed edit不重新编码bundle并只运行一次compiler；
-- [ ] [生命周期正确性｜viewer contract] 两个slot对称、三层atomic swap失败保留旧binding、deferred与PT都使用full capability；
-- [ ] [边界正确性｜project contract] viewer不依赖PyTorch、不读取source family/Metal identity选择renderer；
-- [ ] [实现正确性｜项目回归合同] 已迁移的NVIDIA Package@2、source viewer、Release build和Falcor clean全部成立，正式代码无v1 loader。
+- [x] [实现正确性｜Package@2 ABI] program/asset/instance hashes/layout/resources/capabilities验证完整，tamper/unknown/v1 format fail closed；
+- [x] [数值正确性｜parent runtime] fixed probe和随机query上Python FP32→quantized→Slang→viewer差异落入由precision oracle预先推导的tolerance；
+- [x] [需求交付｜parent R2/R3] bundle切换不重训、不重新编译shader；typed edit不重新编码bundle并只运行一次compiler；
+- [x] [生命周期正确性｜viewer contract] 两个slot对称、三层atomic swap失败保留旧binding、deferred与PT都使用full capability；
+- [x] [边界正确性｜project contract] viewer不依赖PyTorch、不读取source family/Metal identity选择renderer；
+- [x] [实现正确性｜项目回归合同] 已迁移的NVIDIA Package@2、source viewer、Release build和Falcor clean全部成立，正式代码无v1 loader。
 
 ## 阻塞问题
 

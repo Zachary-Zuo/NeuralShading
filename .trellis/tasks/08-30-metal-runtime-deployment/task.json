@@ -3,7 +3,7 @@
   "name": "metal-runtime-deployment",
   "title": "Metal runtime package 与交互 viewer",
   "description": "量化 MethodBundle/Slang parity、bundle replacement 与 typed edit",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

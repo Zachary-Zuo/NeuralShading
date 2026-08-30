@@ -21,6 +21,7 @@ from .contract import (
 )
 from .program import (
     FileResourcePayload,
+    InstancePayload,
     MaterialPayload,
     ReferenceProgramDefinition,
     ReferenceProgramDescriptor,
@@ -28,6 +29,7 @@ from .program import (
     RuntimePayload,
     read_resource_payload,
     resource_payload_sha256,
+    validate_typed_parameter_view,
 )
 
 __all__ = [
@@ -41,12 +43,14 @@ __all__ = [
     "ScatteringContext",
     "MaterialPayload",
     "FileResourcePayload",
+    "InstancePayload",
     "ReferenceProgramDefinition",
     "ReferenceProgramDescriptor",
     "ReferenceProgramProviderStatus",
     "RuntimePayload",
     "read_resource_payload",
     "resource_payload_sha256",
+    "validate_typed_parameter_view",
     "ScatteringEval",
     "ScatteringEvent",
     "ScatteringPdf",

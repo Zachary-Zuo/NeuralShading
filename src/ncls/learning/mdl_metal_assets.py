@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Mapping
@@ -161,6 +162,9 @@ class MdlMetalNativeAssetCollection:
             raise ValueError("Metal native asset collection must contain 52 texture sets")
         self._cache = _WorkingSetCache(working_set_capacity)
         self._artifact_cache: dict[int, MdlCompiledArtifact] = {}
+        self._mip_pyramid_key: tuple[int, int] | None = None
+        self._mip_pyramid: tuple[np.ndarray, ...] = ()
+        self._cook_asset_index: int | None = None
 
     @property
     def collection_id(self) -> str:
@@ -179,6 +183,22 @@ class MdlMetalNativeAssetCollection:
                 "working_set_capacity": self._cache.capacity,
             }
         )
+
+    @contextmanager
+    def cook_session(self, asset_index: int) -> Iterator[None]:
+        if not 0 <= asset_index < len(self.descriptors):
+            raise ValueError("Metal native asset cook index is out of range")
+        if self._cook_asset_index is not None:
+            raise RuntimeError("Metal native asset cook sessions cannot be nested")
+        self._cache.clear()
+        self._cook_asset_index = asset_index
+        try:
+            yield
+        finally:
+            self._cache.clear()
+            self._cook_asset_index = None
+            self._mip_pyramid_key = None
+            self._mip_pyramid = ()
 
     def iter_tile_requests(
         self, asset_index: int, domain_id: str, max_core_texels: int, halo: int
@@ -430,7 +450,98 @@ class MdlMetalNativeAssetCollection:
             torch.as_tensor(role_class, dtype=torch.int64, device=device),
         )
 
-    def _load_tile(
+    def _raw_mip_pyramid(
+        self,
+        asset_index: int,
+        slot_index: int,
+        domain: NativeAssetDomain,
+    ) -> tuple[np.ndarray, ...]:
+        if self._cook_asset_index != asset_index:
+            raise RuntimeError("full Metal mip pyramid is only valid inside a cook session")
+        key = (asset_index, slot_index)
+        if self._mip_pyramid_key == key:
+            return self._mip_pyramid
+        values, manifest_slot, slot = self._base_array(asset_index, slot_index)
+        height, width = domain.level_shapes[0]
+        channels = domain.channel_count
+        base = np.empty((height, width, channels), dtype=np.float32)
+        x = np.arange(width, dtype=np.int64)
+        # Decode in bounded row bands so an 8K source does not create another
+        # full-resolution advanced-indexing temporary.
+        for begin in range(0, height, 256):
+            end = min(height, begin + 256)
+            y = np.arange(begin, end, dtype=np.int64)
+            base[begin:end] = self._read_block(
+                values, manifest_slot, slot, y, x
+            )
+        levels = [base]
+        while len(levels) < len(domain.level_shapes):
+            previous = levels[-1]
+            source_height, source_width = previous.shape[:2]
+            target_height, target_width = domain.level_shapes[len(levels)]
+            if source_height > 1 and source_width > 1:
+                height2, width2 = 2 * target_height, 2 * target_width
+                value = (
+                    previous[:height2:2, :width2:2]
+                    + previous[1:height2:2, :width2:2]
+                    + previous[:height2:2, 1:width2:2]
+                    + previous[1:height2:2, 1:width2:2]
+                ) * np.float32(0.25)
+            elif source_height > 1:
+                value = (
+                    previous[: 2 * target_height : 2]
+                    + previous[1 : 2 * target_height : 2]
+                ) * np.float32(0.5)
+            elif source_width > 1:
+                value = (
+                    previous[:, : 2 * target_width : 2]
+                    + previous[:, 1 : 2 * target_width : 2]
+                ) * np.float32(0.5)
+            else:
+                value = previous.copy()
+            levels.append(np.ascontiguousarray(value, dtype=np.float32))
+        self._mip_pyramid_key = key
+        self._mip_pyramid = tuple(levels)
+        return self._mip_pyramid
+
+    def _load_cook_tile(
+        self,
+        request: NativeAssetTileRequest,
+        domain: NativeAssetDomain,
+        device: torch.device,
+    ) -> torch.Tensor:
+        slot_index = int(request.domain_id.removeprefix("slot-"))
+        level = self._raw_mip_pyramid(request.asset_index, slot_index, domain)[
+            request.mip_level
+        ]
+        target_height = request.core_shape[0] + 2 * request.halo
+        target_width = request.core_shape[1] + 2 * request.halo
+        y = self._indices(
+            request.origin_yx[0] - request.halo,
+            target_height,
+            level.shape[0],
+            domain.address_mode,
+        )
+        x = self._indices(
+            request.origin_yx[1] - request.halo,
+            target_width,
+            level.shape[1],
+            domain.address_mode,
+        )
+        result = np.asarray(level[np.ix_(y, x)]).copy()
+        cursor = 0
+        for role in domain.roles:
+            if role.semantic == "normal-tangent":
+                normal = result[..., cursor : cursor + role.channel_count] * 2.0 - 1.0
+                if role.channel_count >= 3:
+                    normal /= np.maximum(np.linalg.norm(normal, axis=2, keepdims=True), 1e-8)
+                result[..., cursor : cursor + role.channel_count] = normal * 0.5 + 0.5
+            cursor += role.channel_count
+        if not np.isfinite(result).all():
+            raise ValueError("Metal native asset tile decode produced non-finite values")
+        return torch.as_tensor(result, dtype=torch.float32, device=device)
+
+    def _load_lazy_tile(
         self,
         request: NativeAssetTileRequest,
         domain: NativeAssetDomain,
@@ -446,7 +557,6 @@ class MdlMetalNativeAssetCollection:
         origin_x = (request.origin_yx[1] - request.halo) * scale
         channels = domain.channel_count
         result = np.empty((target_height, target_width, channels), dtype=np.float32)
-        # 每个输出 texel只保留自己的source footprint；高mip会流式读取而不展开全量host tensor。
         source_texels = target_height * target_width * scale * scale
         if source_texels <= 4_194_304:
             y = self._indices(
@@ -479,12 +589,26 @@ class MdlMetalNativeAssetCollection:
             if role.semantic == "normal-tangent":
                 normal = result[..., cursor : cursor + role.channel_count] * 2.0 - 1.0
                 if role.channel_count >= 3:
-                    normal /= np.maximum(np.linalg.norm(normal, axis=2, keepdims=True), 1e-8)
+                    normal /= np.maximum(
+                        np.linalg.norm(normal, axis=2, keepdims=True), 1e-8
+                    )
                 result[..., cursor : cursor + role.channel_count] = normal * 0.5 + 0.5
             cursor += role.channel_count
         if not np.isfinite(result).all():
             raise ValueError("Metal native asset tile decode produced non-finite values")
         return torch.as_tensor(result, dtype=torch.float32, device=device)
+
+    def _load_tile(
+        self,
+        request: NativeAssetTileRequest,
+        domain: NativeAssetDomain,
+        device: torch.device,
+    ) -> torch.Tensor:
+        return (
+            self._load_cook_tile(request, domain, device)
+            if self._cook_asset_index == request.asset_index
+            else self._load_lazy_tile(request, domain, device)
+        )
 
     def acquire_tile(
         self, request: NativeAssetTileRequest, device: torch.device

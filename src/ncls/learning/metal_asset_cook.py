@@ -14,6 +14,7 @@ from ncls.learning.source_adaptation import (
     NativeAssetCollection,
     NativeAssetDomain,
     NativeAssetTile,
+    NativeAssetTileRequest,
 )
 
 
@@ -142,13 +143,20 @@ class MetalAssetCooker:
         *,
         max_core_texels: int = 16_384,
         encoder_halo: int = 32,
+        encoder_batch_tiles: int = 8,
     ) -> None:
-        if max_core_texels < 1024 or encoder_halo < 32 or encoder_halo % 8 != 0:
-            raise ValueError("Metal full U-Net cook requires a divisible >=32 halo")
+        if (
+            max_core_texels < 1024
+            or encoder_halo < 32
+            or encoder_halo % 8 != 0
+            or not 1 <= encoder_batch_tiles <= 32
+        ):
+            raise ValueError("Metal full U-Net cook tile/halo/batch settings are invalid")
         self.model = model
         self.assets = assets
         self.max_core_texels = max_core_texels
         self.encoder_halo = encoder_halo
+        self.encoder_batch_tiles = encoder_batch_tiles
 
     @staticmethod
     def _domain_role_class(domain: NativeAssetDomain) -> int:
@@ -228,47 +236,68 @@ class MetalAssetCooker:
                     )
                     high_weights = torch.zeros_like(high[:1])
                     low_weights = torch.zeros_like(low[:1])
-                    requests = self.assets.iter_tile_requests(
-                        asset_index,
-                        domain.domain_id,
-                        self.max_core_texels,
-                        self.encoder_halo,
+                    requests = tuple(
+                        request
+                        for request in self.assets.iter_tile_requests(
+                            asset_index,
+                            domain.domain_id,
+                            self.max_core_texels,
+                            self.encoder_halo,
+                        )
+                        if request.mip_level == mip_level
                     )
-                    for request in requests:
-                        if request.mip_level != mip_level:
-                            continue
-                        tile = self.assets.acquire_tile(request, device)
+                    pending: list[tuple[NativeAssetTileRequest, NativeAssetTile]] = []
+
+                    def flush() -> None:
+                        if not pending:
+                            return
                         try:
+                            batch = torch.cat(
+                                [self._tile_input(tile) for _, tile in pending], dim=0
+                            )
+                            count = batch.shape[0]
                             _, _, encoded_high, encoded_low, adapter, _ = (
                                 self.model.texture_codec.encode_level(
-                                    self._tile_input(tile),
-                                    torch.ones((1, 1), dtype=torch.bool, device=device),
-                                    torch.tensor([[role_class]], dtype=torch.int64, device=device),
-                                    torch.tensor([asset_index], dtype=torch.int64, device=device),
-                                    torch.tensor([float(mip_level)], dtype=torch.float32, device=device),
+                                    batch,
+                                    torch.ones((count, 1), dtype=torch.bool, device=device),
+                                    torch.full((count, 1), role_class, dtype=torch.int64, device=device),
+                                    torch.full((count,), asset_index, dtype=torch.int64, device=device),
+                                    torch.full((count,), float(mip_level), dtype=torch.float32, device=device),
                                 )
                             )
-                            self._accumulate(
-                                high,
-                                high_weights,
-                                encoded_high,
-                                request.origin_yx,
-                                request.core_shape,
-                                request.halo,
-                                2,
-                            )
-                            self._accumulate(
-                                low,
-                                low_weights,
-                                encoded_low,
-                                request.origin_yx,
-                                request.core_shape,
-                                request.halo,
-                                8,
-                            )
-                            adapters.append(adapter[0])
+                            for index, (request, _) in enumerate(pending):
+                                self._accumulate(
+                                    high,
+                                    high_weights,
+                                    encoded_high[index : index + 1],
+                                    request.origin_yx,
+                                    request.core_shape,
+                                    request.halo,
+                                    2,
+                                )
+                                self._accumulate(
+                                    low,
+                                    low_weights,
+                                    encoded_low[index : index + 1],
+                                    request.origin_yx,
+                                    request.core_shape,
+                                    request.halo,
+                                    8,
+                                )
+                                adapters.append(adapter[index])
                         finally:
-                            tile.release()
+                            for _, tile in pending:
+                                tile.release()
+                            pending.clear()
+
+                    for request in requests:
+                        tile = self.assets.acquire_tile(request, device)
+                        if pending and tile.values.shape != pending[0][1].values.shape:
+                            flush()
+                        pending.append((request, tile))
+                        if len(pending) == self.encoder_batch_tiles:
+                            flush()
+                    flush()
                     if torch.any(high_weights == 0) or torch.any(low_weights == 0):
                         raise RuntimeError("Metal tiled encoder failed to cover a compiled grid")
                     levels.append(
@@ -456,7 +485,8 @@ class MetalAssetCooker:
         if mode != "encoder-only" and not 0.0 < refinement_bound <= 0.5:
             raise ValueError("Metal refinement bound must lie in (0,0.5]")
         device = next(self.model.parameters()).device
-        levels, adapter = self._encode_asset(asset_index, device)
+        with self.assets.cook_session(asset_index):
+            levels, adapter = self._encode_asset(asset_index, device)
         if mode != "encoder-only":
             levels, adapter = self._refine(
                 asset_index,

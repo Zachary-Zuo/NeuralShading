@@ -35,6 +35,8 @@ class InstanceBinding:
     program_id: str
     asset_id: str
     parameters: dict[str, Any]
+    descriptor: dict[str, Any]
+    files: dict[str, Path]
 
 
 @dataclass(frozen=True)
@@ -79,7 +81,11 @@ class ScatteringPackage:
             resource_path = path / manifest.files[logical_name]
             validate_typed_resource(resource_path.read_bytes(), descriptor)
         compiled_material_count: int | None = None
-        for section in (manifest.program["blobs"], manifest.asset["blobs"]):
+        for section in (
+            manifest.program["blobs"],
+            manifest.asset["blobs"],
+            manifest.instance["blobs"],
+        ):
             for logical_name, descriptor in section.items():
                 payload = (path / manifest.files[logical_name]).read_bytes()
                 stride = int(descriptor["stride"])
@@ -122,6 +128,11 @@ class ScatteringPackage:
             for name in self.manifest.files
             if name.startswith("asset/")
         }
+        instance_files = {
+            name: self.file(name)
+            for name in self.manifest.files
+            if name.startswith("instance/")
+        }
         program = ProgramRuntime(
             self.manifest.program_id,
             self.manifest.capabilities,
@@ -148,5 +159,7 @@ class ScatteringPackage:
             str(self.manifest.instance["bindings"]["program_id"]),
             str(self.manifest.instance["bindings"]["asset_id"]),
             dict(self.manifest.instance["parameters"]),
+            dict(self.manifest.instance),
+            instance_files,
         )
         return ScatteringBinding(self.manifest.package_id, program, asset, instance)

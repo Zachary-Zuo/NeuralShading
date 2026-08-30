@@ -90,8 +90,8 @@ def test_metal_model_rejects_a_tiny_or_partial_context() -> None:
         MetalFusedNeuralMaterialModel.from_context(partial)
 
 
-def test_metal_full_method_still_fails_closed_at_runtime_package_boundary() -> None:
-    with pytest.raises(RuntimeError, match="runtime deployment"):
+def test_metal_runtime_compiler_requires_a_validated_checkpoint() -> None:
+    with pytest.raises(ValueError, match="checkpoint model_state"):
         METHOD_DEFINITION.compile_program({})
 
 

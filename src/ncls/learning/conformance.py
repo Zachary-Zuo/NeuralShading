@@ -23,6 +23,7 @@ class MethodArtifactInventory:
         checkpoint_model_state: bool,
     ) -> "MethodArtifactInventory":
         artifacts = {
+            *(f"slang:{name}" for name in runtime.module_closure),
             *(f"program:{name}" for name in runtime.blobs),
             *(f"program-sampler:{name}" for name in runtime.sampler_descriptors),
             *(f"asset:{name}" for name in asset.blobs),

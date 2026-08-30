@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 namespace ncls
 {
 struct ParityProbe
@@ -38,6 +40,7 @@ struct ViewerTypedBlob
     uint32_t stride = 1;
     uint32_t alignment = 1;
     std::string usage;
+    std::string kind;
 };
 
 struct ViewerSamplerDescriptor
@@ -85,6 +88,15 @@ struct InstanceBinding
     std::string programId;
     std::string assetId;
     uint32_t compiledMaterialIndex = 0;
+    std::vector<ViewerTypedBlob> blobs;
+    std::string editorSchema;
+    nlohmann::json parameterView;
+    std::string rawUsage;
+    std::string compiledUsage;
+    std::string compilerEntryPoint;
+    std::array<uint32_t, 3> compilerThreadGroupSize{1u, 1u, 1u};
+
+    bool editable() const { return !editorSchema.empty(); }
 };
 
 struct ViewerProgram

@@ -8,7 +8,7 @@ import torch
 from torch import nn
 
 from ncls.core.identity import require_sha256, sha256_json
-from ncls.core.scattering import MaterialPayload, RuntimePayload
+from ncls.core.scattering import InstancePayload, MaterialPayload, RuntimePayload
 from ncls.core.source import SourceEditResult, SourceSnapshot
 from ncls.learning.source_adaptation import NativeAssetCollection
 from ncls.learning.batches import OnlineTrainingBatch
@@ -273,9 +273,9 @@ class MethodDefinition(ABC):
         self,
         snapshot: SourceSnapshot,
         checkpoint: Mapping[str, Any],
-    ) -> Mapping[str, Any]:
+    ) -> InstancePayload:
         del snapshot, checkpoint
-        return {"compiled_material_index": 0}
+        return InstancePayload({"compiled_material_index": 0})
 
     def package_validation(
         self,

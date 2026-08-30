@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+import math
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -70,6 +71,159 @@ def _validate_sampler_descriptors(
     return result
 
 
+def validate_typed_parameter_view(value: Mapping[str, Any]) -> None:
+    """Validate the complete generic editor ABI before any runtime sees it."""
+
+    view = dict(value)
+    required = {
+        "schema_name", "schema_version", "family_id", "source_contract_version",
+        "snapshot_id", "root", "runtime_layout",
+    }
+    if set(view) != required or view.get("schema_name") != "ncls.source-parameter-view":
+        raise ValueError("typed material editor parameter_view fields are invalid")
+    if int(view["schema_version"]) != 1 or int(view["source_contract_version"]) < 1:
+        raise ValueError("typed material editor parameter_view version is invalid")
+    if not isinstance(view["family_id"], str) or not view["family_id"]:
+        raise ValueError("typed material editor family_id is invalid")
+    require_sha256("typed material editor snapshot_id", str(view["snapshot_id"]))
+    layout = dict(view["runtime_layout"])
+    if (
+        set(layout) != {"schema", "word_count", "offsets"}
+        or not str(layout["schema"])
+        or int(layout["word_count"]) < 1
+        or not isinstance(layout["offsets"], Mapping)
+        or any(
+            not isinstance(name, str)
+            or not name
+            or not isinstance(offset, int)
+            or isinstance(offset, bool)
+            or offset < 0
+            or offset >= int(layout["word_count"])
+            for name, offset in layout["offsets"].items()
+        )
+    ):
+        raise ValueError("typed material editor runtime_layout is invalid")
+    word_count = int(layout["word_count"])
+    paths: set[str] = set()
+
+    def finite_number(item: Any) -> bool:
+        return isinstance(item, (int, float)) and not isinstance(item, bool) and math.isfinite(float(item))
+
+    def validate_value(node: Mapping[str, Any], item: Any) -> None:
+        value_type = str(node["value_type"])
+        components = {"vector2": 2, "vector3": 3, "color3": 3, "vector4": 4}.get(value_type)
+        if value_type == "bool" and not isinstance(item, bool):
+            raise ValueError("typed material editor bool value is invalid")
+        if value_type == "int" and (not isinstance(item, int) or isinstance(item, bool)):
+            raise ValueError("typed material editor int value is invalid")
+        if value_type in {"float", "double"} and not finite_number(item):
+            raise ValueError("typed material editor scalar value is invalid")
+        if components is not None and (
+            not isinstance(item, (list, tuple)) or len(item) != components
+            or not all(finite_number(component) for component in item)
+        ):
+            raise ValueError("typed material editor vector value is invalid")
+        if value_type == "enum":
+            choices = node.get("choices")
+            if (
+                not isinstance(item, str)
+                or not isinstance(choices, (list, tuple))
+                or not choices
+                or any(not isinstance(choice, str) or not choice for choice in choices)
+                or len(set(choices)) != len(choices)
+                or item not in choices
+            ):
+                raise ValueError("typed material editor enum value is invalid")
+        if value_type not in {"float", "double", "int", "bool", "enum", "vector2", "vector3", "vector4", "color3"}:
+            raise ValueError("typed material editor value_type is unsupported")
+
+    def visit(raw_node: Any) -> None:
+        if not isinstance(raw_node, Mapping):
+            raise ValueError("typed material editor node must be an object")
+        node = dict(raw_node)
+        for field in ("path", "kind", "label", "children", "editable", "allowed_operations"):
+            if field not in node:
+                raise ValueError("typed material editor node fields are incomplete")
+        path = node["path"]
+        if (
+            not isinstance(path, str)
+            or not path.startswith("/")
+            or path in paths
+            or not isinstance(node["label"], str)
+            or not node["label"]
+            or not isinstance(node["kind"], str)
+            or not node["kind"]
+            or not isinstance(node["editable"], bool)
+            or not isinstance(node["allowed_operations"], (list, tuple))
+            or any(
+                not isinstance(operation, str)
+                for operation in node["allowed_operations"]
+            )
+        ):
+            raise ValueError("typed material editor node path/label is invalid")
+        paths.add(path)
+        children = node["children"]
+        if not isinstance(children, (list, tuple)):
+            raise ValueError("typed material editor node children are invalid")
+        if bool(node["editable"]):
+            if (
+                node["kind"] != "value"
+                or list(node["allowed_operations"]) != ["set"]
+                or children
+            ):
+                raise ValueError("editable typed material node operations are invalid")
+            if "value" not in node or "value_type" not in node:
+                raise ValueError("editable typed material node has no value/type")
+            validate_value(node, node["value"])
+            metadata = node.get("metadata")
+            if not isinstance(metadata, Mapping) or not isinstance(metadata.get("runtime"), Mapping):
+                raise ValueError("editable typed material node has no runtime mapping")
+            runtime = dict(metadata["runtime"])
+            if set(runtime) != {
+                "token_index", "continuous_word", "discrete_word", "type_word",
+                "normalization", "derived_writes",
+            }:
+                raise ValueError("typed material node runtime fields are invalid")
+            if (
+                int(runtime["token_index"]) < 0
+                or int(runtime["continuous_word"]) < 0
+                or int(runtime["continuous_word"]) + 4 > word_count
+                or int(runtime["discrete_word"]) not in range(word_count)
+                or int(runtime["type_word"]) not in range(word_count)
+            ):
+                raise ValueError("typed material node runtime words are out of bounds")
+            normalization = dict(runtime["normalization"])
+            if not set(normalization).issubset({"default", "minimum", "maximum"}) or "default" not in normalization:
+                raise ValueError("typed material node normalization is invalid")
+            validate_value(node, normalization["default"])
+            if ("minimum" in normalization) != ("maximum" in normalization):
+                raise ValueError("typed material node normalization range is incomplete")
+            if "minimum" in normalization and (
+                not finite_number(normalization["minimum"])
+                or not finite_number(normalization["maximum"])
+                or float(normalization["minimum"]) >= float(normalization["maximum"])
+            ):
+                raise ValueError("typed material node normalization range is invalid")
+            writes = runtime["derived_writes"]
+            if not isinstance(writes, (list, tuple)):
+                raise ValueError("typed material node derived_writes are invalid")
+            for write in writes:
+                if (
+                    not isinstance(write, Mapping)
+                    or set(write) != {"word", "operation", "component"}
+                    or int(write["word"]) not in range(word_count)
+                    or write["operation"] not in {"copy", "bool", "degrees-cos", "degrees-sin"}
+                    or int(write["component"]) not in range(4)
+                ):
+                    raise ValueError("typed material node derived write is invalid")
+        for child in children:
+            visit(child)
+
+    visit(view["root"])
+    if str(dict(view["root"])["path"]) != "/":
+        raise ValueError("typed material editor root path must be /")
+
+
 @dataclass(frozen=True)
 class RuntimePayload:
     program_module: str
@@ -129,6 +283,70 @@ class MaterialPayload:
             "sampler_descriptors",
             _validate_sampler_descriptors(self.sampler_descriptors),
         )
+
+
+@dataclass(frozen=True)
+class InstancePayload:
+    """Per-package editable state, separate from immutable program and asset data."""
+
+    parameters: Mapping[str, Any]
+    blobs: Mapping[str, bytes] = field(default_factory=dict)
+    blob_descriptors: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    editor: Mapping[str, Any] = field(default_factory=dict)
+    compiler: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        parameters = dict(self.parameters)
+        if set(parameters) != {"compiled_material_index"}:
+            raise ValueError("instance parameters require exactly compiled_material_index")
+        if int(parameters["compiled_material_index"]) < 0:
+            raise ValueError("compiled_material_index must be nonnegative")
+        if set(self.blobs) != set(self.blob_descriptors):
+            raise ValueError("instance blob descriptors must cover blobs exactly")
+        editor = dict(self.editor)
+        compiler = dict(self.compiler)
+        if bool(editor) != bool(compiler):
+            raise ValueError("editable instances require both editor and compiler contracts")
+        if editor:
+            required_editor = {"schema", "parameter_view", "raw_usage", "compiled_usage"}
+            required_compiler = {"entry_point", "thread_group_size"}
+            if set(editor) != required_editor or set(compiler) != required_compiler:
+                raise ValueError("instance editor/compiler contract fields are invalid")
+            if editor["schema"] != "ncls.typed-material-editor@1":
+                raise ValueError("unsupported typed material editor schema")
+            if not isinstance(editor["parameter_view"], Mapping):
+                raise ValueError("typed material editor parameter_view must be an object")
+            validate_typed_parameter_view(editor["parameter_view"])
+            if not str(editor["raw_usage"]) or not str(editor["compiled_usage"]):
+                raise ValueError("typed material editor usages must be nonempty")
+            group = compiler["thread_group_size"]
+            if (
+                not str(compiler["entry_point"])
+                or not isinstance(group, (tuple, list))
+                or len(group) != 3
+                or any(int(value) < 1 for value in group)
+            ):
+                raise ValueError("typed material compiler entry/group is invalid")
+            usages = {
+                str(descriptor.get("usage")): descriptor
+                for descriptor in self.blob_descriptors.values()
+            }
+            if editor["raw_usage"] not in usages or editor["compiled_usage"] not in usages:
+                raise ValueError("typed material editor usages must name instance blobs")
+            if any(
+                usages[usage].get("kind") != "mutable-structured-buffer"
+                for usage in (editor["raw_usage"], editor["compiled_usage"])
+            ):
+                raise ValueError("typed material editor buffers must be mutable structured buffers")
+        object.__setattr__(self, "parameters", parameters)
+        object.__setattr__(self, "blobs", dict(self.blobs))
+        object.__setattr__(
+            self,
+            "blob_descriptors",
+            {name: dict(value) for name, value in self.blob_descriptors.items()},
+        )
+        object.__setattr__(self, "editor", editor)
+        object.__setattr__(self, "compiler", compiler)
 
 
 @dataclass(frozen=True)

@@ -14,6 +14,7 @@ RWTexture2D<float4> gApproximation;
 cbuffer ApproximationCB
 {
     uint2 gFrameDim;
+    uint2 gDispatchOffset;
     uint gUseEnvironment;
     float gEnvironmentRotation;
     float gEnvironmentIntensity;
@@ -62,7 +63,7 @@ float3 nclsEnvironment(float3 direction)
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
-    const uint2 pixel = dispatchThreadID.xy;
+    const uint2 pixel = dispatchThreadID.xy + gDispatchOffset;
     if (any(pixel >= gFrameDim)) return;
     const float4 positionDepth = gPositionDepth[pixel];
     const float3 viewWorld = normalize(gViewDirection[pixel].xyz);

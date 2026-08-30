@@ -3,13 +3,19 @@ from __future__ import annotations
 import hashlib
 import math
 from pathlib import Path
+import re
 from typing import Any, Mapping
 
 import torch
 from torch import nn
 from torch.nn import functional as F
 
-from ncls.core.scattering import BackendCapability, MaterialPayload, RuntimePayload
+from ncls.core.scattering import (
+    BackendCapability,
+    InstancePayload,
+    MaterialPayload,
+    RuntimePayload,
+)
 from ncls.core.source import SourceSnapshot
 from ncls.learning.batches import (
     AssetTileBatch,
@@ -34,9 +40,24 @@ from ncls.learning.models.metal_fused_profile import (
     METAL_FUSED_LAYOUT_PATH,
     load_metal_fused_layout,
 )
+from ncls.learning.metal_asset_cook import MetalAssetCooker
+from ncls.learning.metal_runtime import (
+    METAL_COMPILED_WORD_COUNT,
+    METAL_RAW_OFFSETS,
+    METAL_RAW_WORD_COUNT,
+    evaluate_metal_cooked_asset,
+    pack_metal_asset,
+    pack_metal_compiled_material,
+    pack_metal_program,
+    pack_metal_raw_parameters,
+    quantize_runtime_model,
+)
 from ncls.learning.objectives import sampler_forward_kl_score
+from ncls.learning.source_adapters import MetalFusedMdlSourceAdapter
 from ncls.learning.source_adaptation import NativeAssetCollection
 from ncls.paths import PROJECT_ROOT
+from ncls.source_materials.families.mdl import MdlFamilyDefinition
+from ncls.source_materials.mdl import MdlMaterialSource
 
 
 _CODEC_GROUPS = (
@@ -85,6 +106,36 @@ _METAL_PREPARE_TENSORS = (
     "metal_frame_state",
 )
 
+_PARITY_VIEW = (0.17364818, -0.33682409, 0.92541658)
+_PARITY_LIGHTS = (
+    (0.0, 0.0, 1.0),
+    (0.34202015, 0.16317591, 0.92541658),
+    (-0.49240388, 0.41317591, 0.76604444),
+    (0.71984631, -0.60402277, 0.34202015),
+)
+
+
+def _module_closure(entry: Path) -> dict[str, bytes]:
+    include_pattern = re.compile(rb'^\s*#include\s+"([^"]+)"', re.MULTILINE)
+    shader_root = PROJECT_ROOT / "shaders"
+    pending = [entry.resolve()]
+    result: dict[str, bytes] = {}
+    while pending:
+        path = pending.pop()
+        try:
+            relative = path.relative_to(shader_root).as_posix()
+        except ValueError as error:
+            raise ValueError(f"Metal shader dependency escapes shader root: {path}") from error
+        if relative in result:
+            continue
+        payload = path.read_bytes()
+        result[relative] = payload
+        for match in include_pattern.finditer(payload):
+            dependency = (path.parent / match.group(1).decode("utf-8")).resolve()
+            if dependency.is_file():
+                pending.append(dependency)
+    return result
+
 
 def _implementation_sha256() -> str:
     paths = (
@@ -96,8 +147,16 @@ def _implementation_sha256() -> str:
         PROJECT_ROOT / "src/ncls/learning/models/metal_sampler.py",
         PROJECT_ROOT / "src/ncls/learning/models/metal_fused_profile.py",
         PROJECT_ROOT / "src/ncls/learning/metal_asset_cook.py",
+        PROJECT_ROOT / "src/ncls/learning/source_adaptation.py",
+        PROJECT_ROOT / "src/ncls/learning/metal_runtime.py",
         PROJECT_ROOT / "src/ncls/learning/mdl_metal_assets.py",
         PROJECT_ROOT / "src/ncls/learning/source_adapters.py",
+        PROJECT_ROOT / "shaders/ncls/backends/metal_fused/metal_fused.slang",
+        PROJECT_ROOT / "shaders/ncls/backends/metal_fused/metal_fused_common.slang",
+        PROJECT_ROOT / "shaders/ncls/backends/metal_fused/metal_fused_prepare.slang",
+        PROJECT_ROOT / "shaders/ncls/backends/metal_fused/metal_fused_evaluator.slang",
+        PROJECT_ROOT / "shaders/ncls/backends/metal_fused/metal_fused_compiler.slang",
+        PROJECT_ROOT / "shaders/ncls/backends/metal_fused/metal_fused_compiler_heads.slang",
         PROJECT_ROOT / "shaders/ncls/backends/metal_fused/metal_fused_layout.generated.slang",
         PROJECT_ROOT / "shaders/ncls/scattering/metal_fused_proposal.slang",
         METAL_FUSED_LAYOUT_PATH,
@@ -276,8 +335,8 @@ _COMPONENTS = (
         ),
         (
             "checkpoint:model_state",
-            "slang:shaders/ncls/scattering/metal_fused_proposal.slang",
-            "layout:src/ncls/learning/abi/metal_fused_layout_v1.json",
+            "slang:ncls/scattering/metal_fused_proposal.slang",
+            "slang:ncls/backends/metal_fused/metal_fused_layout.generated.slang",
         ),
         ("nclsMetalFusedProposalPdf", "nclsSampleMetalFusedProposal"),
     ),
@@ -289,7 +348,7 @@ _COMPONENTS = (
         ("proposal_support_trace", "proposal_fallback_trace"),
         (
             "checkpoint:model_state",
-            "slang:shaders/ncls/scattering/metal_fused_proposal.slang",
+            "slang:ncls/scattering/metal_fused_proposal.slang",
         ),
         ("nclsMetalFusedProposalPdf", "nclsSampleMetalFusedProposal"),
     ),
@@ -301,7 +360,7 @@ _COMPONENTS = (
         ("proposal_sample_pdf_trace", "proposal_weight_identity_trace"),
         (
             "checkpoint:model_state",
-            "slang:shaders/ncls/scattering/metal_fused_proposal.slang",
+            "slang:ncls/scattering/metal_fused_proposal.slang",
         ),
         ("nclsMetalFusedProposalPdf", "nclsSampleMetalFusedProposal"),
     ),
@@ -378,6 +437,156 @@ class MetalFusedMethodDefinition(MethodDefinition):
         metal_fused_parameter_groups(),
         _COMPONENTS,
     )
+
+    def _deployment(
+        self,
+        snapshot: SourceSnapshot,
+        checkpoint: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        self.descriptor.adaptation_contract(snapshot)
+        cache_key = (snapshot.snapshot_id, id(checkpoint))
+        cached = getattr(self, "_deployment_cache", None)
+        if isinstance(cached, tuple) and cached[0] == cache_key:
+            return cached[1]
+        state_ids = checkpoint.get("source_snapshot_ids")
+        state = checkpoint.get("model_state")
+        training_config = checkpoint.get("training_config")
+        if (
+            not isinstance(state_ids, (list, tuple))
+            or snapshot.snapshot_id not in map(str, state_ids)
+            or not isinstance(state, Mapping)
+            or not isinstance(training_config, Mapping)
+        ):
+            raise ValueError("Metal deployment requires a checkpoint containing this source")
+        context = training_config.get("model_context")
+        if not isinstance(context, Mapping):
+            raise ValueError("Metal deployment checkpoint has no model_context")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = self.create_trainable(context).to(device)
+        self.restore_training_state(model, state)
+        quantize_runtime_model(model)
+        adapter = MetalFusedMdlSourceAdapter((snapshot,), device)
+        tensors = adapter.compiler_tensors_for_source(0, device=device)
+        asset_index = adapter.asset_index_for_source(0)
+        cooked = MetalAssetCooker(
+            model,
+            adapter.native_assets(),
+            max_core_texels=262_144,
+            encoder_halo=32,
+            encoder_batch_tiles=1,
+        ).cook_asset(
+            asset_index, mode="encoder-only"
+        )
+        descriptor = adapter.native_assets().descriptors[asset_index]
+        address_modes = {
+            domain.domain_id: domain.address_mode for domain in descriptor.domains
+        }
+        packed_asset = pack_metal_asset(cooked, address_modes=address_modes)
+        with torch.no_grad():
+            program_state = model.typed_compiler(tensors)
+        result = {
+            "model": model,
+            "adapter": adapter,
+            "tensors": tensors,
+            "cooked": cooked,
+            "packed_asset": packed_asset,
+            "program_state": program_state,
+            "address_modes": address_modes,
+        }
+        self._deployment_cache = (cache_key, result)
+        return result
+
+    @staticmethod
+    def _editor_view(
+        snapshot: SourceSnapshot,
+        adapter: MetalFusedMdlSourceAdapter,
+    ) -> Mapping[str, Any]:
+        view = MdlFamilyDefinition().describe_parameters(snapshot).to_dict()
+        source = MdlMaterialSource.from_snapshot(snapshot)
+        record = adapter.registry.resolve_exact_locator(source.module, source.export)
+        by_name = {
+            str(parameter["name"]): (index, parameter)
+            for index, parameter in enumerate(record.parameters)
+        }
+        argument_names = set(source.arguments)
+        derived: dict[str, list[dict[str, Any]]] = {}
+
+        def select(names: tuple[str, ...]) -> str | None:
+            return next((name for name in names if name in argument_names), None)
+
+        def add(name: str | None, word: int, operation: str, component: int = 0) -> None:
+            if name is not None:
+                derived.setdefault(name, []).append(
+                    {"word": word, "operation": operation, "component": component}
+                )
+
+        color_name = select(("metal_color", "metal_tint", "normal_reflectivity", "color_1"))
+        grazing_name = select(("grazing_reflectivity",)) or color_name
+        for component in range(3):
+            add(color_name, METAL_RAW_OFFSETS["optical"] + component, "copy", component)
+            add(grazing_name, METAL_RAW_OFFSETS["optical"] + 3 + component, "copy", component)
+        for component, name in enumerate((
+            "roughness", "metal_roughness", "reflection_roughness",
+            "steel_anisotropy", "brushing_anisotropy", "reflection_brightness",
+            "metalness", "paint_roughness", "oxide_roughness", "polish_film_strength",
+        )):
+            add(select((name,)), METAL_RAW_OFFSETS["optical"] + 6 + component, "copy")
+        access = METAL_RAW_OFFSETS["access"]
+        for component in range(2):
+            add(select(("texture_scale",)), access + component, "copy", component)
+            add(select(("texture_translate",)), access + 2 + component, "copy", component)
+        add(select(("texture_rotate",)), access + 4, "degrees-cos")
+        add(select(("texture_rotate",)), access + 5, "degrees-sin")
+        add(select(("infinite_tiling",)), access + 6, "bool")
+        add(select(("no_uv",)), access + 7, "bool")
+        add(select(("uv_space_index",)), access + 8, "copy")
+        add(select(("scale",)), access + 9, "copy")
+        frame = METAL_RAW_OFFSETS["frame"]
+        add(select(("enable_round_corners", "roundcorners_enable")), frame, "bool")
+        add(select(("radius", "radius_mm", "roundcorner_radius", "roundcorners_radius_mm")), frame + 1, "copy")
+        add(select(("across_materials", "roundcorners_across_materials")), frame + 2, "bool")
+        add(select(("object_scaled_bump",)), frame + 3, "bool")
+
+        def annotate(node: dict[str, Any]) -> None:
+            metadata = dict(node.get("metadata", {}))
+            name = metadata.get("mdl_name")
+            if name in by_name:
+                index, parameter = by_name[str(name)]
+                metadata["runtime"] = {
+                    "token_index": index,
+                    "continuous_word": METAL_RAW_OFFSETS["continuous"] + 4 * index,
+                    "discrete_word": METAL_RAW_OFFSETS["discrete"] + index,
+                    "type_word": METAL_RAW_OFFSETS["type"] + index,
+                    "normalization": {
+                        "default": parameter.get("value", 0.0),
+                        **(
+                            {"minimum": parameter["minimum"]}
+                            if "minimum" in parameter
+                            else {"minimum": parameter["soft_minimum"]}
+                            if "soft_minimum" in parameter
+                            else {}
+                        ),
+                        **(
+                            {"maximum": parameter["maximum"]}
+                            if "maximum" in parameter
+                            else {"maximum": parameter["soft_maximum"]}
+                            if "soft_maximum" in parameter
+                            else {}
+                        ),
+                    },
+                    "derived_writes": derived.get(str(name), []),
+                }
+                node["metadata"] = metadata
+            for child in node.get("children", []):
+                annotate(child)
+
+        annotate(view["root"])
+        view["runtime_layout"] = {
+            "schema": "ncls.metal-raw-typed-parameters@1",
+            "word_count": METAL_RAW_WORD_COUNT,
+            "offsets": dict(METAL_RAW_OFFSETS),
+        }
+        return view
 
     def create_trainable(self, context: Mapping[str, Any]) -> nn.Module:
         return MetalFusedNeuralMaterialModel.from_context(context)
@@ -824,21 +1033,137 @@ class MetalFusedMethodDefinition(MethodDefinition):
         model.load_state_dict(restored, strict=True)
 
     def compile_program(self, checkpoint: Mapping[str, Any]) -> RuntimePayload:
-        del checkpoint
-        raise RuntimeError(
-            "Metal full-method checkpoints are intentionally non-packageable until the "
-            "runtime deployment child freezes Package@2 resources and the full Slang backend"
+        state = checkpoint.get("model_state")
+        training_config = checkpoint.get("training_config")
+        if not isinstance(state, Mapping) or not isinstance(training_config, Mapping):
+            raise ValueError("Metal runtime compilation requires checkpoint model_state")
+        context = training_config.get("model_context")
+        if not isinstance(context, Mapping):
+            raise ValueError("Metal runtime compilation requires model_context")
+        model = self.create_trainable(context)
+        self.restore_training_state(model, state)
+        packed = pack_metal_program(model)
+        module = "ncls/backends/metal_fused/metal_fused.slang"
+        closure = _module_closure(PROJECT_ROOT / "shaders" / module)
+        return RuntimePayload(
+            module,
+            closure,
+            {"shared-weights": packed.payload},
+            {
+                "shared-weights": {
+                    "kind": "structured-buffer",
+                    "dtype": "packed-float16x2-uint32@1",
+                    "shape": [len(packed.payload) // 4],
+                    "stride": 4,
+                    "alignment": 16,
+                    "usage": "gNclsRuntimeWeights",
+                }
+            },
+            self.descriptor.capabilities,
+            packed.defines,
         )
 
     def compile_asset(
         self, snapshot: SourceSnapshot, checkpoint: Mapping[str, Any]
     ) -> MaterialPayload:
-        self.descriptor.adaptation_contract(snapshot)
-        del checkpoint
-        raise RuntimeError(
-            "Metal asset packaging is intentionally fail-closed until the runtime child "
-            "consumes the frozen encoder-only asset layout"
+        deployment = self._deployment(snapshot, checkpoint)
+        packed = deployment["packed_asset"]
+        return MaterialPayload(
+            snapshot.snapshot_id,
+            packed.blobs,
+            packed.descriptors,
+            sampler_descriptors={
+                "metal-grid-sampler": {
+                    "kind": "sampler",
+                    "usage": "gNclsMetalGridSampler",
+                    "filter": "linear",
+                    "address_mode": "wrap",
+                }
+            },
         )
+
+    def compile_instance(
+        self,
+        snapshot: SourceSnapshot,
+        checkpoint: Mapping[str, Any],
+    ) -> InstancePayload:
+        deployment = self._deployment(snapshot, checkpoint)
+        tensors = deployment["tensors"]
+        packed_asset = deployment["packed_asset"]
+        compiled = pack_metal_compiled_material(
+            deployment["program_state"],
+            tensors,
+            deployment["cooked"],
+            domain_count=packed_asset.domain_count,
+            maximum_extent=packed_asset.maximum_extent,
+            maximum_mip=packed_asset.maximum_mip,
+        )
+        raw = pack_metal_raw_parameters(tensors)
+        return InstancePayload(
+            {"compiled_material_index": 0},
+            {"metal-raw-parameters": raw, "compiled-material": compiled},
+            {
+                "metal-raw-parameters": {
+                    "kind": "mutable-structured-buffer",
+                    "dtype": "ncls-metal-raw-typed-parameters@1",
+                    "shape": [METAL_RAW_WORD_COUNT],
+                    "stride": 4,
+                    "alignment": 16,
+                    "usage": "gNclsMetalRawParameters",
+                },
+                "compiled-material": {
+                    "kind": "mutable-structured-buffer",
+                    "dtype": "ncls-metal-compiled-material@1",
+                    "shape": [METAL_COMPILED_WORD_COUNT],
+                    "stride": 4,
+                    "alignment": 16,
+                    "usage": "gNclsCompiledMaterials",
+                },
+            },
+            {
+                "schema": "ncls.typed-material-editor@1",
+                "parameter_view": self._editor_view(snapshot, deployment["adapter"]),
+                "raw_usage": "gNclsMetalRawParameters",
+                "compiled_usage": "gNclsCompiledMaterials",
+            },
+            {"entry_point": "nclsCompileMaterial", "thread_group_size": [32, 1, 1]},
+        )
+
+    def package_validation(
+        self,
+        snapshot: SourceSnapshot,
+        checkpoint: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        deployment = self._deployment(snapshot, checkpoint)
+        with torch.no_grad():
+            expected = evaluate_metal_cooked_asset(
+                deployment["model"],
+                deployment["cooked"],
+                deployment["tensors"],
+                uv=(0.371, 0.619),
+                mip_level=0.375,
+                wo=_PARITY_VIEW,
+                wi=_PARITY_LIGHTS,
+                address_modes=deployment["address_modes"],
+            )
+        return {
+            "status": "gpu-parity-required",
+            "parity": {
+                "oracle": "metal-fused-full-fp16-int8-python@1",
+                "uv": [0.371, 0.619],
+                "mip_level": 0.375,
+                "view": list(_PARITY_VIEW),
+                "lights": [list(value) for value in _PARITY_LIGHTS],
+                "expected_f": expected.tolist(),
+                "relative_tolerance": 5e-2,
+                "absolute_tolerance": 5e-4,
+            },
+            "storage": {
+                "B_shared": len(pack_metal_program(deployment["model"]).payload),
+                "B_asset": sum(len(value) for value in deployment["packed_asset"].blobs.values()),
+                "B_instance": 4 * (METAL_RAW_WORD_COUNT + METAL_COMPILED_WORD_COUNT),
+            },
+        }
 
     def materialize_assets(
         self,

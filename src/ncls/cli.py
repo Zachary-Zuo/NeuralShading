@@ -293,7 +293,7 @@ def _learn_export(
         program_payload=runtime,
         asset_payload=material,
         validation=validation,
-        instance_parameters=instance,
+        instance_payload=instance,
         provenance={
             "checkpoint_sha256": checkpoint_path.with_suffix(
                 checkpoint_path.suffix + ".sha256"

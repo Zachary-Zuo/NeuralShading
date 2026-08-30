@@ -2,15 +2,15 @@
 
 ## 顺序
 
-1. 从layout JSON生成Python/Slang ABI与packing tests；
-2. 实现BF16/QAT Python inference oracle和program/asset/instance packers；
-3. 实现Metal Slang decoder/access/compiler/evaluator/sample/pdf与GPU kernel tests；
-4. 为`ScatteringPackage@2`登记Metal INT8/FP16 typed resources和三section validation；
-5. 扩展viewer generic resource factory与Metal三层bindings，不改变canonical viewer类型；
-6. 实现required editable-material compute entry、schema UI、atomic state update；
-7. 接入deferred和PT full capability parity；
-8. 执行package parity、viewer capture、Release build和Falcor clean；
-9. 记录`B_shared/B_asset/B_instance`、prepare/eval/sample/pdf静态计数与viewer diagnostic timing。
+- [x] 从layout JSON生成Python/Slang ABI与packing tests；
+- [x] 实现BF16/QAT Python inference oracle和program/asset/instance packers；
+- [x] 实现Metal Slang decoder/access/compiler/evaluator/sample/pdf与GPU kernel tests；
+- [x] 为`ScatteringPackage@2`登记Metal INT8/FP16 typed resources和三section validation；
+- [x] 扩展viewer generic resource factory与Metal三层bindings，不改变canonical viewer类型；
+- [x] 实现required editable-material compute entry、schema UI、atomic state update；
+- [x] 接入deferred和PT full capability parity；
+- [x] 执行package parity、viewer capture、Release build和Falcor clean；
+- [x] 记录`B_shared/B_asset/B_instance`、prepare/eval/sample/pdf静态计数与viewer diagnostic timing。
 
 ## 重点文件
 
@@ -25,9 +25,9 @@
 
 ```powershell
 conda run -n neural-shading python -m pytest tests/unit/test_scattering_package.py tests/unit/test_viewer_slots.py tests/unit/test_viewer_studio.py
-scripts/run_falcor_python.ps1 -Command "python -m pytest tests/gpu/test_scattering_package_parity.py tests/gpu/test_viewer_path_surface.py"
+scripts/run_falcor_python.ps1 -m pytest tests/gpu/test_metal_runtime_package.py -q
 scripts/build_viewer.ps1 -Configuration Release
-scripts/benchmark_viewer.ps1 -Config <metal-diagnostic-config>
+external/Falcor/build/windows-vs2022/bin/Release/NclsViewer.exe --headless --request .trellis/tasks/08-30-metal-runtime-deployment/scratch/metal-runtime-capture-request.json
 git -C external/Falcor status --short
 git diff --check
 ```

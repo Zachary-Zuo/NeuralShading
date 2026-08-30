@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+import math
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Protocol
 
@@ -278,6 +280,11 @@ class _WorkingSetCache:
 
         return NativeAssetWorkingSetLease(entry.tensor, release)
 
+    def clear(self) -> None:
+        if any(entry.ref_count for entry in self._entries.values()):
+            raise RuntimeError("native asset working set cannot clear leased entries")
+        self._entries.clear()
+
 
 @dataclass(frozen=True)
 class NativeAssetTile:
@@ -359,6 +366,8 @@ class NativeAssetCollection(Protocol):
         self, request: NativeAssetTileRequest, device: torch.device
     ) -> NativeAssetTile: ...
 
+    def cook_session(self, asset_index: int) -> Iterator[None]: ...
+
 
 def _tile_requests(
     descriptor: NativeAssetDescriptor,
@@ -370,8 +379,14 @@ def _tile_requests(
     if max_core_texels < 1 or halo < 0:
         raise ValueError("native asset tile budget/halo is invalid")
     for mip_level, (height, width) in enumerate(domain.level_shapes):
-        tile_width = min(width, max_core_texels)
-        tile_height = max(1, min(height, max_core_texels // tile_width))
+        # Keep 2D encoder tiles compact. A full-width strip technically obeys
+        # the core-texel budget, but its halo cost grows with the entire image
+        # width and turns a 4K/8K U-Net cook into billions of redundant texels.
+        side = max(1, math.isqrt(max_core_texels))
+        tile_width = min(width, side)
+        tile_height = min(height, max(1, max_core_texels // tile_width))
+        if tile_height < side:
+            tile_width = min(width, max(1, max_core_texels // tile_height))
         for origin_y in range(0, height, tile_height):
             core_height = min(tile_height, height - origin_y)
             for origin_x in range(0, width, tile_width):
@@ -507,6 +522,12 @@ class DenseNativeAssetCollection:
         except BaseException:
             lease.release()
             raise
+
+    @contextmanager
+    def cook_session(self, asset_index: int) -> Iterator[None]:
+        if not 0 <= asset_index < len(self.descriptors):
+            raise ValueError("dense native asset cook index is out of range")
+        yield
 
 
 def layer_stack_native_feature_layout() -> NativeFeatureLayout:
@@ -831,6 +852,12 @@ class MaterialXNativeAssetCollection:
         except BaseException:
             lease.release()
             raise
+
+    @contextmanager
+    def cook_session(self, asset_index: int) -> Iterator[None]:
+        if asset_index != 0:
+            raise ValueError("MaterialX native asset cook index is out of range")
+        yield
 
     @staticmethod
     def _bilinear_wrap(level: torch.Tensor, uv: torch.Tensor) -> torch.Tensor:

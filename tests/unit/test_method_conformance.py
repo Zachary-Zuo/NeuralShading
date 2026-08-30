@@ -97,5 +97,6 @@ def test_artifact_inventory_uses_symbols_from_the_packaged_module_closure() -> N
         asset,
         checkpoint_model_state=False,
     )
+    assert "slang:fixture.slang" in inventory.runtime_artifacts
     assert "NclsPackageBackend" in inventory.slang_entry_points
     assert "NclsPackageEvaluate" not in inventory.slang_entry_points

@@ -18,6 +18,7 @@ RWStructuredBuffer<uint> gPackageNoiseStats;
 cbuffer PackagePathTracerCB
 {
     uint2 gFrameDim;
+    uint2 gDispatchOffset;
     uint gFrameIndex;
     uint gPackageSpp;
     uint gSamplesThisFrame;
@@ -422,7 +423,7 @@ groupshared float gPackageRelativeStandardError[64];
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
 {
-    const uint2 pixel = dispatchThreadID.xy;
+    const uint2 pixel = dispatchThreadID.xy + gDispatchOffset;
     const bool validPixel = all(pixel < gFrameDim);
     float3 batchSum = float3(0.0f);
     float batchLuminanceSquare = 0.0f;
@@ -476,8 +477,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint groupIndex : SV_Gro
     }
     if (groupIndex == 0u)
     {
-        const uint groupPixels = min(8u, gFrameDim.x - dispatchThreadID.x)
-            * min(8u, gFrameDim.y - dispatchThreadID.y);
+        const uint groupPixels = min(8u, gFrameDim.x - pixel.x)
+            * min(8u, gFrameDim.y - pixel.y);
         const float groupMean = gPackageRelativeStandardError[0] / max(groupPixels, 1u);
         InterlockedAdd(gPackageNoiseStats[0], uint(groupMean * 4096.0f));
         InterlockedAdd(gPackageNoiseStats[1], 1u);

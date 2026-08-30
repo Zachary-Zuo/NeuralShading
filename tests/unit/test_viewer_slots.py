@@ -236,3 +236,82 @@ def test_release_viewer_uses_v2_studio_and_package_id_slot_cli() -> None:
     assert "--slot0-package $packages[$Slot0PackageId]" not in benchmark
     assert 'constants["gDividerColor"] = mDividerColor;' in viewer
     assert "else { comparisonLinear = gDividerColor;" in composite
+
+
+def test_package_source_identity_uses_canonical_mdl_snapshot() -> None:
+    viewer = Path("apps/viewer/NclsViewer.cpp").read_text(encoding="utf-8")
+    compatibility = viewer[
+        viewer.index("bool NclsViewer::allMaterialsSupportedBy") :
+        viewer.index("bool NclsViewer::hasActiveProgram")
+    ]
+
+    assert "source.familyId() != method.asset.sourceFamilyId" in compatibility
+    assert "source.family == ncls::ReferenceFamily::Mdl" in compatibility
+    assert "? method.asset.sourceSnapshotId" in compatibility
+    assert ": method.asset.sourceAssetSha256" in compatibility
+    assert "source.sourceSha256 == expectedIdentity" in compatibility
+
+
+def test_package_program_runtime_is_shared_by_program_identity() -> None:
+    viewer = Path("apps/viewer/NclsViewer.cpp").read_text(encoding="utf-8")
+    runtime = viewer[
+        viewer.index("std::shared_ptr<NclsViewer::ProgramGpuRuntime>") :
+        viewer.index("void NclsViewer::compileMaterialInstance")
+    ]
+
+    assert "mProgramGpuRuntimes.find(method.program->programId)" in runtime
+    assert "runtime->programId = method.program->programId" in runtime
+    assert "mProgramGpuRuntimes.emplace(runtime->programId, runtime)" in runtime
+    assert "method.asset.assetId" not in runtime
+    assert "method.instance.instanceId" not in runtime
+
+
+def test_typed_material_edit_compiles_candidate_before_atomic_replacement() -> None:
+    viewer = Path("apps/viewer/NclsViewer.cpp").read_text(encoding="utf-8")
+    editor = viewer[
+        viewer.index("void NclsViewer::applyMaterialEditor") :
+        viewer.index("bool NclsViewer::runParityProbe")
+    ]
+    activation = viewer[
+        viewer.index("void NclsViewer::activateComparisonSlot") :
+        viewer.index("ref<Texture> NclsViewer::slotOutput")
+    ]
+
+    assert "auto candidateBuffers = slot.buffers;" in editor
+    assert "uploadMaterialEditorValues(method, editorView, candidateBuffers);" in editor
+    assert "compileMaterialInstance(*slot.programRuntime, method, candidateBuffers);" in editor
+    assert editor.index("compileMaterialInstance") < editor.index(
+        "slot.buffers = std::move(candidateBuffers);"
+    )
+    assert "slot.editorView = std::move(editorView);" in editor
+    assert "ComparisonSlotRuntime candidate;" in activation
+    assert "mComparisonSlots[slotIndex] = std::move(candidate);" in activation
+    assert "previous slot binding preserved" in activation
+
+
+def test_package_rendering_uses_generic_tdr_safe_tiles_without_model_shortcuts() -> None:
+    viewer = Path("apps/viewer/NclsViewer.cpp").read_text(encoding="utf-8")
+    header = Path("apps/viewer/NclsViewer.h").read_text(encoding="utf-8")
+    deferred = Path("apps/viewer/shaders/DeferredRenderer.cs.slang").read_text(
+        encoding="utf-8"
+    )
+    path = Path("apps/viewer/shaders/PackagePathTracer.cs.slang").read_text(
+        encoding="utf-8"
+    )
+    dispatch = viewer[
+        viewer.index("void NclsViewer::executePackageTiles") :
+        viewer.index("void NclsViewer::renderPackagePath")
+    ]
+
+    assert "kPackageDispatchTileWidth = 8u" in viewer
+    assert "kPackageDispatchTileRows = 8u" in viewer
+    assert "void executePackageTiles(" in header
+    assert 'root[constantBufferName]["gDispatchOffset"] = uint2(column, row);' in dispatch
+    assert "pRenderContext->submit(true)" in dispatch
+    assert "ReferenceFamily::Mdl" not in dispatch
+    assert "metal" not in dispatch.lower()
+    assert viewer.count("executePackageTiles(pRenderContext") == 2
+    for shader in (deferred, path):
+        assert "uint2 gDispatchOffset;" in shader
+        assert "dispatchThreadID.xy + gDispatchOffset" in shader
+        assert "[numthreads(8, 8, 1)]" in shader

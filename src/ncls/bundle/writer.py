@@ -5,7 +5,12 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ncls.core.identity import safe_relative_uri, sha256_bytes, sha256_json, write_json_atomic
-from ncls.core.scattering import MaterialPayload, RuntimePayload, read_resource_payload
+from ncls.core.scattering import (
+    InstancePayload,
+    MaterialPayload,
+    RuntimePayload,
+    read_resource_payload,
+)
 from ncls.core.source import SourceSnapshot
 
 from .manifest import FORMAT_NAME, FORMAT_VERSION, ScatteringPackageManifest
@@ -51,7 +56,7 @@ def write_scattering_package(
     asset_payload: MaterialPayload,
     validation: Mapping[str, Any],
     provenance: Mapping[str, Any],
-    instance_parameters: Mapping[str, Any] | None = None,
+    instance_payload: InstancePayload | None = None,
 ) -> ScatteringPackageManifest:
     """写出唯一的ScatteringPackage@2 program/asset/instance布局。"""
 
@@ -61,12 +66,10 @@ def write_scattering_package(
     target.mkdir(parents=True, exist_ok=True)
     if asset_payload.source_snapshot_id != source.snapshot_id:
         raise ValueError("asset payload source snapshot does not match package source")
-    parameters = {
-        "compiled_material_index": 0,
-        **({} if instance_parameters is None else dict(instance_parameters)),
-    }
-    if set(parameters) != {"compiled_material_index"}:
-        raise ValueError("instance parameters contain unknown fields")
+    instance_payload = instance_payload or InstancePayload(
+        {"compiled_material_index": 0}
+    )
+    parameters = dict(instance_payload.parameters)
 
     files: dict[str, str] = {}
     contents: dict[str, bytes] = {}
@@ -107,6 +110,15 @@ def write_scattering_package(
         descriptor = asset_payload.resource_descriptors[name]
         validate_typed_resource(materialized, descriptor)
         asset_resources[logical] = _typed_descriptor(descriptor)
+    instance_blobs: dict[str, Any] = {}
+    for name, payload in sorted(instance_payload.blobs.items()):
+        if safe_relative_uri(name) != Path(name).name:
+            raise ValueError("instance blob names must be single safe path components")
+        logical, uri = f"instance/blob/{name}", f"instance/blobs/{name}.bin"
+        files[logical], contents[uri] = uri, payload
+        instance_blobs[logical] = _typed_descriptor(
+            instance_payload.blob_descriptors[name]
+        )
     documents = (
         ("provenance/source", "provenance/source.json", source.to_identity_dict()),
         ("provenance/program", "provenance/program.json", dict(provenance)),
@@ -178,6 +190,9 @@ def write_scattering_package(
     instance = {
         "bindings": {"program_id": program_id, "asset_id": asset_id},
         "parameters": {"compiled_material_index": int(parameters["compiled_material_index"])},
+        "blobs": instance_blobs,
+        "editor": dict(instance_payload.editor),
+        "compiler": dict(instance_payload.compiler),
     }
     instance_identity = {
         "program_id": program_id,

@@ -562,6 +562,44 @@ class MetalFusedMdlSourceAdapter(MethodSourceAdapter):
             }
         )
 
+    def asset_index_for_source(self, source_index: int = 0) -> int:
+        if not 0 <= source_index < len(self.snapshots):
+            raise ValueError("Metal source index is out of range")
+        return int(self._tables["asset"][source_index].item())
+
+    def compiler_tensors_for_source(
+        self, source_index: int = 0, *, device: torch.device | None = None
+    ) -> Mapping[str, torch.Tensor]:
+        """Return one complete typed compiler record without sampling a training batch."""
+
+        if not 0 <= source_index < len(self.snapshots):
+            raise ValueError("Metal source index is out of range")
+        target = self.device if device is None else device
+        names = {
+            "metal_graph_index": "graph",
+            "metal_schema_index": "schema",
+            "metal_recipe_index": "recipe",
+            "metal_identity_index": "metal",
+            "metal_finish_index": "finish",
+            "metal_asset_index": "asset",
+            "metal_typed_semantic_id": "semantic",
+            "metal_typed_type_id": "type",
+            "metal_typed_responsibility_id": "responsibility",
+            "metal_typed_discrete": "discrete",
+            "metal_typed_continuous": "continuous",
+            "metal_typed_presence": "presence",
+            "metal_canonical_optical": "optical",
+            "metal_access_state": "access",
+            "metal_frame_state": "frame",
+        }
+        return {
+            output: self._tables[source][source_index : source_index + 1]
+            .detach()
+            .to(target)
+            .contiguous()
+            for output, source in names.items()
+        }
+
     def sample_tensors(
         self,
         source_index: torch.Tensor,

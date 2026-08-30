@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -25,6 +26,9 @@ FALCOR_EXPORT_D3D12_AGILITY_SDK
 
 namespace
 {
+constexpr uint32_t kPackageDispatchTileWidth = 8u;
+constexpr uint32_t kPackageDispatchTileRows = 8u;
+
 constexpr uint32_t kMaximumSceneMaterials = 64;
 constexpr uint32_t kDefaultCapturePathTracingSpp = 1024;
 const Gui::DropdownList kComparisonModes = {
@@ -71,9 +75,87 @@ ref<Buffer> createPackageBuffer(
     return device->createStructuredBuffer(
         descriptor.stride,
         static_cast<uint32_t>(descriptor.data.size() / descriptor.stride),
-        ResourceBindFlags::ShaderResource,
+        descriptor.kind == "mutable-structured-buffer"
+            ? ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess
+            : ResourceBindFlags::ShaderResource,
         MemoryType::DeviceLocal,
         descriptor.data.data());
+}
+
+bool editableRuntimeNode(const nlohmann::json& node)
+{
+    return node.is_object() && node.value("editable", false)
+        && node.contains("value") && node.contains("value_type")
+        && node.contains("metadata") && node.at("metadata").is_object()
+        && node.at("metadata").contains("runtime")
+        && node.at("metadata").at("runtime").is_object();
+}
+
+std::vector<float> numericComponents(const nlohmann::json& value)
+{
+    std::vector<float> result;
+    const auto append = [&](const nlohmann::json& component) {
+        float converted = 0.f;
+        if (component.is_boolean()) converted = component.get<bool>() ? 1.f : 0.f;
+        else if (component.is_number()) converted = component.get<float>();
+        else return;
+        if (!std::isfinite(converted)) throw std::runtime_error("material editor value is non-finite");
+        result.push_back(converted);
+    };
+    if (value.is_array())
+    {
+        for (const auto& component : value) append(component);
+    }
+    else append(value);
+    if (result.empty()) result.push_back(0.f);
+    return result;
+}
+
+bool editorValuesCompatible(const nlohmann::json& source, const nlohmann::json& target)
+{
+    if (!editableRuntimeNode(source) || !editableRuntimeNode(target)) return false;
+    if (source.at("value_type") != target.at("value_type")) return false;
+    const std::string type = target.at("value_type").get<std::string>();
+    const auto& value = source.at("value");
+    if (type == "enum")
+    {
+        if (!value.is_string() || !target.contains("choices") || !target.at("choices").is_array()) return false;
+        return std::find(target.at("choices").begin(), target.at("choices").end(), value)
+            != target.at("choices").end();
+    }
+    if (type == "bool") return value.is_boolean();
+    if (type == "int") return value.is_number_integer() || value.is_number_unsigned();
+    const size_t components = type == "vector2" ? 2u
+        : type == "vector3" || type == "color3" ? 3u
+        : type == "vector4" ? 4u : 1u;
+    if (components == 1u) return value.is_number();
+    return value.is_array() && value.size() == components
+        && std::all_of(value.begin(), value.end(), [](const auto& item) { return item.is_number(); });
+}
+
+void migrateEditorValues(nlohmann::json& targetView, const nlohmann::json& sourceView)
+{
+    if (!targetView.is_object() || !sourceView.is_object()
+        || !targetView.contains("root") || !sourceView.contains("root")) return;
+    std::map<std::string, const nlohmann::json*> sourceByPath;
+    std::function<void(const nlohmann::json&)> collect = [&](const nlohmann::json& node) {
+        if (editableRuntimeNode(node) && node.contains("path") && node.at("path").is_string())
+            sourceByPath.emplace(node.at("path").get<std::string>(), &node);
+        if (node.contains("children") && node.at("children").is_array())
+            for (const auto& child : node.at("children")) collect(child);
+    };
+    collect(sourceView.at("root"));
+    std::function<void(nlohmann::json&)> migrate = [&](nlohmann::json& node) {
+        if (editableRuntimeNode(node) && node.contains("path") && node.at("path").is_string())
+        {
+            const auto found = sourceByPath.find(node.at("path").get<std::string>());
+            if (found != sourceByPath.end() && editorValuesCompatible(*found->second, node))
+                node["value"] = found->second->at("value");
+        }
+        if (node.contains("children") && node.at("children").is_array())
+            for (auto& child : node.at("children")) migrate(child);
+    };
+    migrate(targetView.at("root"));
 }
 
 std::vector<uint8_t> readBinaryFile(const std::filesystem::path& path)
@@ -923,6 +1005,9 @@ void NclsViewer::loadScene(const std::filesystem::path& requestedPath, const std
     auto visibilityPass = RasterPass::create(getDevice(), program, scene->getSceneDefines());
 
     mpScene = std::move(scene);
+    // Path programs specialize against the scene module/type-conformance set.
+    // A scene change invalidates GPU programs but package data identities stay intact.
+    mProgramGpuRuntimes.clear();
     mpSceneVisibilityPass = std::move(visibilityPass);
     mReferenceGeometryPath = path;
     mReferenceGeometrySha256 = geometrySha256;
@@ -1138,8 +1223,15 @@ void NclsViewer::updateReferenceSourceBuffer()
 bool NclsViewer::allMaterialsSupportedBy(const ncls::ViewerProgram& method) const
 {
     const auto supports = [&](const ncls::ReferenceSource& source) {
-        return source.familyId() == method.asset.sourceFamilyId
-            && source.sourceSha256 == method.asset.sourceAssetSha256;
+        if (source.familyId() != method.asset.sourceFamilyId) return false;
+        // MDL source identity includes the export, typed defaults and the transitive
+        // resource set. ReferenceSource deliberately exposes that canonical snapshot
+        // through sourceSha256; sourceAssetSha256 is only the root .mdl file hash.
+        // Other source families retain their native-asset identity here.
+        const std::string& expectedIdentity = source.family == ncls::ReferenceFamily::Mdl
+            ? method.asset.sourceSnapshotId
+            : method.asset.sourceAssetSha256;
+        return source.sourceSha256 == expectedIdentity;
     };
     if (!supports(mReferenceSource)) return false;
     for (const auto& [materialId, binding] : mInactiveSceneMaterials)
@@ -1244,6 +1336,7 @@ ref<ComputePass> NclsViewer::createProgramPass(
         "NCLS_PACKAGE_PROGRAM_HEADER",
         "\"" + std::filesystem::path(method.program->shaderModule).generic_string() + "\"");
     for (const auto& [name, value] : method.program->shaderDefines) defines.add(name, value);
+    if (method.instance.editable()) defines.add("NCLS_METAL_RUNTIME_ONLY", "1");
     return ComputePass::create(getDevice(), program, defines, true);
 }
 
@@ -1259,7 +1352,273 @@ ref<ComputePass> NclsViewer::createProgramPathPass(const ncls::ViewerProgram& me
         "NCLS_PACKAGE_PROGRAM_HEADER",
         "\"" + std::filesystem::path(method.program->shaderModule).generic_string() + "\"");
     for (const auto& [name, value] : method.program->shaderDefines) defines.add(name, value);
+    if (method.instance.editable()) defines.add("NCLS_METAL_RUNTIME_ONLY", "1");
     return ComputePass::create(getDevice(), program, defines, true);
+}
+
+std::shared_ptr<NclsViewer::ProgramGpuRuntime> NclsViewer::programGpuRuntime(
+    const ncls::ViewerProgram& method)
+{
+    const auto found = mProgramGpuRuntimes.find(method.program->programId);
+    if (found != mProgramGpuRuntimes.end()) return found->second;
+    auto runtime = std::make_shared<ProgramGpuRuntime>();
+    runtime->programId = method.program->programId;
+    for (const auto& descriptor : method.program->blobs)
+    {
+        const auto inserted = runtime->buffers.emplace(
+            descriptor.usage, createPackageBuffer(getDevice(), descriptor));
+        if (!inserted.second) throw std::runtime_error("program buffer usage is duplicated");
+    }
+    for (const auto& descriptor : method.program->samplers)
+    {
+        const auto inserted = runtime->samplers.emplace(
+            descriptor.usage, createPackageSampler(getDevice(), descriptor));
+        if (!inserted.second) throw std::runtime_error("program sampler usage is duplicated");
+    }
+    runtime->pDeferredPass = createProgramPass(
+        "NclsViewer/shaders/DeferredRenderer.cs.slang", method);
+    if ((method.program->capabilities & (4u | 8u)) == (4u | 8u))
+        runtime->pPathPass = createProgramPathPass(method);
+    if (method.instance.editable())
+    {
+        ProgramDesc program;
+        program.addShaderLibrary(method.program->shaderModule)
+            .csEntry(method.instance.compilerEntryPoint);
+        DefineList defines;
+        for (const auto& [name, value] : method.program->shaderDefines) defines.add(name, value);
+        runtime->pMaterialCompilerPass = ComputePass::create(
+            getDevice(), program, defines, true);
+    }
+    mProgramGpuRuntimes.emplace(runtime->programId, runtime);
+    return runtime;
+}
+
+void NclsViewer::compileMaterialInstance(
+    ProgramGpuRuntime& runtime,
+    const ncls::ViewerProgram& method,
+    const std::map<std::string, ref<Buffer>>& instanceBuffers)
+{
+    if (!method.instance.editable()) return;
+    if (!runtime.pMaterialCompilerPass)
+        throw std::runtime_error("editable package has no material compiler pass");
+    auto root = runtime.pMaterialCompilerPass->getRootVar();
+    for (const auto& [usage, buffer] : runtime.buffers) root[usage] = buffer;
+    for (const auto& [usage, buffer] : instanceBuffers) root[usage] = buffer;
+    runtime.pMaterialCompilerPass->execute(
+        getRenderContext(),
+        method.instance.compilerThreadGroupSize[0],
+        method.instance.compilerThreadGroupSize[1],
+        method.instance.compilerThreadGroupSize[2]);
+}
+
+void NclsViewer::uploadMaterialEditorValues(
+    const ncls::ViewerProgram& method,
+    const nlohmann::json& editorView,
+    const std::map<std::string, ref<Buffer>>& instanceBuffers) const
+{
+    if (!method.instance.editable()) return;
+    const auto found = instanceBuffers.find(method.instance.rawUsage);
+    if (found == instanceBuffers.end())
+        throw std::runtime_error("editable package raw parameter buffer is not bound");
+    const auto& buffer = found->second;
+    const auto writeFloat = [&](uint32_t word, float value) {
+        if (!std::isfinite(value) || (size_t(word) + 1u) * sizeof(uint32_t) > buffer->getSize())
+            throw std::runtime_error("material editor float write is invalid or out of bounds");
+        buffer->setBlob(&value, size_t(word) * sizeof(uint32_t), sizeof(value));
+    };
+    const auto writeUint = [&](uint32_t word, uint32_t value) {
+        if ((size_t(word) + 1u) * sizeof(uint32_t) > buffer->getSize())
+            throw std::runtime_error("material editor integer write is out of bounds");
+        buffer->setBlob(&value, size_t(word) * sizeof(uint32_t), sizeof(value));
+    };
+    std::function<void(const nlohmann::json&)> upload = [&](const nlohmann::json& node) {
+        if (editableRuntimeNode(node))
+        {
+            const auto& runtime = node.at("metadata").at("runtime");
+            const auto& normalization = runtime.at("normalization");
+            const auto values = numericComponents(node.at("value"));
+            const auto defaults = numericComponents(normalization.at("default"));
+            const bool ranged = normalization.contains("minimum") && normalization.at("minimum").is_number()
+                && normalization.contains("maximum") && normalization.at("maximum").is_number()
+                && normalization.at("maximum").get<float>() > normalization.at("minimum").get<float>();
+            const float minimum = ranged ? normalization.at("minimum").get<float>() : 0.f;
+            const float maximum = ranged ? normalization.at("maximum").get<float>() : 0.f;
+            const uint32_t continuousWord = runtime.at("continuous_word").get<uint32_t>();
+            for (uint32_t component = 0u; component < 4u; ++component)
+            {
+                float normalized = 0.f;
+                if (component < values.size())
+                {
+                    if (ranged)
+                        normalized = 2.f * (values[component] - minimum) / (maximum - minimum) - 1.f;
+                    else
+                    {
+                        const float defaultValue = defaults[std::min<size_t>(component, defaults.size() - 1u)];
+                        normalized = std::tanh((values[component] - defaultValue) / std::max(1.f, std::abs(defaultValue)));
+                    }
+                    normalized = std::clamp(normalized, -4.f, 4.f);
+                }
+                writeFloat(continuousWord + component, normalized);
+            }
+
+            const std::string type = node.at("value_type").get<std::string>();
+            uint32_t discrete = 0u;
+            if (type == "bool") discrete = node.at("value").get<bool>() ? 1u : 0u;
+            else if (type == "int") discrete = static_cast<uint32_t>(std::max<int64_t>(0, node.at("value").get<int64_t>()));
+            else if (type == "enum")
+            {
+                const auto& choices = node.at("choices");
+                const auto choice = std::find(choices.begin(), choices.end(), node.at("value"));
+                if (choice == choices.end()) throw std::runtime_error("material editor enum value is not a declared choice");
+                discrete = static_cast<uint32_t>(std::distance(choices.begin(), choice));
+            }
+            writeUint(runtime.at("discrete_word").get<uint32_t>(), discrete);
+
+            if (runtime.contains("derived_writes"))
+            {
+                for (const auto& derived : runtime.at("derived_writes"))
+                {
+                    const std::string operation = derived.at("operation").get<std::string>();
+                    const uint32_t component = derived.value("component", 0u);
+                    const float source = values[std::min<size_t>(component, values.size() - 1u)];
+                    float value = source;
+                    if (operation == "bool") value = source != 0.f ? 1.f : 0.f;
+                    else if (operation == "degrees-cos") value = std::cos(source * 0.01745329251994329577f);
+                    else if (operation == "degrees-sin") value = std::sin(source * 0.01745329251994329577f);
+                    else if (operation != "copy") throw std::runtime_error("material editor derived operation is unsupported");
+                    writeFloat(derived.at("word").get<uint32_t>(), value);
+                }
+            }
+        }
+        if (node.contains("children") && node.at("children").is_array())
+            for (const auto& child : node.at("children")) upload(child);
+    };
+    if (!editorView.is_object() || !editorView.contains("root"))
+        throw std::runtime_error("editable package parameter view has no root");
+    upload(editorView.at("root"));
+}
+
+bool NclsViewer::renderMaterialEditor(Gui::Widgets& widgets, nlohmann::json& editorView) const
+{
+    bool changed = false;
+    std::function<void(Gui::Widgets&, nlohmann::json&)> render =
+        [&](Gui::Widgets& parent, nlohmann::json& node) {
+        if (editableRuntimeNode(node))
+        {
+            const std::string path = node.at("path").get<std::string>();
+            const std::string label = node.at("label").get<std::string>() + "##" + path;
+            const std::string type = node.at("value_type").get<std::string>();
+            const float minimum = node.contains("minimum") ? node.at("minimum").get<float>() : -100000.f;
+            const float maximum = node.contains("maximum") ? node.at("maximum").get<float>() : 100000.f;
+            const float step = node.contains("step") ? node.at("step").get<float>()
+                : (type == "int" ? 1.f : 0.01f);
+            auto& jsonValue = node["value"];
+            if (type == "bool")
+            {
+                bool value = jsonValue.get<bool>();
+                if (parent.checkbox(label.c_str(), value)) { jsonValue = value; changed = true; }
+            }
+            else if (type == "enum")
+            {
+                Gui::DropdownList choices;
+                uint32_t selected = 0u;
+                for (uint32_t index = 0u; index < node.at("choices").size(); ++index)
+                {
+                    const std::string choice = node.at("choices").at(index).get<std::string>();
+                    choices.push_back({index, choice});
+                    if (jsonValue == choice) selected = index;
+                }
+                if (parent.dropdown(label.c_str(), choices, selected))
+                {
+                    jsonValue = choices.at(selected).label;
+                    changed = true;
+                }
+            }
+            else if (type == "int")
+            {
+                int32_t value = jsonValue.get<int32_t>();
+                const int32_t lower = node.contains("minimum") ? static_cast<int32_t>(std::ceil(minimum)) : 0;
+                const int32_t upper = node.contains("maximum") ? static_cast<int32_t>(std::floor(maximum)) : 100000;
+                if (parent.var(label.c_str(), value, lower, upper, step)) { jsonValue = value; changed = true; }
+            }
+            else if (type == "color3")
+            {
+                const auto values = numericComponents(jsonValue);
+                float3 value(values.at(0), values.at(1), values.at(2));
+                if (parent.rgbColor(label.c_str(), value))
+                {
+                    jsonValue = {value.x, value.y, value.z};
+                    changed = true;
+                }
+            }
+            else if (type == "vector2")
+            {
+                const auto values = numericComponents(jsonValue);
+                float2 value(values.at(0), values.at(1));
+                if (parent.var(label.c_str(), value, minimum, maximum, step))
+                {
+                    jsonValue = {value.x, value.y};
+                    changed = true;
+                }
+            }
+            else if (type == "vector3")
+            {
+                const auto values = numericComponents(jsonValue);
+                float3 value(values.at(0), values.at(1), values.at(2));
+                if (parent.var(label.c_str(), value, minimum, maximum, step))
+                {
+                    jsonValue = {value.x, value.y, value.z};
+                    changed = true;
+                }
+            }
+            else if (type == "vector4")
+            {
+                const auto values = numericComponents(jsonValue);
+                float4 value(values.at(0), values.at(1), values.at(2), values.at(3));
+                if (parent.var(label.c_str(), value, minimum, maximum, step))
+                {
+                    jsonValue = {value.x, value.y, value.z, value.w};
+                    changed = true;
+                }
+            }
+            else if (type == "float" || type == "double")
+            {
+                float value = jsonValue.get<float>();
+                if (parent.var(label.c_str(), value, minimum, maximum, step)) { jsonValue = value; changed = true; }
+            }
+            return;
+        }
+        if (!node.contains("children") || !node.at("children").is_array()) return;
+        if (node.value("path", std::string()) == "/")
+        {
+            for (auto& child : node["children"]) render(parent, child);
+            return;
+        }
+        Gui::Group group = parent.group(
+            node.value("label", std::string("Parameters")) + "##" + node.value("path", std::string()), false);
+        if (group) for (auto& child : node["children"]) render(group, child);
+    };
+    if (editorView.is_object() && editorView.contains("root")) render(widgets, editorView["root"]);
+    return changed;
+}
+
+void NclsViewer::applyMaterialEditor(
+    ComparisonSlotRuntime& slot,
+    const ncls::ViewerProgram& method,
+    nlohmann::json editorView)
+{
+    auto candidateBuffers = slot.buffers;
+    for (const auto& descriptor : method.instance.blobs)
+        candidateBuffers[descriptor.usage] = createPackageBuffer(getDevice(), descriptor);
+    uploadMaterialEditorValues(method, editorView, candidateBuffers);
+    compileMaterialInstance(*slot.programRuntime, method, candidateBuffers);
+    slot.buffers = std::move(candidateBuffers);
+    slot.editorView = std::move(editorView);
+    slot.ping = 0u;
+    slot.spp = 0u;
+    slot.resetAccumulation = true;
+    mFreezeReference = false;
+    mStatus = "Typed material edit compiled and atomically applied.";
 }
 
 bool NclsViewer::runParityProbe(const ncls::ViewerProgram& method, std::string& error)
@@ -1291,6 +1650,7 @@ bool NclsViewer::runParityProbe(const ncls::ViewerProgram& method, std::string& 
         };
         for (const auto& descriptor : method.program->blobs) bindBlob(descriptor);
         for (const auto& descriptor : method.asset.blobs) bindBlob(descriptor);
+        for (const auto& descriptor : method.instance.blobs) bindBlob(descriptor);
         std::vector<ref<Texture>> textures;
         std::vector<ref<Sampler>> samplers;
         for (const auto& resource : method.asset.resources)
@@ -1419,6 +1779,11 @@ void NclsViewer::activateComparisonSlot(uint32_t slotIndex, uint32_t selection)
             const auto& method = mPrograms[programIndex];
             candidate.programIndex = static_cast<int32_t>(programIndex);
             candidate.contract.bind(&method);
+            if (method.instance.editable())
+            {
+                candidate.editorView = method.instance.parameterView;
+                migrateEditorValues(candidate.editorView, mComparisonSlots[slotIndex].editorView);
+            }
             if (!allMaterialsSupportedBy(method))
             {
                 candidate.contract.status = ncls::SlotStatus::Unsupported;
@@ -1426,6 +1791,7 @@ void NclsViewer::activateComparisonSlot(uint32_t slotIndex, uint32_t selection)
             }
             if (candidate.contract.status == ncls::SlotStatus::Ready)
             {
+                candidate.programRuntime = programGpuRuntime(method);
                 auto addBlob = [&](const ncls::ViewerTypedBlob& descriptor) {
                     const auto inserted = candidate.buffers.emplace(
                         descriptor.usage,
@@ -1434,12 +1800,8 @@ void NclsViewer::activateComparisonSlot(uint32_t slotIndex, uint32_t selection)
                     if (!inserted.second)
                         throw std::runtime_error("package buffer usage is duplicated");
                 };
-                for (const auto& descriptor : method.program->blobs) addBlob(descriptor);
                 for (const auto& descriptor : method.asset.blobs) addBlob(descriptor);
-                candidate.pDeferredPass = createProgramPass(
-                    "NclsViewer/shaders/DeferredRenderer.cs.slang", method);
-                if ((method.program->capabilities & (4u | 8u)) == (4u | 8u))
-                    candidate.pPathPass = createProgramPathPass(method);
+                for (const auto& descriptor : method.instance.blobs) addBlob(descriptor);
                 for (const auto& resource : method.asset.resources)
                 {
                     if (resource.dtype == "texture2d-rgba16float-dds@1")
@@ -1462,15 +1824,19 @@ void NclsViewer::activateComparisonSlot(uint32_t slotIndex, uint32_t selection)
                 };
                 for (const auto& descriptor : method.program->samplers) addSampler(descriptor);
                 for (const auto& descriptor : method.asset.samplers) addSampler(descriptor);
+                uploadMaterialEditorValues(method, candidate.editorView, candidate.buffers);
+                compileMaterialInstance(*candidate.programRuntime, method, candidate.buffers);
             }
         }
         resizeComparisonSlot(candidate);
     }
     catch (const std::exception& exception)
     {
-        candidate.contract.status = ncls::SlotStatus::Error;
-        candidate.contract.diagnostic = exception.what();
         logWarning("Comparison slot {} failed: {}", slotIndex, exception.what());
+        mComparisonSlots[slotIndex].contract.diagnostic = exception.what();
+        mStatus = "Package activation failed; previous slot binding preserved: "
+            + std::string(exception.what());
+        return;
     }
     mComparisonSlots[slotIndex] = std::move(candidate);
 }
@@ -1485,6 +1851,11 @@ ref<Texture> NclsViewer::slotOutput(const ComparisonSlotRuntime& slot) const
 
 void NclsViewer::bindProgramResources(ShaderVar root, const ComparisonSlotRuntime& slot) const
 {
+    if (slot.programRuntime)
+    {
+        for (const auto& [usage, buffer] : slot.programRuntime->buffers) root[usage] = buffer;
+        for (const auto& [usage, sampler] : slot.programRuntime->samplers) root[usage] = sampler;
+    }
     for (const auto& [usage, buffer] : slot.buffers) root[usage] = buffer;
     for (const auto& [usage, texture] : slot.textures) root[usage] = texture;
     for (const auto& [usage, sampler] : slot.samplers) root[usage] = sampler;
@@ -1662,8 +2033,8 @@ void NclsViewer::renderReference(RenderContext* pRenderContext, ComparisonSlotRu
 void NclsViewer::renderApproximation(RenderContext* pRenderContext, ComparisonSlotRuntime& slot)
 {
     const auto* method = slotProgram(slot);
-    if (!method || !slot.pDeferredPass) return;
-    auto root = slot.pDeferredPass->getRootVar();
+    if (!method || !slot.programRuntime || !slot.programRuntime->pDeferredPass) return;
+    auto root = slot.programRuntime->pDeferredPass->getRootVar();
     root["gPositionDepth"] = mpPositionDepth;
     root["gNormal"] = mpNormal;
     root["gTangent"] = mpTangent;
@@ -1681,18 +2052,42 @@ void NclsViewer::renderApproximation(RenderContext* pRenderContext, ComparisonSl
     root["ApproximationCB"]["gRectangleQueryBudget"] = method->program->rectangleQueryBudget;
     bindLighting(root, "ApproximationCB");
     beginTiming(slot.timing);
-    slot.pDeferredPass->execute(pRenderContext, mViewWidth, mOutputHeight);
+    executePackageTiles(pRenderContext, slot.programRuntime->pDeferredPass, "ApproximationCB");
     endTiming(slot.timing);
+}
+
+void NclsViewer::executePackageTiles(
+    RenderContext* pRenderContext,
+    const ref<ComputePass>& pPass,
+    const char* constantBufferName)
+{
+    auto root = pPass->getRootVar();
+    for (uint32_t row = 0u; row < mOutputHeight; row += kPackageDispatchTileRows)
+    {
+        for (uint32_t column = 0u; column < mViewWidth; column += kPackageDispatchTileWidth)
+        {
+            root[constantBufferName]["gDispatchOffset"] = uint2(column, row);
+            pPass->execute(
+                pRenderContext,
+                std::min(kPackageDispatchTileWidth, mViewWidth - column),
+                std::min(kPackageDispatchTileRows, mOutputHeight - row));
+            // A completed workgroup is the scheduling boundary that remains
+            // reliable under Windows TDR for a quality-first neural program.
+            const bool lastTile = row + kPackageDispatchTileRows >= mOutputHeight
+                && column + kPackageDispatchTileWidth >= mViewWidth;
+            if (!lastTile) pRenderContext->submit(true);
+        }
+    }
 }
 
 void NclsViewer::renderPackagePath(RenderContext* pRenderContext, ComparisonSlotRuntime& slot)
 {
     const auto* method = slotProgram(slot);
-    if (!method || !slot.pPathPass) return;
+    if (!method || !slot.programRuntime || !slot.programRuntime->pPathPass) return;
     const uint32_t samplesThisFrame = pathSamplesThisDispatch(slot);
     if (samplesThisFrame == 0u) return;
     const uint32_t next = 1u - slot.ping;
-    auto root = slot.pPathPass->getRootVar();
+    auto root = slot.programRuntime->pPathPass->getRootVar();
     mpScene->bindShaderDataForRaytracing(pRenderContext, root["gScene"]);
     root["gPreviousPackage"] = slot.pAccumulated[slot.ping];
     root["gNextPackage"] = slot.pAccumulated[next];
@@ -1718,7 +2113,7 @@ void NclsViewer::renderPackagePath(RenderContext* pRenderContext, ComparisonSlot
     bindLighting(root, "PackagePathTracerCB");
     pRenderContext->clearUAV(slot.pNoiseStats->getUAV().get(), uint4(0u));
     beginTiming(slot.timing);
-    slot.pPathPass->execute(pRenderContext, mViewWidth, mOutputHeight);
+    executePackageTiles(pRenderContext, slot.programRuntime->pPathPass, "PackagePathTracerCB");
     endTiming(slot.timing);
     slot.ping = next;
     slot.spp += samplesThisFrame;
@@ -2409,8 +2804,31 @@ void NclsViewer::onGuiRender(Gui* pGui)
                     + ", GPU=" + fmt::format("{:.3f} ms", slot.timing.milliseconds));
                 if (!slot.contract.diagnostic.empty()) group.textWrapped(slot.contract.diagnostic);
                 if (const auto* method = slotProgram(slot))
+                {
                     group.text("package " + shortId(method->packageId)
                         + " / " + method->program->runtimeClass);
+                    if (method->instance.editable())
+                    {
+                        Gui::Group editor = group.group(prefix + " typed parameters", false);
+                        if (editor)
+                        {
+                            auto candidateView = slot.editorView;
+                            if (renderMaterialEditor(editor, candidateView))
+                            {
+                                try
+                                {
+                                    applyMaterialEditor(slot, *method, std::move(candidateView));
+                                }
+                                catch (const std::exception& exception)
+                                {
+                                    logWarning("Typed material edit failed for slot {}: {}", slotIndex, exception.what());
+                                    mStatus = "Typed material edit failed; previous instance binding preserved: "
+                                        + std::string(exception.what());
+                                }
+                            }
+                        }
+                    }
+                }
             }
             if (group.button("Rescan ScatteringPackages")) scanPackages();
             if (!mPackageFailures.empty())

@@ -5,8 +5,10 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <set>
 #include <stdexcept>
 
@@ -49,6 +51,138 @@ void requireSamplerKeys(const json& value, const std::string& label)
     require(addressMode == "clamp" || addressMode == "wrap",
         label + " address mode is unsupported");
     require(!value.at("usage").get<std::string>().empty(), label + " usage is empty");
+}
+
+void validateTypedParameterView(const json& view)
+{
+    requireKeys(
+        view,
+        {"schema_name", "schema_version", "family_id", "source_contract_version",
+            "snapshot_id", "root", "runtime_layout"},
+        "typed material parameter_view");
+    require(view.at("schema_name") == "ncls.source-parameter-view"
+            && view.at("schema_version") == 1u
+            && view.at("source_contract_version").get<uint32_t>() > 0u,
+        "typed material parameter_view version is invalid");
+    require(view.at("family_id").is_string()
+            && !view.at("family_id").get<std::string>().empty(),
+        "typed material parameter_view family is invalid");
+    const auto& layout = view.at("runtime_layout");
+    requireKeys(layout, {"schema", "word_count", "offsets"}, "typed material runtime_layout");
+    const uint32_t wordCount = layout.at("word_count").get<uint32_t>();
+    require(!layout.at("schema").get<std::string>().empty() && wordCount > 0u
+            && layout.at("offsets").is_object(),
+        "typed material runtime_layout is invalid");
+    for (auto item = layout.at("offsets").begin(); item != layout.at("offsets").end(); ++item)
+        require(!item.key().empty() && item.value().is_number_unsigned()
+                && item.value().get<uint32_t>() < wordCount,
+            "typed material runtime_layout offset is invalid");
+
+    std::set<std::string> paths;
+    const auto finiteNumber = [](const json& value) {
+        return value.is_number() && std::isfinite(value.get<double>());
+    };
+    const auto validateTypedValue = [&](const json& node, const json& value) {
+        const std::string type = node.at("value_type").get<std::string>();
+        const size_t components = type == "vector2" ? 2u
+            : type == "vector3" || type == "color3" ? 3u
+            : type == "vector4" ? 4u : 1u;
+        if (type == "bool") require(value.is_boolean(), "typed material bool value is invalid");
+        else if (type == "int") require(value.is_number_integer() || value.is_number_unsigned(),
+            "typed material int value is invalid");
+        else if (type == "enum")
+        {
+            std::set<std::string> uniqueChoices;
+            const bool choicesValid = node.contains("choices") && node.at("choices").is_array()
+                && !node.at("choices").empty()
+                && std::all_of(node.at("choices").begin(), node.at("choices").end(), [&](const json& choice) {
+                    return choice.is_string() && !choice.get<std::string>().empty()
+                        && uniqueChoices.insert(choice.get<std::string>()).second;
+                });
+            require(value.is_string() && choicesValid
+                    && std::find(node.at("choices").begin(), node.at("choices").end(), value)
+                        != node.at("choices").end(),
+                "typed material enum value is invalid");
+        }
+        else if (components == 1u)
+            require((type == "float" || type == "double") && finiteNumber(value),
+                "typed material scalar value is invalid");
+        else
+            require((type == "vector2" || type == "vector3" || type == "vector4" || type == "color3")
+                    && value.is_array() && value.size() == components
+                    && std::all_of(value.begin(), value.end(), finiteNumber),
+                "typed material vector value is invalid");
+    };
+    std::function<void(const json&)> visit = [&](const json& node) {
+        require(node.is_object() && node.contains("path") && node.contains("kind")
+                && node.contains("label") && node.contains("children")
+                && node.contains("editable") && node.contains("allowed_operations"),
+            "typed material editor node fields are incomplete");
+        require(node.at("path").is_string() && node.at("kind").is_string()
+                && node.at("label").is_string() && node.at("editable").is_boolean()
+                && node.at("allowed_operations").is_array(),
+            "typed material editor node field types are invalid");
+        const std::string path = node.at("path").get<std::string>();
+        require(!path.empty() && path.front() == '/' && paths.insert(path).second
+                && !node.at("kind").get<std::string>().empty()
+                && !node.at("label").get<std::string>().empty()
+                && node.at("children").is_array()
+                && std::all_of(
+                    node.at("allowed_operations").begin(),
+                    node.at("allowed_operations").end(),
+                    [](const json& operation) { return operation.is_string(); }),
+            "typed material editor node identity is invalid");
+        if (node.at("editable").get<bool>())
+        {
+            require(node.at("kind") == "value"
+                    && node.at("allowed_operations") == json::array({"set"})
+                    && node.at("children").empty(),
+                "editable typed material node operations are invalid");
+            require(node.contains("value") && node.contains("value_type")
+                    && node.contains("metadata") && node.at("metadata").contains("runtime"),
+                "editable typed material node has no value/type/runtime mapping");
+            validateTypedValue(node, node.at("value"));
+
+            const auto& runtime = node.at("metadata").at("runtime");
+            requireKeys(
+                runtime,
+                {"token_index", "continuous_word", "discrete_word", "type_word",
+                    "normalization", "derived_writes"},
+                "typed material runtime mapping");
+            require(runtime.at("continuous_word").get<uint32_t>() + 4u <= wordCount
+                    && runtime.at("discrete_word").get<uint32_t>() < wordCount
+                    && runtime.at("type_word").get<uint32_t>() < wordCount,
+                "typed material runtime word is out of bounds");
+            const auto& normalization = runtime.at("normalization");
+            require(normalization.is_object() && normalization.contains("default")
+                    && normalization.size() <= 3u,
+                "typed material normalization is invalid");
+            validateTypedValue(node, normalization.at("default"));
+            const bool hasMinimum = normalization.contains("minimum");
+            const bool hasMaximum = normalization.contains("maximum");
+            require(hasMinimum == hasMaximum, "typed material normalization range is incomplete");
+            if (hasMinimum)
+                require(finiteNumber(normalization.at("minimum"))
+                        && finiteNumber(normalization.at("maximum"))
+                        && normalization.at("minimum").get<double>() < normalization.at("maximum").get<double>(),
+                    "typed material normalization range is invalid");
+            require(runtime.at("derived_writes").is_array(),
+                "typed material derived_writes must be an array");
+            for (const auto& write : runtime.at("derived_writes"))
+            {
+                requireKeys(write, {"word", "operation", "component"}, "typed material derived write");
+                const std::string operation = write.at("operation").get<std::string>();
+                require(write.at("word").get<uint32_t>() < wordCount
+                        && write.at("component").get<uint32_t>() < 4u
+                        && (operation == "copy" || operation == "bool"
+                            || operation == "degrees-cos" || operation == "degrees-sin"),
+                    "typed material derived write is invalid");
+            }
+        }
+        for (const auto& child : node.at("children")) visit(child);
+    };
+    visit(view.at("root"));
+    require(view.at("root").at("path") == "/", "typed material editor root path must be /");
 }
 
 std::string sha256Json(const json& value)
@@ -139,7 +273,7 @@ ViewerProgram loadPackage(const std::filesystem::path& root)
     const auto& instance = manifest.at("instance");
     requireKeys(program, {"module", "defines", "blobs", "samplers"}, "package program");
     requireKeys(asset, {"blobs", "resources", "samplers"}, "package asset");
-    requireKeys(instance, {"bindings", "parameters"}, "package instance");
+    requireKeys(instance, {"bindings", "parameters", "blobs", "editor", "compiler"}, "package instance");
     requireKeys(instance.at("bindings"), {"program_id", "asset_id"}, "instance bindings");
     requireKeys(instance.at("parameters"), {"compiled_material_index"}, "instance parameters");
     std::set<std::string> bindingUsages;
@@ -170,6 +304,7 @@ ViewerProgram loadPackage(const std::filesystem::path& root)
     validateTypedGroup(asset.at("blobs"));
     validateTypedGroup(asset.at("resources"));
     validateSamplerGroup(asset.at("samplers"));
+    validateTypedGroup(instance.at("blobs"));
     auto filteredHashes = [&](const std::string& prefix) {
         json result = json::object();
         for (auto item = files.begin(); item != files.end(); ++item)
@@ -281,6 +416,7 @@ ViewerProgram loadPackage(const std::filesystem::path& root)
             blob.stride = item.value().at("stride").get<uint32_t>();
             blob.alignment = item.value().at("alignment").get<uint32_t>();
             blob.usage = item.value().at("usage").get<std::string>();
+            blob.kind = item.value().value("kind", "structured-buffer");
             require(!blob.data.empty() && !blob.dtype.empty() && !blob.shape.empty()
                 && blob.stride > 0u && blob.data.size() % blob.stride == 0u
                 && blob.alignment > 0u && !blob.usage.empty(),
@@ -290,6 +426,7 @@ ViewerProgram loadPackage(const std::filesystem::path& root)
     };
     consume(program.at("blobs"), programCache->blobs);
     consume(asset.at("blobs"), result.asset.blobs);
+    consume(instance.at("blobs"), result.instance.blobs);
     for (auto item = asset.at("resources").begin(); item != asset.at("resources").end(); ++item)
     {
         requireTypedKeys(item.value(), "typed resource descriptor");
@@ -353,10 +490,52 @@ ViewerProgram loadPackage(const std::filesystem::path& root)
     };
     consumeSamplers(program.at("samplers"), programCache->samplers);
     consumeSamplers(asset.at("samplers"), result.asset.samplers);
-    for (const auto& blob : result.asset.blobs)
-        if (blob.usage == "gNclsCompiledMaterials")
-            require(result.instance.compiledMaterialIndex < blob.data.size() / blob.stride,
-                "instance compiled_material_index is outside the compiled material blob");
+    const auto& editor = instance.at("editor");
+    const auto& compiler = instance.at("compiler");
+    require(editor.is_object() && compiler.is_object(), "instance editor/compiler must be objects");
+    require(editor.empty() == compiler.empty(), "instance editor/compiler contract is incomplete");
+    if (!editor.empty())
+    {
+        requireKeys(editor, {"schema", "parameter_view", "raw_usage", "compiled_usage"}, "instance editor");
+        requireKeys(compiler, {"entry_point", "thread_group_size"}, "instance compiler");
+        result.instance.editorSchema = editor.at("schema").get<std::string>();
+        require(result.instance.editorSchema == "ncls.typed-material-editor@1",
+            "unsupported typed material editor schema");
+        result.instance.parameterView = editor.at("parameter_view");
+        validateTypedParameterView(result.instance.parameterView);
+        require(result.instance.parameterView.at("snapshot_id") == manifest.at("source_snapshot_id"),
+            "typed material parameter_view snapshot does not match package source");
+        result.instance.rawUsage = editor.at("raw_usage").get<std::string>();
+        result.instance.compiledUsage = editor.at("compiled_usage").get<std::string>();
+        result.instance.compilerEntryPoint = compiler.at("entry_point").get<std::string>();
+        result.instance.compilerThreadGroupSize = compiler.at("thread_group_size").get<std::array<uint32_t, 3>>();
+        require(!result.instance.rawUsage.empty() && !result.instance.compiledUsage.empty()
+            && !result.instance.compilerEntryPoint.empty()
+            && std::all_of(result.instance.compilerThreadGroupSize.begin(),
+                result.instance.compilerThreadGroupSize.end(), [](uint32_t value) { return value > 0u; }),
+            "typed material editor/compiler values are invalid");
+        std::map<std::string, const ViewerTypedBlob*> instanceUsages;
+        for (const auto& blob : result.instance.blobs) instanceUsages.emplace(blob.usage, &blob);
+        require(instanceUsages.find(result.instance.rawUsage) != instanceUsages.end()
+                && instanceUsages.find(result.instance.compiledUsage) != instanceUsages.end(),
+            "typed editor usages do not name instance blobs");
+        require(instanceUsages.at(result.instance.rawUsage)->kind == "mutable-structured-buffer"
+                && instanceUsages.at(result.instance.compiledUsage)->kind == "mutable-structured-buffer",
+            "typed editor buffers must be mutable structured buffers");
+    }
+    bool foundCompiledMaterials = false;
+    const auto validateCompiledIndex = [&](const std::vector<ViewerTypedBlob>& blobs) {
+        for (const auto& blob : blobs)
+            if (blob.usage == "gNclsCompiledMaterials")
+            {
+                foundCompiledMaterials = true;
+                require(result.instance.compiledMaterialIndex < blob.data.size() / blob.stride,
+                    "instance compiled_material_index is outside the compiled material blob");
+            }
+    };
+    validateCompiledIndex(result.asset.blobs);
+    validateCompiledIndex(result.instance.blobs);
+    require(foundCompiledMaterials, "package has no gNclsCompiledMaterials binding");
     result.program = std::move(programCache);
     return result;
 }

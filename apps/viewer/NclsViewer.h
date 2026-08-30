@@ -123,17 +123,27 @@ private:
         std::string displayName = "Default layered material";
     };
 
+    struct ProgramGpuRuntime
+    {
+        std::string programId;
+        std::map<std::string, Falcor::ref<Falcor::Buffer>> buffers;
+        std::map<std::string, Falcor::ref<Falcor::Sampler>> samplers;
+        Falcor::ref<Falcor::ComputePass> pDeferredPass;
+        Falcor::ref<Falcor::ComputePass> pPathPass;
+        Falcor::ref<Falcor::ComputePass> pMaterialCompilerPass;
+    };
+
     struct ComparisonSlotRuntime
     {
         ncls::ComparisonSlot contract;
         bool sourceReference = false;
         int32_t programIndex = -1;
         uint32_t uiValue = 0;
+        std::shared_ptr<ProgramGpuRuntime> programRuntime;
         std::map<std::string, Falcor::ref<Falcor::Buffer>> buffers;
         std::map<std::string, Falcor::ref<Falcor::Texture>> textures;
         std::map<std::string, Falcor::ref<Falcor::Sampler>> samplers;
-        Falcor::ref<Falcor::ComputePass> pDeferredPass;
-        Falcor::ref<Falcor::ComputePass> pPathPass;
+        nlohmann::json editorView;
         std::array<Falcor::ref<Falcor::Texture>, 2> pAccumulated;
         Falcor::ref<Falcor::Texture> pDeferred;
         Falcor::ref<Falcor::Buffer> pNoiseStats;
@@ -170,6 +180,21 @@ private:
         const ncls::ViewerProgram& method);
     Falcor::ref<Falcor::ComputePass> createProgramPathPass(
         const ncls::ViewerProgram& method);
+    std::shared_ptr<ProgramGpuRuntime> programGpuRuntime(
+        const ncls::ViewerProgram& method);
+    void compileMaterialInstance(
+        ProgramGpuRuntime& runtime,
+        const ncls::ViewerProgram& method,
+        const std::map<std::string, Falcor::ref<Falcor::Buffer>>& instanceBuffers);
+    void uploadMaterialEditorValues(
+        const ncls::ViewerProgram& method,
+        const nlohmann::json& editorView,
+        const std::map<std::string, Falcor::ref<Falcor::Buffer>>& instanceBuffers) const;
+    bool renderMaterialEditor(Falcor::Gui::Widgets& widgets, nlohmann::json& editorView) const;
+    void applyMaterialEditor(
+        ComparisonSlotRuntime& slot,
+        const ncls::ViewerProgram& method,
+        nlohmann::json editorView);
     bool runParityProbe(const ncls::ViewerProgram& method, std::string& error);
     void selectProgram(int32_t methodIndex);
     void activateComparisonSlot(uint32_t slotIndex, uint32_t selection);
@@ -183,6 +208,10 @@ private:
     void renderReference(Falcor::RenderContext* pRenderContext, ComparisonSlotRuntime& slot);
     void renderApproximation(Falcor::RenderContext* pRenderContext, ComparisonSlotRuntime& slot);
     void renderPackagePath(Falcor::RenderContext* pRenderContext, ComparisonSlotRuntime& slot);
+    void executePackageTiles(
+        Falcor::RenderContext* pRenderContext,
+        const Falcor::ref<Falcor::ComputePass>& pPass,
+        const char* constantBufferName);
     void renderComposite(Falcor::RenderContext* pRenderContext);
     void beginTiming(PassTiming& timing);
     void endTiming(PassTiming& timing);
@@ -220,6 +249,7 @@ private:
 
     std::vector<ncls::ViewerProgram> mPrograms;
     std::vector<ncls::PackageFailure> mPackageFailures;
+    std::map<std::string, std::shared_ptr<ProgramGpuRuntime>> mProgramGpuRuntimes;
     std::array<ComparisonSlotRuntime, 2> mComparisonSlots;
     Falcor::ref<Falcor::Buffer> mpReferenceMaterialMetadata;
     Falcor::ref<Falcor::Buffer> mpEnvironmentMarginalCdf;

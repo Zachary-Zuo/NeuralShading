@@ -5,6 +5,7 @@ import json
 from typing import Any, Mapping
 
 from ncls.core.identity import require_sha256, safe_relative_uri, sha256_json
+from ncls.core.scattering import validate_typed_parameter_view
 
 
 FORMAT_NAME = "ncls.scattering-package"
@@ -112,7 +113,7 @@ class ScatteringPackageManifest:
             raise ValueError("ScatteringPackage program fields are invalid")
         if set(asset) != {"blobs", "resources", "samplers"}:
             raise ValueError("ScatteringPackage asset fields are invalid")
-        if set(instance) != {"bindings", "parameters"}:
+        if set(instance) != {"bindings", "parameters", "blobs", "editor", "compiler"}:
             raise ValueError("ScatteringPackage instance fields are invalid")
         if not isinstance(program["defines"], Mapping):
             raise ValueError("ScatteringPackage program defines must be an object")
@@ -133,12 +134,16 @@ class ScatteringPackageManifest:
         asset["blobs"] = _validate_typed_group(asset["blobs"], files, "asset blob")
         asset["resources"] = _validate_typed_group(asset["resources"], files, "asset resource")
         asset["samplers"] = _validate_sampler_group(asset["samplers"], "asset")
+        instance["blobs"] = _validate_typed_group(
+            instance["blobs"], files, "instance blob"
+        )
         binding_descriptors = (
             *program["blobs"].values(),
             *program["samplers"].values(),
             *asset["blobs"].values(),
             *asset["resources"].values(),
             *asset["samplers"].values(),
+            *instance["blobs"].values(),
         )
         usages = [str(descriptor["usage"]) for descriptor in binding_descriptors]
         if any(not usage for usage in usages) or len(set(usages)) != len(usages):
@@ -149,7 +154,42 @@ class ScatteringPackageManifest:
         parameters = dict(instance["parameters"])
         if set(parameters) != {"compiled_material_index"} or int(parameters["compiled_material_index"]) < 0:
             raise ValueError("ScatteringPackage instance parameters are invalid")
-        instance = {"bindings": bindings, "parameters": parameters}
+        editor = dict(instance["editor"])
+        compiler = dict(instance["compiler"])
+        if bool(editor) != bool(compiler):
+            raise ValueError("ScatteringPackage editable instance contract is incomplete")
+        if editor:
+            if (
+                set(editor) != {"schema", "parameter_view", "raw_usage", "compiled_usage"}
+                or editor["schema"] != "ncls.typed-material-editor@1"
+                or not isinstance(editor["parameter_view"], Mapping)
+                or set(compiler) != {"entry_point", "thread_group_size"}
+                or not str(compiler["entry_point"])
+                or not isinstance(compiler["thread_group_size"], (list, tuple))
+                or len(compiler["thread_group_size"]) != 3
+                or any(int(value) < 1 for value in compiler["thread_group_size"])
+            ):
+                raise ValueError("ScatteringPackage editable instance contract is invalid")
+            validate_typed_parameter_view(editor["parameter_view"])
+            if editor["parameter_view"]["snapshot_id"] != self.source_snapshot_id:
+                raise ValueError("ScatteringPackage editor parameter_view snapshot mismatch")
+            usages = {
+                descriptor["usage"]: descriptor for descriptor in instance["blobs"].values()
+            }
+            if editor["raw_usage"] not in usages or editor["compiled_usage"] not in usages:
+                raise ValueError("ScatteringPackage editor usages do not name instance blobs")
+            if any(
+                usages[usage].get("kind") != "mutable-structured-buffer"
+                for usage in (editor["raw_usage"], editor["compiled_usage"])
+            ):
+                raise ValueError("ScatteringPackage editor buffers must be mutable")
+        instance = {
+            "bindings": bindings,
+            "parameters": parameters,
+            "blobs": instance["blobs"],
+            "editor": editor,
+            "compiler": compiler,
+        }
         object.__setattr__(self, "program", program)
         object.__setattr__(self, "asset", asset)
         object.__setattr__(self, "instance", instance)

@@ -1,0 +1,57 @@
+{
+  "format_name": "ncls.viewer-capture",
+  "format_version": 4,
+  "reference_integrator": "ncls.scene-path-tracer@1",
+  "bundle_root": "../../../../artifacts/08-30-metal-runtime-deployment/package-v7",
+  "source_material": "../../../../artifacts/08-30-metal-runtime-deployment/viewer-source/catalog.json",
+  "reference_geometry": "../../../../external/Falcor/build/windows-vs2022/bin/Release/data/ncls-viewer/shaderball.glb",
+  "reference_geometry_sha256": "a47a52c37f6be60c963c766a6279d302d9940456b9d02972cc8a1bf9026a859a",
+  "environment": "../../../../external/Falcor/build/windows-vs2022/bin/Release/data/ncls-viewer/studio_small_03_1k.exr",
+  "environment_sha256": "6c41a5f0c2d42c8dc6b4a5b698e952949b4660ecc2ed5158a20676cacd181c74",
+  "slots": [
+    {
+      "package_id": "4eeadff233cfd88373dea186aeb4cc68106b8278db82daa521457e011690622e",
+      "mode": "path-tracing"
+    },
+    {
+      "package_id": "4eeadff233cfd88373dea186aeb4cc68106b8278db82daa521457e011690622e",
+      "mode": "deferred"
+    }
+  ],
+  "resolution": [320, 240],
+  "reference_spp": 1,
+  "reference_samples_per_frame": 1,
+  "reference_scene_max_bounces": 0,
+  "reference_layer_walk_max_depth": 24,
+  "camera": {
+    "target": [-0.05485052, 1.047861, -0.06448951],
+    "yaw": 0.45,
+    "pitch": 0.12,
+    "distance": 4.373682,
+    "vertical_fov_degrees": 38.0
+  },
+  "display": {
+    "comparison_mode": 0,
+    "exposure_ev": -0.5,
+    "difference_scale": 8.0
+  },
+  "lighting": {
+    "use_environment": false,
+    "environment_rotation": 0.0,
+    "environment_intensity": 0.8,
+    "use_sun": true,
+    "sun_direction": [-0.35, 0.78, 0.52],
+    "sun_intensity": 1.5,
+    "sun_color": [1.0, 0.92, 0.82],
+    "use_point": false,
+    "point_position": [-1.8, 1.4, 2.0],
+    "point_intensity": 7.0,
+    "point_color": [0.55, 0.72, 1.0],
+    "use_rectangle": false,
+    "rectangle_center": [1.3, 2.4, 1.2],
+    "rectangle_axis_u": [0.65, 0.0, 0.0],
+    "rectangle_axis_v": [0.0, 0.0, 0.45],
+    "rectangle_intensity": 3.2,
+    "rectangle_color": [1.0, 0.78, 0.58]
+  }
+}
