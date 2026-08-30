@@ -321,3 +321,30 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 15: 完成 vMaterial Metal 神经材质系统
+
+**Date**: 2026-08-30
+**Task**: 完成 vMaterial Metal 神经材质系统
+**Branch**: `main`
+
+### Summary
+
+完成 canonical 架构递归迁移、692-export Metal reference、共享 texture codec 与 full evaluator、matched sampler、Package@2/Slang/viewer、Windows 四阶段 online correctness 验证和 Linux 单 GPU 长训 handoff；六个子任务及父任务均已提交归档，Linux 原生 smoke 保持待目标机执行。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0cfeb88` | (see git log) |
+| `6c20af9` | (see git log) |
+| `867c67b` | (see git log) |
+| `e8deaaa` | (see git log) |
+| `b1008b6` | (see git log) |
+| `bccf2d8` | (see git log) |
+| `3757450` | (see git log) |
+
+### Status
+
+[OK] **Completed**

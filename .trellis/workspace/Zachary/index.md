@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 14
-- **Last Active**: 2026-08-29
+- **Total Sessions**: 15
+- **Last Active**: 2026-08-30
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~323 | Active |
+| `journal-1.md` | ~350 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 15 | 2026-08-30 | 完成 vMaterial Metal 神经材质系统 | `0cfeb88`, `6c20af9`, `867c67b`, `e8deaaa`, `b1008b6`, `bccf2d8`, `3757450` | `main` |
 | 14 | 2026-08-29 | 完成 Neural Shading 与 Appearance 文献深度研究 | `4f54a53` | `main` |
 | 13 | 2026-08-28 | 补齐 vMaterials preset catalog 与 capability audit | `d8d9795`, `5b9672c` | `main` |
 | 12 | 2026-08-28 | 统一材质 Reference 在线训练数据回路 | `cf01d33`, `8ea0e60` | `main` |
