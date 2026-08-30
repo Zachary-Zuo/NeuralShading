@@ -37,6 +37,7 @@ class MetalMaterialProgramState:
     residual_state: torch.Tensor
     block_condition: torch.Tensor
     proposal_logits: torch.Tensor
+    proposal_modulation: torch.Tensor
     correction_bound: torch.Tensor
     tail_scale: torch.Tensor
     frame_strength: torch.Tensor
@@ -86,7 +87,7 @@ class MetalTypedCompiler(nn.Module):
             width, profile.evaluator_blocks * profile.asset_adapter_rank
         )
         self.proposal_head = nn.Linear(
-            width, profile.core_lobe_count + profile.residual_lobe_count + 1
+            width, (profile.core_lobe_count + profile.residual_lobe_count + 1) * 4
         )
         self.bounds_head = nn.Linear(width, 3)
 
@@ -187,6 +188,11 @@ class MetalTypedCompiler(nn.Module):
             dim=-1,
         )
         bounds = self.bounds_head(latent)
+        proposal = self.proposal_head(latent).reshape(
+            batch,
+            self.profile.core_lobe_count + self.profile.residual_lobe_count + 1,
+            4,
+        )
         return MetalMaterialProgramState(
             compiler_latent=latent,
             spatial_modulation=torch.tanh(self.spatial_head(latent)),
@@ -197,7 +203,8 @@ class MetalTypedCompiler(nn.Module):
                 self.profile.evaluator_blocks,
                 self.profile.asset_adapter_rank,
             ),
-            proposal_logits=self.proposal_head(latent),
+            proposal_logits=proposal[..., 0],
+            proposal_modulation=torch.tanh(proposal[..., 1:4]),
             correction_bound=0.25 + 2.75 * torch.sigmoid(bounds[:, 0:1]),
             tail_scale=0.01 + 0.49 * torch.sigmoid(bounds[:, 1:2]),
             frame_strength=torch.sigmoid(bounds[:, 2:3]),

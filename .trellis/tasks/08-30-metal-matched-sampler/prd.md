@@ -33,14 +33,14 @@
 
 ## 验收标准
 
-- [ ] [数值正确性｜material interface] `sample()` 返回的 PDF 与对返回方向重新调用 `pdf()` 一致，throughput 满足公共 weight identity；
-- [ ] [物理正确性｜project contract] PDF 非负、归一化误差受控、有效方向位于支持域，退化输入无 NaN/Inf；
-- [ ] [实现正确性｜bounded runtime] component 数、循环、随机数、state、reads 与 MAC 静态有界，sample 后不重复 texture decode/material compile；
-- [ ] [数值正确性｜backend parity] Python与generated-layout Slang kernels在冻结probes上满足precision-derived tolerance；
-- [ ] [数值实现正确性｜parent completeness] proposal components/groups在proposal phase有execution、finite非零gradient、optimizer update及Python/Slang artifact coverage；
-- [ ] [需求交付｜parent full method] full identity同时具有`prepare/evaluate/sample/pdf`实现；analytic-only或reserved-only路径无法通过conformance；
-- [ ] [研究交付｜report-only] 短run density fit、support coverage、weight-tail和成本只作Linux long前流程诊断，不形成quality/variance hard gate；
-- [ ] [实现正确性｜项目回归合同] evaluator correctness checkpoint、canonical sampler tests与Falcor clean不回归。
+- [x] [数值正确性｜material interface] `sample()` 返回的 PDF 与对返回方向重新调用 `pdf()` 一致，throughput 满足公共 weight identity；
+- [x] [物理正确性｜project contract] PDF 非负、归一化误差受控、有效方向位于支持域，退化输入无 NaN/Inf；
+- [x] [实现正确性｜bounded runtime] component 数、循环、随机数、state、reads 与 MAC 静态有界，sample 后不重复 texture decode/material compile；
+- [x] [数值正确性｜backend parity] Python与generated-layout Slang kernels在冻结probes上满足precision-derived tolerance；
+- [x] [数值实现正确性｜parent completeness] proposal components/groups在proposal phase有execution、finite非零gradient、optimizer update及Python/Slang artifact coverage；
+- [x] [需求交付｜parent full method] full identity同时具有`prepare/evaluate/sample/pdf`实现；analytic-only或reserved-only路径无法通过conformance；
+- [x] [研究交付｜report-only] 短run density fit、support coverage、weight-tail和成本只作Linux long前流程诊断，不形成quality/variance hard gate；
+- [x] [实现正确性｜项目回归合同] evaluator correctness checkpoint、canonical sampler tests与Falcor clean不回归。
 
 ## 阻塞问题
 

@@ -19,6 +19,15 @@ from ncls.learning.models.metal_fused_profile import (
     METAL_FUSED_FULL_PROFILE,
     MetalFusedProfile,
 )
+from ncls.learning.models.metal_sampler import (
+    METAL_PROPOSAL_COMPONENT_COUNT,
+    METAL_PROPOSAL_DISTRIBUTION_IDS,
+    METAL_PROPOSAL_FRAME_INDICES,
+    MetalProposalPdf,
+    MetalProposalSample,
+    metal_proposal_pdf,
+    metal_sample_proposal,
+)
 from ncls.learning.models.metal_texture_codec import (
     MetalTextureCodec,
     semantic_role_class,
@@ -39,7 +48,11 @@ METAL_FUSED_REQUIRED_CONTEXT: Mapping[str, Any] = {
     "metal_count": 22,
     "finish_count": 36,
     "source_state_capacity": 4096,
-    "required_route_kinds": ["asset-tile", "reference-evaluator"],
+    "required_route_kinds": [
+        "asset-tile",
+        "reference-evaluator",
+        "method-sampler",
+    ],
 }
 
 
@@ -65,6 +78,18 @@ class MetalPreparedState:
     proposal_state: torch.Tensor
     valid: torch.Tensor
     trace: Mapping[str, torch.Tensor]
+
+
+@dataclass(frozen=True)
+class MetalScatteringSample:
+    wi: torch.Tensor
+    f: torch.Tensor
+    forward_pdf: torch.Tensor
+    reverse_pdf: torch.Tensor
+    weight: torch.Tensor
+    valid: torch.Tensor
+    component: torch.Tensor
+    component_pdfs: torch.Tensor
 
 
 class MetalPreparedModel(nn.Module):
@@ -94,8 +119,7 @@ class MetalPreparedModel(nn.Module):
             nn.SiLU(),
         )
         self.proposal_spatial_head = nn.Linear(
-            condition_width,
-            profile.core_lobe_count + profile.residual_lobe_count + 1,
+            condition_width, METAL_PROPOSAL_COMPONENT_COUNT * 4
         )
 
     @staticmethod
@@ -213,24 +237,113 @@ class MetalPreparedModel(nn.Module):
             dim=-1,
         )
         view_token = self.view_encoder(torch.cat((wo, condition), dim=1))
-        proposal_logits = program.proposal_logits + self.proposal_spatial_head(condition)
-        proposal_weights = torch.softmax(proposal_logits.float(), dim=1).to(wo.dtype)
-        proposal_state = torch.zeros(
-            (wo.shape[0], proposal_weights.shape[1], 8),
-            dtype=wo.dtype,
-            device=wo.device,
+        proposal_delta = self.proposal_spatial_head(condition).reshape(
+            wo.shape[0], METAL_PROPOSAL_COMPONENT_COUNT, 4
         )
-        proposal_state[..., 0] = proposal_weights
-        proposal_state[:, : self.profile.core_lobe_count, 1:3] = core_state[..., 3:5]
-        proposal_state[
-            :,
-            self.profile.core_lobe_count : self.profile.core_lobe_count
-            + self.profile.residual_lobe_count,
-            1:3,
-        ] = residual_state[..., 3:5]
-        proposal_state[..., 3] = torch.arange(
-            proposal_weights.shape[1], dtype=wo.dtype, device=wo.device
-        )[None, :]
+        proposal_logits = program.proposal_logits + proposal_delta[..., 0]
+        core_alpha = core_state[..., 3:5]
+        core_alpha = core_alpha.clone()
+        core_alpha[:, 4, :] = torch.clamp(
+            torch.sqrt(core_alpha[:, 4, :]), min=0.01, max=1.0
+        )
+        core_alpha[:, 5, :] = torch.clamp(
+            torch.sqrt(core_alpha[:, 5, :]), min=0.01, max=1.0
+        )
+        residual_skew = residual_state[..., 6:7]
+        residual_alpha = residual_state[..., 3:5] * torch.cat(
+            (torch.exp(0.35 * residual_skew), torch.exp(-0.35 * residual_skew)),
+            dim=-1,
+        )
+        base_alpha = torch.cat(
+            (
+                core_alpha,
+                residual_alpha,
+                torch.ones((wo.shape[0], 1, 2), dtype=wo.dtype, device=wo.device),
+            ),
+            dim=1,
+        )
+        proposal_modulation = program.proposal_modulation + proposal_delta[..., 1:4]
+        alpha = torch.clamp(
+            base_alpha
+            * torch.exp(0.5 * torch.tanh(proposal_modulation[..., 0:2])),
+            min=0.01,
+            max=1.0,
+        )
+        base_rotation = torch.cat(
+            (
+                torch.pi * core_state[..., 5],
+                0.5 * torch.pi * residual_state[..., 6],
+                torch.zeros((wo.shape[0], 1), dtype=wo.dtype, device=wo.device),
+            ),
+            dim=1,
+        )
+        rotation = base_rotation + torch.pi * torch.tanh(
+            proposal_modulation[..., 2]
+        )
+        luminance = wo.new_tensor((0.2126, 0.7152, 0.0722))
+        core_active = core_state[..., 7]
+        residual_active = residual_state[..., 5]
+        activity = torch.cat(
+            (
+                core_active,
+                residual_active,
+                torch.ones((wo.shape[0], 1), dtype=wo.dtype, device=wo.device),
+            ),
+            dim=1,
+        )
+        # The proposal ABI carries a binary topology mask separately from the
+        # differentiable lobe activity used to shape mixture mass.  Compiler
+        # gates are continuous, so serializing them directly as an ``active``
+        # flag would make every positive gate below 0.5 fail validation while
+        # still assigning it non-zero probability.
+        active = (activity > 0.0).to(wo.dtype)
+        core_clue = (
+            torch.sum(core_state[..., :3] * luminance, dim=-1)
+            * core_state[..., 6]
+            * core_active
+        )
+        residual_clue = (
+            torch.sum(residual_state[..., :3] * luminance, dim=-1)
+            * residual_active
+        )
+        fallback_clue = 0.05 + program.tail_scale.mean(dim=1, keepdim=True)
+        clue = torch.cat((core_clue, residual_clue, fallback_clue), dim=1)
+        raw_weight = (
+            activity.float()
+            * torch.clamp(clue.float(), min=1e-6)
+            * torch.exp(torch.clamp(proposal_logits.float(), min=-8.0, max=8.0))
+        )
+        normalized = raw_weight / torch.clamp(
+            torch.sum(raw_weight, dim=1, keepdim=True), min=1e-12
+        )
+        fallback_floor = 0.02
+        proposal_weights = (1.0 - fallback_floor) * normalized
+        proposal_weights = torch.cat(
+            (
+                proposal_weights[:, :-1],
+                proposal_weights[:, -1:] + fallback_floor,
+            ),
+            dim=1,
+        ).to(wo.dtype)
+        frame_index = torch.tensor(
+            METAL_PROPOSAL_FRAME_INDICES, dtype=wo.dtype, device=wo.device
+        )[None, :].expand(wo.shape[0], -1)
+        distribution = torch.tensor(
+            METAL_PROPOSAL_DISTRIBUTION_IDS, dtype=wo.dtype, device=wo.device
+        )[None, :].expand(wo.shape[0], -1)
+        proposal_state = torch.stack(
+            (
+                proposal_weights,
+                alpha[..., 0],
+                alpha[..., 1],
+                rotation,
+                active,
+                frame_index,
+                distribution,
+                clue,
+            ),
+            dim=-1,
+        )
         valid = (
             spatial.valid
             & normal_valid.all(dim=1)
@@ -407,6 +520,65 @@ class MetalFusedNeuralMaterialModel(nn.Module):
             prepared.valid,
         )
 
+    def pdf_prepared(
+        self,
+        prepared: MetalPreparedState,
+        wo: torch.Tensor,
+        wi: torch.Tensor,
+    ) -> MetalProposalPdf:
+        return metal_proposal_pdf(
+            prepared.proposal_state,
+            prepared.frames,
+            prepared.valid,
+            wo,
+            wi,
+        )
+
+    def sample_prepared(
+        self,
+        prepared: MetalPreparedState,
+        wo: torch.Tensor,
+        sample_u: torch.Tensor,
+    ) -> MetalScatteringSample:
+        proposal = self.sample_proposal_prepared(prepared, wo, sample_u)
+        # Runtime identity: exactly one directional evaluator invocation after
+        # the proposal has produced a valid candidate direction.
+        evaluated = self.evaluate_prepared(prepared, wo, proposal.wi)
+        cosine = torch.clamp(proposal.wi[..., 2:3], min=0.0)
+        safe_pdf = torch.clamp(proposal.forward_pdf[..., None], min=1e-12)
+        weight = evaluated.f * cosine / safe_pdf
+        valid = (
+            proposal.valid
+            & evaluated.valid
+            & torch.isfinite(weight).all(dim=-1)
+            & torch.isfinite(evaluated.f).all(dim=-1)
+            & (proposal.forward_pdf > 0.0)
+        )
+        return MetalScatteringSample(
+            proposal.wi,
+            torch.where(valid[..., None], evaluated.f, 0.0),
+            torch.where(valid, proposal.forward_pdf, 0.0),
+            torch.where(valid, proposal.reverse_pdf, 0.0),
+            torch.where(valid[..., None], weight, 0.0),
+            valid,
+            proposal.component,
+            proposal.component_pdfs,
+        )
+
+    @staticmethod
+    def sample_proposal_prepared(
+        prepared: MetalPreparedState,
+        wo: torch.Tensor,
+        sample_u: torch.Tensor,
+    ) -> MetalProposalSample:
+        return metal_sample_proposal(
+            prepared.proposal_state,
+            prepared.frames,
+            prepared.valid,
+            wo,
+            sample_u,
+        )
+
     @staticmethod
     def _structured_target(target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         masked = target * mask[:, :, None, None, None]
@@ -542,6 +714,7 @@ class MetalFusedNeuralMaterialModel(nn.Module):
             "angular_bank": [],
             "analytic_core": [],
             "hybrid_evaluator": [],
+            "proposal_sampler": [],
         }
         for name, _ in model.named_parameters():
             if name.startswith("texture_codec.role_stems") or name.startswith(
@@ -565,6 +738,10 @@ class MetalFusedNeuralMaterialModel(nn.Module):
                 group = "codec_decoder"
             elif name.startswith("texture_codec"):
                 group = "codec_encoder"
+            elif name.startswith("typed_compiler.proposal_head") or name.startswith(
+                "prepared_model.proposal_spatial_head"
+            ):
+                group = "proposal_sampler"
             elif name.startswith("typed_compiler"):
                 group = "typed_compiler"
             elif name.startswith("optimized_teacher"):
@@ -597,6 +774,7 @@ __all__ = [
     "METAL_FUSED_REQUIRED_CONTEXT",
     "MetalFusedNeuralMaterialModel",
     "MetalPreparedState",
+    "MetalScatteringSample",
     "MetalSpatialState",
     "metal_fused_parameter_groups",
 ]

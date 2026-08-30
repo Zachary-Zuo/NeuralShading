@@ -8,6 +8,15 @@ from tqdm import tqdm
 
 from ncls.core.identity import sha256_json, write_json_atomic
 from ncls.learning.methods.metal_fused import METHOD_DEFINITION
+from ncls.learning.models.metal_fused_profile import load_metal_fused_layout
+from ncls.learning.models.metal_sampler import (
+    METAL_PROPOSAL_COMPONENTS,
+    METAL_PROPOSAL_COMPONENT_COUNT,
+    METAL_PROPOSAL_DISTRIBUTION_IDS,
+    METAL_PROPOSAL_FRAME_INDICES,
+    METAL_PROPOSAL_SPECULAR_FLAGS,
+    METAL_PROPOSAL_STATE_WIDTH,
+)
 from ncls.learning.models.metal_texture_codec import semantic_role_class
 from ncls.source_materials.mdl_metal import (
     MDL_METAL_EXPECTED_COUNTS,
@@ -133,6 +142,49 @@ def build_preflight_report(registry: MdlMetalRegistry) -> Mapping[str, Any]:
     }:
         raise RuntimeError(f"Metal full-cohort closure drifted: {closure}")
     activation = _activation_set(registry)
+    layout = load_metal_fused_layout()
+    proposal = layout["proposal_reservation"]
+    proposal_closure = {
+        "components": list(proposal["components"]),
+        "component_count": len(proposal["components"]),
+        "state_width": len(proposal["state_fields"]),
+        "state_fields": list(proposal["state_fields"]),
+        "component_frame_indices": list(proposal["component_frame_indices"]),
+        "component_distribution_ids": list(
+            proposal["component_distribution_ids"]
+        ),
+        "component_specular_flags": list(proposal["component_specular_flags"]),
+        "random_tuple_width": int(proposal["random_tuple"]["shape"][0]),
+        "fallback_weight_floor": float(proposal["fallback_weight_floor"]),
+        "hemisphere_convention": str(proposal["hemisphere_convention"]),
+        "sample_evaluator_calls": int(
+            layout["bounded_execution"]["maximum_sample_evaluator_calls"]
+        ),
+    }
+    expected_proposal = {
+        "components": list(METAL_PROPOSAL_COMPONENTS),
+        "component_count": METAL_PROPOSAL_COMPONENT_COUNT,
+        "state_width": METAL_PROPOSAL_STATE_WIDTH,
+        "state_fields": [
+            "normalized_weight",
+            "alpha_x",
+            "alpha_y",
+            "rotation_radians",
+            "active",
+            "frame_index",
+            "distribution_id",
+            "energy_clue",
+        ],
+        "component_frame_indices": list(METAL_PROPOSAL_FRAME_INDICES),
+        "component_distribution_ids": list(METAL_PROPOSAL_DISTRIBUTION_IDS),
+        "component_specular_flags": list(METAL_PROPOSAL_SPECULAR_FLAGS),
+        "random_tuple_width": 2,
+        "fallback_weight_floor": 0.02,
+        "hemisphere_convention": "renderer-shading-z-positive-folded-preimage@1",
+        "sample_evaluator_calls": 1,
+    }
+    if proposal_closure != expected_proposal:
+        raise RuntimeError(f"Metal proposal ABI closure drifted: {proposal_closure}")
     component_evidence = {
         component.component_id: {
             "required": component.required,
@@ -148,6 +200,7 @@ def build_preflight_report(registry: MdlMetalRegistry) -> Mapping[str, Any]:
         "method_descriptor_identity": METHOD_DEFINITION.descriptor.descriptor_sha256,
         "profile_id": "metal_fused_full_v1",
         "full_cohort_closure": closure,
+        "proposal_closure": proposal_closure,
         "activation_set": [
             {
                 "export_id": record.export_id,

@@ -3,8 +3,8 @@
   "format_version": 4,
   "method_key": "metal-fused-neural-material",
   "run_class": "smoke",
-  "correspondence_id": "metal-fused-full-evaluator@1",
-  "recipe_id": "metal-fused-full-windows-stratified-8step@1",
+  "correspondence_id": "metal-fused-full-method@1",
+  "recipe_id": "metal-fused-full-windows-stratified-12step@1",
   "source_adaptation_id": "metal-fused.mdl-vmaterials2-metal@1",
   "source": {
     "family_id": "mdl.program@1",
@@ -52,7 +52,7 @@
     "metal_count": 22,
     "finish_count": 36,
     "source_state_capacity": 4096,
-    "required_route_kinds": ["asset-tile", "reference-evaluator"]
+    "required_route_kinds": ["asset-tile", "reference-evaluator", "method-sampler"]
   },
   "phases": [
     {
@@ -104,7 +104,7 @@
         "kind": "cosine",
         "start": 0.0003,
         "end": 0.0001,
-        "total_steps": 8,
+        "total_steps": 12,
         "offset": 0
       },
       "precision": {"autocast": "fp32", "gradient_scaler": false},
@@ -190,8 +190,79 @@
         "kind": "cosine",
         "start": 0.0003,
         "end": 0.0001,
-        "total_steps": 8,
+        "total_steps": 12,
         "offset": 4
+      },
+      "precision": {"autocast": "bfloat16", "gradient_scaler": false},
+      "checkpoint_boundary": true,
+      "transition": null,
+      "log_interval": 1,
+      "gradient_audit_interval": 4,
+      "prefetch_depth": 1
+    },
+    {
+      "name": "proposal-fit",
+      "steps": 4,
+      "routes": [
+        {
+          "name": "evaluator",
+          "kind": "reference-evaluator",
+          "batch_size": 1,
+          "direction_count": 1,
+          "seed_offset": 1,
+          "options": {
+            "direction_proposal": "uniform-half-difference@1",
+            "evaluation_samples": 1,
+            "footprint_samples": 1,
+            "source_execution_mode": "authoritative@1",
+            "asset_tile_coherent": true,
+            "spatial_tile_extent": 0.015625,
+            "source_patch_size": 8,
+            "maximum_rejection_rounds": 64
+          }
+        },
+        {
+          "name": "sampler",
+          "kind": "method-sampler",
+          "batch_size": 1,
+          "direction_count": 1,
+          "seed_offset": 3,
+          "options": {
+            "direction_proposal": "uniform-hemisphere-conditioning@1",
+            "asset_tile_coherent": true,
+            "spatial_tile_extent": 0.015625,
+            "source_patch_size": 8
+          }
+        }
+      ],
+      "parameter_groups": ["proposal_sampler"],
+      "loss_terms": [
+        "proposal-forward-kl",
+        "proposal-density-fit",
+        "proposal-mode-coverage",
+        "proposal-weight-tail",
+        "sample-pdf-identity"
+      ],
+      "recipes": {
+        "profile_id": "metal_fused_full_v1",
+        "proposal": "eleven-component-folded-analytic-mixture@1",
+        "target": "evaluator-luminance-times-abs-cosine@1",
+        "hemisphere": "renderer-shading-z-positive-folded-preimage@1",
+        "random_tuple": "cdf-remapped-float2@1"
+      },
+      "optimizer": {
+        "kind": "adam",
+        "betas": [0.9, 0.99],
+        "epsilon": 1e-8,
+        "weight_decay": 0.000001
+      },
+      "optimizer_state_policy": "reset",
+      "schedule": {
+        "kind": "cosine",
+        "start": 0.0002,
+        "end": 0.00005,
+        "total_steps": 12,
+        "offset": 8
       },
       "precision": {"autocast": "bfloat16", "gradient_scaler": false},
       "checkpoint_boundary": true,
@@ -203,6 +274,6 @@
   ],
   "seed": 20260830,
   "device": "cuda:0",
-  "validation": {"interval": 8, "batches": 1},
+  "validation": {"interval": 12, "batches": 1},
   "checkpoint_selection": "tail_guard"
 }

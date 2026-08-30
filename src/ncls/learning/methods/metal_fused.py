@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -10,7 +11,12 @@ from torch.nn import functional as F
 
 from ncls.core.scattering import BackendCapability, MaterialPayload, RuntimePayload
 from ncls.core.source import SourceSnapshot
-from ncls.learning.batches import AssetTileBatch, EvaluatorBatch, OnlineTrainingBatch
+from ncls.learning.batches import (
+    AssetTileBatch,
+    EvaluatorBatch,
+    MethodSamplerBatch,
+    OnlineTrainingBatch,
+)
 from ncls.learning.method import (
     ComponentContract,
     MethodDefinition,
@@ -28,6 +34,7 @@ from ncls.learning.models.metal_fused_profile import (
     METAL_FUSED_LAYOUT_PATH,
     load_metal_fused_layout,
 )
+from ncls.learning.objectives import sampler_forward_kl_score
 from ncls.learning.source_adaptation import NativeAssetCollection
 from ncls.paths import PROJECT_ROOT
 
@@ -49,6 +56,34 @@ _JOINT_GROUPS = (
     "analytic_core",
     "hybrid_evaluator",
 )
+_PROPOSAL_GROUPS = ("proposal_sampler",)
+_METAL_PREPARE_TENSORS = (
+    "source_index",
+    "wo",
+    "uv",
+    "uv_dx",
+    "uv_dy",
+    "mip_level",
+    "metal_texture_patches",
+    "metal_texture_slot_mask",
+    "metal_texture_role_class",
+    "metal_mip_fraction",
+    "metal_graph_index",
+    "metal_schema_index",
+    "metal_recipe_index",
+    "metal_identity_index",
+    "metal_finish_index",
+    "metal_asset_index",
+    "metal_typed_semantic_id",
+    "metal_typed_type_id",
+    "metal_typed_responsibility_id",
+    "metal_typed_discrete",
+    "metal_typed_continuous",
+    "metal_typed_presence",
+    "metal_canonical_optical",
+    "metal_access_state",
+    "metal_frame_state",
+)
 
 
 def _implementation_sha256() -> str:
@@ -58,10 +93,13 @@ def _implementation_sha256() -> str:
         PROJECT_ROOT / "src/ncls/learning/models/metal_texture_codec.py",
         PROJECT_ROOT / "src/ncls/learning/models/metal_typed_compiler.py",
         PROJECT_ROOT / "src/ncls/learning/models/metal_directional_evaluator.py",
+        PROJECT_ROOT / "src/ncls/learning/models/metal_sampler.py",
         PROJECT_ROOT / "src/ncls/learning/models/metal_fused_profile.py",
         PROJECT_ROOT / "src/ncls/learning/metal_asset_cook.py",
         PROJECT_ROOT / "src/ncls/learning/mdl_metal_assets.py",
         PROJECT_ROOT / "src/ncls/learning/source_adapters.py",
+        PROJECT_ROOT / "shaders/ncls/backends/metal_fused/metal_fused_layout.generated.slang",
+        PROJECT_ROOT / "shaders/ncls/scattering/metal_fused_proposal.slang",
         METAL_FUSED_LAYOUT_PATH,
     )
     digest = hashlib.sha256()
@@ -91,6 +129,8 @@ def _component(
     phases: tuple[str, ...],
     dependencies: tuple[str, ...],
     outputs: tuple[str, ...],
+    runtime_artifacts: tuple[str, ...] = ("checkpoint:model_state",),
+    slang_entry_points: tuple[str, ...] = (),
 ) -> ComponentContract:
     return ComponentContract(
         component_id,
@@ -99,8 +139,8 @@ def _component(
         phases,
         dependencies,
         outputs,
-        ("checkpoint:model_state",),
-        (),
+        runtime_artifacts,
+        slang_entry_points,
     )
 
 
@@ -225,11 +265,45 @@ _COMPONENTS = (
         ("free_positive_tail_trace",),
     ),
     _component(
-        "eleven-component-proposal-state-reservation",
-        ("typed_compiler", "prepared_model"),
-        ("joint-appearance",),
-        ("reference-evaluator",),
-        ("proposal_state_trace",),
+        "eleven-component-matched-proposal-mixture",
+        ("proposal_sampler",),
+        ("proposal-fit",),
+        ("reference-evaluator", "method-sampler"),
+        (
+            "proposal_state_trace",
+            "proposal_component_pdf_trace",
+            "proposal_component_sample_trace",
+        ),
+        (
+            "checkpoint:model_state",
+            "slang:shaders/ncls/scattering/metal_fused_proposal.slang",
+            "layout:src/ncls/learning/abi/metal_fused_layout_v1.json",
+        ),
+        ("nclsMetalFusedProposalPdf", "nclsSampleMetalFusedProposal"),
+    ),
+    _component(
+        "folded-full-hemisphere-support",
+        ("proposal_sampler",),
+        ("proposal-fit",),
+        ("reference-evaluator", "method-sampler"),
+        ("proposal_support_trace", "proposal_fallback_trace"),
+        (
+            "checkpoint:model_state",
+            "slang:shaders/ncls/scattering/metal_fused_proposal.slang",
+        ),
+        ("nclsMetalFusedProposalPdf", "nclsSampleMetalFusedProposal"),
+    ),
+    _component(
+        "sample-pdf-throughput-identity",
+        ("proposal_sampler",),
+        ("proposal-fit",),
+        ("reference-evaluator", "method-sampler"),
+        ("proposal_sample_pdf_trace", "proposal_weight_identity_trace"),
+        (
+            "checkpoint:model_state",
+            "slang:shaders/ncls/scattering/metal_fused_proposal.slang",
+        ),
+        ("nclsMetalFusedProposalPdf", "nclsSampleMetalFusedProposal"),
     ),
 )
 
@@ -239,7 +313,7 @@ class MetalFusedMethodDefinition(MethodDefinition):
     descriptor = MethodDescriptor(
         "metal-fused-neural-material",
         1,
-        "vMaterials Metal quality-first fused neural evaluator slice",
+        "vMaterials Metal quality-first fused neural material with matched sampler",
         _implementation_sha256(),
         (
             SourceAdaptationContract(
@@ -254,38 +328,20 @@ class MetalFusedMethodDefinition(MethodDefinition):
                 "mip_level",
             ),
             "reference-evaluator": (
-                "source_index",
-                "wo",
                 "wi",
                 "target_f",
-                "uv",
-                "uv_dx",
-                "uv_dy",
-                "mip_level",
-                "metal_texture_patches",
-                "metal_texture_slot_mask",
-                "metal_texture_role_class",
-                "metal_mip_fraction",
-                "metal_graph_index",
-                "metal_schema_index",
-                "metal_recipe_index",
-                "metal_identity_index",
-                "metal_finish_index",
-                "metal_asset_index",
-                "metal_typed_semantic_id",
-                "metal_typed_type_id",
-                "metal_typed_responsibility_id",
-                "metal_typed_discrete",
-                "metal_typed_continuous",
-                "metal_typed_presence",
-                "metal_canonical_optical",
-                "metal_access_state",
-                "metal_frame_state",
+                *_METAL_PREPARE_TENSORS,
             ),
+            "method-sampler": ("sample_u", *_METAL_PREPARE_TENSORS),
         },
         _state_schema(),
-        "ncls.metal-fused-evaluator-slice@1",
-        int(BackendCapability.PREPARE | BackendCapability.EVALUATE),
+        "ncls.metal-fused-full-method@1",
+        int(
+            BackendCapability.PREPARE
+            | BackendCapability.EVALUATE
+            | BackendCapability.SAMPLE
+            | BackendCapability.PDF
+        ),
         {
             "maximum_prepare_steps": int(
                 _layout["bounded_execution"]["maximum_prepare_steps"]
@@ -299,12 +355,24 @@ class MetalFusedMethodDefinition(MethodDefinition):
             "maximum_reads": int(_layout["bounded_execution"]["maximum_reads"]),
         },
         {
-            "runtime_class": "quality-first-evaluator-slice",
+            "runtime_class": "quality-first-full-method",
             "profile_id": METAL_FUSED_FULL_PROFILE.profile_id,
             "B_prepared_max": METAL_FUSED_FULL_PROFILE.maximum_state_bytes,
             "B_grid_texel": 16,
             "maximum_texture_reads": METAL_FUSED_FULL_PROFILE.maximum_reads,
-            "matched_sampler_status": "reserved-downstream-child",
+            "matched_sampler_status": "python-slang-matched@1",
+            "proposal_components": 11,
+            "proposal_random_values": 2,
+            "proposal_fallback_weight_floor": 0.02,
+            "maximum_sample_steps": int(
+                _layout["bounded_execution"]["maximum_sample_steps"]
+            ),
+            "maximum_pdf_steps": int(
+                _layout["bounded_execution"]["maximum_pdf_steps"]
+            ),
+            "maximum_sample_evaluator_calls": int(
+                _layout["bounded_execution"]["maximum_sample_evaluator_calls"]
+            ),
             "observed_quality_gate": False,
         },
         metal_fused_parameter_groups(),
@@ -315,8 +383,8 @@ class MetalFusedMethodDefinition(MethodDefinition):
         return MetalFusedNeuralMaterialModel.from_context(context)
 
     def validate_training_config(self, config: Mapping[str, Any]) -> None:
-        if config.get("correspondence_id") != "metal-fused-full-evaluator@1":
-            raise ValueError("Metal fused training requires its frozen evaluator correspondence")
+        if config.get("correspondence_id") != "metal-fused-full-method@1":
+            raise ValueError("Metal fused training requires its full evaluator/sampler correspondence")
         if config.get("source_adaptation_id") != "metal-fused.mdl-vmaterials2-metal@1":
             raise ValueError("Metal fused training requires the Metal registry adapter")
         if dict(config.get("model_context", {})) != dict(METAL_FUSED_REQUIRED_CONTEXT):
@@ -328,17 +396,23 @@ class MetalFusedMethodDefinition(MethodDefinition):
         if not isinstance(phases, list) or [item.get("name") for item in phases] != [
             "codec-warmup",
             "joint-appearance",
+            "proposal-fit",
         ]:
-            raise ValueError("Metal evaluator slice requires codec and joint phases")
+            raise ValueError("Metal full method requires codec, joint and proposal phases")
         expected_groups = {
             "codec-warmup": list(_CODEC_GROUPS),
             "joint-appearance": list(_JOINT_GROUPS),
+            "proposal-fit": list(_PROPOSAL_GROUPS),
         }
         expected_routes = {
             "codec-warmup": {"asset": "asset-tile"},
             "joint-appearance": {
                 "asset": "asset-tile",
                 "evaluator": "reference-evaluator",
+            },
+            "proposal-fit": {
+                "evaluator": "reference-evaluator",
+                "sampler": "method-sampler",
             },
         }
         expected_losses = {
@@ -358,6 +432,13 @@ class MetalFusedMethodDefinition(MethodDefinition):
                 "analytic-core-preservation",
                 "teacher-response",
                 "compiler-functional-distillation",
+            ],
+            "proposal-fit": [
+                "proposal-forward-kl",
+                "proposal-density-fit",
+                "proposal-mode-coverage",
+                "proposal-weight-tail",
+                "sample-pdf-identity",
             ],
         }
         for phase in phases:
@@ -387,6 +468,19 @@ class MetalFusedMethodDefinition(MethodDefinition):
             or not bool(options.get("asset_tile_coherent", False))
         ):
             raise ValueError("Metal joint route requires coherent real source patches")
+        proposal_evaluator = next(
+            item for item in phases[2]["routes"] if item["name"] == "evaluator"
+        )
+        proposal_sampler = next(
+            item for item in phases[2]["routes"] if item["name"] == "sampler"
+        )
+        if (
+            proposal_evaluator.get("options", {}).get("direction_proposal")
+            != "uniform-half-difference@1"
+            or proposal_sampler.get("options", {}).get("direction_proposal")
+            != "uniform-hemisphere-conditioning@1"
+        ):
+            raise ValueError("Metal proposal phase requires evaluator and sampler strata")
 
     def configure_phase(self, model: nn.Module, phase: Mapping[str, Any]) -> None:
         if not isinstance(model, MetalFusedNeuralMaterialModel):
@@ -402,6 +496,172 @@ class MetalFusedMethodDefinition(MethodDefinition):
         except KeyError as error:
             raise RuntimeError(f"Metal full execution omitted trace {name!r}") from error
 
+    @staticmethod
+    def _proposal_target(f: torch.Tensor, wi: torch.Tensor) -> torch.Tensor:
+        luminance = torch.sum(
+            f * f.new_tensor((0.2126, 0.7152, 0.0722)), dim=-1
+        )
+        return (
+            torch.clamp(luminance, min=0.0)
+            * torch.clamp(wi[..., 2], min=0.0)
+        ).detach()
+
+    @staticmethod
+    def _masked_mean(value: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
+        return torch.sum(torch.where(valid, value, 0.0)) / torch.clamp(
+            valid.to(value.dtype).sum(), min=1.0
+        )
+
+    def _proposal_objective(
+        self,
+        model: MetalFusedNeuralMaterialModel,
+        batches: Mapping[str, OnlineTrainingBatch],
+    ) -> tuple[torch.Tensor, Mapping[str, torch.Tensor | float]]:
+        if set(batches) != {"evaluator", "sampler"}:
+            raise ValueError("Metal proposal fit requires evaluator and sampler routes")
+        evaluator_batch = batches["evaluator"]
+        sampler_batch = batches["sampler"]
+        if not isinstance(evaluator_batch, EvaluatorBatch) or not isinstance(
+            sampler_batch, MethodSamplerBatch
+        ):
+            raise ValueError("Metal proposal fit received the wrong typed batches")
+
+        sampler_values = sampler_batch.tensors
+        sampler_spatial = model.spatial_state(sampler_values)
+        sampler_program = model.typed_compiler(sampler_values)
+        sampler_prepared = model.prepare_from_components(
+            sampler_program, sampler_spatial, sampler_values
+        )
+        sampled = model.sample_prepared(
+            sampler_prepared,
+            sampler_values["wo"],
+            sampler_values["sample_u"],
+        )
+        score_loss, sample_valid_fraction = sampler_forward_kl_score(
+            sampled.f,
+            sampled.wi,
+            sampled.forward_pdf,
+            sampled.valid,
+        )
+
+        evaluator_values = evaluator_batch.tensors
+        evaluator_spatial = model.spatial_state(evaluator_values)
+        evaluator_program = model.typed_compiler(evaluator_values)
+        evaluator_prepared = model.prepare_from_components(
+            evaluator_program, evaluator_spatial, evaluator_values
+        )
+        evaluator_prediction = model.evaluate_prepared(
+            evaluator_prepared,
+            evaluator_values["wo"],
+            evaluator_values["wi"],
+        )
+        evaluator_density = model.pdf_prepared(
+            evaluator_prepared,
+            evaluator_values["wo"],
+            evaluator_values["wi"],
+        )
+        query_target = self._proposal_target(
+            evaluator_prediction.f, evaluator_values["wi"]
+        )
+        query_target = query_target / torch.clamp(query_target.mean(), min=1e-4)
+        query_valid = evaluator_prediction.valid & evaluator_density.valid
+        density_loss = self._masked_mean(
+            -query_target * torch.log(torch.clamp(evaluator_density.forward, min=1e-12)),
+            query_valid,
+        )
+
+        sample_u = sampler_values["sample_u"]
+        wo = sampler_values["wo"]
+        reflection = torch.stack((-wo[:, 0], -wo[:, 1], wo[:, 2]), dim=1)
+        reflection = F.normalize(reflection, dim=1, eps=1e-8)
+        phi = 2.0 * math.pi * sample_u[:, 1]
+        grazing_z = 0.01 + 0.09 * sample_u[:, 0]
+        grazing_radius = torch.sqrt(torch.clamp(1.0 - grazing_z.square(), min=0.0))
+        grazing = torch.stack(
+            (
+                grazing_radius * torch.cos(phi),
+                grazing_radius * torch.sin(phi),
+                grazing_z,
+            ),
+            dim=1,
+        )
+        cosine_radius = torch.sqrt(sample_u[:, 0])
+        cosine_direction = torch.stack(
+            (
+                cosine_radius * torch.cos(phi),
+                cosine_radius * torch.sin(phi),
+                torch.sqrt(torch.clamp(1.0 - sample_u[:, 0], min=0.0)),
+            ),
+            dim=1,
+        )
+        mode_directions = torch.stack(
+            (reflection, grazing, cosine_direction), dim=1
+        )
+        mode_prediction = model.evaluate_prepared(
+            sampler_prepared, wo, mode_directions
+        )
+        mode_density = model.pdf_prepared(
+            sampler_prepared, wo, mode_directions
+        )
+        mode_target = self._proposal_target(mode_prediction.f, mode_directions)
+        mode_target = mode_target / torch.clamp(mode_target.mean(), min=1e-4)
+        mode_valid = mode_prediction.valid & mode_density.valid
+        mode_loss = self._masked_mean(
+            -mode_target * torch.log(torch.clamp(mode_density.forward, min=1e-12)),
+            mode_valid,
+        )
+
+        sampled_target = self._proposal_target(sampled.f, sampled.wi)
+        throughput_tail = sampled_target / torch.clamp(
+            sampled.forward_pdf, min=1e-12
+        )
+        tail_loss = self._masked_mean(
+            torch.log1p(throughput_tail.square()), sampled.valid
+        )
+        independent = model.pdf_prepared(
+            sampler_prepared, wo, sampled.wi
+        )
+        pdf_error = torch.abs(sampled.forward_pdf - independent.forward)
+        expected_weight = (
+            sampled.f
+            * torch.clamp(sampled.wi[..., 2:3], min=0.0)
+            / torch.clamp(independent.forward[..., None], min=1e-12)
+        )
+        weight_error = torch.abs(sampled.weight - expected_weight).mean(dim=-1)
+        identity_error = self._masked_mean(pdf_error + weight_error, sampled.valid)
+        loss = (
+            0.25 * score_loss
+            + 0.5 * density_loss
+            + 0.5 * mode_loss
+            + 0.02 * tail_loss
+            + identity_error
+        )
+        trace = sampler_prepared.trace
+        component_histogram = F.one_hot(
+            sampled.component, num_classes=11
+        ).to(sampled.f.dtype)
+        return loss, {
+            "proposal_forward_kl_loss": score_loss.detach(),
+            "proposal_density_fit_loss": density_loss.detach(),
+            "proposal_mode_coverage_loss": mode_loss.detach(),
+            "proposal_weight_tail_loss": tail_loss.detach(),
+            "proposal_identity_error": identity_error.detach(),
+            "proposal_valid_fraction": sample_valid_fraction.detach(),
+            "proposal_state_trace": self._trace_metric(trace, "proposal_state"),
+            "proposal_component_pdf_trace": (
+                0.5
+                * (
+                    evaluator_density.component_pdfs.square().mean()
+                    + mode_density.component_pdfs.square().mean()
+                )
+            ).detach(),
+            "proposal_component_sample_trace": component_histogram.square().mean().detach(),
+            "proposal_support_trace": mode_density.forward[:, 1].mean().detach(),
+            "proposal_fallback_trace": sampler_prepared.proposal_state[:, -1, 0].mean().detach(),
+            "proposal_sample_pdf_trace": sampled.forward_pdf.mean().detach(),
+            "proposal_weight_identity_trace": (1.0 / (1.0 + identity_error.detach())),
+        }
+
     def training_objective(
         self,
         model: nn.Module,
@@ -411,6 +671,8 @@ class MetalFusedMethodDefinition(MethodDefinition):
         if not isinstance(model, MetalFusedNeuralMaterialModel):
             raise TypeError("Metal fused method requires MetalFusedNeuralMaterialModel")
         phase_name = str(phase.get("name"))
+        if phase_name == "proposal-fit":
+            return self._proposal_objective(model, batches)
         if "asset" not in batches or not isinstance(batches["asset"], AssetTileBatch):
             raise ValueError("Metal phases require the canonical asset-tile route")
         codec_loss, codec_metrics = model.codec_objective(batches["asset"])
@@ -564,8 +826,8 @@ class MetalFusedMethodDefinition(MethodDefinition):
     def compile_program(self, checkpoint: Mapping[str, Any]) -> RuntimePayload:
         del checkpoint
         raise RuntimeError(
-            "Metal evaluator-slice checkpoints are intentionally non-packageable until "
-            "the matched sampler and runtime deployment children freeze SAMPLE/PDF and Slang"
+            "Metal full-method checkpoints are intentionally non-packageable until the "
+            "runtime deployment child freezes Package@2 resources and the full Slang backend"
         )
 
     def compile_asset(

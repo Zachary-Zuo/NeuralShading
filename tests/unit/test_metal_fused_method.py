@@ -26,12 +26,14 @@ def test_metal_full_profile_freezes_all_quality_first_shape_bounds() -> None:
     assert (profile.core_lobe_count, profile.residual_lobe_count) == (6, 4)
     assert profile.maximum_reads == 9 * 2 * 5 + 4 * 4
     assert profile.maximum_state_bytes <= 4096
+    assert profile.maximum_sample_random_values == 2
+    assert profile.maximum_sample_evaluator_calls == 1
     layout = load_metal_fused_layout()
     assert layout["asset_packing"]["mip"].startswith("independent-source")
     assert len(layout["proposal_reservation"]["components"]) == 11
 
 
-def test_metal_descriptor_registers_complete_evaluator_slice_without_claiming_sampler() -> None:
+def test_metal_descriptor_registers_complete_evaluator_and_matched_sampler() -> None:
     descriptor = METHOD_DEFINITION.descriptor
     required = {
         component.component_id
@@ -56,12 +58,14 @@ def test_metal_descriptor_registers_complete_evaluator_slice_without_claiming_sa
         "bounded-multiplicative-correction",
         "four-positive-residual-lobes",
         "free-positive-rgb-tail",
-        "eleven-component-proposal-state-reservation",
+        "eleven-component-matched-proposal-mixture",
+        "folded-full-hemisphere-support",
+        "sample-pdf-throughput-identity",
     }
     assert descriptor.capabilities & int(BackendCapability.PREPARE)
     assert descriptor.capabilities & int(BackendCapability.EVALUATE)
-    assert not descriptor.capabilities & int(BackendCapability.SAMPLE)
-    assert not descriptor.capabilities & int(BackendCapability.PDF)
+    assert descriptor.capabilities & int(BackendCapability.SAMPLE)
+    assert descriptor.capabilities & int(BackendCapability.PDF)
     assert set(descriptor.parameter_groups) == {
         "codec_role_stems",
         "codec_encoder",
@@ -75,6 +79,7 @@ def test_metal_descriptor_registers_complete_evaluator_slice_without_claiming_sa
         "angular_bank",
         "analytic_core",
         "hybrid_evaluator",
+        "proposal_sampler",
     }
 
 
@@ -85,8 +90,8 @@ def test_metal_model_rejects_a_tiny_or_partial_context() -> None:
         MetalFusedNeuralMaterialModel.from_context(partial)
 
 
-def test_metal_evaluator_slice_fails_closed_at_package_boundary() -> None:
-    with pytest.raises(RuntimeError, match="matched sampler"):
+def test_metal_full_method_still_fails_closed_at_runtime_package_boundary() -> None:
+    with pytest.raises(RuntimeError, match="runtime deployment"):
         METHOD_DEFINITION.compile_program({})
 
 

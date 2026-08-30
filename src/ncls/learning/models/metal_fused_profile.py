@@ -6,6 +6,12 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ncls.core.identity import sha256_json
+from ncls.learning.models.metal_sampler import (
+    METAL_PROPOSAL_COMPONENTS,
+    METAL_PROPOSAL_DISTRIBUTION_IDS,
+    METAL_PROPOSAL_FRAME_INDICES,
+    METAL_PROPOSAL_SPECULAR_FLAGS,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
@@ -38,6 +44,10 @@ class MetalFusedProfile:
     angular_difference_rank: int
     evaluator_width: int
     evaluator_blocks: int
+    maximum_sample_steps: int
+    maximum_pdf_steps: int
+    maximum_sample_random_values: int
+    maximum_sample_evaluator_calls: int
     maximum_reads: int
     maximum_state_bytes: int
 
@@ -56,6 +66,8 @@ class MetalFusedProfile:
             or self.learned_frame_count != 3
             or self.core_lobe_count != 6
             or self.residual_lobe_count != 4
+            or self.maximum_sample_random_values != 2
+            or self.maximum_sample_evaluator_calls != 1
         ):
             raise ValueError("Metal full profile required branch shape drifted")
         if self.maximum_reads > 192 or self.maximum_state_bytes > 4096:
@@ -102,6 +114,14 @@ def full_metal_fused_profile() -> MetalFusedProfile:
         angular_difference_rank=int(profile["angular_difference_rank"]),
         evaluator_width=int(profile["evaluator_width"]),
         evaluator_blocks=int(profile["evaluator_blocks"]),
+        maximum_sample_steps=int(value["bounded_execution"]["maximum_sample_steps"]),
+        maximum_pdf_steps=int(value["bounded_execution"]["maximum_pdf_steps"]),
+        maximum_sample_random_values=int(
+            value["bounded_execution"]["maximum_sample_random_values"]
+        ),
+        maximum_sample_evaluator_calls=int(
+            value["bounded_execution"]["maximum_sample_evaluator_calls"]
+        ),
         maximum_reads=int(value["bounded_execution"]["maximum_reads"]),
         maximum_state_bytes=int(
             value["bounded_execution"]["maximum_prepared_state_bytes"]
@@ -115,6 +135,19 @@ def full_metal_fused_profile() -> MetalFusedProfile:
     )
     if computed_reads != result.maximum_reads:
         raise ValueError("Metal fused layout read accounting drifted")
+    proposal = value["proposal_reservation"]
+    if (
+        tuple(proposal["components"]) != METAL_PROPOSAL_COMPONENTS
+        or tuple(int(item) for item in proposal["component_frame_indices"])
+        != METAL_PROPOSAL_FRAME_INDICES
+        or tuple(int(item) for item in proposal["component_distribution_ids"])
+        != METAL_PROPOSAL_DISTRIBUTION_IDS
+        or tuple(bool(item) for item in proposal["component_specular_flags"])
+        != METAL_PROPOSAL_SPECULAR_FLAGS
+        or proposal["random_tuple"].get("shape") != [2]
+        or float(proposal["fallback_weight_floor"]) != 0.02
+    ):
+        raise ValueError("Metal proposal layout disagrees with its generated component ABI")
     return result
 
 

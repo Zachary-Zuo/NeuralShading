@@ -3,7 +3,7 @@
   "name": "metal-matched-sampler",
   "title": "Metal matched sampler 与 PDF",
   "description": "基于已稳定 evaluator/proposal state 的 matched sample/pdf",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

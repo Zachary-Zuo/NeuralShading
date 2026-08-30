@@ -127,6 +127,7 @@ def test_full_metal_evaluator_has_finite_nonnegative_f_and_all_group_gradients()
     assert bool(torch.isfinite(evaluated.f).all())
     assert bool((evaluated.f >= 0.0).all())
     assert bool(evaluated.valid.all())
+    assert evaluated.f.shape == (1, 1, 3)
     groups = METHOD_DEFINITION.parameter_registry(model)
     for name, parameters in groups.items():
         gradients = [parameter.grad for parameter in parameters if parameter.grad is not None]
@@ -234,3 +235,82 @@ def test_full_model_bfloat16_forward_keeps_sensitive_outputs_finite() -> None:
     loss.backward()
     assert bool(torch.isfinite(evaluated.f).all())
     assert bool((evaluated.f >= 0.0).all())
+
+
+def test_full_metal_sample_pdf_and_throughput_weight_share_one_prepared_state() -> None:
+    pytest.importorskip("slangpy")
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is required")
+    device = torch.device("cuda:0")
+    torch.manual_seed(20260831)
+    model = MetalFusedNeuralMaterialModel.from_context(
+        METAL_FUSED_REQUIRED_CONTEXT
+    ).to(device)
+    values = _conditioning(device)
+    spatial = model.spatial_state(values)
+    program, _ = model.compile_program_states(values)
+    prepared = model.prepare_from_components(program, spatial, values)
+    sampled = model.sample_prepared(
+        prepared,
+        values["wo"],
+        torch.tensor([[0.731, 0.217]], device=device),
+    )
+    independent = model.pdf_prepared(
+        prepared, values["wo"], sampled.wi
+    )
+    expected_weight = (
+        sampled.f
+        * sampled.wi[..., 2:3]
+        / independent.forward[..., None]
+    )
+    assert bool(sampled.valid.all())
+    assert bool((sampled.wi[..., 2] > 0.0).all())
+    assert bool(torch.isfinite(sampled.weight).all())
+    torch.testing.assert_close(sampled.forward_pdf, independent.forward)
+    torch.testing.assert_close(sampled.reverse_pdf, independent.reverse)
+    torch.testing.assert_close(sampled.weight, expected_weight)
+
+
+def test_proposal_group_has_finite_gradients_and_descends_on_fixed_density_target() -> None:
+    pytest.importorskip("slangpy")
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is required")
+    device = torch.device("cuda:0")
+    torch.manual_seed(20260831)
+    model = MetalFusedNeuralMaterialModel.from_context(
+        METAL_FUSED_REQUIRED_CONTEXT
+    ).to(device)
+    proposal_parameters = tuple(
+        METHOD_DEFINITION.parameter_registry(model)["proposal_sampler"]
+    )
+    optimizer = torch.optim.Adam(proposal_parameters, lr=2e-3)
+    values = _conditioning(device)
+    wo = values["wo"]
+    target_wi = torch.stack((-wo[:, 0], -wo[:, 1], wo[:, 2]), dim=1)
+    target_wi = torch.nn.functional.normalize(target_wi, dim=1)[:, None, :]
+
+    def density_loss() -> tuple[torch.Tensor, torch.Tensor]:
+        spatial = model.spatial_state(values)
+        program = model.typed_compiler(values)
+        prepared = model.prepare_from_components(program, spatial, values)
+        density = model.pdf_prepared(prepared, wo, target_wi)
+        assert bool(density.valid.all())
+        return -torch.log(torch.clamp(density.forward, min=1e-12)).mean(), density.forward.mean()
+
+    initial_loss, initial_density = density_loss()
+    observed_finite_nonzero = False
+    for _ in range(12):
+        optimizer.zero_grad(set_to_none=True)
+        loss, _ = density_loss()
+        loss.backward()
+        gradients = [parameter.grad for parameter in proposal_parameters]
+        assert all(gradient is not None for gradient in gradients)
+        assert all(bool(torch.isfinite(gradient).all()) for gradient in gradients)
+        observed_finite_nonzero |= any(
+            bool(torch.count_nonzero(gradient)) for gradient in gradients
+        )
+        optimizer.step()
+    final_loss, final_density = density_loss()
+    assert observed_finite_nonzero
+    assert float(final_loss.detach()) < float(initial_loss.detach())
+    assert float(final_density.detach()) > float(initial_density.detach())

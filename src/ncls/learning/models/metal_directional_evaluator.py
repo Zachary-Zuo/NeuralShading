@@ -265,6 +265,21 @@ def _anisotropic_beckmann(
     return distribution / torch.clamp(4.0 * cos_o * cos_i, min=1e-6)
 
 
+def _rotate_xy(value: torch.Tensor, angle: torch.Tensor) -> torch.Tensor:
+    cosine = torch.cos(angle)
+    sine = torch.sin(angle)
+    rotated_x = cosine * value[..., 0:1] + sine * value[..., 1:2]
+    rotated_y = -sine * value[..., 0:1] + cosine * value[..., 1:2]
+    return torch.cat(
+        (
+            rotated_x,
+            rotated_y,
+            value[..., 2:3].expand_as(rotated_x),
+        ),
+        dim=-1,
+    )
+
+
 class MetalHybridEvaluator(nn.Module):
     def __init__(self, profile: MetalFusedProfile, directional_width: int) -> None:
         super().__init__()
@@ -301,6 +316,7 @@ class MetalHybridEvaluator(nn.Module):
         half_lobe = half_vector[:, :, None, :]
         color = state[..., :3]
         alpha = state[..., 3:5]
+        rotation = math.pi * state[..., 5:6]
         energy = state[..., 6:7]
         active = state[..., 7:8]
         fresnel_power = state[..., 8:9]
@@ -308,10 +324,15 @@ class MetalHybridEvaluator(nn.Module):
             torch.sum(wo_lobe * half_lobe, dim=-1, keepdim=True), 0.0, 1.0
         )
         fresnel = color + (1.0 - color) * (1.0 - voh).pow(5.0 + 3.0 * fresnel_power)
-        ggx = _anisotropic_ggx(wo_lobe, wi_lobe, half_lobe, alpha)
-        beckmann = _anisotropic_beckmann(wo_lobe, wi_lobe, half_lobe, alpha)
+        rotated_wo = _rotate_xy(wo_lobe, rotation)
+        rotated_wi = _rotate_xy(wi_lobe, rotation)
+        rotated_half = _rotate_xy(half_lobe, rotation)
+        ggx = _anisotropic_ggx(rotated_wo, rotated_wi, rotated_half, alpha)
+        beckmann = _anisotropic_beckmann(
+            rotated_wo, rotated_wi, rotated_half, alpha
+        )
         cosine_i = torch.clamp(wi_lobe[..., 2:3], min=0.0)
-        lambert = color / math.pi
+        lambert = (color / math.pi).expand(-1, directions, -1, -1)
         broad = color * (0.2 + 0.8 * cosine_i) / math.pi
         coat_f0 = 0.04 + 0.24 * color
         coat_fresnel = coat_f0 + (1.0 - coat_f0) * (1.0 - voh).pow(5.0)
@@ -331,7 +352,9 @@ class MetalHybridEvaluator(nn.Module):
             dtype=wi.dtype,
             device=wi.device,
         )[None, None, :, :, None]
-        lobes = torch.sum(candidates[:, :, :, None, :] * selector, dim=2)
+        # candidates=[batch,direction,state-slot,candidate-kind,rgb].  Each
+        # authored slot owns exactly the candidate at the same index.
+        lobes = torch.sum(candidates * selector, dim=3)
         gain = torch.exp(self.analytic_gain_log)[None, None, :, :]
         lobes = lobes * energy * active * gain
         return torch.sum(lobes, dim=2), lobes
@@ -353,8 +376,21 @@ class MetalHybridEvaluator(nn.Module):
         wo_lobe = wo[:, None, None, :].expand(-1, directions, self.profile.residual_lobe_count, -1)
         wi_lobe = wi[:, :, None, :].expand(-1, -1, self.profile.residual_lobe_count, -1)
         half_lobe = half_vector[:, :, None, :].expand_as(wi_lobe)
-        alpha = torch.clamp(alpha * (1.0 + 0.35 * skew), min=0.01)
-        shape = _anisotropic_ggx(wo_lobe, wi_lobe, half_lobe, alpha)
+        alpha = torch.clamp(
+            alpha
+            * torch.cat(
+                (torch.exp(0.35 * skew), torch.exp(-0.35 * skew)), dim=-1
+            ),
+            min=0.01,
+            max=1.0,
+        )
+        rotation = 0.5 * math.pi * skew
+        shape = _anisotropic_ggx(
+            _rotate_xy(wo_lobe, rotation),
+            _rotate_xy(wi_lobe, rotation),
+            _rotate_xy(half_lobe, rotation),
+            alpha,
+        )
         return amplitude * color_scale * active * shape
 
     def forward(
