@@ -3,7 +3,7 @@
   "name": "metal-fused-full-method",
   "title": "Metal quality-first 融合 neural method",
   "description": "shared texture codec、typed compiler、hybrid evaluator 与 full-stack joint training",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

@@ -21,6 +21,7 @@ from ncls.learning.source_adaptation import (
 from ncls.references.mdl import MdlCompiledArtifact, create_mdl_program_provider
 from ncls.source_materials.families.mdl import MdlFamilyDefinition
 from ncls.source_materials.mdl_metal import MdlMetalRegistry
+from ncls.learning.models.metal_texture_codec import semantic_role_class
 
 
 _PIXEL_LAYOUTS = {
@@ -267,6 +268,167 @@ class MdlMetalNativeAssetCollection:
         groups = _channel_groups(slot)
         channel_count = sum(count for _, count in groups)
         return source[..., :channel_count]
+
+    def _sample_mip_patches(
+        self,
+        asset_index: int,
+        slot_index: int,
+        mip_level: int,
+        uv: np.ndarray,
+        patch_size: int,
+    ) -> np.ndarray:
+        """从canonical box mip随机访问局部patch，不持久化派生mip。"""
+
+        descriptor = self.descriptors[asset_index]
+        domain = descriptor.domain(f"slot-{slot_index}")
+        level = min(max(0, int(mip_level)), len(domain.level_shapes) - 1)
+        target_height, target_width = domain.level_shapes[level]
+        values, manifest_slot, slot = self._base_array(asset_index, slot_index)
+        scale = 1 << level
+        center_x = np.floor(uv[:, 0] * target_width).astype(np.int64)
+        center_y = np.floor(uv[:, 1] * target_height).astype(np.int64)
+        offsets = np.arange(patch_size, dtype=np.int64) - patch_size // 2
+        target_y = center_y[:, None] + offsets[None, :]
+        target_x = center_x[:, None] + offsets[None, :]
+        if domain.address_mode == "wrap":
+            target_y = np.remainder(target_y, target_height)
+            target_x = np.remainder(target_x, target_width)
+        else:
+            target_y = np.clip(target_y, 0, target_height - 1)
+            target_x = np.clip(target_x, 0, target_width - 1)
+        footprint = np.arange(scale, dtype=np.int64)
+        source_y = target_y[..., None] * scale + footprint
+        source_x = target_x[..., None] * scale + footprint
+        source_y = np.clip(source_y, 0, values.shape[0] - 1)
+        source_x = np.clip(source_x, 0, values.shape[1] - 1)
+        if (
+            manifest_slot.get("shape") == "2d"
+            and manifest_slot.get("data_origin") == "lower_left"
+        ):
+            source_y = values.shape[0] - 1 - source_y
+        elif manifest_slot.get("data_origin") not in {"top_left", "lower_left"}:
+            raise ValueError("decoded Metal texture row origin is unsupported")
+        source_texels = int(
+            uv.shape[0] * patch_size * patch_size * scale * scale
+        )
+        channel_count = sum(count for _, count in _channel_groups(slot))
+        result = np.empty(
+            (uv.shape[0], patch_size, patch_size, channel_count),
+            dtype=np.float32,
+        )
+
+        def decode(block: np.ndarray) -> np.ndarray:
+            decoded = np.asarray(block).astype(np.float32)
+            if np.issubdtype(values.dtype, np.integer):
+                decoded /= np.float32(np.iinfo(values.dtype).max)
+            decoded = decoded[..., :channel_count]
+            if slot["transfer"] == "srgb-to-linear":
+                decoded[..., : min(3, channel_count)] = self._srgb_to_linear(
+                    decoded[..., : min(3, channel_count)]
+                )
+            return decoded
+
+        if source_texels <= 4_194_304:
+            block = values[
+                source_y[:, :, None, :, None],
+                source_x[:, None, :, None, :],
+            ]
+            result[...] = decode(block).mean(axis=(3, 4))
+        else:
+            for row in range(uv.shape[0]):
+                for patch_y in range(patch_size):
+                    for patch_x in range(patch_size):
+                        block = values[
+                            np.ix_(
+                                source_y[row, patch_y],
+                                source_x[row, patch_x],
+                            )
+                        ]
+                        result[row, patch_y, patch_x] = decode(block).mean(
+                            axis=(0, 1)
+                        )
+        cursor = 0
+        for role in domain.roles:
+            if role.semantic == "normal-tangent":
+                normal = result[..., cursor : cursor + role.channel_count] * 2.0 - 1.0
+                if role.channel_count >= 3:
+                    normal /= np.maximum(
+                        np.linalg.norm(normal, axis=-1, keepdims=True), 1e-8
+                    )
+                result[..., cursor : cursor + role.channel_count] = normal * 0.5 + 0.5
+            cursor += role.channel_count
+        if not np.isfinite(result).all():
+            raise ValueError("Metal random-access source patch contains non-finite values")
+        return result
+
+    def sample_local_patches(
+        self,
+        asset_index: torch.Tensor,
+        uv: torch.Tensor,
+        mip_level: torch.Tensor,
+        *,
+        patch_size: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """返回相邻两级source patches，供shared encoder端到端训练。"""
+
+        if (
+            asset_index.ndim != 1
+            or uv.shape != (asset_index.shape[0], 2)
+            or mip_level.shape != asset_index.shape
+            or patch_size < 8
+            or patch_size > 32
+        ):
+            raise ValueError("Metal source patch request shape/budget is invalid")
+        device = uv.device
+        asset_values = asset_index.detach().to("cpu").numpy().astype(np.int64)
+        uv_values = uv.detach().to("cpu").numpy().astype(np.float64)
+        mip_values = np.floor(
+            mip_level.detach().to("cpu").numpy()
+        ).astype(np.int64)
+        batch = asset_values.shape[0]
+        patches = np.zeros(
+            (batch, 9, 2, 4, patch_size, patch_size), dtype=np.float32
+        )
+        mask = np.zeros((batch, 9), dtype=np.bool_)
+        role_class = np.zeros((batch, 9), dtype=np.int64)
+        for current_asset in np.unique(asset_values):
+            rows = np.flatnonzero(asset_values == current_asset)
+            descriptor = self.descriptors[int(current_asset)]
+            for slot_position, domain in enumerate(descriptor.domains):
+                if slot_position >= 9:
+                    raise ValueError("Metal source asset exceeds the nine-slot profile")
+                slot_index = int(domain.domain_id.removeprefix("slot-"))
+                mask[rows, slot_position] = True
+                role_class[rows, slot_position] = (
+                    3
+                    if len(domain.roles) > 1
+                    else semantic_role_class(
+                        domain.roles[0].semantic, domain.roles[0].channel_count
+                    )
+                )
+                for adjacent in range(2):
+                    requested_levels = np.minimum(
+                        mip_values[rows] + adjacent,
+                        len(domain.level_shapes) - 1,
+                    )
+                    for level in np.unique(requested_levels):
+                        selected = rows[requested_levels == level]
+                        values = self._sample_mip_patches(
+                            int(current_asset),
+                            slot_index,
+                            int(level),
+                            uv_values[selected],
+                            patch_size,
+                        )
+                        channels = min(4, values.shape[-1])
+                        patches[selected, slot_position, adjacent, :channels] = (
+                            values[..., :channels].transpose(0, 3, 1, 2)
+                        )
+        return (
+            torch.as_tensor(patches, dtype=torch.float32, device=device),
+            torch.as_tensor(mask, dtype=torch.bool, device=device),
+            torch.as_tensor(role_class, dtype=torch.int64, device=device),
+        )
 
     def _load_tile(
         self,

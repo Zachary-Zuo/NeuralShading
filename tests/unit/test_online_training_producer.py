@@ -7,6 +7,10 @@ import torch
 
 from ncls.learning.batches import TrainingConditioning, TrainingRouteRequest
 from ncls.learning.producer import OnlineTrainingProducer
+from ncls.learning.source_adaptation import (
+    DenseNativeAssetCollection,
+    NativeAssetRole,
+)
 
 
 class _Lease:
@@ -118,3 +122,50 @@ def test_online_query_resume_rejects_typed_state_pool_drift_before_restoring_cur
     assert restored._request_count == producer._request_count
     assert restored._group_cursor == producer._group_cursor
     assert restored._asset_tile_cursor == producer._asset_tile_cursor
+
+
+def test_asset_route_selects_explicit_cohort_and_round_robins_assets() -> None:
+    collection = DenseNativeAssetCollection(
+        (
+            (torch.zeros((4, 4, 1)),),
+            (torch.ones((1, 1, 1)),),
+        ),
+        ("large", "small"),
+        "fixture-schema",
+        "surface",
+        "uv0",
+        "wrap",
+        (NativeAssetRole("value", "scalar", 0, 1, "linear", "box"),),
+    )
+    producer = OnlineTrainingProducer.__new__(OnlineTrainingProducer)
+    producer.device = torch.device("cpu")
+    producer.adapter = SimpleNamespace(native_assets=lambda: collection)
+    producer.query_stream_identity = "a" * 64
+    producer._asset_tile_cursor = {}
+    producer._request_count = {}
+    request = TrainingRouteRequest(
+        "asset",
+        "asset-tile",
+        2,
+        1,
+        0,
+        0,
+        {"asset_indices": [0, 1], "max_core_texels": 4, "halo": 0},
+    )
+    batch = producer._asset_tile_batch(request)
+    try:
+        assert [tile.asset_index for tile in batch.tiles] == [0, 1]
+        assert batch.provenance["asset_indices"] == [0, 1]
+    finally:
+        batch.release()
+    invalid = TrainingRouteRequest(
+        "invalid",
+        "asset-tile",
+        1,
+        1,
+        0,
+        0,
+        {"asset_indices": [1, 1], "max_core_texels": 4, "halo": 0},
+    )
+    with pytest.raises(ValueError, match="duplicate"):
+        producer._asset_tile_batch(invalid)

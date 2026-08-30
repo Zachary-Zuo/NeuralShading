@@ -7,8 +7,11 @@ def _snapshot(family):
     return SourceSnapshot(family, 1, "fixture", "a" * 64, b"{}")
 
 
-def test_product_registry_contains_only_nvidia_and_fixture_is_injected():
-    assert [item.descriptor.method_key for item in method_definitions()] == ["nvidia-neural-appearance"]
+def test_product_registry_contains_canonical_product_methods_and_fixture_is_injected():
+    assert [item.descriptor.method_key for item in method_definitions()] == [
+        "metal-fused-neural-material",
+        "nvidia-neural-appearance",
+    ]
     openpbr = _snapshot("openpbr.material@1.1.1")
     layer_stack = _snapshot("ncls.layer-stack@1")
     assert METHOD_DEFINITION.classify_edit(openpbr, SourceEditResult(openpbr, ("/inputs/base_weight",), ("material",))) == "runtime-patch"

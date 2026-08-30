@@ -94,7 +94,7 @@ def test_mdl_fixed_uniform_adapter_is_bounded_finite_and_one_by_one() -> None:
         "nvidia-neural-appearance", (snapshot,), torch.device("cpu")
     )
     tensors, provenance = adapter.sample_tensors(
-        torch.zeros(3, dtype=torch.int64), torch.Generator().manual_seed(7)
+        torch.zeros(3, dtype=torch.int64), torch.Generator().manual_seed(7), {}
     )
     layout = mdl_fixed_native_feature_layout()
     assert layout.channel_count == 896

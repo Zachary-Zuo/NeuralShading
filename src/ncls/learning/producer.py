@@ -221,7 +221,9 @@ class OnlineTrainingProducer:
                 )
             wo = _uniform_hemisphere(request.batch_size, generator, self.device)
             evaluator_wi = None
-        adapted, provenance = self.adapter.sample_tensors(source_index, generator)
+        adapted, provenance = self.adapter.sample_tensors(
+            source_index, generator, request.options
+        )
         request_index = self._request_count.get(request.name, 0)
         self._request_count[request.name] = request_index + 1
         conditioning = TrainingConditioning(
@@ -278,16 +280,53 @@ class OnlineTrainingProducer:
         halo = int(request.options.get("halo", 0))
         if max_core_texels < 1 or halo < 0:
             raise ValueError("asset-tile route budget and halo are invalid")
+        selected_asset_indices = tuple(
+            int(value)
+            for value in request.options.get(
+                "asset_indices", range(len(assets.descriptors))
+            )
+        )
+        if (
+            not selected_asset_indices
+            or len(set(selected_asset_indices)) != len(selected_asset_indices)
+            or any(
+                value < 0 or value >= len(assets.descriptors)
+                for value in selected_asset_indices
+            )
+        ):
+            raise ValueError("asset-tile route asset_indices are empty, duplicate or out of range")
 
         def one_cycle():
-            for asset_index, descriptor in enumerate(assets.descriptors):
+            streams = []
+            for asset_index in selected_asset_indices:
+                descriptor = assets.descriptors[asset_index]
                 for domain in descriptor.domains:
-                    yield from assets.iter_tile_requests(
-                        asset_index, domain.domain_id, max_core_texels, halo
+                    streams.append(
+                        iter(
+                            assets.iter_tile_requests(
+                                asset_index,
+                                domain.domain_id,
+                                max_core_texels,
+                                halo,
+                            )
+                        )
                     )
+            # Deterministic round-robin prevents one large 4K domain from
+            # starving other assets/roles/mips for thousands of steps.
+            active = streams
+            while active:
+                following = []
+                for stream in active:
+                    try:
+                        yield next(stream)
+                    except StopIteration:
+                        continue
+                    following.append(stream)
+                active = following
 
         tile_counts: list[int] = []
-        for descriptor in assets.descriptors:
+        for asset_index in selected_asset_indices:
+            descriptor = assets.descriptors[asset_index]
             for domain in descriptor.domains:
                 for height, width in domain.level_shapes:
                     tile_width = min(width, max_core_texels)
@@ -334,6 +373,7 @@ class OnlineTrainingProducer:
                 "native_asset_collection_identity": assets.collection_id,
                 "max_core_texels": max_core_texels,
                 "halo": halo,
+                "asset_indices": list(selected_asset_indices),
             },
         )
 

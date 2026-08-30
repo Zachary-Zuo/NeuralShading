@@ -1,0 +1,94 @@
+{
+  "schema": "ncls.metal-fused-layout@1",
+  "profile": {
+    "profile_id": "metal_fused_full_v1",
+    "maximum_texture_slots": 9,
+    "maximum_typed_tokens": 32,
+    "typed_token_width": 64,
+    "typed_attention_blocks": 4,
+    "typed_attention_heads": 4,
+    "encoder_role_width": 32,
+    "encoder_widths": [64, 128, 192, 256],
+    "grid_high_channels": 8,
+    "grid_low_channels": 8,
+    "asset_adapter_rank": 8,
+    "decoder_width": 128,
+    "decoder_blocks": 4,
+    "structured_width": 64,
+    "learned_frame_count": 3,
+    "core_lobe_count": 6,
+    "residual_lobe_count": 4,
+    "angular_levels": 4,
+    "angular_channels": 8,
+    "angular_difference_rank": 16,
+    "evaluator_width": 128,
+    "evaluator_blocks": 4
+  },
+  "bounded_execution": {
+    "maximum_prepare_steps": 32,
+    "maximum_evaluate_steps": 24,
+    "maximum_prepared_state_bytes": 2816,
+    "maximum_reads": 106
+  },
+  "material_program_state": {
+    "alignment": 16,
+    "total_bytes": 1536,
+    "fields": [
+      {"name": "compiler_latent", "dtype": "float32", "shape": [64], "offset": 0},
+      {"name": "spatial_modulation", "dtype": "float32", "shape": [64], "offset": 256},
+      {"name": "core_state", "dtype": "float32", "shape": [6, 9], "offset": 512},
+      {"name": "residual_state", "dtype": "float32", "shape": [4, 7], "offset": 736},
+      {"name": "block_condition", "dtype": "float32", "shape": [4, 8], "offset": 848},
+      {"name": "proposal_logits", "dtype": "float32", "shape": [11], "offset": 976},
+      {"name": "tail_and_bounds", "dtype": "float32", "shape": [8], "offset": 1024},
+      {"name": "identity_and_flags", "dtype": "uint32", "shape": [16], "offset": 1056}
+    ]
+  },
+  "prepared_state": {
+    "alignment": 16,
+    "total_bytes": 2816,
+    "fields": [
+      {"name": "structured_spatial", "dtype": "float32", "shape": [64], "offset": 0},
+      {"name": "compiler_latent", "dtype": "float32", "shape": [64], "offset": 256},
+      {"name": "view_token", "dtype": "float32", "shape": [64], "offset": 512},
+      {"name": "frames", "dtype": "float32", "shape": [4, 3, 3], "offset": 768},
+      {"name": "core_state", "dtype": "float32", "shape": [6, 9], "offset": 912},
+      {"name": "residual_state", "dtype": "float32", "shape": [4, 7], "offset": 1136},
+      {"name": "block_condition", "dtype": "float32", "shape": [4, 8], "offset": 1248},
+      {"name": "proposal_state", "dtype": "float32", "shape": [11, 8], "offset": 1376},
+      {"name": "access_and_validity", "dtype": "float32", "shape": [24], "offset": 1728}
+    ]
+  },
+  "asset_packing": {
+    "schema": "ncls.metal-fused-flat-asset@1",
+    "storage": "flat-versioned-offset-shape-tables",
+    "high_grid": {"dtype": "int8", "channels": 8, "gather": "fixed-2x2"},
+    "low_grid": {"dtype": "int8", "channels": 8, "gather": "one-filtered"},
+    "scale": {"dtype": "float16", "scope": "asset-domain-mip-channel"},
+    "adapter": {"dtype": "float16", "rank": 8},
+    "mip": "independent-source-supervision-adjacent-decoded-state-interpolation@1"
+  },
+  "proposal_reservation": {
+    "schema": "ncls.metal-fused-proposal-reservation@1",
+    "components": [
+      "core-conductor-ggx",
+      "core-conductor-beckmann",
+      "core-coat-specular",
+      "core-diffuse-contamination",
+      "core-broad-scatter",
+      "core-secondary-specular",
+      "positive-residual-0",
+      "positive-residual-1",
+      "positive-residual-2",
+      "positive-residual-3",
+      "full-hemisphere-fallback"
+    ],
+    "normalization_accumulation": "float32"
+  },
+  "precision": {
+    "shared_weights": "float16-master-pack",
+    "asset_grids": "int8-per-channel-qat",
+    "sensitive_accumulation": "float32"
+  },
+  "identity": "bb8708268258fbd06c3371839bd7b86facdd61158ca7a482783995879de0ac0f"
+}
