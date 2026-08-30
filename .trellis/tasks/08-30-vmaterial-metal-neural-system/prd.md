@@ -133,19 +133,19 @@ full profile必须同时包含并实际执行：
 
 ## 验收标准
 
-- [ ] [需求交付｜用户架构要求] canonical新接口覆盖grouped reference、multi-asset online training、完整method phases与program/asset/instance deployment；全部正式调用方递归迁移，旧API/reader/alias/converter/fallback经静态负向测试证明已删除；
-- [ ] [语义正确性｜`docs/material_scope.md`] 692 opaque registry与GT保持原生MDL语义，145 cutout fail closed，特殊recipe不越出native适用域；
-- [ ] [需求交付｜用户三部分组合] metal identity、finish bundle与native typed instance state独立可追溯、可组合、可编辑，兼容切换不重训或重编码未变化资产；
-- [ ] [需求交付｜用户“完整实现”] required-component manifest覆盖R5全部组件；construction、training、checkpoint和export均拒绝缺失、disabled、zero/identity placeholder或无artifact分支；
-- [ ] [数值实现正确性｜gradient conformance] stratified activation audit中每个required trainable group具有finite非零gradient和optimizer update，所有phase可resume且没有orphan trainable parameter；
-- [ ] [数值实现正确性｜online optimization] Windows full-profile短训练无host target readback、无持久化batch、无NaN/Inf，并以预冻结统计方法证明loss末段低于初段；
-- [ ] [需求交付｜用户高效正确性验证] Windows以覆盖全部required components、parameter groups和关键source语义的最小stratified子集执行真实online优化；除budget/cadence与cohort缩减外不改变full方法，并保留全cohort preflight；
-- [ ] [数值实现正确性｜scattering/package oracle] Python、mixed/QAT、Slang与viewer的`prepare/evaluate/sample/pdf`、sample→pdf、normalization与weight identity tolerance在观察正式结果前由precision/oracle推导；
-- [ ] [需求交付｜用户“高效梯度下降”] 训练profile分解关键stage、memory与sync，热路径不逐step同步全部parameter/metrics，group/tile batching和prefetch合同有实现及回归证据；observed throughput保持report-only；
-- [ ] [需求交付｜用户跨平台要求] 同一full method/config/CLI可由Windows D3D12/CUDA与Linux Vulkan/CUDA backend消费，无平台或Metal专用upper-layer分支；
-- [ ] [需求交付｜用户Linux handoff] long-run config、source identity、resume/monitor/failure说明和Linux preflight/smoke命令齐全，可在已验证Ubuntu/A6000环境开始长训练；
-- [ ] [需求交付｜用户单GPU边界] Windows/Linux使用同一单GPU训练合同，不包含未验证DDP旁路；Linux长训后只生成首轮效果审阅材料，不自动启动formal/ablation/Pareto；
-- [ ] [工程正确性｜项目统一性合同] NVIDIA、五个reference、configs/tests/spec/docs/package/viewer均迁入唯一新接口，上游external保持锁定且干净。
+- [x] [需求交付｜用户架构要求] canonical新接口覆盖grouped reference、multi-asset online training、完整method phases与program/asset/instance deployment；全部正式调用方递归迁移，旧API/reader/alias/converter/fallback经静态负向测试证明已删除；
+- [x] [语义正确性｜`docs/material_scope.md`] 692 opaque registry与GT保持原生MDL语义，145 cutout fail closed，特殊recipe不越出native适用域；
+- [x] [需求交付｜用户三部分组合] metal identity、finish bundle与native typed instance state独立可追溯、可组合、可编辑，兼容切换不重训或重编码未变化资产；
+- [x] [需求交付｜用户“完整实现”] required-component manifest覆盖R5全部组件；construction、training、checkpoint和export均拒绝缺失、disabled、zero/identity placeholder或无artifact分支；
+- [x] [数值实现正确性｜gradient conformance] stratified activation audit中每个required trainable group具有finite非零gradient和optimizer update，所有phase可resume且没有orphan trainable parameter；
+- [x] [数值实现正确性｜online optimization] Windows full-profile短训练无host target readback、无持久化batch、无NaN/Inf，并以预冻结统计方法证明loss末段低于初段；
+- [x] [需求交付｜用户高效正确性验证] Windows以覆盖全部required components、parameter groups和关键source语义的最小stratified子集执行真实online优化；除budget/cadence与cohort缩减外不改变full方法，并保留全cohort preflight；
+- [x] [数值实现正确性｜scattering/package oracle] Python、mixed/QAT、Slang与viewer的`prepare/evaluate/sample/pdf`、sample→pdf、normalization与weight identity tolerance在观察正式结果前由precision/oracle推导；
+- [x] [需求交付｜用户“高效梯度下降”] 训练profile分解关键stage、memory与sync，热路径不逐step同步全部parameter/metrics，group/tile batching和prefetch合同有实现及回归证据；observed throughput保持report-only；
+- [x] [需求交付｜用户跨平台要求] 同一full method/config/CLI可由Windows D3D12/CUDA与Linux Vulkan/CUDA backend消费，无平台或Metal专用upper-layer分支；
+- [x] [需求交付｜用户Linux handoff] long-run config、source identity、resume/monitor/failure说明和Linux preflight/smoke命令齐全，可在已验证Ubuntu/A6000环境开始长训练；
+- [x] [需求交付｜用户单GPU边界] Windows/Linux使用同一单GPU训练合同，不包含未验证DDP旁路；Linux长训后只生成首轮效果审阅材料，不自动启动formal/ablation/Pareto；
+- [x] [工程正确性｜项目统一性合同] NVIDIA、五个reference、configs/tests/spec/docs/package/viewer均迁入唯一新接口，上游external保持锁定且干净。
 
 ## 延后决策
 

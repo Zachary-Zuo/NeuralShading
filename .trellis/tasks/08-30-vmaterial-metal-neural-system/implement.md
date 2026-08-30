@@ -27,53 +27,53 @@ child 1是破坏式迁移：NVIDIA和全部现有调用方一起进入新合同�
 
 ### 3.1 Canonical architecture后
 
-- [ ] `ReferenceExecutionPlan@1`、`NativeAssetCollection@1`、typed batches、`MethodDescriptor@2`、`TrainingConfig/Checkpoint@4`、`ScatteringPackage@2`成为唯一正式接口；
-- [ ] 五个reference、NVIDIA、四个configs、CLI、tests/spec/docs/package/viewer递归迁移；
-- [ ] v3/v1 reader/schema/alias/converter/fallback和旧public symbols删除，旧format只在拒绝测试/历史说明出现；
-- [ ] Windows/Linux upper layer仍无platform/device/build-path分支；
-- [ ] 现有reference/NVIDIA/package/viewer判据不放宽。
+- [x] `ReferenceExecutionPlan@1`、`NativeAssetCollection@1`、typed batches、`MethodDescriptor@2`、`TrainingConfig/Checkpoint@4`、`ScatteringPackage@2`成为唯一正式接口；
+- [x] 五个reference、NVIDIA、四个configs、CLI、tests/spec/docs/package/viewer递归迁移；
+- [x] v3/v1 reader/schema/alias/converter/fallback和旧public symbols删除，旧format只在拒绝测试/历史说明出现；
+- [x] Windows/Linux upper layer仍无platform/device/build-path分支；
+- [x] 现有reference/NVIDIA/package/viewer判据不放宽。
 
 ### 3.2 Reference foundation后
 
-- [ ] registry与审计计数一致：692 opaque exports、178 groups、52 texture sets、64 schemas；145 cutout拒绝；
-- [ ] group-homogeneous session、argument/RO offsets、typed-state pool、global source index和lease/resume成立；
-- [ ] `NativeAssetCollection`覆盖role/schema/mip/tile+halo，cook与training使用同一identity；
-- [ ] authoritative footprint query和source-derived texture target没有host response batch；
-- [ ] 每个group/asset/schema具有representative Windows query/preflight证据。
+- [x] registry与审计计数一致：692 opaque exports、178 groups、52 texture sets、64 schemas；145 cutout拒绝；
+- [x] group-homogeneous session、argument/RO offsets、typed-state pool、global source index和lease/resume成立；
+- [x] `NativeAssetCollection`覆盖role/schema/mip/tile+halo，cook与training使用同一identity；
+- [x] authoritative footprint query和source-derived texture target没有host response batch；
+- [x] 每个group/asset/schema具有representative Windows query/preflight证据。
 
 ### 3.3 Full evaluator后
 
-- [ ] full profile的所有R5 codec/compiler/direction/evaluator components存在、启用并进入phase graph；
-- [ ] parameter registry、component contracts和checkpoint tensors双向一致，无orphan/placeholder；
-- [ ] stratified activation中execution、gradient/update和Python artifact coverage闭合；
-- [ ] codec与joint-appearance短run finite，encoder/decoder确实联合反向；
-- [ ] typed edit不重训evaluator或重编码未变化asset。
+- [x] full profile的所有R5 codec/compiler/direction/evaluator components存在、启用并进入phase graph；
+- [x] parameter registry、component contracts和checkpoint tensors双向一致，无orphan/placeholder；
+- [x] stratified activation中execution、gradient/update和Python artifact coverage闭合；
+- [x] codec与joint-appearance短run finite，encoder/decoder确实联合反向；
+- [x] typed edit不重训evaluator或重编码未变化asset。
 
 ### 3.4 Matched sampler后
 
-- [ ] proposal phase训练10 lobe slots + full-support fallback，不模仿source sampler；
-- [ ] sample→pdf、normalization、forward/reverse PDF、weight identity、support和finite成立；
-- [ ] sample至多一次directional evaluator，sample/pdf不重复texture decoder或typed compiler；
-- [ ] sampler component/parameter/artifact coverage闭合，不使用analytic-only fallback冒充full。
+- [x] proposal phase训练10 lobe slots + full-support fallback，不模仿source sampler；
+- [x] sample→pdf、normalization、forward/reverse PDF、weight identity、support和finite成立；
+- [x] sample至多一次directional evaluator，sample/pdf不重复texture decoder或typed compiler；
+- [x] sampler component/parameter/artifact coverage闭合，不使用analytic-only fallback冒充full。
 
 ### 3.5 Runtime deployment后
 
-- [ ] `program/asset/instance` compilers与Package@2三层identity/resources一致；
-- [ ] Python FP32、BF16/QAT、Slang package和viewer full `prepare/evaluate/sample/pdf` parity；
-- [ ] bundle replacement/typed edit只更新asset/instance，program runtime缓存复用且失败原子；
-- [ ] viewer/package不识别Metal/module/preset，不存在v1 loader；
-- [ ] 两个slot对称，Release build后Falcor clean。
+- [x] `program/asset/instance` compilers与Package@2三层identity/resources一致；
+- [x] Python FP32、BF16/QAT、Slang package和viewer full `prepare/evaluate/sample/pdf` parity；
+- [x] bundle replacement/typed edit只更新asset/instance，program runtime缓存复用且失败原子；
+- [x] viewer/package不识别Metal/module/preset，不存在v1 loader；
+- [x] 两个slot对称，Release build后Falcor clean。
 
 ### 3.6 Windows/Linux handoff后
 
-- [ ] Windows用full shape完成四phase真实optimizer steps和phase resume；
-- [ ] 全cohort preflight及component execution/gradient/update/artifact coverage闭合；
-- [ ] optimization run使用机械生成的最小stratified子集提高验证效率，但保持full shape、真实online reference、loss/optimizer/phase data flow并覆盖全部required groups；
-- [ ] 无host target readback、磁盘batch、NaN/Inf、非法PDF、负f或silent clamp；
-- [ ] 预冻结统计方法证明短run末段loss低于初段；
-- [ ] profile记录reference/encode/forward/backward/optimizer/I/O、memory和sync；
-- [ ] Linux smoke/long config只改变budget/cadence，单GPU命令、resume/monitor/stop/recovery与review manifest齐全；
-- [ ] parent需求逐项有证据；不自动启动formal、追加训练、消融或Pareto。
+- [x] Windows用full shape完成四phase真实optimizer steps和phase resume；
+- [x] 全cohort preflight及component execution/gradient/update/artifact coverage闭合；
+- [x] optimization run使用机械生成的最小stratified子集提高验证效率，但保持full shape、真实online reference、loss/optimizer/phase data flow并覆盖全部required groups；
+- [x] 无host target readback、磁盘batch、NaN/Inf、非法PDF、负f或silent clamp；
+- [x] 预冻结统计方法证明短run末段loss低于初段；
+- [x] profile记录reference/encode/forward/backward/optimizer/I/O、memory和sync；
+- [x] Linux smoke/long config只改变budget/cadence，单GPU命令、resume/monitor/stop/recovery与review manifest齐全；
+- [x] parent需求逐项有证据；不自动启动formal、追加训练、消融或Pareto。
 
 ## 4. 通用验证
 
