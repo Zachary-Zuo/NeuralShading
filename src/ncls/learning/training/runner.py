@@ -294,6 +294,26 @@ class TrainingRunner:
         if dist.is_available() and dist.is_initialized():
             dist.barrier()
 
+    def _ddp_validate_state(self) -> None:
+        """Ensure rank-local online cursors are identical before rank0 writes."""
+        if not (dist.is_available() and dist.is_initialized()):
+            return
+        state = self.producer.state_dict()
+        local = {
+            "query_stream_identity": self.producer.query_stream_identity,
+            "typed_state_pool_identity": getattr(
+                self.producer, "typed_state_pool_identity", ""
+            ),
+            "request_count": dict(state.get("request_count", {})),
+            "group_cursor": dict(state.get("group_cursor", {})),
+            "asset_tile_cursor": dict(state.get("asset_tile_cursor", {})),
+        }
+        gathered: list[Mapping[str, Any] | None] = [None] * dist.get_world_size()
+        dist.all_gather_object(gathered, local)
+        first = gathered[0]
+        if any(value != first for value in gathered[1:]):
+            raise RuntimeError("DDP ranks have divergent online query/checkpoint state")
+
     @staticmethod
     def _ddp_report(
         loss: torch.Tensor,
@@ -994,6 +1014,7 @@ class TrainingRunner:
                         self.definition.descriptor, coverage
                     )
                 if needs_validation or checkpoint_boundary:
+                    self._ddp_validate_state()
                     if global_step == self.config.total_steps:
                         optimization_state: Mapping[str, Any] = {}
                     else:
