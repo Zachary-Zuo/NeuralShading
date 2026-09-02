@@ -242,6 +242,8 @@ def _setup_ddp() -> tuple[int, int]:
         raise RuntimeError("DDP rank environment values must be integers") from error
     if world < 2 or rank < 0 or rank >= world or local < 0 or local >= world:
         raise RuntimeError("DDP rank environment is invalid")
+    if int(os.environ.get("NCLS_DDP_WORLD_SIZE", str(world))) != world:
+        raise RuntimeError("NCLS_DDP_WORLD_SIZE disagrees with WORLD_SIZE")
     gpu_list = os.environ.get("NCLS_DDP_GPU_LIST", "")
     visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
     if not gpu_list or visible != gpu_list:
