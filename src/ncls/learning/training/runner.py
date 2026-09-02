@@ -271,10 +271,11 @@ class TrainingRunner:
         options = dict(route.options)
         options.update({"recipes": dict(phase.recipes), "validation": validation})
         name = f"validation:{phase.name}:{route.name}" if validation else f"{phase.name}:{route.name}"
-        # Keep every rank's producer cursor identical so the single rank-0
-        # checkpoint remains resumable by all ranks. DDP synchronizes gradients;
-        # the authoritative online query stream is intentionally shared.
-        seed_offset = route.seed_offset + (1_000_000_007 if validation else 0)
+        # Give every rank a deterministic, disjoint query subsequence. The
+        # shared identity freezes the partition recipe, while rank-local state
+        # is persisted in the checkpoint envelope for exact resume.
+        rank_stride = self._ddp_rank() * 1_000_003
+        seed_offset = route.seed_offset + rank_stride + (1_000_000_007 if validation else 0)
         return TrainingRouteRequest(
             name,
             route.kind,
@@ -288,6 +289,10 @@ class TrainingRunner:
     @staticmethod
     def _ddp_rank() -> int:
         return int(dist.get_rank()) if dist.is_available() and dist.is_initialized() else 0
+
+    @staticmethod
+    def _ddp_world_size() -> int:
+        return int(dist.get_world_size()) if dist.is_available() and dist.is_initialized() else 1
 
     @staticmethod
     def _ddp_barrier() -> None:
@@ -627,15 +632,16 @@ class TrainingRunner:
                             phase_index, phase_step, global_step, validation=True
                         ),
                     )
+                    report_loss, report_metrics = self._ddp_report(loss, metrics)
                 row = {
                     "step": float(global_step),
                     "phase_index": float(phase_index),
-                    "validation/loss": float(loss.detach()),
+                    "validation/loss": float(report_loss.detach()),
                 }
                 validate_objective_outputs(
                     self.definition.descriptor, phase.name, metrics
                 )
-                for name, value in metrics.items():
+                for name, value in report_metrics.items():
                     row[f"validation/{name}"] = (
                         float(value.detach()) if isinstance(value, torch.Tensor) else float(value)
                     )
@@ -751,7 +757,6 @@ class TrainingRunner:
             raise ValueError("stop_at_step must lie between resume step and total steps")
         if global_step == self.config.total_steps:
             checkpoint = self._checkpoint(model, global_step, {}, coverage, validation_rows)
-            self._ddp_barrier()
             return TrainingRunResult(checkpoint, tuple(validation_rows))
 
         phase_index, phase_step = self.config.locate_step(global_step)
@@ -764,13 +769,15 @@ class TrainingRunner:
         )
         registry = self.definition.parameter_registry(model)
         metric_rows: list[Mapping[str, float]] = []
+        global_batch_multiplier = self._ddp_world_size()
         work_units = sum(
             self.config.phases[index].steps
             * sum(route.batch_size * route.direction_count for route in self.config.phases[index].routes)
+            * global_batch_multiplier
             for index in range(phase_index)
         ) + phase_step * sum(
             route.batch_size * route.direction_count for route in phase.routes
-        )
+        ) * global_batch_multiplier
         run_started = time.perf_counter()
         run_start_step = global_step
         queue: deque[_PreparedStep] = deque()
@@ -915,7 +922,7 @@ class TrainingRunner:
                 phase_step += 1
                 work_units += sum(
                     route.batch_size * route.direction_count for route in phase.routes
-                )
+                ) * global_batch_multiplier
                 should_log = (
                     global_step == target_step
                     or phase_step == phase.steps
@@ -932,6 +939,10 @@ class TrainingRunner:
                         "loss": float(loss.detach()),
                         "learning_rate": float(optimizer.param_groups[0]["lr"]),
                         "work_units": float(work_units),
+                        "global_batch_multiplier": float(global_batch_multiplier),
+                        "global_work_units_per_second": (
+                            speed * global_batch_multiplier
+                        ),
                         "elapsed_seconds": elapsed,
                         "steps_per_second": speed,
                         "eta_seconds": (target_step - global_step) / max(speed, 1e-12),
@@ -1031,7 +1042,6 @@ class TrainingRunner:
                         optimization_state = self._optimization_state(
                             current_phase, optimizer, scheduler, scaler, active
                         )
-                    self._ddp_barrier()
                     if self.checkpoint_callback is not None:
                         self.checkpoint_callback(
                             self._checkpoint(
@@ -1042,7 +1052,6 @@ class TrainingRunner:
                                 validation_rows,
                             )
                         )
-                    self._ddp_barrier()
         finally:
             while queue:
                 self._release_prepared(queue.popleft())

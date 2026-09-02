@@ -187,9 +187,9 @@ class OnlineTrainingProducer:
                 "routes": [route.to_dict() for route in config.all_routes],
                 "seed": config.seed,
                 "partition": {
-                    "rank": self.ddp_rank,
                     "world_size": self.ddp_world_size,
                     "gpu_indices": list(self.ddp_gpu_indices),
+                    "recipe": "rank-strided-route-seed@1",
                 },
             }
         )

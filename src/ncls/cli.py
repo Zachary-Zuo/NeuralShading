@@ -100,6 +100,7 @@ def _learn_train(
     config = TrainingConfig.load(config_path)
     definition = get_method(config.method_key)
     producer = OnlineTrainingProducer(definition, config)
+    gpu_indices = list(getattr(producer, "ddp_gpu_indices", ()))
     metrics_path = output.with_name(f"{output.stem}.metrics.jsonl")
     summary_path = output.with_name(f"{output.stem}.summary.json")
     review_path = output.with_name(f"{output.stem}.review.json")
@@ -198,6 +199,14 @@ def _learn_train(
                 "final_step": result.checkpoint.global_step,
                 "planned_final_step": config.total_steps,
                 "complete": result.checkpoint.global_step == config.total_steps,
+                "distributed": ddp_world > 1,
+                "world_size": ddp_world,
+                "gpu_indices": gpu_indices,
+                "effective_global_batch": {
+                    route.name: route.batch_size * route.direction_count * ddp_world
+                    for phase in config.phases
+                    for route in phase.routes
+                },
                 "elapsed_seconds": elapsed_seconds,
                 "checkpoint_write_seconds": checkpoint_write_seconds,
             }
@@ -224,8 +233,6 @@ def _learn_train(
             metric_stream.close()
         producer.close()
         if ddp_world > 1 and dist.is_initialized():
-            if ddp_completed:
-                dist.barrier()
             dist.destroy_process_group()
     if is_rank0:
         print(f"TrainingCheckpoint@4 {digest}: {output}")

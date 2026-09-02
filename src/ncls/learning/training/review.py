@@ -181,6 +181,14 @@ def build_training_review(
         "global_step": checkpoint.global_step,
         "planned_steps": config.total_steps,
         "complete": checkpoint.global_step == config.total_steps,
+        "distributed": {
+            "enabled": checkpoint.query_stream_state.get("schema") == "ncls.ddp-rank-state@1",
+            "world_size": (
+                int(checkpoint.query_stream_state.get("world_size", 1))
+                if checkpoint.query_stream_state.get("schema") == "ncls.ddp-rank-state@1"
+                else 1
+            ),
+        },
         "source_count": len(config.source["materials"]),
         "phase_summaries": phases,
         "health": {
