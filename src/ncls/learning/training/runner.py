@@ -694,6 +694,7 @@ class TrainingRunner:
             raise ValueError("stop_at_step must lie between resume step and total steps")
         if global_step == self.config.total_steps:
             checkpoint = self._checkpoint(model, global_step, {}, coverage, validation_rows)
+            self._ddp_barrier()
             return TrainingRunResult(checkpoint, tuple(validation_rows))
 
         phase_index, phase_step = self.config.locate_step(global_step)
