@@ -23,7 +23,7 @@
 
 Linux smoke和long由`tools/learning/build_metal_training_configs.py`机械生成；两者的source、online state recipe、model profile、phase顺序、route options、parameter groups、loss、precision、optimizer和batch geometry逐字段相同，只允许run budget及log/audit/validation cadence不同。静态检查会拒绝第692个source遗漏、QAT precision漂移、loss变化或多方向route。Windows只缩小正确性验证的source与batch，不改变full model shape或required component。
 
-本机 GPU5 gate 已实测通过：692 sources、四个 phase 各 4 步、1424 次 online query；`checkpoint.review.json` 报告 `complete=true`、所有 metric finite、gradient/update coverage complete、proposal identity error 为 0，峰值显存 `5,578,002,944` bytes（约 5.19 GiB），steady-state `median_steps_per_second=0.6459367207`。首次启动的 692-source MDL eager materialization 约 12 分钟，之后 16-step smoke 训练约 25 秒；它是启动开销，不是离线训练 batch。
+本机 GPU5 gate 已实测通过：692 sources、四个 phase 各 4 步、1424 次 online query；`checkpoint.review.json` 报告 `complete=true`、所有 metric finite、gradient/update coverage complete、proposal identity error 为 0，峰值显存 `5,578,002,944` bytes（约 5.19 GiB），steady-state `median_steps_per_second=0.6459367207`。优化前首次启动的 692-source MDL eager materialization 约 12 分钟；优化后在已有 cache 的 GPU2 上，初始化加 16-step smoke 总 wall-clock 为 `7:14.75`，其中 runner 的 16 步训练约 21 秒。它是启动开销，不是离线训练 batch；完全没有编译 cache 时仍需执行一次 SDK 编译。
 
 本次可复现产物位于 `artifacts/metal-linux-training/full-cohort-smoke-rerun/`，其中 `checkpoint.pt` 可由同一 smoke config resume；`artifacts/metal-linux-training/handoff.json` 保存了 GPU5 命令和 config/registry/toolchain hash。`long` 目录下此前失败的 checkpoint 不可 resume，应从新的 long 输出路径开始。
 
@@ -109,7 +109,7 @@ checkpoint_disk ≈ 25 × smoke_checkpoint_bytes
 
 这两个值是目标机的容量规划观察值，不是质量或完成门。若吞吐/显存异常，按`implementation defect / protocol defect / resource defect / normal empirical outcome`分类；前三类停止并修复或回planning，最后一类照实进入结果审阅，不自动加预算或换seed。
 
-按本次 GPU5 smoke 的 steady-state 中位数，120,000 steps 约 `185,770` 秒，即 **51.6 小时**；另加首次约 12 分钟的 MDL eager materialization、周期性 validation/checkpoint I/O 和机器负载波动。这个 ETA 只用于容量规划，不是质量或完成保证。
+按本次 GPU5 smoke 的 steady-state 中位数，120,000 steps 约 `185,770` 秒，即 **51.6 小时**；GPU2/3/4 的 692-source smoke 中位数对应约 47.1--49.0 小时。单卡容量规划取保守约 **52 小时**，另加首次 MDL eager materialization、周期性 validation/checkpoint I/O 和机器负载波动。这个 ETA 只用于容量规划，不是质量或完成保证。
 
 ## 训练完成后的首轮审阅
 
