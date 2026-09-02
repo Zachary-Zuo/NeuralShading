@@ -85,7 +85,9 @@ class _DDPObjective(nn.Module):
         self._batches = batches
         self._phase = phase
 
-    def forward(self) -> torch.Tensor:
+    def forward(self, _trigger: torch.Tensor) -> torch.Tensor:
+        # DDP requires a positional input to enter its reducer hooks. The
+        # trigger is deliberately ignored; the objective owns all real inputs.
         if self._batches is None or self._phase is None:
             raise RuntimeError("DDP objective inputs were not set")
         loss, metrics = self.definition.training_objective(
@@ -846,7 +848,9 @@ class TrainingRunner:
                             )
                         else:
                             ddp_shell.set_inputs(prepared.batches, context)
-                            loss = execution_model()
+                            loss = execution_model(
+                                torch.empty((), device=self.producer.device)
+                            )
                             metrics = ddp_shell.last_metrics
                     if cuda_events is not None:
                         cuda_events[1].record()
