@@ -4,6 +4,27 @@ set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Optional multi-GPU fan-out. Each child remains an ordinary single-GPU
+# launcher invocation; use a literal {gpu} token in arguments that must be
+# unique per child (for example, checkpoint output paths).
+if [[ "${1:-}" == "--gpus" ]]; then
+    if [[ "$#" -lt 2 ]]; then
+        echo "Usage: $0 --gpus <gpu0,gpu1,...> -- <python args>" >&2
+        exit 2
+    fi
+    gpu_list="$2"
+    shift 2
+    if [[ "${1:-}" == "--" ]]; then
+        shift
+    fi
+    if [[ "$#" -eq 0 ]]; then
+        echo "Usage: $0 --gpus <gpu0,gpu1,...> -- <python args>" >&2
+        exit 2
+    fi
+    exec "${project_root}/scripts/run_falcor_python_multi.sh" \
+        --gpus "${gpu_list}" -- "$@"
+fi
+
 if [[ "$(uname -s)" != "Linux" ]]; then
     echo "Use scripts/run_falcor_python.ps1 on Windows." >&2
     exit 1
@@ -17,7 +38,7 @@ if [[ -n "${NCLS_FALCOR_GPU_INDEX:-}" && -z "${CUDA_VISIBLE_DEVICES:-}" ]]; then
     exit 1
 fi
 if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
-    if [[ ! "${CUDA_VISIBLE_DEVICES}" =~ ^[0-9]+$ ]]; then
+    if [[ ! "${CUDA_VISIBLE_DEVICES}" =~ ^(0|[1-9][0-9]*)$ ]]; then
         echo "CUDA_VISIBLE_DEVICES must name exactly one physical GPU index." >&2
         exit 1
     fi

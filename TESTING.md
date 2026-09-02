@@ -133,6 +133,14 @@ CUDA_VISIBLE_DEVICES=0 bash scripts/deploy_reference_linux.sh
 
 多GPU机器只通过`CUDA_VISIBLE_DEVICES=<单个物理序号>`选择GPU；launcher把同一序号交给Falcor Vulkan，Torch/SlangPy使用重映射后的`cuda:0`。用户自行复制资产后先构建validation-only的OpenPBR C++ probe，再运行完整GPU集合：
 
+需要在多张卡上并行跑相互独立的实验时，使用 fan-out launcher；这不是 DDP，不共享模型、optimizer 或 checkpoint。每个输出路径应包含`{gpu}`占位符：
+
+```bash
+bash scripts/run_falcor_python.sh --gpus 2,3,4 -- \
+  -m ncls.cli learn train configs/learning/metal-fused-full-linux-smoke.json \
+  artifacts/metal-linux-training/gpu{gpu}/checkpoint.pt
+```
+
 ```bash
 conda run -n neural-shading cmake -S tools/reference/openpbr_probe \
   -B build/openpbr-probe -G Ninja -DCMAKE_BUILD_TYPE=Release
