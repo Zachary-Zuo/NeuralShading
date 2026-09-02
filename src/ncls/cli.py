@@ -104,6 +104,7 @@ def _learn_train(
     metric_count = 0
     checkpoint_write_seconds: list[float] = []
     started = time.perf_counter()
+    ddp_completed = False
     try:
         resume = (
             load_checkpoint(
@@ -215,12 +216,14 @@ def _learn_train(
                 checkpoint_write_seconds=checkpoint_write_seconds,
             )
             write_training_review(review_path, review)
+        ddp_completed = True
     finally:
         if "metric_stream" in locals() and metric_stream is not None and not metric_stream.closed:
             metric_stream.close()
         producer.close()
         if ddp_world > 1 and dist.is_initialized():
-            dist.barrier()
+            if ddp_completed:
+                dist.barrier()
             dist.destroy_process_group()
     if is_rank0:
         print(f"TrainingCheckpoint@4 {digest}: {output}")

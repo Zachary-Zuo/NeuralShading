@@ -295,6 +295,34 @@ class TrainingRunner:
             dist.barrier()
 
     @staticmethod
+    def _ddp_report(
+        loss: torch.Tensor,
+        metrics: Mapping[str, torch.Tensor | float],
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor | float]]:
+        """Average report scalars across ranks without changing the backward loss."""
+        if not (dist.is_available() and dist.is_initialized()):
+            return loss.detach(), dict(metrics)
+        world = float(dist.get_world_size())
+        reduced_loss = loss.detach().clone()
+        dist.all_reduce(reduced_loss, op=dist.ReduceOp.SUM)
+        reduced_loss.div_(world)
+        reduced: dict[str, torch.Tensor | float] = {}
+        for name, value in metrics.items():
+            if isinstance(value, torch.Tensor):
+                item = value.detach().clone()
+                if item.ndim != 0:
+                    reduced[name] = value
+                    continue
+                dist.all_reduce(item, op=dist.ReduceOp.SUM)
+                item.div_(world)
+                reduced[name] = item
+            else:
+                item = torch.tensor(float(value), device=loss.device)
+                dist.all_reduce(item, op=dist.ReduceOp.SUM)
+                reduced[name] = float(item.div_(world).item())
+        return reduced_loss, reduced
+
+    @staticmethod
     def _validate_batch_type(route: TrainingRoute, batch: OnlineTrainingBatch) -> None:
         expected = {
             "asset-tile": AssetTileBatch,
@@ -883,7 +911,9 @@ class TrainingRunner:
                         row["peak_memory_bytes"] = float(
                             torch.cuda.max_memory_allocated(self.producer.device)
                         )
-                    for name, value in metrics.items():
+                    report_loss, report_metrics = self._ddp_report(loss, metrics)
+                    row["loss"] = float(report_loss)
+                    for name, value in report_metrics.items():
                         row[name] = (
                             float(value.detach())
                             if isinstance(value, torch.Tensor)
