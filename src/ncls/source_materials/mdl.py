@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from collections import OrderedDict
 from pathlib import Path
 import re
 from typing import Any, Mapping
@@ -14,6 +15,32 @@ from ncls.references.mdl import MDL_SDK_BUILD, MdlCompiledArtifact, canonical_md
 MDL_FAMILY_ID = "mdl.program@1"
 MDL_NATIVE_SCHEMA = "ncls.mdl-source@1"
 _LANGUAGE = re.compile(r"^\s*mdl\s+([0-9.]+)\s*;", re.MULTILINE)
+
+# Source snapshots repeatedly reference the same module/texture files across
+# hundreds of typed exports. Keep integrity hashing strict while avoiding a
+# full read for every repeated hardlink/inode in one producer process.
+_SOURCE_HASH_CACHE_CAPACITY = 4096
+_SOURCE_HASH_CACHE: OrderedDict[tuple[int, int, int, int, int], str] = OrderedDict()
+
+
+def _cached_source_sha256(path: Path) -> str:
+    stat = path.stat()
+    key = (
+        int(stat.st_dev),
+        int(stat.st_ino),
+        int(stat.st_size),
+        int(stat.st_mtime_ns),
+        int(stat.st_ctime_ns),
+    )
+    digest = _SOURCE_HASH_CACHE.get(key)
+    if digest is not None:
+        _SOURCE_HASH_CACHE.move_to_end(key)
+        return digest
+    digest = sha256_file(path)
+    _SOURCE_HASH_CACHE[key] = digest
+    if len(_SOURCE_HASH_CACHE) > _SOURCE_HASH_CACHE_CAPACITY:
+        _SOURCE_HASH_CACHE.popitem(last=False)
+    return digest
 
 
 def module_path(module_root: Path, module: str) -> Path:
@@ -158,7 +185,7 @@ def snapshot_from_mdl_artifact(
             raise ValueError(f"MDL dependency escapes the pack root: {dependency_path}") from error
         if not dependency_path.is_file():
             raise FileNotFoundError(f"MDL dependency is missing: {dependency_path}")
-        resource_hashes[relative.as_posix()] = sha256_file(dependency_path)
+        resource_hashes[relative.as_posix()] = _cached_source_sha256(dependency_path)
     relative_module = source_path.relative_to(resolved_root).as_posix()
     if relative_module not in resource_hashes:
         raise ValueError("MDL dependency closure does not contain the root module")
@@ -171,12 +198,12 @@ def snapshot_from_mdl_artifact(
             relative = path.relative_to(resolved_root).as_posix()
         except ValueError as error:
             raise ValueError(f"MDL texture escapes the pack root: {path}") from error
-        resource_hashes[relative] = sha256_file(path)
+        resource_hashes[relative] = _cached_source_sha256(path)
     return SourceSnapshot(
         MDL_FAMILY_ID,
         1,
         MDL_NATIVE_SCHEMA,
-        sha256_file(source_path),
+        _cached_source_sha256(source_path),
         source.to_payload(),
         resource_hashes,
         editor_metadata={

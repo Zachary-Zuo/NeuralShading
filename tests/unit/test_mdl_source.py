@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import ncls.references.mdl as mdl_module
+import ncls.source_materials.mdl as source_mdl_module
 from ncls.core.identity import sha256_file
 from ncls.core.source import SourceEditOperation, SourceEditPatch, SourceSnapshot
 from ncls.references.mdl import (
@@ -468,6 +469,27 @@ def test_mdl_file_hash_cache_reuses_content_addressed_hardlinks(
     source.write_bytes(b"changed payload")
     assert mdl_module._cached_sha256_file(alias) == original(alias)
     assert calls == 2
+
+
+def test_mdl_source_snapshot_hash_cache_reuses_hardlinks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"source payload")
+    alias = tmp_path / "alias.bin"
+    alias.hardlink_to(source)
+    calls = 0
+    original = mdl_module.sha256_file
+
+    def counting_hash(path: Path) -> str:
+        nonlocal calls
+        calls += 1
+        return original(path)
+
+    monkeypatch.setattr(source_mdl_module, "sha256_file", counting_hash)
+    source_mdl_module._SOURCE_HASH_CACHE.clear()
+    assert source_mdl_module._cached_source_sha256(source) == source_mdl_module._cached_source_sha256(alias)
+    assert calls == 1
 
 
 def test_mdl_rgba16_texture_binding_preserves_all_uint16_bits(tmp_path: Path) -> None:
