@@ -297,6 +297,17 @@ class TrainingRunner:
         return int(dist.get_world_size()) if dist.is_available() and dist.is_initialized() else 1
 
     @staticmethod
+    def _ddp_checkpoint_sync(success: bool) -> None:
+        if not (dist.is_available() and dist.is_initialized()):
+            if not success:
+                raise RuntimeError("checkpoint callback failed")
+            return
+        flag = torch.tensor(1 if success else 0, device=torch.cuda.current_device())
+        dist.all_reduce(flag, op=dist.ReduceOp.MIN)
+        if int(flag.item()) != 1:
+            raise RuntimeError("rank0 checkpoint write failed on at least one rank")
+
+    @staticmethod
     def _ddp_barrier() -> None:
         if dist.is_available() and dist.is_initialized():
             dist.barrier()
@@ -1047,15 +1058,22 @@ class TrainingRunner:
                             current_phase, optimizer, scheduler, scaler, active
                         )
                     if self.checkpoint_callback is not None:
-                        self.checkpoint_callback(
-                            self._checkpoint(
-                                model,
-                                global_step,
-                                optimization_state,
-                                coverage,
-                                validation_rows,
+                        checkpoint_error: BaseException | None = None
+                        try:
+                            self.checkpoint_callback(
+                                self._checkpoint(
+                                    model,
+                                    global_step,
+                                    optimization_state,
+                                    coverage,
+                                    validation_rows,
+                                )
                             )
-                        )
+                        except BaseException as error:
+                            checkpoint_error = error
+                        self._ddp_checkpoint_sync(checkpoint_error is None)
+                        if checkpoint_error is not None:
+                            raise checkpoint_error
         finally:
             while queue:
                 self._release_prepared(queue.popleft())

@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import time
+from datetime import timedelta
 from typing import Any
 
 import torch
@@ -272,7 +273,12 @@ def _setup_ddp() -> tuple[int, int]:
         raise RuntimeError("DDP training requires CUDA")
     torch.cuda.set_device(local)
     if not dist.is_initialized():
-        dist.init_process_group(backend="nccl", rank=rank, world_size=world)
+        dist.init_process_group(
+            backend="nccl",
+            rank=rank,
+            world_size=world,
+            timeout=timedelta(seconds=float(os.environ.get("NCLS_DDP_TIMEOUT_SECONDS", "300"))),
+        )
     return rank, world
 
 
