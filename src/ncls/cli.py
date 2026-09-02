@@ -259,19 +259,29 @@ def _setup_ddp() -> tuple[int, int]:
         raise RuntimeError("NCLS_DDP_WORLD_SIZE disagrees with WORLD_SIZE")
     gpu_list = os.environ.get("NCLS_DDP_GPU_LIST", "")
     visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
-    if not gpu_list or visible != gpu_list:
-        raise RuntimeError("DDP requires CUDA_VISIBLE_DEVICES to match NCLS_DDP_GPU_LIST")
+    worker_mode = os.environ.get("NCLS_DDP_WORKER") == "1"
+    if not gpu_list:
+        raise RuntimeError("DDP requires NCLS_DDP_GPU_LIST")
     try:
         physical = [int(value) for value in gpu_list.split(",")]
     except ValueError as error:
         raise RuntimeError("NCLS_DDP_GPU_LIST must be comma-separated GPU indices") from error
     if len(physical) != world or len(set(physical)) != world:
         raise RuntimeError("DDP GPU list length must equal WORLD_SIZE and be unique")
+    expected_visible = str(physical[local]) if worker_mode else gpu_list
+    if visible != expected_visible:
+        raise RuntimeError(
+            "DDP CUDA_VISIBLE_DEVICES must be the full GPU list before worker "
+            "narrowing or the rank's single GPU inside a worker"
+        )
     os.environ["NCLS_DDP_LOCAL_RANK"] = str(local)
     os.environ["NCLS_FALCOR_GPU_INDEX"] = str(physical[local])
     if not torch.cuda.is_available():
         raise RuntimeError("DDP training requires CUDA")
-    torch.cuda.set_device(local)
+    device_index = int(os.environ.get("NCLS_DDP_DEVICE_INDEX", str(local)))
+    if device_index < 0 or device_index >= torch.cuda.device_count():
+        raise RuntimeError("DDP worker device index is outside CUDA visible devices")
+    torch.cuda.set_device(device_index)
     if not dist.is_initialized():
         dist.init_process_group(
             backend="nccl",

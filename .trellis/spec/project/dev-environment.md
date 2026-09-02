@@ -75,7 +75,7 @@ bash scripts/run_falcor_python.sh --gpus <gpu0,gpu1,...> -- <python-args>
 
 - `CUDA_VISIBLE_DEVICES`若存在，必须是一个十进制非负整数，表示物理GPU序号；不接受逗号列表、UUID或空列表。
 - launcher把该值写入`NCLS_FALCOR_GPU_INDEX`。Falcor使用物理序号，Torch/SlangPy只看到一张卡并使用重映射后的`cuda:0`。
-- `--gpus`只接受不重复的十进制物理序号列表；入口启动一个torchrun/NCCL DDP作业，各rank使用重映射`cuda:<LOCAL_RANK>`并将梯度all-reduce，统一checkpoint/metrics仅由rank0写出。
+- `--gpus`只接受不重复的十进制物理序号列表；入口启动一个torchrun/NCCL DDP作业。launcher先保留完整物理列表供rank身份校验，再由worker将本rank的可见域收窄为一个物理GPU，因此每个rank内Torch/Falcor均使用`cuda:0`；梯度通过NCCL all-reduce，统一checkpoint/metrics仅由rank0写出。
 - 同一Python进程按`(Falcor module, device API, physical GPU index)`复用一个Falcor device；session关闭只释放session资源，不销毁进程级device。
 - backend拒绝`llvmpipe`、`lavapipe`、WARP和Microsoft Basic Render等软件adapter，不把其结果登记为GPU证据。
 - Linux deployment固定安装`defaults::cuda-compat=12.8.1`。宿主driver主版本低于570时，launcher在`LD_LIBRARY_PATH`中优先放`${CONDA_PREFIX}/cuda-compat`；570及以上使用系统driver库。
@@ -101,7 +101,7 @@ bash scripts/run_falcor_python.sh --gpus <gpu0,gpu1,...> -- <python-args>
 ### 5. Good / Base / Bad Cases
 
 - Good：`CUDA_VISIBLE_DEVICES=3`时Falcor使用物理GPU 3，Torch/SlangPy使用进程内`cuda:0`，report两字段均记录`3`。
-- Good：`bash scripts/run_falcor_python.sh --gpus 2,3,4 -- -m ncls.cli learn train <config> artifacts/run/checkpoint.pt`启动一个三卡同步DDP训练。
+- Good：`bash scripts/run_falcor_python.sh --gpus 2,3,4 -- -m ncls.cli learn train <config> artifacts/run/checkpoint.pt`启动一个三卡同步DDP训练；三个worker分别将`CUDA_VISIBLE_DEVICES`收窄为`2`、`3`、`4`，进程内设备均为`cuda:0`。
 - Good：manifest同时登记`windows-vs2022`与`linux-gcc`；每台机器只生成和维护自己的ignored build output。
 - Base：未设置GPU变量时单GPU机器沿用Falcor与Torch默认GPU 0。
 - Bad：只限制Torch可见域却让Falcor始终使用物理GPU 0；在选择GPU 3时会形成跨卡interop。

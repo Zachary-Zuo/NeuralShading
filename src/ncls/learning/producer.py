@@ -106,7 +106,8 @@ class OnlineTrainingProducer:
                 raise RuntimeError("NCLS_DDP_LOCAL_RANK must be an integer") from error
             if rank < 0:
                 raise RuntimeError("NCLS_DDP_LOCAL_RANK must be nonnegative")
-            self.device = torch.device(f"cuda:{rank}")
+            device_index = int(os.environ.get("NCLS_DDP_DEVICE_INDEX", str(rank)))
+            self.device = torch.device(f"cuda:{device_index}")
         else:
             self.device = torch.device(config.device)
         if self.device.type != "cuda" or not torch.cuda.is_available():

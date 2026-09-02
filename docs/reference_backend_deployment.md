@@ -42,10 +42,10 @@ CUDA_VISIBLE_DEVICES=0 bash scripts/deploy_reference_linux.sh
 CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls.cli reference doctor
 CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls.cli reference probe
 
-# GPU2、3、4 各启动一个独立实验；输出路径必须按卡隔离
+# GPU2、3、4 作为一个同步 DDP 作业；仅 rank0 写统一输出
 bash scripts/run_falcor_python.sh --gpus 2,3,4 -- \
   -m ncls.cli learn train configs/learning/metal-fused-full-linux-smoke.json \
-  artifacts/metal-linux-training/gpu{gpu}/checkpoint.pt
+  artifacts/metal-linux-training/ddp-234/checkpoint.pt
 ```
 
 ## 用户复制资产后的验收

@@ -102,6 +102,6 @@ export PYTHONPATH="${project_root}/src:${falcor_module}${PYTHONPATH:+:${PYTHONPA
 if [[ -n "${ddp_world}" ]]; then
     exec conda run --no-capture-output -n neural-shading \
         torchrun --standalone --nnodes=1 --nproc_per_node="${ddp_world}" \
-        "$@"
+        -m ncls.ddp_worker "$@"
 fi
 exec conda run --no-capture-output -n neural-shading python "$@"
