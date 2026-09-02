@@ -8,9 +8,9 @@ usage() {
     cat >&2 <<'EOF'
 Usage: scripts/run_falcor_python.sh --gpus <gpu0,gpu1,...> -- <python args>
 
-Starts one independent single-GPU process per physical GPU. Arguments may use
-the literal {gpu} token; it is replaced with that process's physical index.
-Use distinct output/checkpoint paths when running training on several GPUs.
+Starts one torchrun/NCCL data-parallel job. CUDA_VISIBLE_DEVICES remains the
+physical GPU list; each rank receives one remapped cuda:<LOCAL_RANK> device.
+Only rank 0 writes checkpoint, metrics, summary and review files.
 EOF
 }
 
@@ -49,45 +49,18 @@ for gpu in "${gpu_indices[@]}"; do
     seen["$gpu"]=1
 done
 
-declare -a pids=()
-declare -a logs=()
-status=0
-for gpu in "${gpu_indices[@]}"; do
-    log_path=""
-    for arg in "$@"; do
-        if [[ "$arg" == *"{gpu}"* ]]; then
-            candidate="${arg//\{gpu\}/${gpu}}"
-            if [[ "$candidate" == *.log || "$candidate" == */logs/* ]]; then
-                log_path="$candidate"
-                break
-            fi
-        fi
-    done
-    if [[ -z "$log_path" ]]; then
-        log_path="${project_root}/artifacts/multi-gpu/gpu${gpu}.log"
-    fi
-    mkdir -p "$(dirname "$log_path")"
+world_size="${#gpu_indices[@]}"
+if (( world_size < 2 )); then
+    echo "--gpus requires at least two GPUs for DDP; use single-GPU launcher otherwise." >&2
+    exit 2
+fi
+if [[ -n "${NCLS_DDP_GPU_LIST:-}" && "${NCLS_DDP_GPU_LIST}" != "${gpu_list}" ]]; then
+    echo "NCLS_DDP_GPU_LIST must not be set independently of --gpus." >&2
+    exit 2
+fi
+export CUDA_VISIBLE_DEVICES="${gpu_list}"
+export NCLS_DDP_GPU_LIST="${gpu_list}"
+export NCLS_DDP_WORLD_SIZE="${world_size}"
+echo "[ddp] GPUs=${gpu_list} world_size=${world_size} backend=NCCL" >&2
 
-    declare -a child_args=()
-    for arg in "$@"; do
-        child_args+=("${arg//\{gpu\}/${gpu}}")
-    done
-    echo "[multi-gpu] GPU${gpu}: ${child_args[*]} (log=${log_path})" >&2
-    (
-        CUDA_VISIBLE_DEVICES="${gpu}" \
-            bash "${project_root}/scripts/run_falcor_python.sh" "${child_args[@]}"
-    ) >"${log_path}" 2>&1 &
-    pids+=("$!")
-    logs+=("${log_path}")
-done
-
-for index in "${!pids[@]}"; do
-    if ! wait "${pids[$index]}"; then
-        echo "[multi-gpu] GPU${gpu_indices[$index]} failed; see ${logs[$index]}" >&2
-        status=1
-    else
-        echo "[multi-gpu] GPU${gpu_indices[$index]} completed; log=${logs[$index]}" >&2
-    fi
-done
-
-exit "$status"
+exec "${project_root}/scripts/run_falcor_python.sh" --ddp "${world_size}" -- "$@"

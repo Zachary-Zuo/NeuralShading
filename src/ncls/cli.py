@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import time
 from typing import Any
 
 import torch
+import torch.distributed as dist
 
 from ncls.bundle import ScatteringPackage, write_scattering_package
 from ncls.core.material import (
@@ -91,6 +93,8 @@ def _learn_train(
     resume_path: Path | None,
     stop_at_step: int | None,
 ) -> int:
+    ddp_rank, ddp_world = _setup_ddp()
+    is_rank0 = ddp_rank == 0
     config = TrainingConfig.load(config_path)
     definition = get_method(config.method_key)
     producer = OnlineTrainingProducer(definition, config)
@@ -105,7 +109,7 @@ def _learn_train(
             load_checkpoint(
                 resume_path,
                 descriptor=definition.descriptor,
-                map_location=config.device,
+                map_location="cpu" if ddp_world > 1 else config.device,
             )
             if resume_path is not None
             else None
@@ -121,9 +125,14 @@ def _learn_train(
                         json.dumps(value, ensure_ascii=False, separators=(",", ":"))
                     )
         output.parent.mkdir(parents=True, exist_ok=True)
-        metric_stream = metrics_path.open("w", encoding="utf-8", newline="\n")
-        for line in retained_metric_lines:
-            metric_stream.write(line + "\n")
+        metric_stream = (
+            metrics_path.open("w", encoding="utf-8", newline="\n")
+            if is_rank0
+            else None
+        )
+        if metric_stream is not None:
+            for line in retained_metric_lines:
+                metric_stream.write(line + "\n")
         metric_count = len(retained_metric_lines)
 
         def record_metric(row: dict[str, float]) -> None:
@@ -135,6 +144,8 @@ def _learn_train(
                 "training_config_sha256": config.sha256,
                 **row,
             }
+            if metric_stream is None:
+                return
             metric_stream.write(
                 json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
                 + "\n"
@@ -144,6 +155,9 @@ def _learn_train(
                 metric_stream.flush()
 
         def save_periodic(checkpoint) -> None:
+            if not is_rank0:
+                return
+            assert metric_stream is not None
             metric_stream.flush()
             path = output.with_name(
                 f"{output.stem}.step{checkpoint.global_step:08d}{output.suffix}"
@@ -159,50 +173,93 @@ def _learn_train(
             checkpoint_callback=save_periodic,
             metric_callback=record_metric,
         ).run(resume=resume, stop_at_step=stop_at_step)
-        checkpoint_started = time.perf_counter()
-        digest = save_checkpoint(output, result.checkpoint)
-        checkpoint_write_seconds.append(time.perf_counter() - checkpoint_started)
-        metric_stream.flush()
-        metric_stream.close()
+        digest = ""
         elapsed_seconds = time.perf_counter() - started
-        summary = {
-            "schema_name": "ncls.training-run-summary",
-            "schema_version": 2,
-            "training_config_sha256": config.sha256,
-            "checkpoint_sha256": digest,
-            "checkpoint": output.name,
-            "metrics": metrics_path.name,
-            "review": review_path.name,
-            "metric_records": metric_count,
-            "final_step": result.checkpoint.global_step,
-            "planned_final_step": config.total_steps,
-            "complete": result.checkpoint.global_step == config.total_steps,
-            "elapsed_seconds": elapsed_seconds,
-            "checkpoint_write_seconds": checkpoint_write_seconds,
-        }
-        summary_path.write_text(
-            json.dumps(summary, ensure_ascii=False, indent=2)
-            + "\n",
-            encoding="utf-8",
-        )
-        review = build_training_review(
-            config,
-            definition.descriptor,
-            result.checkpoint,
-            checkpoint_sha256=digest,
-            checkpoint_bytes=output.stat().st_size,
-            metric_rows=load_metric_rows(metrics_path, config_sha256=config.sha256),
-            metrics_bytes=metrics_path.stat().st_size,
-            elapsed_seconds=elapsed_seconds,
-            checkpoint_write_seconds=checkpoint_write_seconds,
-        )
-        write_training_review(review_path, review)
+        if is_rank0:
+            assert metric_stream is not None
+            checkpoint_started = time.perf_counter()
+            digest = save_checkpoint(output, result.checkpoint)
+            checkpoint_write_seconds.append(time.perf_counter() - checkpoint_started)
+            metric_stream.flush()
+            metric_stream.close()
+            elapsed_seconds = time.perf_counter() - started
+            summary = {
+                "schema_name": "ncls.training-run-summary",
+                "schema_version": 2,
+                "training_config_sha256": config.sha256,
+                "checkpoint_sha256": digest,
+                "checkpoint": output.name,
+                "metrics": metrics_path.name,
+                "review": review_path.name,
+                "metric_records": metric_count,
+                "final_step": result.checkpoint.global_step,
+                "planned_final_step": config.total_steps,
+                "complete": result.checkpoint.global_step == config.total_steps,
+                "elapsed_seconds": elapsed_seconds,
+                "checkpoint_write_seconds": checkpoint_write_seconds,
+            }
+            summary_path.write_text(
+                json.dumps(summary, ensure_ascii=False, indent=2)
+                + "\n",
+                encoding="utf-8",
+            )
+            review = build_training_review(
+                config,
+                definition.descriptor,
+                result.checkpoint,
+                checkpoint_sha256=digest,
+                checkpoint_bytes=output.stat().st_size,
+                metric_rows=load_metric_rows(metrics_path, config_sha256=config.sha256),
+                metrics_bytes=metrics_path.stat().st_size,
+                elapsed_seconds=elapsed_seconds,
+                checkpoint_write_seconds=checkpoint_write_seconds,
+            )
+            write_training_review(review_path, review)
     finally:
-        if "metric_stream" in locals() and not metric_stream.closed:
+        if "metric_stream" in locals() and metric_stream is not None and not metric_stream.closed:
             metric_stream.close()
         producer.close()
-    print(f"TrainingCheckpoint@4 {digest}: {output}")
+        if ddp_world > 1 and dist.is_initialized():
+            dist.barrier()
+            dist.destroy_process_group()
+    if is_rank0:
+        print(f"TrainingCheckpoint@4 {digest}: {output}")
     return 0
+
+
+def _setup_ddp() -> tuple[int, int]:
+    """Initialize torchrun process group and map each rank to one visible GPU."""
+    world_raw = os.environ.get("WORLD_SIZE")
+    rank_raw = os.environ.get("RANK")
+    local_raw = os.environ.get("LOCAL_RANK")
+    if world_raw is None and rank_raw is None and local_raw is None:
+        return 0, 1
+    if world_raw is None or rank_raw is None or local_raw is None:
+        raise RuntimeError("DDP requires WORLD_SIZE, RANK and LOCAL_RANK")
+    try:
+        world = int(world_raw); rank = int(rank_raw); local = int(local_raw)
+    except ValueError as error:
+        raise RuntimeError("DDP rank environment values must be integers") from error
+    if world < 2 or rank < 0 or rank >= world or local < 0 or local >= world:
+        raise RuntimeError("DDP rank environment is invalid")
+    gpu_list = os.environ.get("NCLS_DDP_GPU_LIST", "")
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    if not gpu_list or visible != gpu_list:
+        raise RuntimeError("DDP requires CUDA_VISIBLE_DEVICES to match NCLS_DDP_GPU_LIST")
+    try:
+        physical = [int(value) for value in gpu_list.split(",")]
+    except ValueError as error:
+        raise RuntimeError("NCLS_DDP_GPU_LIST must be comma-separated GPU indices") from error
+    if len(physical) != world or len(set(physical)) != world:
+        raise RuntimeError("DDP GPU list length must equal WORLD_SIZE and be unique")
+    os.environ["NCLS_DDP_LOCAL_RANK"] = str(local)
+    os.environ["NCLS_FALCOR_GPU_INDEX"] = str(physical[local])
+    if not torch.cuda.is_available():
+        raise RuntimeError("DDP training requires CUDA")
+    torch.cuda.set_device(local)
+    if not dist.is_initialized():
+        dist.init_process_group(backend="nccl", rank=rank, world_size=world)
+    return rank, world
 
 
 def _learn_evaluate(config_path: Path, checkpoint_path: Path, batches: int) -> int:

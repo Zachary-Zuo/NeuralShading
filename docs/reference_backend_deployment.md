@@ -36,7 +36,7 @@ CUDA_VISIBLE_DEVICES=0 bash scripts/deploy_reference_linux.sh
 
 脚本依次执行环境preflight、Conda环境创建/更新、manifest锁定依赖获取与校验、Falcor setup/build、MDL provider build、backend doctor/device/compile probe，并把逐步状态与`assets: not-managed`写入ignored deployment report。再次运行必须复用已经通过hash/commit校验的输出；dirty external、错误commit、partial SDK或hash漂移会fail closed，不会清理用户目录。
 
-部署完成后，上层命令始终通过launcher进入同一环境。多GPU机器的基础入口只接受`CUDA_VISIBLE_DEVICES=<单个物理序号>`；launcher将该序号同时交给Falcor Vulkan，Torch与SlangPy使用可见域内的`cuda:0`。如需在多张卡上并行运行彼此独立的训练实验，可使用 fan-out 入口；它为每张物理卡启动一个独立的单卡进程（不是 DDP），并用`{gpu}`替换输出路径中的卡号：
+部署完成后，上层命令始终通过launcher进入同一环境。单卡入口接受`CUDA_VISIBLE_DEVICES=<单个物理序号>`；launcher将该序号同时交给Falcor Vulkan，Torch与SlangPy使用可见域内的`cuda:0`。需要同步多卡训练时，使用`--gpus <gpu0,gpu1,...>`入口启动一个torchrun/NCCL DDP job，各rank共享梯度且仅rank0写checkpoint；该模式不支持`{gpu}`输出替换。
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls.cli reference doctor

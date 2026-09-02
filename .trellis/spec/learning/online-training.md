@@ -221,7 +221,7 @@ python -m tools.learning.build_metal_linux_handoff --output <handoff.json>
 | QAT只执行joint或proposal一侧、漏required output | generic objective conformance失败 |
 | evaluator/sampler `direction_count != 1` | config验证失败；不把provider的单方向合同静默改义 |
 | Linux config少于692 source、source/loss/precision/batch geometry漂移 | generated-form/config-pair验证失败 |
-| 多值/UUID `CUDA_VISIBLE_DEVICES`或DDP入口 | Linux launcher/交接合同拒绝 |
+| 多值/UUID `CUDA_VISIBLE_DEVICES` 在单卡入口，或DDP rank/GPU列表不一致 | Linux launcher/交接合同拒绝 |
 | review metric含NaN/Inf或属于另一config | review生成失败 |
 | Windows package与MDL viewer catalog的source snapshot不同 | viewer slot为unsupported；生成同locator catalog后重跑，不放宽snapshot identity |
 
@@ -239,7 +239,7 @@ python -m tools.learning.build_metal_linux_handoff --output <handoff.json>
 - GPU：full model BF16/QAT finite、13组gradient/update、fixed proposal下降；真实Windows四phase在首个QAT step停点并恢复至complete。
 - online：fixed query cursor下四phase分别重复authoritative reference，初尾window记录真实下降且无response持久化；完整checkpoint evaluate与package export通过。
 - viewer：package、catalog与scene material的source snapshot一致；PT/deferred两个slot ready且linear EXR finite。
-- static：config generator `--check`、full-cohort preflight、Linux launcher shell syntax、无DDP、Falcor clean、`git diff --check`。
+- static：config generator `--check`、full-cohort preflight、Linux launcher shell syntax、DDP rank0/checkpoint语义、Falcor clean、`git diff --check`。
 
 ### 7. Wrong vs Correct
 

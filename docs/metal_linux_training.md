@@ -2,7 +2,7 @@
 
 ## 它是什么
 
-`metal-fused-neural-material`把vMaterials 2 Metal的原生MDL参数、52组texture asset与online reference query编译成统一的`prepare/evaluate/sample/pdf` neural material。训练始终由一个进程控制一张GPU，不保存response batch，也没有DDP或per-rank状态。
+`metal-fused-neural-material`把vMaterials 2 Metal的原生MDL参数、52组texture asset与online reference query编译成统一的`prepare/evaluate/sample/pdf` neural material。训练默认单进程单卡；Linux可通过`--gpus`启用torchrun/NCCL DDP，多rank共享梯度，只有rank0写出统一checkpoint/metrics，不保存response batch。
 
 完整训练固定四个phase：
 
@@ -43,12 +43,12 @@ MDL artifact 的 decoded texture payload 使用 cache 根下的 `resource-payloa
 
 ## Linux部署与smoke gate
 
-先按[统一Reference Backend部署](reference_backend_deployment.md)部署锁定的Falcor/MDL toolchain，并由用户把`assets/source-materials/mdl-vmaterials2/2.4.0/Materials`复制到目标机。单卡 launcher 接受一个十进制`CUDA_VISIBLE_DEVICES`，并把Falcor映射到同一物理GPU、Torch映射到进程内`cuda:0`。若要同时跑 GPU2、3、4 的独立实验，使用 fan-out 入口；每个子进程仍是单卡训练，必须为输出目录加入`{gpu}`占位符：
+先按[统一Reference Backend部署](reference_backend_deployment.md)部署锁定的Falcor/MDL toolchain，并由用户把`assets/source-materials/mdl-vmaterials2/2.4.0/Materials`复制到目标机。单卡 launcher 接受一个十进制`CUDA_VISIBLE_DEVICES`，并把Falcor映射到同一物理GPU、Torch映射到进程内`cuda:0`。若要在 GPU2、3、4 上运行一个同步 DDP 作业，使用：
 
 ```bash
 bash scripts/run_falcor_python.sh --gpus 2,3,4 -- \
   -m ncls.cli learn train configs/learning/metal-fused-full-linux-smoke.json \
-  artifacts/metal-linux-training/gpu{gpu}/checkpoint.pt
+  artifacts/metal-linux-training/ddp/checkpoint.pt
 ```
 
 ```bash
@@ -66,7 +66,7 @@ CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls.cli learn train
 - 四个phase都有真实step，`runtime_fp16_quantization_trace`存在且finite；
 - `source_count=692`，peak VRAM不超过目标卡可用容量；
 - `checkpoint.summary.json`与review的config/checkpoint hash一致；
-- 没有host response readback、磁盘batch或distributed process。
+- 没有host response readback或磁盘batch；DDP模式使用NCCL process group同步梯度。
 
 ## 启动、恢复与停止long run
 

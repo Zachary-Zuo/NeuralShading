@@ -10,7 +10,9 @@ from typing import Any, Callable, Mapping, Protocol
 
 import numpy as np
 import torch
+import torch.distributed as dist
 from torch import nn
+from torch.nn.parallel import DistributedDataParallel
 from tqdm import tqdm
 
 from ncls.core.identity import sha256_json
@@ -62,6 +64,35 @@ class _PreparedStep:
     batches: dict[str, OnlineTrainingBatch]
     iteration_ended: bool
     preparation_seconds: float
+
+
+class _DDPObjective(nn.Module):
+    """DDP forward shell for objectives implemented as model helper calls."""
+
+    def __init__(self, definition: MethodDefinition, model: nn.Module) -> None:
+        super().__init__()
+        self.definition = definition
+        self.model = model
+        self._batches: Mapping[str, OnlineTrainingBatch] | None = None
+        self._phase: Mapping[str, Any] | None = None
+        self.last_metrics: Mapping[str, torch.Tensor | float] = {}
+
+    def set_inputs(
+        self,
+        batches: Mapping[str, OnlineTrainingBatch],
+        phase: Mapping[str, Any],
+    ) -> None:
+        self._batches = batches
+        self._phase = phase
+
+    def forward(self) -> torch.Tensor:
+        if self._batches is None or self._phase is None:
+            raise RuntimeError("DDP objective inputs were not set")
+        loss, metrics = self.definition.training_objective(
+            self.model, self._batches, self._phase
+        )
+        self.last_metrics = metrics
+        return loss
 
 
 class _CosinePhaseScheduler:
@@ -240,7 +271,8 @@ class TrainingRunner:
         options = dict(route.options)
         options.update({"recipes": dict(phase.recipes), "validation": validation})
         name = f"validation:{phase.name}:{route.name}" if validation else f"{phase.name}:{route.name}"
-        seed_offset = route.seed_offset + (1_000_000_007 if validation else 0)
+        rank_offset = self._ddp_rank() * 1_000_003
+        seed_offset = route.seed_offset + rank_offset + (1_000_000_007 if validation else 0)
         return TrainingRouteRequest(
             name,
             route.kind,
@@ -250,6 +282,15 @@ class TrainingRunner:
             self.config.seed + seed_offset,
             options,
         )
+
+    @staticmethod
+    def _ddp_rank() -> int:
+        return int(dist.get_rank()) if dist.is_available() and dist.is_initialized() else 0
+
+    @staticmethod
+    def _ddp_barrier() -> None:
+        if dist.is_available() and dist.is_initialized():
+            dist.barrier()
 
     @staticmethod
     def _validate_batch_type(route: TrainingRoute, batch: OnlineTrainingBatch) -> None:
@@ -607,6 +648,21 @@ class TrainingRunner:
         model = self.definition.create_trainable(self.config.model_context).to(
             self.producer.device
         )
+        execution_model: nn.Module = model
+        ddp_shell: _DDPObjective | None = None
+        if dist.is_available() and dist.is_initialized():
+            if self.producer.device.type != "cuda":
+                raise RuntimeError("DDP training requires a CUDA producer device")
+            local_rank = self.producer.device.index
+            if local_rank is None:
+                raise RuntimeError("DDP CUDA device index is required")
+            ddp_shell = _DDPObjective(self.definition, model)
+            execution_model = DistributedDataParallel(
+                ddp_shell,
+                device_ids=[local_rank],
+                output_device=local_rank,
+                find_unused_parameters=True,
+            )
         global_step = 0
         validation_rows: list[Mapping[str, float]] = []
         coverage: dict[str, dict[str, Any]] = {
@@ -716,11 +772,15 @@ class TrainingRunner:
                 try:
                     optimizer.zero_grad(set_to_none=True)
                     with self._autocast(phase):
-                        loss, metrics = self.definition.training_objective(
-                            model,
-                            prepared.batches,
-                            self._phase_context(phase_index, phase_step, global_step),
-                        )
+                        context = self._phase_context(phase_index, phase_step, global_step)
+                        if ddp_shell is None:
+                            loss, metrics = self.definition.training_objective(
+                                model, prepared.batches, context
+                            )
+                        else:
+                            ddp_shell.set_inputs(prepared.batches, context)
+                            loss = execution_model()
+                            metrics = ddp_shell.last_metrics
                     if cuda_events is not None:
                         cuda_events[1].record()
                     forward_finished = time.perf_counter()
@@ -900,9 +960,7 @@ class TrainingRunner:
                     validate_gradient_coverage(
                         self.definition.descriptor, coverage
                     )
-                if self.checkpoint_callback is not None and (
-                    needs_validation or checkpoint_boundary
-                ):
+                if needs_validation or checkpoint_boundary:
                     if global_step == self.config.total_steps:
                         optimization_state: Mapping[str, Any] = {}
                     else:
@@ -911,15 +969,18 @@ class TrainingRunner:
                         optimization_state = self._optimization_state(
                             current_phase, optimizer, scheduler, scaler, active
                         )
-                    self.checkpoint_callback(
-                        self._checkpoint(
-                            model,
-                            global_step,
-                            optimization_state,
-                            coverage,
-                            validation_rows,
+                    self._ddp_barrier()
+                    if self.checkpoint_callback is not None:
+                        self.checkpoint_callback(
+                            self._checkpoint(
+                                model,
+                                global_step,
+                                optimization_state,
+                                coverage,
+                                validation_rows,
+                            )
                         )
-                    )
+                    self._ddp_barrier()
         finally:
             while queue:
                 self._release_prepared(queue.popleft())

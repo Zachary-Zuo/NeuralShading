@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 from typing import Any, Mapping
 
 import torch
@@ -87,7 +88,19 @@ class OnlineTrainingProducer:
         *,
         backend: ReferenceBackendCapability | None = None,
     ) -> None:
-        self.device = torch.device(config.device)
+        # DDP keeps a shared CUDA visibility list; each rank consumes its
+        # remapped local device while the config identity remains identical.
+        local_rank = os.environ.get("NCLS_DDP_LOCAL_RANK")
+        if local_rank is not None:
+            try:
+                rank = int(local_rank)
+            except ValueError as error:
+                raise RuntimeError("NCLS_DDP_LOCAL_RANK must be an integer") from error
+            if rank < 0:
+                raise RuntimeError("NCLS_DDP_LOCAL_RANK must be nonnegative")
+            self.device = torch.device(f"cuda:{rank}")
+        else:
+            self.device = torch.device(config.device)
         if self.device.type != "cuda" or not torch.cuda.is_available():
             raise RuntimeError("online training producer requires a CUDA device")
         family = create_source_family(str(config.source["family_id"]))
