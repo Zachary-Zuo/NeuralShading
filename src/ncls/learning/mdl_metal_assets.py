@@ -232,6 +232,7 @@ class MdlMetalNativeAssetCollection:
         locator = {**record.exact_locator, "module_root": str(self.module_root)}
         snapshot = MdlFamilyDefinition().load_snapshot(locator)
         artifact = create_mdl_program_provider(self.module_root).compile_snapshot(snapshot)
+        artifact.verify_texture_payloads()
         artifact.require_runtime_supported()
         if artifact.manifest["texture_payloads"] != "decoded":
             raise ValueError("Metal native assets require decoded MDL texture payloads")

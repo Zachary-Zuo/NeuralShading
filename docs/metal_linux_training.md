@@ -39,7 +39,9 @@ preflight必须得到692 exports、178 execution groups、52 texture sets、64-e
 
 MDL artifact 的 decoded texture payload 使用 cache 根下的 `resource-payloads/<前两位>/<sha256>` 内容寻址存储，artifact 内的原始 `data` 路径通过 hardlink 指向共享内容，manifest 的逐文件哈希和 runtime 语义不变。这样不同 typed state 仍可有独立 argument/code artifact，但不会为同一纹理重复保存几十 MiB。首次构建仍会 eager materialize 全部 typed state，因此它会增加启动时间；这不改变 online query 或训练 step 的定义。
 
-启动时对已有 artifact 的完整性校验会复用同一进程内、按文件 inode 与时间戳失效的有界 SHA-256 结果；共享 hardlink 的 decoded payload 不会被 692 个 typed state 重复读盘。缓存只优化校验 I/O，不跳过 manifest、尺寸和路径检查；删除或修改 artifact 后仍会重新计算哈希。首次没有编译缓存时，692-state 的 SDK 编译仍需执行一次，后续运行应直接复用 `build/mdl-reference/cache`。
+启动时对已有 artifact 的完整性校验会复用同一进程内、按文件 inode 与时间戳失效的有界 SHA-256 结果；共享 hardlink 的 decoded payload 不会被 692 个 typed state 重复读盘。对 decoded texture 的逐文件哈希现在延迟到该 artifact 第一次实际绑定 reference/native asset 时执行，启动阶段仍检查 manifest、文件存在性、尺寸、路径、HLSL/argument/RO 文件哈希；首次绑定通过 `FileResourcePayload.read_bytes()` 或 asset collection 的 `verify_texture_payloads()` 完整复核，删除或修改 payload 会 fail closed。这样不会把在线训练变成离线 batch，也不会降低完整性标准。
+
+首次没有编译缓存时，692-state 的 SDK 编译仍需执行一次；已有 `build/mdl-reference/cache` 时，训练入口不会为了构造全量 plan 预先读取约 300 GB 的重复 hardlink payload，而是随实际 reference group/tile 使用按需读取。后续运行应直接复用 cache。
 
 ## Linux部署与smoke gate
 

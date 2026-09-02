@@ -255,7 +255,13 @@ class MdlCompiledArtifact:
     source_snapshot_id: str | None = None
 
     @classmethod
-    def load(cls, root: Path, *, source_snapshot_id: str | None = None) -> "MdlCompiledArtifact":
+    def load(
+        cls,
+        root: Path,
+        *,
+        source_snapshot_id: str | None = None,
+        verify_texture_payloads: bool = True,
+    ) -> "MdlCompiledArtifact":
         resolved = root.resolve()
         manifest_path = _contained(resolved, resolved / "manifest.json")
         if not manifest_path.is_file():
@@ -335,6 +341,11 @@ class MdlCompiledArtifact:
         declared_files = manifest.get("files_sha256")
         if not isinstance(declared_files, dict) or not declared_files:
             raise ValueError("MDL compiled artifact has no finalized file hash table")
+        texture_paths = {
+            str(texture["data"])
+            for texture in manifest.get("textures", [])
+            if isinstance(texture, Mapping) and texture.get("data") is not None
+        }
         actual_files = {
             path.relative_to(resolved).as_posix(): path
             for path in resolved.rglob("*")
@@ -343,6 +354,9 @@ class MdlCompiledArtifact:
         if set(declared_files) != set(actual_files):
             raise ValueError("MDL compiled artifact file set differs from its manifest")
         for relative, path in actual_files.items():
+            _require_hex("MDL artifact file hash", declared_files[relative], 64)
+            if not verify_texture_payloads and relative in texture_paths:
+                continue
             if _cached_sha256_file(path) != str(declared_files[relative]):
                 raise ValueError(f"MDL compiled artifact file hash mismatch: {relative}")
         code = _contained(resolved, resolved / str(manifest.get("code", "")))
@@ -401,6 +415,23 @@ class MdlCompiledArtifact:
             }:
                 raise ValueError("MDL 2D texture has no supported decoded-data origin")
         return cls(resolved, manifest, source_snapshot_id)
+
+    def verify_texture_payloads(self) -> None:
+        """在首次实际绑定 source resource 时验证延迟的 decoded payload。"""
+
+        declared_files = self.manifest.get("files_sha256")
+        if not isinstance(declared_files, Mapping):
+            raise ValueError("MDL compiled artifact has no finalized file hash table")
+        for texture in self.manifest.get("textures", []):
+            if not isinstance(texture, Mapping) or texture.get("data") is None:
+                continue
+            relative = str(texture["data"])
+            path = _contained(self.root, self.root / relative)
+            expected = declared_files.get(relative)
+            if expected is None:
+                raise ValueError("MDL texture payload is absent from the artifact hash table")
+            if _cached_sha256_file(path) != str(expected):
+                raise ValueError(f"MDL texture payload hash mismatch: {relative}")
 
     @property
     def hlsl(self) -> str:
@@ -780,7 +811,11 @@ class MdlSdkProgramProvider:
         )
         target = self.cache_root / key
         if target.exists():
-            return MdlCompiledArtifact.load(target, source_snapshot_id=snapshot.snapshot_id)
+            return MdlCompiledArtifact.load(
+                target,
+                source_snapshot_id=snapshot.snapshot_id,
+                verify_texture_payloads=False,
+            )
         self.cache_root.mkdir(parents=True, exist_ok=True)
         temporary = self.cache_root / f".{key}.{uuid.uuid4().hex}.partial"
         try:

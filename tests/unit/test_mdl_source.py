@@ -268,6 +268,73 @@ def test_mdl_compiled_artifact_validates_schema_and_argument_block(tmp_path: Pat
         MdlCompiledArtifact.load(root)
 
 
+def test_mdl_compiled_artifact_can_defer_decoded_payload_hash(tmp_path: Path) -> None:
+    root = tmp_path / "artifact"
+    root.mkdir()
+    (root / "generated.hlsl").write_text("// generated", encoding="utf-8")
+    (root / "argument-block.bin").write_bytes(bytes(16))
+    texture = root / "texture.bin"
+    texture.write_bytes(bytes(4))
+    manifest = {
+        "schema": ARTIFACT_SCHEMA,
+        "mdl_sdk": MDL_SDK_BUILD,
+        "module": "::constant_diffuse",
+        "material": "::constant_diffuse::constant_diffuse(color)",
+        "code": "generated.hlsl",
+        "texture_payloads": "decoded",
+        "capability_audit": {
+            "surface_bsdf_evaluate": True,
+            "emission": False,
+            "volume": False,
+            "displacement": False,
+            "cutout_opacity": False,
+        },
+        "compiled_material_hash": "1" * 32,
+        "sub_expression_hashes": {
+            "surface.scattering": "2" * 32,
+            "geometry.normal": "3" * 32,
+            "geometry.cutout_opacity": "4" * 32,
+        },
+        "compiler_identity": {
+            "mdl_sdk": MDL_SDK_BUILD,
+            "platform_id": "linux-x86_64@1",
+            "semantic_identity": "b" * 64,
+            "build_identity": "c" * 64,
+            "backend_manifest_sha256": "d" * 64,
+            "sdk_archive_sha256": "e" * 64,
+            "bridge_executable_sha256": "a" * 64,
+            "stb_commit": STB_COMMIT,
+            "stb_image_sha256": STB_IMAGE_SHA256,
+            "codegen_options": CODEGEN_OPTIONS,
+        },
+        "argument_block": {"path": "argument-block.bin", "size": 16},
+        "parameters": [],
+        "ro_data": [],
+        "textures": [
+            {
+                "index": 1,
+                "shape": "bsdf_data",
+                "data": "texture.bin",
+                "width": 1,
+                "height": 1,
+                "depth": 1,
+                "pixel_type": "Float32",
+            }
+        ],
+        "diagnostics": "",
+        "files_sha256": {
+            "argument-block.bin": sha256_file(root / "argument-block.bin"),
+            "generated.hlsl": sha256_file(root / "generated.hlsl"),
+            "texture.bin": sha256_file(texture),
+        },
+    }
+    (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    texture.write_bytes(b"bad!")
+    artifact = MdlCompiledArtifact.load(root, verify_texture_payloads=False)
+    with pytest.raises(ValueError, match="payload hash mismatch"):
+        artifact.verify_texture_payloads()
+
+
 def test_mdl_decoded_texture_payloads_are_content_addressed(tmp_path: Path) -> None:
     output = tmp_path / "artifact"
     output.mkdir()

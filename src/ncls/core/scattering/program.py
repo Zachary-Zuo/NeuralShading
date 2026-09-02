@@ -27,9 +27,12 @@ class FileResourcePayload:
         object.__setattr__(self, "path", path)
 
     @classmethod
-    def from_path(cls, path: Path) -> "FileResourcePayload":
+    def from_path(
+        cls, path: Path, *, content_sha256: str | None = None
+    ) -> "FileResourcePayload":
         resolved = path.resolve()
-        return cls(resolved, sha256_file(resolved), resolved.stat().st_size)
+        digest = sha256_file(resolved) if content_sha256 is None else str(content_sha256)
+        return cls(resolved, digest, resolved.stat().st_size)
 
     def read_bytes(self) -> bytes:
         payload = self.path.read_bytes()

@@ -330,6 +330,7 @@ class MdlReferenceProgram(FileReferenceProgram):
         }
         resources: dict[str, bytes | FileResourcePayload] = {}
         resource_descriptors: dict[str, dict[str, object]] = {}
+        declared_files = artifact.manifest.get("files_sha256", {})
         for texture in texture_descriptors:
             index = int(texture["index"])
             if texture["shape"] == "2d":
@@ -342,7 +343,15 @@ class MdlReferenceProgram(FileReferenceProgram):
                     raise ValueError("unsupported MDL decoded texture pixel type")
                 dtype, channels = layout
                 name = f"texture-{index}.mdltex"
-                resources[name] = FileResourcePayload.from_path(path)
+                resources[name] = FileResourcePayload.from_path(
+                    path,
+                    content_sha256=(
+                        str(declared_files[str(data)])
+                        if isinstance(declared_files, Mapping)
+                        and str(data) in declared_files
+                        else None
+                    ),
+                )
                 resource_descriptors[name] = {
                     "kind": "texture2d",
                     "dtype": dtype.name,
@@ -361,7 +370,15 @@ class MdlReferenceProgram(FileReferenceProgram):
             else:
                 path = artifact.root / str(texture["data"])
                 name = f"texture-{index}.r32f"
-                resources[name] = FileResourcePayload.from_path(path)
+                resources[name] = FileResourcePayload.from_path(
+                    path,
+                    content_sha256=(
+                        str(declared_files[str(texture["data"])])
+                        if isinstance(declared_files, Mapping)
+                        and str(texture["data"]) in declared_files
+                        else None
+                    ),
+                )
                 resource_descriptors[name] = {
                     "kind": "texture3d",
                     "dtype": "float32",
