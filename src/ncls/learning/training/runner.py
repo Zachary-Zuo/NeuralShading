@@ -294,25 +294,34 @@ class TrainingRunner:
         if dist.is_available() and dist.is_initialized():
             dist.barrier()
 
-    def _ddp_validate_state(self) -> None:
-        """Ensure rank-local online cursors are identical before rank0 writes."""
+    def _ddp_state_envelope(self, state: Mapping[str, Any]) -> Mapping[str, Any]:
         if not (dist.is_available() and dist.is_initialized()):
-            return
-        state = self.producer.state_dict()
+            return state
         local = {
-            "query_stream_identity": self.producer.query_stream_identity,
-            "typed_state_pool_identity": getattr(
-                self.producer, "typed_state_pool_identity", ""
-            ),
-            "request_count": dict(state.get("request_count", {})),
-            "group_cursor": dict(state.get("group_cursor", {})),
-            "asset_tile_cursor": dict(state.get("asset_tile_cursor", {})),
+            "rank": dist.get_rank(),
+            "world_size": dist.get_world_size(),
+            "state": state,
+            "rng": self._rng_state(),
         }
         gathered: list[Mapping[str, Any] | None] = [None] * dist.get_world_size()
         dist.all_gather_object(gathered, local)
-        first = gathered[0]
-        if any(value != first for value in gathered[1:]):
-            raise RuntimeError("DDP ranks have divergent online query/checkpoint state")
+        return {
+            "schema": "ncls.ddp-rank-state@1",
+            "world_size": dist.get_world_size(),
+            "rank_states": [dict(value) for value in gathered if value is not None],
+        }
+
+    def _ddp_select_state(self, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        if value.get("schema") != "ncls.ddp-rank-state@1":
+            return value
+        world = int(value.get("world_size", 0))
+        if not (dist.is_available() and dist.is_initialized()) or world != dist.get_world_size():
+            raise ValueError("DDP checkpoint world size mismatch")
+        rank = dist.get_rank()
+        entries = [item for item in value.get("rank_states", ()) if int(item.get("rank", -1)) == rank]
+        if len(entries) != 1:
+            raise ValueError("DDP checkpoint does not contain this rank state")
+        return entries[0]["state"]
 
     @staticmethod
     def _ddp_report(
@@ -680,8 +689,8 @@ class TrainingRunner:
             {"policy": self.config.checkpoint_selection, "tail": validation_rows[-1:]},
             self.definition.export_training_state(model),
             optimization_state,
-            self._rng_state(),
-            self.producer.state_dict(),
+            self._ddp_state_envelope(self._rng_state()),
+            self._ddp_state_envelope(self.producer.state_dict()),
             coverage,
             {"rows": validation_rows},
         )
@@ -728,8 +737,8 @@ class TrainingRunner:
         if resume is not None:
             self._validate_resume(resume)
             self.definition.restore_training_state(model, resume.model_state)
-            self.producer.load_state_dict(resume.query_stream_state)
-            self._restore_rng(resume.rng_state)
+            self.producer.load_state_dict(self._ddp_select_state(resume.query_stream_state))
+            self._restore_rng(self._ddp_select_state(resume.rng_state))
             global_step = resume.global_step
             validation_rows = [dict(row) for row in resume.validation_state.get("rows", ())]
             coverage = {
@@ -1014,7 +1023,6 @@ class TrainingRunner:
                         self.definition.descriptor, coverage
                     )
                 if needs_validation or checkpoint_boundary:
-                    self._ddp_validate_state()
                     if global_step == self.config.total_steps:
                         optimization_state: Mapping[str, Any] = {}
                     else:

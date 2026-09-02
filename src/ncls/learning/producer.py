@@ -91,6 +91,14 @@ class OnlineTrainingProducer:
         # DDP keeps a shared CUDA visibility list; each rank consumes its
         # remapped local device while the config identity remains identical.
         local_rank = os.environ.get("NCLS_DDP_LOCAL_RANK")
+        self.ddp_rank = int(os.environ.get("RANK", "0"))
+        self.ddp_world_size = int(os.environ.get("WORLD_SIZE", "1"))
+        raw_gpu_list = os.environ.get("NCLS_DDP_GPU_LIST", "")
+        self.ddp_gpu_indices = tuple(
+            int(value) for value in raw_gpu_list.split(",") if value != ""
+        )
+        if self.ddp_world_size > 1 and len(self.ddp_gpu_indices) != self.ddp_world_size:
+            raise RuntimeError("DDP GPU list length must match WORLD_SIZE")
         if local_rank is not None:
             try:
                 rank = int(local_rank)
@@ -178,6 +186,11 @@ class OnlineTrainingProducer:
                 "online_query": plan_recipe,
                 "routes": [route.to_dict() for route in config.all_routes],
                 "seed": config.seed,
+                "partition": {
+                    "rank": self.ddp_rank,
+                    "world_size": self.ddp_world_size,
+                    "gpu_indices": list(self.ddp_gpu_indices),
+                },
             }
         )
         self._generators: dict[str, torch.Generator] = {}
