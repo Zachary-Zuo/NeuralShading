@@ -65,4 +65,4 @@ export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
 export MASTER_PORT="${MASTER_PORT:-29517}"
 echo "[ddp] GPUs=${gpu_list} world_size=${world_size} backend=NCCL" >&2
 
-exec "${project_root}/scripts/run_falcor_python.sh" --ddp "${world_size}" -- "$@"
+exec bash "${project_root}/scripts/run_falcor_python.sh" --ddp "${world_size}" -- "$@"
