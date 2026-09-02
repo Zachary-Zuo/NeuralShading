@@ -717,7 +717,13 @@ class TrainingRunner:
         )
         execution_model: nn.Module = model
         ddp_shell: _DDPObjective | None = None
-        if dist.is_available() and dist.is_initialized():
+
+        def rebuild_ddp_execution() -> None:
+            nonlocal execution_model, ddp_shell
+            if not (dist.is_available() and dist.is_initialized()):
+                execution_model = model
+                ddp_shell = None
+                return
             if self.producer.device.type != "cuda":
                 raise RuntimeError("DDP training requires a CUDA producer device")
             local_rank = self.producer.device.index
@@ -730,6 +736,8 @@ class TrainingRunner:
                 output_device=local_rank,
                 find_unused_parameters=True,
             )
+
+        rebuild_ddp_execution()
         global_step = 0
         validation_rows: list[Mapping[str, float]] = []
         coverage: dict[str, dict[str, Any]] = {
@@ -997,6 +1005,10 @@ class TrainingRunner:
                             overlap_state=previous_state,
                         )
                         registry = self.definition.parameter_registry(model)
+                        # The active parameter set can change at a phase
+                        # transition; rebuild DDP's reducer buckets so frozen
+                        # groups and find-unused detection are re-registered.
+                        rebuild_ddp_execution()
 
                 needs_validation = (
                     global_step % int(self.config.validation["interval"]) == 0
