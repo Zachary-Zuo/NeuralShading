@@ -95,6 +95,8 @@ def _learn_train(
 ) -> int:
     ddp_rank, ddp_world = _setup_ddp()
     is_rank0 = ddp_rank == 0
+    if ddp_world > 1 and output.is_absolute() is False:
+        output = output.resolve()
     config = TrainingConfig.load(config_path)
     definition = get_method(config.method_key)
     producer = OnlineTrainingProducer(definition, config)
