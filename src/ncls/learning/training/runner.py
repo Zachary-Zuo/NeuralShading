@@ -271,8 +271,10 @@ class TrainingRunner:
         options = dict(route.options)
         options.update({"recipes": dict(phase.recipes), "validation": validation})
         name = f"validation:{phase.name}:{route.name}" if validation else f"{phase.name}:{route.name}"
-        rank_offset = self._ddp_rank() * 1_000_003
-        seed_offset = route.seed_offset + rank_offset + (1_000_000_007 if validation else 0)
+        # Keep every rank's producer cursor identical so the single rank-0
+        # checkpoint remains resumable by all ranks. DDP synchronizes gradients;
+        # the authoritative online query stream is intentionally shared.
+        seed_offset = route.seed_offset + (1_000_000_007 if validation else 0)
         return TrainingRouteRequest(
             name,
             route.kind,
