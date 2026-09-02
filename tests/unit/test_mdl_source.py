@@ -335,6 +335,50 @@ def test_mdl_compiled_artifact_can_defer_decoded_payload_hash(tmp_path: Path) ->
         artifact.verify_texture_payloads()
 
 
+def test_mdl_family_defers_cached_locator_texture_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module_root = tmp_path / "materials"
+    module_root.mkdir()
+    cached = tmp_path / "cache" / "source-locators" / "locator"
+    cached.mkdir(parents=True)
+    compiler = type(
+        "Compiler",
+        (),
+        {
+            "cache_root": tmp_path / "cache",
+            "descriptor": type(
+                "Descriptor",
+                (),
+                {"semantic_identity": "a" * 64, "build_identity": "b" * 64},
+            )(),
+        },
+    )()
+    loaded: dict[str, object] = {}
+
+    def fake_load(path: Path, **kwargs: object) -> object:
+        loaded.update(path=path, **kwargs)
+        return object()
+
+    monkeypatch.setattr(mdl_module, "MdlCompiledArtifact", type("Artifact", (), {"load": fake_load}))
+    monkeypatch.setattr(mdl_module, "create_mdl_program_provider", lambda root: compiler)
+    monkeypatch.setattr("ncls.core.identity.sha256_json", lambda value: "locator")
+    monkeypatch.setattr(
+        "ncls.source_materials.mdl.snapshot_from_mdl_artifact", lambda *args, **kwargs: _snapshot()
+    )
+    family = MdlFamilyDefinition()
+    family.load_snapshot(
+        {
+            "kind": "mdl-export",
+            "module_root": str(module_root),
+            "module": "::constant_diffuse",
+            "export": "::constant_diffuse::constant_diffuse(color)",
+        }
+    )
+    assert loaded["path"] == cached
+    assert loaded["verify_texture_payloads"] is False
+
+
 def test_mdl_decoded_texture_payloads_are_content_addressed(tmp_path: Path) -> None:
     output = tmp_path / "artifact"
     output.mkdir()

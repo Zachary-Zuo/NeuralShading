@@ -150,7 +150,7 @@ class MdlFamilyDefinition(SourceFamilyDefinition):
         )
         output = compiler.cache_root / "source-locators" / cache_key
         artifact = (
-            MdlCompiledArtifact.load(output)
+            MdlCompiledArtifact.load(output, verify_texture_payloads=False)
             if output.is_dir()
             else compiler.inspect(module, export, arguments, output=output)
         )
