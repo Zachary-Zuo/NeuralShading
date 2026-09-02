@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import errno
 import json
 import math
 import os
@@ -689,10 +690,33 @@ class MdlSdkProgramProvider:
                     raise ValueError("content-addressed MDL payload size mismatch")
                 if _cached_sha256_file(shared) != digest:
                     raise ValueError("content-addressed MDL payload hash mismatch")
-                payload.unlink()
             else:
-                os.replace(payload, shared)
-            os.link(shared, payload)
+                try:
+                    os.replace(payload, shared)
+                except OSError as error:
+                    if error.errno != errno.EXDEV:
+                        raise
+                    # Artifact output may live on a different filesystem (for
+                    # example pytest's /tmp). Install the shared copy
+                    # atomically, while retaining the original artifact copy.
+                    partial = shared.with_name(f".{shared.name}.{uuid.uuid4().hex}.partial")
+                    try:
+                        shutil.copyfile(payload, partial)
+                        os.replace(partial, shared)
+                    finally:
+                        if partial.exists():
+                            partial.unlink()
+                    continue
+            if payload.exists():
+                payload.unlink()
+            try:
+                os.link(shared, payload)
+            except OSError as error:
+                if error.errno != errno.EXDEV:
+                    raise
+                # A pre-existing shared payload can also be on another
+                # filesystem; keep an artifact-local copy in that case.
+                shutil.copyfile(shared, payload)
 
     def inspect(
         self,

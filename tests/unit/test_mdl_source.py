@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import errno
 from pathlib import Path
 
 import numpy as np
@@ -301,6 +302,35 @@ def test_mdl_decoded_texture_payloads_are_content_addressed(tmp_path: Path) -> N
                 "textures": [{"data": "missing.bin"}],
             },
         )
+
+
+def test_mdl_decoded_texture_payloads_support_cross_device_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "artifact"
+    output.mkdir()
+    payload = output / "texture.bin"
+    payload.write_bytes(b"cross-device decoded payload")
+    provider = MdlSdkProgramProvider.__new__(MdlSdkProgramProvider)
+    provider.cache_root = tmp_path / "cache"
+    original_replace = mdl_module.os.replace
+
+    def cross_device_replace(source: Path, target: Path) -> None:
+        if source == payload:
+            raise OSError(errno.EXDEV, "cross-device link")
+        original_replace(source, target)
+
+    monkeypatch.setattr(mdl_module.os, "replace", cross_device_replace)
+    provider._deduplicate_texture_payloads(
+        output,
+        {
+            "texture_payloads": "decoded",
+            "textures": [{"data": payload.name}],
+        },
+    )
+    shared = next(path for path in provider.cache_root.rglob("*") if path.is_file())
+    assert shared.read_bytes() == payload.read_bytes()
+    assert shared.stat().st_ino != payload.stat().st_ino
 
 
 def test_mdl_file_hash_cache_reuses_content_addressed_hardlinks(
