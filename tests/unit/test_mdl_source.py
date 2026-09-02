@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import ncls.references.mdl as mdl_module
 from ncls.core.identity import sha256_file
 from ncls.core.source import SourceEditOperation, SourceEditPatch, SourceSnapshot
 from ncls.references.mdl import (
@@ -300,6 +301,32 @@ def test_mdl_decoded_texture_payloads_are_content_addressed(tmp_path: Path) -> N
                 "textures": [{"data": "missing.bin"}],
             },
         )
+
+
+def test_mdl_file_hash_cache_reuses_content_addressed_hardlinks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"decoded texture payload")
+    alias = tmp_path / "alias.bin"
+    alias.hardlink_to(source)
+
+    calls = 0
+    original = mdl_module.sha256_file
+
+    def counting_hash(path: Path) -> str:
+        nonlocal calls
+        calls += 1
+        return original(path)
+
+    monkeypatch.setattr(mdl_module, "sha256_file", counting_hash)
+    mdl_module._FILE_HASH_CACHE.clear()
+    assert mdl_module._cached_sha256_file(source) == mdl_module._cached_sha256_file(alias)
+    assert calls == 1
+
+    source.write_bytes(b"changed payload")
+    assert mdl_module._cached_sha256_file(alias) == original(alias)
+    assert calls == 2
 
 
 def test_mdl_rgba16_texture_binding_preserves_all_uint16_bits(tmp_path: Path) -> None:

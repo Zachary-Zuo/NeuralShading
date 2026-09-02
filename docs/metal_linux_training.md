@@ -39,6 +39,8 @@ preflight必须得到692 exports、178 execution groups、52 texture sets、64-e
 
 MDL artifact 的 decoded texture payload 使用 cache 根下的 `resource-payloads/<前两位>/<sha256>` 内容寻址存储，artifact 内的原始 `data` 路径通过 hardlink 指向共享内容，manifest 的逐文件哈希和 runtime 语义不变。这样不同 typed state 仍可有独立 argument/code artifact，但不会为同一纹理重复保存几十 MiB。首次构建仍会 eager materialize 全部 typed state，因此它会增加启动时间；这不改变 online query 或训练 step 的定义。
 
+启动时对已有 artifact 的完整性校验会复用同一进程内、按文件 inode 与时间戳失效的有界 SHA-256 结果；共享 hardlink 的 decoded payload 不会被 692 个 typed state 重复读盘。缓存只优化校验 I/O，不跳过 manifest、尺寸和路径检查；删除或修改 artifact 后仍会重新计算哈希。首次没有编译缓存时，692-state 的 SDK 编译仍需执行一次，后续运行应直接复用 `build/mdl-reference/cache`。
+
 ## Linux部署与smoke gate
 
 先按[统一Reference Backend部署](reference_backend_deployment.md)部署锁定的Falcor/MDL toolchain，并由用户把`assets/source-materials/mdl-vmaterials2/2.4.0/Materials`复制到目标机。单卡 launcher 接受一个十进制`CUDA_VISIBLE_DEVICES`，并把Falcor映射到同一物理GPU、Torch映射到进程内`cuda:0`。若要同时跑 GPU2、3、4 的独立实验，使用 fan-out 入口；每个子进程仍是单卡训练，必须为输出目录加入`{gpu}`占位符：

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 import math
 import os
+from collections import OrderedDict
 from pathlib import Path
 import shutil
 import subprocess
@@ -42,6 +43,35 @@ CODEGEN_OPTIONS = {
     "texture_runtime_with_derivs": False,
     "use_renderer_adapt_normal": True,
 }
+
+
+# Decoded MDL texture payloads are content-addressed and hard-linked into
+# every typed-state artifact.  Loading a large plan used to hash the same
+# inode once per state (often hundreds of times).  Keep a small process-local
+# cache keyed by the complete stat identity so integrity checks remain strict
+# while repeated loads avoid rereading unchanged bytes.
+_FILE_HASH_CACHE_CAPACITY = 8192
+_FILE_HASH_CACHE: OrderedDict[tuple[int, int, int, int, int], str] = OrderedDict()
+
+
+def _cached_sha256_file(path: Path) -> str:
+    stat = path.stat()
+    key = (
+        int(stat.st_dev),
+        int(stat.st_ino),
+        int(stat.st_size),
+        int(stat.st_mtime_ns),
+        int(stat.st_ctime_ns),
+    )
+    digest = _FILE_HASH_CACHE.get(key)
+    if digest is not None:
+        _FILE_HASH_CACHE.move_to_end(key)
+        return digest
+    digest = sha256_file(path)
+    _FILE_HASH_CACHE[key] = digest
+    if len(_FILE_HASH_CACHE) > _FILE_HASH_CACHE_CAPACITY:
+        _FILE_HASH_CACHE.popitem(last=False)
+    return digest
 
 
 @dataclass(frozen=True)
@@ -111,14 +141,14 @@ def _toolchain_semantic_identity(
             "sdk_build": MDL_SDK_BUILD,
             "backend_manifest_sha256": backend_manifest_sha256,
             "portable_bridge": {
-                "main_cpp": sha256_file(
+                "main_cpp": _cached_sha256_file(
                     PROJECT_ROOT / "tools/reference/mdl_sdk_bridge/main.cpp"
                 ),
-                "cmake": sha256_file(
+                "cmake": _cached_sha256_file(
                     PROJECT_ROOT / "tools/reference/mdl_sdk_bridge/CMakeLists.txt"
                 ),
             },
-            "artifact_schema": sha256_file(
+            "artifact_schema": _cached_sha256_file(
                 PROJECT_ROOT
                 / "references/mdl-vmaterials2-v1/schemas/mdl-compiled-artifact.schema.json"
             ),
@@ -151,7 +181,7 @@ def resolve_mdl_program_toolchain(
     cache_root = (
         values.cache_root or PROJECT_ROOT / "build/mdl-reference/cache"
     ).resolve()
-    executable_sha256 = sha256_file(executable) if executable.is_file() else None
+    executable_sha256 = _cached_sha256_file(executable) if executable.is_file() else None
     semantic_identity = _toolchain_semantic_identity(
         manifest.sha256, record
     )
@@ -312,7 +342,7 @@ class MdlCompiledArtifact:
         if set(declared_files) != set(actual_files):
             raise ValueError("MDL compiled artifact file set differs from its manifest")
         for relative, path in actual_files.items():
-            if sha256_file(path) != str(declared_files[relative]):
+            if _cached_sha256_file(path) != str(declared_files[relative]):
                 raise ValueError(f"MDL compiled artifact file hash mismatch: {relative}")
         code = _contained(resolved, resolved / str(manifest.get("code", "")))
         if not code.is_file():
@@ -384,7 +414,7 @@ class MdlCompiledArtifact:
     def artifact_sha256(self) -> str:
         files: dict[str, str] = {}
         for path in sorted(item for item in self.root.rglob("*") if item.is_file()):
-            files[path.relative_to(self.root).as_posix()] = sha256_file(path)
+            files[path.relative_to(self.root).as_posix()] = _cached_sha256_file(path)
         return sha256_json(files)
 
     @property
@@ -549,7 +579,7 @@ class MdlSdkProgramProvider:
             raise RuntimeError(f"MDL SDK bridge discovery failed: {message}")
         path = output / "discovery.json"
         value = json.loads(path.read_text(encoding="utf-8"))
-        bridge_digest = sha256_file(self.executable)
+        bridge_digest = _cached_sha256_file(self.executable)
         value["bridge_executable_sha256"] = bridge_digest
         path.write_text(
             json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -614,7 +644,7 @@ class MdlSdkProgramProvider:
         manifest["compiler_identity"] = self.compiler_identity
         self._deduplicate_texture_payloads(output, manifest)
         manifest["files_sha256"] = {
-            path.relative_to(output).as_posix(): sha256_file(path)
+            path.relative_to(output).as_posix(): _cached_sha256_file(path)
             for path in sorted(output.rglob("*"))
             if path.is_file() and path.name != "manifest.json"
         }
@@ -651,13 +681,13 @@ class MdlSdkProgramProvider:
             payload = _contained(output, output / str(relative))
             if not payload.is_file():
                 raise ValueError("MDL decoded texture payload is missing")
-            digest = sha256_file(payload)
+            digest = _cached_sha256_file(payload)
             shared = shared_root / digest[:2] / digest
             shared.parent.mkdir(parents=True, exist_ok=True)
             if shared.exists():
                 if shared.stat().st_size != payload.stat().st_size:
                     raise ValueError("content-addressed MDL payload size mismatch")
-                if sha256_file(shared) != digest:
+                if _cached_sha256_file(shared) != digest:
                     raise ValueError("content-addressed MDL payload hash mismatch")
                 payload.unlink()
             else:
