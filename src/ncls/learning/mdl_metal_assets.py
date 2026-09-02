@@ -68,6 +68,23 @@ def _channel_groups(slot: Mapping[str, Any]) -> tuple[tuple[str, int], ...]:
     return tuple(result)
 
 
+def _canonicalize_decoded_channels(
+    source: np.ndarray, groups: tuple[tuple[str, int], ...]
+) -> np.ndarray:
+    """Adapt SDK's physical channel count to the registry's semantic layout."""
+
+    expected = sum(count for _, count in groups)
+    actual = int(source.shape[-1])
+    if actual == expected:
+        return source
+    if actual == 1 and expected == 3 and len(groups) == 1 and groups[0][1] == 3:
+        return np.broadcast_to(source, (*source.shape[:-1], 3)).copy()
+    if actual == expected - 1 and groups[-1][1] == 1:
+        alpha = np.ones((*source.shape[:-1], 1), dtype=source.dtype)
+        return np.concatenate((source, alpha), axis=-1)
+    raise ValueError("decoded Metal texture cannot satisfy its semantic channel contract")
+
+
 def _roles(slot: Mapping[str, Any]) -> tuple[NativeAssetRole, ...]:
     offset = 0
     result = []
@@ -286,8 +303,7 @@ class MdlMetalNativeAssetCollection:
                 source[..., : min(3, source.shape[2])]
             )
         groups = _channel_groups(slot)
-        channel_count = sum(count for _, count in groups)
-        return source[..., :channel_count]
+        return _canonicalize_decoded_channels(source, groups)
 
     def _sample_mip_patches(
         self,
@@ -341,12 +357,11 @@ class MdlMetalNativeAssetCollection:
             decoded = np.asarray(block).astype(np.float32)
             if np.issubdtype(values.dtype, np.integer):
                 decoded /= np.float32(np.iinfo(values.dtype).max)
-            decoded = decoded[..., :channel_count]
             if slot["transfer"] == "srgb-to-linear":
-                decoded[..., : min(3, channel_count)] = self._srgb_to_linear(
-                    decoded[..., : min(3, channel_count)]
+                decoded[..., : min(3, decoded.shape[-1])] = self._srgb_to_linear(
+                    decoded[..., : min(3, decoded.shape[-1])]
                 )
-            return decoded
+            return _canonicalize_decoded_channels(decoded, _channel_groups(slot))
 
         if source_texels <= 4_194_304:
             block = values[

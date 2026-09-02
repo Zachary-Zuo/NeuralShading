@@ -5,6 +5,7 @@ import torch
 
 from ncls.core.scattering import BackendCapability
 from ncls.learning.methods.metal_fused import METHOD_DEFINITION
+from ncls.learning.source_adapters import _normalized_components
 from ncls.learning.models.metal_fused import (
     METAL_FUSED_REQUIRED_CONTEXT,
     MetalFusedNeuralMaterialModel,
@@ -14,6 +15,18 @@ from ncls.learning.models.metal_fused_profile import (
     METAL_FUSED_FULL_PROFILE,
     load_metal_fused_layout,
 )
+
+
+def test_metal_parameter_normalization_accepts_vector_ranges() -> None:
+    values = _normalized_components(
+        {
+            "value": [0.5, 0.25],
+            "minimum": [0.0, 0.0],
+            "maximum": [1.0, 0.5],
+        },
+        [0.25, 0.125],
+    )
+    assert values.tolist() == pytest.approx([-0.5, -0.5, 0.0, 0.0])
 
 
 def test_metal_full_profile_freezes_all_quality_first_shape_bounds() -> None:

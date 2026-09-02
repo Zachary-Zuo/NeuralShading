@@ -12,6 +12,7 @@ from ncls.references.mdl import (
     ARTIFACT_SCHEMA,
     CODEGEN_OPTIONS,
     MDL_SDK_BUILD,
+    MdlSdkProgramProvider,
     STB_COMMIT,
     STB_IMAGE_SHA256,
     MdlCompiledArtifact,
@@ -263,6 +264,42 @@ def test_mdl_compiled_artifact_validates_schema_and_argument_block(tmp_path: Pat
     (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(ValueError, match="capability audit"):
         MdlCompiledArtifact.load(root)
+
+
+def test_mdl_decoded_texture_payloads_are_content_addressed(tmp_path: Path) -> None:
+    output = tmp_path / "artifact"
+    output.mkdir()
+    payload_a = output / "texture-1.bin"
+    payload_b = output / "texture-2.bin"
+    payload_a.write_bytes(b"same decoded payload")
+    payload_b.write_bytes(payload_a.read_bytes())
+    provider = MdlSdkProgramProvider.__new__(MdlSdkProgramProvider)
+    provider.cache_root = tmp_path / "cache"
+    provider._deduplicate_texture_payloads(
+        output,
+        {
+            "texture_payloads": "decoded",
+            "textures": [
+                {"data": payload_a.name},
+                {"data": payload_b.name},
+            ],
+        },
+    )
+    shared = next(path for path in provider.cache_root.rglob("*") if path.is_file())
+    assert shared.is_file()
+    assert payload_a.read_bytes() == payload_b.read_bytes() == shared.read_bytes()
+    assert payload_a.stat().st_ino == payload_b.stat().st_ino == shared.stat().st_ino
+
+    payload_a.unlink()
+    payload_b.unlink()
+    with pytest.raises(ValueError, match="missing"):
+        provider._deduplicate_texture_payloads(
+            output,
+            {
+                "texture_payloads": "decoded",
+                "textures": [{"data": "missing.bin"}],
+            },
+        )
 
 
 def test_mdl_rgba16_texture_binding_preserves_all_uint16_bits(tmp_path: Path) -> None:

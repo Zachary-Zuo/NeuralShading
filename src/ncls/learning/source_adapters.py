@@ -321,10 +321,17 @@ def _normalized_components(parameter: Mapping[str, Any], value: object) -> np.nd
     defaults = _components(parameter.get("value", 0.0))
     minimum = parameter.get("minimum", parameter.get("soft_minimum"))
     maximum = parameter.get("maximum", parameter.get("soft_maximum"))
+    minimums = _components(minimum) if minimum is not None else ()
+    maximums = _components(maximum) if maximum is not None else ()
     for index, item in enumerate(values[:4]):
-        if minimum is not None and maximum is not None and float(maximum) > float(minimum):
-            normalized = 2.0 * (item - float(minimum)) / (
-                float(maximum) - float(minimum)
+        if minimums and maximums:
+            lower = minimums[min(index, len(minimums) - 1)]
+            upper = maximums[min(index, len(maximums) - 1)]
+        else:
+            lower = upper = None
+        if lower is not None and upper is not None and upper > lower:
+            normalized = 2.0 * (item - lower) / (
+                upper - lower
             ) - 1.0
         else:
             default = defaults[min(index, len(defaults) - 1)]

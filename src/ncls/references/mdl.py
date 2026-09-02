@@ -612,6 +612,7 @@ class MdlSdkProgramProvider:
         manifest_path = output / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest["compiler_identity"] = self.compiler_identity
+        self._deduplicate_texture_payloads(output, manifest)
         manifest["files_sha256"] = {
             path.relative_to(output).as_posix(): sha256_file(path)
             for path in sorted(output.rglob("*"))
@@ -622,6 +623,46 @@ class MdlSdkProgramProvider:
             encoding="utf-8",
         )
         return MdlCompiledArtifact.load(output)
+
+    def _deduplicate_texture_payloads(
+        self, output: Path, manifest: Mapping[str, Any]
+    ) -> None:
+        """Share immutable decoded payloads while keeping artifact-local paths.
+
+        The MDL bridge emits a self-contained artifact for each typed state. A
+        state changes the argument block, but usually reuses the same decoded
+        texture bytes. Hardlinking those bytes into a content-addressed store
+        preserves the artifact schema and tamper checks without multiplying
+        disk usage by the number of states.
+        """
+
+        if manifest.get("texture_payloads") != "decoded":
+            return
+        textures = manifest.get("textures", [])
+        if not isinstance(textures, list):
+            raise ValueError("MDL artifact texture table must be a list")
+        shared_root = self.cache_root / "resource-payloads"
+        for texture in textures:
+            if not isinstance(texture, Mapping):
+                raise ValueError("MDL artifact texture descriptor must be an object")
+            relative = texture.get("data")
+            if relative is None:
+                continue
+            payload = _contained(output, output / str(relative))
+            if not payload.is_file():
+                raise ValueError("MDL decoded texture payload is missing")
+            digest = sha256_file(payload)
+            shared = shared_root / digest[:2] / digest
+            shared.parent.mkdir(parents=True, exist_ok=True)
+            if shared.exists():
+                if shared.stat().st_size != payload.stat().st_size:
+                    raise ValueError("content-addressed MDL payload size mismatch")
+                if sha256_file(shared) != digest:
+                    raise ValueError("content-addressed MDL payload hash mismatch")
+                payload.unlink()
+            else:
+                os.replace(payload, shared)
+            os.link(shared, payload)
 
     def inspect(
         self,

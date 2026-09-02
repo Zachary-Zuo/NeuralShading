@@ -3,9 +3,13 @@ from __future__ import annotations
 import copy
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from ncls.learning.mdl_metal_assets import MdlMetalNativeAssetCollection
+from ncls.learning.mdl_metal_assets import (
+    MdlMetalNativeAssetCollection,
+    _canonicalize_decoded_channels,
+)
 from ncls.source_materials.mdl_metal import (
     MDL_METAL_EXPECTED_COUNTS,
     MdlMetalRegistry,
@@ -59,6 +63,20 @@ def test_mdl_metal_registry_identity_detects_any_semantic_change() -> None:
     changed["opaque_exports"][0]["finish"] = "tampered"
     with pytest.raises(ValueError, match="identity mismatch"):
         MdlMetalRegistry(changed)
+
+
+def test_mdl_metal_decoded_scalar_is_broadcast_to_registry_rgb_contract() -> None:
+    source = np.asarray([[[0.25], [0.75]]], dtype=np.float32)
+    expanded = _canonicalize_decoded_channels(source, (("roughness", 3),))
+    assert expanded.shape == (1, 2, 3)
+    np.testing.assert_allclose(expanded[0, 0], [0.25, 0.25, 0.25])
+    np.testing.assert_allclose(expanded[0, 1], [0.75, 0.75, 0.75])
+
+
+def test_mdl_metal_decoded_channel_contract_rejects_ambiguous_short_layout() -> None:
+    source = np.zeros((1, 1, 2), dtype=np.float32)
+    with pytest.raises(ValueError, match="semantic channel contract"):
+        _canonicalize_decoded_channels(source, (("roughness", 3),))
 
 
 @pytest.mark.skipif(not MODULE_ROOT.is_dir(), reason="vMaterials 2 assets are not installed")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import platform
 from pathlib import Path
 import subprocess
@@ -39,6 +40,11 @@ def _git(*arguments: str) -> str:
 def build_handoff_manifest(
     *, windows_checkpoint: Path | None = None
 ) -> dict[str, Any]:
+    visible_gpu = os.environ.get("CUDA_VISIBLE_DEVICES", "0")
+    if not visible_gpu.isdecimal():
+        raise ValueError(
+            "CUDA_VISIBLE_DEVICES must name exactly one physical GPU index"
+        )
     smoke = TrainingConfig.load(LINUX_SMOKE_PATH)
     long_run = TrainingConfig.load(LINUX_LONG_PATH)
     pair = validate_linux_config_pair(smoke.to_dict(), long_run.to_dict())
@@ -85,28 +91,28 @@ def build_handoff_manifest(
             "torch_cuda": torch.version.cuda,
         },
         "commands": {
-            "deploy": "CUDA_VISIBLE_DEVICES=0 bash scripts/deploy_reference_linux.sh",
+            "deploy": f"CUDA_VISIBLE_DEVICES={visible_gpu} bash scripts/deploy_reference_linux.sh",
             "config_check": (
-                "conda run -n neural-shading python "
+                "PYTHONPATH=src conda run --no-capture-output -n neural-shading python "
                 "tools/learning/build_metal_training_configs.py"
             ),
             "full_cohort_preflight": (
-                "conda run -n neural-shading python "
+                "PYTHONPATH=src conda run --no-capture-output -n neural-shading python "
                 "tools/learning/preflight_metal_fused.py --output "
                 "artifacts/metal-linux-training/full-cohort-preflight.json"
             ),
             "smoke": (
-                "CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls.cli "
+                f"CUDA_VISIBLE_DEVICES={visible_gpu} bash scripts/run_falcor_python.sh -m ncls.cli "
                 "learn train configs/learning/metal-fused-full-linux-smoke.json "
                 "artifacts/metal-linux-training/smoke/checkpoint.pt"
             ),
             "long_start_recoverable": (
-                "CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls.cli "
+                f"CUDA_VISIBLE_DEVICES={visible_gpu} bash scripts/run_falcor_python.sh -m ncls.cli "
                 "learn train configs/learning/metal-fused-full-linux-long.json "
                 "artifacts/metal-linux-training/long/checkpoint.pt --stop-at-step 16"
             ),
             "long_resume": (
-                "CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls.cli "
+                f"CUDA_VISIBLE_DEVICES={visible_gpu} bash scripts/run_falcor_python.sh -m ncls.cli "
                 "learn train configs/learning/metal-fused-full-linux-long.json "
                 "artifacts/metal-linux-training/long/checkpoint.pt --resume "
                 "artifacts/metal-linux-training/long/checkpoint.pt"
@@ -120,12 +126,12 @@ def build_handoff_manifest(
                 "| sort | tail -n 1"
             ),
             "evaluate": (
-                "CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls.cli "
+                f"CUDA_VISIBLE_DEVICES={visible_gpu} bash scripts/run_falcor_python.sh -m ncls.cli "
                 "learn evaluate configs/learning/metal-fused-full-linux-long.json "
                 "artifacts/metal-linux-training/long/checkpoint.pt --batches 8"
             ),
             "export": (
-                "CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls.cli "
+                f"CUDA_VISIBLE_DEVICES={visible_gpu} bash scripts/run_falcor_python.sh -m ncls.cli "
                 "learn export artifacts/metal-linux-training/long/checkpoint.pt "
                 "artifacts/metal-linux-training/long/package --material-index 0"
             ),
