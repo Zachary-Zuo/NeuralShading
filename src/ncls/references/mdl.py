@@ -9,6 +9,7 @@ from collections import OrderedDict
 from pathlib import Path
 import shutil
 import subprocess
+import time
 from typing import Any, Mapping, Protocol
 import uuid
 
@@ -53,6 +54,32 @@ CODEGEN_OPTIONS = {
 # while repeated loads avoid rereading unchanged bytes.
 _FILE_HASH_CACHE_CAPACITY = 8192
 _FILE_HASH_CACHE: OrderedDict[tuple[int, int, int, int, int], str] = OrderedDict()
+
+
+def _publish_compiled_artifact_directory(
+    temporary: Path, target: Path, *, attempts: int = 4
+) -> bool:
+    """Publish a completed cache directory, tolerating races and transient handles.
+
+    Returns true when this caller published the directory and false when another
+    caller already published the same content-addressed target.
+    """
+
+    if attempts < 1:
+        raise ValueError("compiled artifact publication attempts must be positive")
+    for attempt in range(attempts):
+        if target.exists():
+            return False
+        try:
+            os.replace(temporary, target)
+            return True
+        except (FileExistsError, PermissionError):
+            if target.exists():
+                return False
+            if attempt + 1 == attempts:
+                raise
+            time.sleep(0.05 * (2**attempt))
+    raise AssertionError("unreachable compiled artifact publication retry state")
 
 
 def _cached_sha256_file(path: Path) -> str:
@@ -829,7 +856,7 @@ class MdlSdkProgramProvider:
                 },
                 temporary,
             )
-            os.replace(temporary, target)
+            _publish_compiled_artifact_directory(temporary, target)
             return MdlCompiledArtifact.load(target, source_snapshot_id=snapshot.snapshot_id)
         except Exception:
             if temporary.is_dir():

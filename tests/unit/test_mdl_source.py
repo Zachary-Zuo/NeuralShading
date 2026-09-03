@@ -16,6 +16,7 @@ from ncls.references.mdl import (
     CODEGEN_OPTIONS,
     MDL_SDK_BUILD,
     MdlSdkProgramProvider,
+    _publish_compiled_artifact_directory,
     STB_COMMIT,
     STB_IMAGE_SHA256,
     MdlCompiledArtifact,
@@ -48,6 +49,45 @@ def _snapshot() -> SourceSnapshot:
         {"module_root": str(module_root.resolve())},
         source,
     )
+
+
+def test_compiled_artifact_publication_retries_a_transient_open_handle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temporary = tmp_path / "partial"
+    target = tmp_path / "published"
+    temporary.mkdir()
+    (temporary / "payload").write_bytes(b"ready")
+    real_replace = mdl_module.os.replace
+    calls = 0
+    delays: list[float] = []
+
+    def replace(source: Path, destination: Path) -> None:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise PermissionError("transient bridge handle")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(mdl_module.os, "replace", replace)
+    monkeypatch.setattr(mdl_module.time, "sleep", delays.append)
+
+    assert _publish_compiled_artifact_directory(temporary, target)
+    assert calls == 3
+    assert delays == [0.05, 0.1]
+    assert (target / "payload").read_bytes() == b"ready"
+
+
+def test_compiled_artifact_publication_accepts_an_existing_identity(
+    tmp_path: Path,
+) -> None:
+    temporary = tmp_path / "partial"
+    target = tmp_path / "published"
+    temporary.mkdir()
+    target.mkdir()
+
+    assert not _publish_compiled_artifact_directory(temporary, target)
+    assert temporary.is_dir()
 
 
 def _rich_snapshot() -> SourceSnapshot:

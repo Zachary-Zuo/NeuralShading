@@ -18,9 +18,7 @@ LINUX_LONG_PATH = PROJECT_ROOT / "configs/learning/metal-fused-full-linux-long.j
 REGISTRY_PATH = PROJECT_ROOT / "references/mdl-vmaterials2-v1/metal-opaque-v1.json"
 
 _LONG_PHASE_STEPS = {
-    "codec-warmup": 20_000,
-    "joint-appearance": 70_000,
-    "proposal-fit": 15_000,
+    "joint-coarse-to-fine": 105_000,
     "qat-refine": 15_000,
 }
 _LINUX_ROUTE_GEOMETRY = {
@@ -28,6 +26,124 @@ _LINUX_ROUTE_GEOMETRY = {
     "evaluator": (64, 1),
     "sampler": (64, 1),
 }
+
+_END_TO_END_GROUPS = [
+    "codec_role_stems",
+    "codec_encoder",
+    "codec_decoder",
+    "codec_semantic_heads",
+    "asset_adapter",
+    "quantization",
+    "typed_compiler",
+    "optimized_state_teacher",
+    "prepared_model",
+    "angular_bank",
+    "analytic_core",
+    "hybrid_evaluator",
+    "proposal_sampler",
+]
+_QAT_GROUPS = [
+    name for name in _END_TO_END_GROUPS if name != "optimized_state_teacher"
+]
+_END_TO_END_LOSSES = [
+    "codec-full",
+    "response-robust",
+    "linear-energy",
+    "peak-support",
+    "reciprocity",
+    "analytic-core-preservation",
+    "teacher-response",
+    "compiler-functional-distillation",
+    "proposal-forward-kl",
+    "proposal-density-fit",
+    "proposal-mode-coverage",
+    "proposal-weight-tail",
+    "sample-pdf-identity",
+]
+
+
+def build_windows_smoke(seed: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalize either the historical or current smoke into the shared recipe."""
+
+    result = deepcopy(dict(seed))
+    routes: dict[str, dict[str, Any]] = {}
+    recipes: dict[str, Any] = {}
+    for phase in result["phases"]:
+        recipes.update(phase["recipes"])
+        for route in phase["routes"]:
+            routes.setdefault(str(route["name"]), deepcopy(route))
+    if set(routes) != {"asset", "evaluator", "sampler"}:
+        raise ValueError("Metal smoke seed does not contain all three typed routes")
+    recipes.pop("runtime_quantization", None)
+    recipes["proposal_weight"] = {
+        "schema": "linear-nonzero-ramp@1",
+        "start": 0.05,
+        "end": 1.0,
+        "ramp_steps": 5000,
+    }
+    optimizer = {
+        "kind": "adam",
+        "betas": [0.9, 0.99],
+        "epsilon": 1e-8,
+        "weight_decay": 0.000001,
+    }
+    joint = {
+        "name": "joint-coarse-to-fine",
+        "steps": 8,
+        "routes": [routes["asset"], routes["evaluator"], routes["sampler"]],
+        "parameter_groups": list(_END_TO_END_GROUPS),
+        "loss_terms": list(_END_TO_END_LOSSES),
+        "recipes": recipes,
+        "optimizer": optimizer,
+        "optimizer_state_policy": "reset",
+        "schedule": {
+            "kind": "cosine",
+            "start": 0.0003,
+            "end": 0.00005,
+            "total_steps": 16,
+            "offset": 0,
+        },
+        "precision": {"autocast": "bfloat16", "gradient_scaler": False},
+        "checkpoint_boundary": True,
+        "transition": None,
+        "log_interval": 1,
+        "gradient_audit_interval": 4,
+        "prefetch_depth": 1,
+    }
+    qat_recipes = {
+        **recipes,
+        "proposal_weight": {
+            "schema": "linear-nonzero-ramp@1",
+            "start": 1.0,
+            "end": 1.0,
+            "ramp_steps": 1,
+        },
+        "runtime_quantization": "fp16-runtime-ste-int8-grid-qat-sensitive-fp32@1",
+    }
+    qat = {
+        **deepcopy(joint),
+        "name": "qat-refine",
+        "parameter_groups": list(_QAT_GROUPS),
+        "loss_terms": [*_END_TO_END_LOSSES, "runtime-fp16-qat"],
+        "recipes": qat_recipes,
+        "optimizer_state_policy": "carry-overlap",
+        "schedule": {
+            "kind": "cosine",
+            "start": 0.0001,
+            "end": 0.00002,
+            "total_steps": 16,
+            "offset": 8,
+        },
+        "precision": {"autocast": "fp32", "gradient_scaler": False},
+    }
+    result["phases"] = [joint, qat]
+    result["online_query"]["group_schedule"] = {
+        "recipe": "group-block-balanced@1",
+        "weight": "record-count",
+        "block_steps": 64,
+        "validation_offset_blocks": 104729,
+    }
+    return result
 
 
 def _full_cohort_materials(
@@ -72,7 +188,7 @@ def build_linux_configs(
                 route["options"]["asset_indices"] = list(range(52))
 
     long_run = deepcopy(smoke)
-    long_run["run_class"] = "profile"
+    long_run["run_class"] = "formal"
     long_run["recipe_id"] = "metal-fused-full-cohort-linux-long-120k@1"
     total_steps = sum(_LONG_PHASE_STEPS.values())
     offset = 0
@@ -143,11 +259,16 @@ def main() -> int:
     parser.add_argument("--report", type=Path)
     arguments = parser.parse_args()
     registry = MdlMetalRegistry.load(REGISTRY_PATH)
-    windows = _load_payload(WINDOWS_SMOKE_PATH)
+    windows_seed = _load_payload(WINDOWS_SMOKE_PATH)
+    windows = build_windows_smoke(windows_seed)
     expected_smoke, expected_long = build_linux_configs(windows, registry)
     if arguments.write:
+        write_json_atomic(WINDOWS_SMOKE_PATH, windows)
         write_json_atomic(LINUX_SMOKE_PATH, expected_smoke)
         write_json_atomic(LINUX_LONG_PATH, expected_long)
+    actual_windows = _load_payload(WINDOWS_SMOKE_PATH)
+    if actual_windows != windows:
+        raise ValueError("checked-in Metal Windows smoke is not the canonical generated form")
     actual_smoke = _load_payload(LINUX_SMOKE_PATH)
     actual_long = _load_payload(LINUX_LONG_PATH)
     if actual_smoke != expected_smoke or actual_long != expected_long:

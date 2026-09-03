@@ -73,9 +73,7 @@ def test_checked_in_linux_configs_are_full_cohort_canonical_pair() -> None:
     assert report["smoke_steps"] == 16
     assert report["long_steps"] == 120_000
     assert report["phase_names"] == [
-        "codec-warmup",
-        "joint-appearance",
-        "proposal-fit",
+        "joint-coarse-to-fine",
         "qat-refine",
     ]
     assert report["distributed"] is False
@@ -86,8 +84,8 @@ def test_linux_semantic_fingerprint_rejects_method_data_or_precision_drift() -> 
     smoke = TrainingConfig.load(LINUX_SMOKE_PATH).to_dict()
     baseline = semantic_training_fingerprint(smoke)
     for mutation in (
-        lambda value: value["phases"][1]["loss_terms"].append("unregistered-loss"),
-        lambda value: value["phases"][3]["precision"].update(autocast="bfloat16"),
+        lambda value: value["phases"][0]["loss_terms"].append("unregistered-loss"),
+        lambda value: value["phases"][1]["precision"].update(autocast="bfloat16"),
         lambda value: value["source"]["materials"].pop(),
     ):
         changed = deepcopy(smoke)
@@ -99,11 +97,16 @@ def test_windows_smoke_uses_the_registry_generated_stratified_activation_set() -
     config = TrainingConfig.load(WINDOWS_SMOKE_PATH)
     assert len(config.source["materials"]) == 3
     assert [phase.name for phase in config.phases] == [
-        "codec-warmup",
-        "joint-appearance",
-        "proposal-fit",
+        "joint-coarse-to-fine",
         "qat-refine",
     ]
+    assert set(route.name for route in config.phases[0].routes) == {
+        "asset",
+        "evaluator",
+        "sampler",
+    }
+    assert "proposal_sampler" in config.phases[0].parameter_groups
+    assert config.phases[0].recipes["proposal_weight"]["start"] > 0.0
     asset_routes = [
         route
         for phase in config.phases

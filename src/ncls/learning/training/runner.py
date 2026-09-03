@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 from contextlib import nullcontext
 from dataclasses import dataclass
+import hashlib
 import math
 import random
 import time
@@ -54,6 +55,7 @@ class OnlineTrainingProducer(Protocol):
     def state_dict(self) -> Mapping[str, Any]: ...
     def load_state_dict(self, state: Mapping[str, Any]) -> None: ...
     def end_iteration(self) -> None: ...
+    def profile_snapshot(self, *, reset: bool = False) -> Mapping[str, float]: ...
     def close(self) -> None: ...
 
 
@@ -131,6 +133,42 @@ def _tree_to_cpu(value: Any) -> Any:
     if isinstance(value, list):
         return [_tree_to_cpu(item) for item in value]
     return value
+
+
+def _merge_backend_profile(
+    target: dict[str, float], source: Mapping[str, float]
+) -> None:
+    for name, raw_value in source.items():
+        value = float(raw_value)
+        if name == "resident_groups":
+            target[name] = value
+        elif name.endswith("_max"):
+            target[name] = max(target.get(name, 0.0), value)
+        else:
+            target[name] = target.get(name, 0.0) + value
+
+
+def _backend_profile_metrics(
+    profile: Mapping[str, float], *, prefix: str
+) -> dict[str, float]:
+    result = {f"{prefix}{name}": float(value) for name, value in profile.items()}
+    requests = float(
+        profile.get("session_hits", 0.0) + profile.get("session_misses", 0.0)
+    )
+    result[f"{prefix}session_miss_rate"] = float(
+        profile.get("session_misses", 0.0)
+    ) / max(requests, 1.0)
+    return result
+
+
+def _execution_group_code(group_id: str) -> float:
+    try:
+        prefix = int(group_id[:12], 16)
+    except ValueError:
+        prefix = int.from_bytes(
+            hashlib.sha256(group_id.encode("utf-8")).digest()[:6], "big"
+        )
+    return float(prefix)
 
 
 def _tree_to_device(value: Any, device: torch.device) -> Any:
@@ -766,6 +804,21 @@ class TrainingRunner:
         ) * global_batch_multiplier
         run_started = time.perf_counter()
         run_start_step = global_step
+        phase_timing_index = phase_index
+        phase_timing_started = run_started
+        phase_timing_start_step = phase_step
+        preparation_window: list[float] = []
+        step_wall_window: list[float] = []
+        reference_group_codes: set[float] = set()
+        reference_last_group_code = 0.0
+        reference_candidate_count = 0
+        reference_rejected_count = 0
+        reference_rejection_rounds = 0
+        reference_rejection_rounds_max = 0
+        profile_snapshot = getattr(self.producer, "profile_snapshot", None)
+        pending_training_profile: dict[str, float] = {}
+        if callable(profile_snapshot):
+            profile_snapshot(reset=True)
         queue: deque[_PreparedStep] = deque()
         bar = self.progress_factory(
             total=target_step - global_step, desc="train", unit="step"
@@ -774,6 +827,12 @@ class TrainingRunner:
             while global_step < target_step:
                 phase_index, phase_step = self.config.locate_step(global_step)
                 phase = self.config.phases[phase_index]
+                if phase_timing_index != phase_index:
+                    phase_timing_index = phase_index
+                    phase_timing_started = time.perf_counter()
+                    phase_timing_start_step = phase_step
+                    step_wall_window.clear()
+                step_started = time.perf_counter()
                 next_validation = (
                     ((global_step // int(self.config.validation["interval"])) + 1)
                     * int(self.config.validation["interval"])
@@ -791,6 +850,23 @@ class TrainingRunner:
                 if not queue:
                     queue.append(self._prepare_step(phase, global_step))
                 prepared = queue.popleft()
+                preparation_window.append(prepared.preparation_seconds)
+                for batch in prepared.batches.values():
+                    provenance = batch.provenance
+                    group_id = provenance.get("reference_execution_group_id")
+                    if isinstance(group_id, str) and group_id:
+                        reference_last_group_code = _execution_group_code(group_id)
+                        reference_group_codes.add(reference_last_group_code)
+                    if isinstance(batch, EvaluatorBatch):
+                        candidate_count = int(provenance.get("candidate_count", 0))
+                        rejected_count = int(provenance.get("rejected_count", 0))
+                        rejection_rounds = int(provenance.get("rejection_rounds", 0))
+                        reference_candidate_count += candidate_count
+                        reference_rejected_count += rejected_count
+                        reference_rejection_rounds += rejection_rounds
+                        reference_rejection_rounds_max = max(
+                            reference_rejection_rounds_max, rejection_rounds
+                        )
                 if prepared.global_step != global_step:
                     raise RuntimeError("training prefetch queue lost deterministic step order")
                 audit = (
@@ -905,6 +981,7 @@ class TrainingRunner:
                 work_units += sum(
                     route.batch_size * route.direction_count for route in phase.routes
                 ) * global_batch_multiplier
+                step_wall_window.append(time.perf_counter() - step_started)
                 should_log = (
                     global_step == target_step
                     or phase_step == phase.steps
@@ -914,6 +991,13 @@ class TrainingRunner:
                     elapsed = time.perf_counter() - run_started
                     completed = global_step - run_start_step
                     speed = completed / max(elapsed, 1e-12)
+                    phase_elapsed = time.perf_counter() - phase_timing_started
+                    phase_completed = phase_step - phase_timing_start_step
+                    phase_speed = phase_completed / max(phase_elapsed, 1e-12)
+                    wall_values = np.asarray(step_wall_window, dtype=np.float64)
+                    rolling_speed = len(step_wall_window) / max(
+                        float(wall_values.sum()), 1e-12
+                    )
                     row: dict[str, float] = {
                         "step": float(global_step),
                         "phase_index": float(phase_index),
@@ -927,11 +1011,22 @@ class TrainingRunner:
                         ),
                         "elapsed_seconds": elapsed,
                         "steps_per_second": speed,
+                        "phase_steps_per_second": phase_speed,
+                        "rolling_steps_per_second": rolling_speed,
                         "eta_seconds": (target_step - global_step) / max(speed, 1e-12),
+                        "phase_eta_seconds": (
+                            phase.steps - phase_step
+                        ) / max(phase_speed, 1e-12),
+                        "rolling_eta_seconds": (
+                            target_step - global_step
+                        ) / max(rolling_speed, 1e-12),
                     }
                     if self.producer.device.type == "cuda":
                         row["peak_memory_bytes"] = float(
                             torch.cuda.max_memory_allocated(self.producer.device)
+                        )
+                        row["reserved_memory_bytes"] = float(
+                            torch.cuda.memory_reserved(self.producer.device)
                         )
                     report_loss, report_metrics = self._ddp_report(loss, metrics)
                     row["loss"] = float(report_loss)
@@ -942,6 +1037,83 @@ class TrainingRunner:
                             else float(value)
                         )
                     row.update(timing)
+                    preparation_values = np.asarray(preparation_window, dtype=np.float64)
+                    row.update(
+                        {
+                            "profile/step_wall_window_count": float(
+                                len(step_wall_window)
+                            ),
+                            "profile/step_wall_seconds_mean": float(
+                                wall_values.mean()
+                            ),
+                            "profile/step_wall_seconds_median": float(
+                                np.median(wall_values)
+                            ),
+                            "profile/step_wall_seconds_p90": float(
+                                np.quantile(wall_values, 0.9)
+                            ),
+                            "profile/step_wall_seconds_max": float(
+                                wall_values.max()
+                            ),
+                            "profile/batch_prepare_window_count": float(
+                                len(preparation_window)
+                            ),
+                            "profile/batch_prepare_wall_seconds_mean": float(
+                                preparation_values.mean()
+                            ),
+                            "profile/batch_prepare_wall_seconds_median": float(
+                                np.median(preparation_values)
+                            ),
+                            "profile/batch_prepare_wall_seconds_p90": float(
+                                np.quantile(preparation_values, 0.9)
+                            ),
+                            "profile/batch_prepare_wall_seconds_max": float(
+                                preparation_values.max()
+                            ),
+                            "profile/reference_execution_group_count": float(
+                                len(reference_group_codes)
+                            ),
+                            "profile/reference_last_group_id_u48": (
+                                reference_last_group_code
+                            ),
+                            "profile/reference_candidate_count": float(
+                                reference_candidate_count
+                            ),
+                            "profile/reference_rejected_count": float(
+                                reference_rejected_count
+                            ),
+                            "profile/reference_rejection_rate": float(
+                                reference_rejected_count
+                                / max(reference_candidate_count, 1)
+                            ),
+                            "profile/reference_rejection_rounds": float(
+                                reference_rejection_rounds
+                            ),
+                            "profile/reference_rejection_rounds_max": float(
+                                reference_rejection_rounds_max
+                            ),
+                        }
+                    )
+                    if callable(profile_snapshot):
+                        backend_profile = profile_snapshot(reset=True)
+                        _merge_backend_profile(
+                            pending_training_profile, backend_profile
+                        )
+                        row.update(
+                            _backend_profile_metrics(
+                                pending_training_profile,
+                                prefix="profile/reference_",
+                            )
+                        )
+                        pending_training_profile.clear()
+                    preparation_window.clear()
+                    step_wall_window.clear()
+                    reference_group_codes.clear()
+                    reference_last_group_code = 0.0
+                    reference_candidate_count = 0
+                    reference_rejected_count = 0
+                    reference_rejection_rounds = 0
+                    reference_rejection_rounds_max = 0
                     metric_rows.append(row)
                     if self.metric_callback is not None:
                         self.metric_callback(row)
@@ -983,24 +1155,42 @@ class TrainingRunner:
                 if needs_validation:
                     if queue:
                         raise RuntimeError("prefetch queue crossed a validation boundary")
+                    if callable(profile_snapshot):
+                        _merge_backend_profile(
+                            pending_training_profile,
+                            profile_snapshot(reset=True),
+                        )
                     if global_step == self.config.total_steps:
                         validation_phase_index = len(self.config.phases) - 1
                         validation_phase_step = self.config.phases[-1].steps
                     else:
                         validation_phase_index, validation_phase_step = self.config.locate_step(global_step)
                     validation_started = time.perf_counter()
-                    new_rows = self._validation_rows(
-                        model,
-                        validation_phase_index,
-                        validation_phase_step,
-                        global_step,
-                    )
+                    validation_backend_profile: Mapping[str, float] = {}
+                    try:
+                        new_rows = self._validation_rows(
+                            model,
+                            validation_phase_index,
+                            validation_phase_step,
+                            global_step,
+                        )
+                    finally:
+                        if callable(profile_snapshot):
+                            validation_backend_profile = profile_snapshot(reset=True)
                     validation_seconds = time.perf_counter() - validation_started
                     new_rows = [
                         {
                             **row,
                             "profile/validation_wall_seconds": (
                                 validation_seconds if index == 0 else 0.0
+                            ),
+                            **(
+                                _backend_profile_metrics(
+                                    validation_backend_profile,
+                                    prefix="profile/validation_reference_",
+                                )
+                                if index == 0 and validation_backend_profile
+                                else {}
                             ),
                         }
                         for index, row in enumerate(new_rows)

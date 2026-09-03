@@ -90,6 +90,11 @@ def test_checkpoint_v4_roundtrip_and_tensor_schema(tmp_path):
     restored = load_checkpoint(path, descriptor=descriptor)
     assert restored.format_version == 4 and restored.global_step == 1
 
+    with pytest.raises(ValueError, match="method descriptor identity mismatch"):
+        replace(restored, implementation_identity="0" * 64).validate_method(
+            descriptor
+        )
+
 
 def test_complete_checkpoint_rejects_incomplete_required_gradient_coverage() -> None:
     descriptor = METHOD_DEFINITION.descriptor

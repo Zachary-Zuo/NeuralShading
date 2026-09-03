@@ -14,6 +14,8 @@ expand_source_states(family, base_snapshots, typed_state_recipe) -> ExpandedSour
 MethodDefinition.training_objective(model, batches, phase) -> (loss, metrics)
 TrainingRunner.run(resume=None, stop_at_step=None) -> TrainingRunResult
 TrainingCheckpoint.load(path) -> TrainingCheckpoint@4
+assess_checkpoint_readiness(checkpoint, descriptor, mode="formal" | "diagnostic-evaluator")
+  -> CheckpointReadiness@1
 MetalAssetCooker.cook_asset(asset_index, mode, refinement_steps, refinement_bound) -> MetalCompiledAssetState
 ```
 
@@ -31,6 +33,7 @@ MetalAssetCooker.cook_asset(asset_index, mode, refinement_steps, refinement_boun
 - 三种batch不共享dummy字段。method descriptor必须严格登记batch dependencies与parameter ownership。
 - runner只启用phase groups；optimizer状态以parameter name保存，`carry-overlap`仅传递同名交集。autocast/scaler由phase配置。
 - 每步GPU聚合finite检查；audit cadence验证每个required group存在nonzero gradient和实际参数更新。metrics只在log cadence同步。
+- optional producer profile在training与validation之间严格分账。validation开始前先把尚未落盘的training counter暂存，validation结束后以`profile/validation_reference_*`写入首条validation row并reset；下一条training row只合并`profile/reference_*`训练计数。counter求和、`*_max`取最大、`resident_groups`取最后状态。
 - prefetch有界且不跨validation、checkpoint、phase或stop边界；checkpoint query cursor不得领先已消费batch。
 - objective每次返回active required component的全部Python outputs；完成checkpoint前required groups的gradient/update coverage必须齐全。
 - checkpoint严格冻结method/components/config/phase graph/reference plan/asset collection/query/source identity与当前phase optimization状态。
@@ -46,7 +49,9 @@ MetalAssetCooker.cook_asset(asset_index, mode, refinement_steps, refinement_boun
 | objective漏required component output | generic conformance失败 |
 | resume identity或phase cursor漂移 | checkpoint恢复拒绝 |
 | tile越界、role/domain不匹配或mip chain不canonical | collection在materialize前拒绝 |
-| completed checkpoint缺required group finite/nonzero/update coverage | checkpoint写出拒绝 |
+| formal export不是`run_class=formal`、phase不是`complete`，或缺required group finite/nonzero/update coverage | readiness拒绝；不生成正式package/catalog |
+| diagnostic evaluator preview没有exact descriptor、step-1端到端evaluator组覆盖或合法phase | readiness拒绝；不得用旧tensor shape兼容冒充可部署状态 |
+| validation backend counter出现在下一条training profile | runner profile隔离测试失败；不得据此归因冷启动或长期吞吐 |
 | typed-state recipe schema/字段、registry locator或range未知 | plan/session创建前拒绝 |
 | resume的typed-state pool identity漂移 | producer恢复拒绝，不恢复任何cursor |
 | Metal profile count、layout identity、slot/token上限或required route不精确匹配full profile | model/method config构造拒绝，不创建缩小版identity |
@@ -59,16 +64,16 @@ MetalAssetCooker.cook_asset(asset_index, mode, refinement_steps, refinement_boun
 - Good：MaterialX的base-color/roughness/metalness/normal按各自role共享一个collection，encoder与decoder联合训练；phase checkpoint同时冻结asset collection identity与每个required group的梯度/更新覆盖。
 - Good：同一Metal graph的base export与多个typed states进入一个group；训练batch先选group再选group-local state，checkpoint冻结完整state pool identity。
 - Good：Metal typed edit只重编`MaterialProgramState`，替换texture bundle只改变`AssetState`；相邻mip分别经shared encoder/decoder后在structured state中连续插值。
-- Good：Windows smoke先以FP32运行codec，再以BF16运行full joint appearance和proposal fit；所有13个required parameter groups记录finite/nonzero/update coverage。
+- Good：Windows smoke从第1步同时执行asset/evaluator/sampler三条route，13个required parameter groups都记录finite/nonzero/update coverage；第二phase再以FP32执行部署态QAT。
 - Base：常量1×1资产仍经同一个tile+halo请求与lease协议，只是其canonical mip chain长度为1。
-- Bad：每个batch新建collection使cache永远失效；在tile lease存活时驱逐payload；或仅因loss finite就把从未更新decoder的checkpoint标成完成。
+- Bad：每个batch新建collection使cache永远失效；在tile lease存活时驱逐payload；或仅因loss finite/shape compatible就把非formal、未完成checkpoint标成正式可部署。
 - Bad：预先离线编码52个纹理grid后只训练evaluator；把bounded refinement和direct control写入同一个asset identity；或为了mixed precision把angular lookup改成最近邻。
 
 ## 6. Tests Required
 
 - unit：三种batch、multi-asset tile+halo、phase graph、carry-overlap resume、component正负例、checkpoint v4；
 - integration：generic recipe registry扩展Metal train/validation states并验证非默认snapshot IDs不重叠、pool identity可恢复；
-- GPU：NVIDIA Python/Slang evaluator与sampler梯度；Metal full-shape finite/nonnegative、typed missing/discrete与bundle分离、三路径asset cook、BF16/QAT敏感路径、Python/Slang matched proposal parity，以及真实online四phase smoke/resume/evaluate；
+- GPU：NVIDIA Python/Slang evaluator与sampler梯度；Metal full-shape finite/nonnegative、typed missing/discrete与bundle分离、三路径asset cook、BF16/QAT敏感路径、Python/Slang matched proposal parity，以及真实online两phase smoke/resume/evaluate；
 - static：无固定lifecycle、旧schema reader、offline batch或family-specific producer。
 
 ## 7. Wrong vs Correct
@@ -133,7 +138,7 @@ nclsMetalFusedProposalPdf(proposal, wo, wi) -> float
 - 每个component先在其局部上半球采样，再将renderer-z为负的方向折回。PDF必须累加原方向与z镜像方向两个preimage，不能用rejection、null sample或只算一个preimage。
 - fallback权重下限是0.02，保证合法非零能量state对整个renderer上半球有正密度。sample随后只调用一次公共directional evaluator，并形成`f * max(wi.z,0) / pdf.forward`；独立`pdf()`不执行texture decode、typed compiler或evaluator。
 - zero/nonfinite energy clue、非法weight/active关系、错误enum/frame index、退化authored frame、grazing hemisphere、非法`float2`和prepared invalid都tensor化fail closed。反射轴偶然与旋转tangent共线不是坏state；使用确定性fallback tangent继续形成正交基。
-- `proposal-fit`只启用`proposal_sampler`group，但同时消费`reference-evaluator`与`method-sampler`route；自采样forward-KL、evaluator-direction density fit、reflection/grazing/cosine mode coverage、weight-tail与sample/PDF identity必须同时执行。
+- proposal从`joint-coarse-to-fine`第1步开始与appearance共同训练。自采样forward-KL、evaluator-direction density fit、reflection/grazing/cosine mode coverage、weight-tail与sample/PDF identity必须同时执行；其evaluator response是detached target，functional call只允许`proposal_sampler`拥有proposal objective梯度，防止proposal loss反向拖动evaluator去迎合当前采样器。
 
 ### 4. Validation & Error Matrix
 
@@ -145,7 +150,7 @@ nclsMetalFusedProposalPdf(proposal, wo, wi) -> float
 | 合法axis与tangent偶然共线 | 使用由axis确定的fallback tangent，proposal保持有效 |
 | `sample_u`非有限或不在`[0,1)` | 返回invalid sample与零PDF，不触发GPU host同步 |
 | sample方向重新调用独立PDF不一致，或weight identity不成立 | 数值测试失败，不用clamp或另一proposal修补 |
-| proposal phase缺finite/nonzero gradient或parameter update | complete checkpoint构造失败 |
+| proposal在首phase被禁用、权重从0开始，或缺finite/nonzero gradient/parameter update | config/complete checkpoint构造失败 |
 
 ### 5. Good / Base / Bad Cases
 
@@ -160,7 +165,7 @@ nclsMetalFusedProposalPdf(proposal, wo, wi) -> float
 - unit：11种单component+fallback mixture半球积分、sample→independent forward/reverse PDF、非法state/random/grazing/zero-energy/degenerate-frame fail closed、axis-tangent共线回归、layout/preflight闭包；
 - GPU：full evaluator返回精确`[batch,direction,3]`、sample/PDF/weight identity、proposal group固定目标下降；
 - Falcor/Slang：至少256个跨state/frame/wo/random tuple probes，比较sample方向、component、forward/reverse/direct PDF并覆盖11个component；
-- online：full-shape四phase小步数训练，complete checkpoint断言13/13 groups finite、nonzero gradient和update，proposal identity error为零；
+- online：full-shape两phase小步数训练，首个audit即断言13/13 groups finite、nonzero gradient和update，complete checkpoint的proposal identity error为零；
 - static：generated layout `--check`、sample evaluator call上限1、随机数上限2、Falcor上游工作树干净。
 
 ### 7. Wrong vs Correct
@@ -184,7 +189,7 @@ pdf = local_pdf(to_local(wi))
 pdf = local_pdf(to_local(wi)) + local_pdf(to_local(mirror_z(wi)))
 ```
 
-## Metal四phase QAT与Linux单GPU交接合同
+## Metal step-1端到端、两phase QAT与Linux交接合同
 
 ### 1. Scope / Trigger
 
@@ -204,40 +209,47 @@ python -m tools.learning.build_metal_linux_handoff --output <handoff.json>
 
 ### 3. Contracts
 
-- phase顺序固定为`codec-warmup → joint-appearance → proposal-fit → qat-refine`。QAT同时执行codec、pure typed compiler、full evaluator与matched proposal objective，active groups为codec六组、typed compiler、prepared/angular/analytic/hybrid evaluator与proposal；training-only optimized-state teacher继续作为detached/control target但不在QAT optimizer中。
+- phase顺序固定为`joint-coarse-to-fine → qat-refine`。首phase从第1步同时执行codec、pure typed compiler、optimized-state teacher、full evaluator与matched proposal，13个parameter groups全部active；粗到细只能通过冻结的loss-weight/schedule实现，不能用“先只训codec”的phase切断目标response梯度。QAT继续执行完整部署路径，但training-only optimized-state teacher不在QAT optimizer中。
 - QAT保留FP32 master。`metal_runtime_parameter_names()`登记的最终部署weights只在functional forward中使用`x + (fp16(x)-x).detach()`；非runtime encoder/semantic head/optimized teacher不做FP16伪量化。codec high/low grid继续使用已有INT8 per-channel STE；phase precision为FP32，使FP16 storage模拟后的值按runtime语义进入FP32敏感累积。
 - objective必须返回joint与proposal全部component trace，再附`runtime_fp16_quantization_trace`；fake quantization不能原地覆盖model state、改变parameter names、optimizer引用或checkpoint schema。
-- Windows smoke使用registry机械生成的3-export activation set和3个对应asset index，只缩source/batch/step；model shape、四phase route/loss/precision和所有required components不缩。fixed-stream micro-overfit每次重新执行authoritative reference，只恢复同一query cursor，不保存response batch。
+- 每个phase的`proposal_weight`固定为`linear-nonzero-ramp@1`且`start > 0`。proposal objective通过`torch.func.functional_call`冻结非proposal参数；QAT时proposal可读取FP16 STE runtime值，但梯度仍只归`proposal_sampler`。
+- Windows smoke使用registry机械生成的3-export activation set和3个对应asset index，只缩source/batch/step；model shape、两phase route/loss/precision和所有required components不缩。fixed-stream micro-overfit每次重新执行authoritative reference，只恢复同一query cursor，不保存response batch。
 - Linux smoke/long都显式包含registry全部692个opaque export和52个asset。两者source、typed-state recipe、model、route options、groups、loss、precision、optimizer与batch geometry完全相同；只允许run class/recipe identity、phase step budget、schedule total/offset和log/audit/validation cadence不同。evaluator/sampler的`direction_count`固定1；吞吐通过group-homogeneous `batch_size`扩展。
+- online query必须声明`group_schedule={recipe:"group-block-balanced@1", weight:"record-count", block_steps:64, validation_offset_blocks:104729}`。cycle先让每个execution group各出现一次，再按record count确定性加权；一个64-step block与一个DDP rank只绑定一个group，避免每step切group导致反复materialize。validation在同一cycle中使用冻结的block offset，方向/source RNG和group选择都与training流独立但可恢复。reference session只请求训练实际使用的`evaluate` operation，不构建reference `sample/pdf` pass。
 - `--stop-at-step N`只允许`resume.global_step <= N <= config.total_steps`，正常写出含optimizer/scheduler/precision/RNG/query cursor的checkpoint。跨config恢复仍拒绝；Linux long先用long config自身停点，再以同一config恢复。
-- cadence记录`batch_prepare_wall`、forward/backward/optimizer GPU event、validation/checkpoint write、peak memory与显式sync；普通非log/audit step不新增同步。review的固定window/bootstrap delta、VRAM/time/bytes是report-only，不自动触发formal、追加seed、ablation或Pareto。
+- cadence记录step wall与batch prepare的window count/mean/median/p90/max、phase-local与rolling step rate/ETA、48-bit group ID前缀及window group count、candidate/rejected/round统计、forward/backward/optimizer GPU event、training/validation分账的session hit/miss/create/evict、runtime/pass/resource/slot build、operation dispatch/residency、validation/checkpoint write、allocated/reserved peak memory与显式sync；普通非log/audit step不新增同步。review用rolling而非run-global累计rate汇总；固定window/bootstrap delta、VRAM/time/bytes是report-only，不自动触发formal、追加seed、ablation或Pareto。
+- 正式导出要求exact method identity、`run_class=formal`、`phase_name=complete`和全部required group覆盖。未完成checkpoint只能经显式`diagnostic-evaluator`模式导出evaluate-only preview，capability必须移除`sample/pdf`，UI/capture明确标注diagnostic；tensor shape compatible不是readiness。
 
 ### 4. Validation & Error Matrix
 
 | 条件 | 行为 |
 |---|---|
-| 缺`qat-refine`、route/group/loss不精确或QAT不是FP32敏感累积recipe | method config构造失败 |
+| phase graph不是两phase、首phase缺任一route/group/loss、proposal weight为0，或QAT不是FP32敏感累积recipe | method config构造失败 |
 | runtime state未出现在functional parameter/buffer tree、或对非浮点runtime tensor做FP16 STE | QAT forward失败，不退回未量化forward |
 | QAT只执行joint或proposal一侧、漏required output | generic objective conformance失败 |
 | evaluator/sampler `direction_count != 1` | config验证失败；不把provider的单方向合同静默改义 |
 | Linux config少于692 source、source/loss/precision/batch geometry漂移 | generated-form/config-pair验证失败 |
+| group schedule字段漂移、block/validation offset非正或weight不是record-count | method/producer构造失败，不退回per-step group轮转或同group validation |
+| training请求reference `sample/pdf`，或block内持续出现session miss/create | 性能结构门失败；先查operation plan/session lifecycle，不用增加超时掩盖 |
 | 多值/UUID `CUDA_VISIBLE_DEVICES` 在单卡入口，或DDP rank/GPU列表不一致 | Linux launcher/交接合同拒绝 |
 | review metric含NaN/Inf或属于另一config | review生成失败 |
 | Windows package与MDL viewer catalog的source snapshot不同 | viewer slot为unsupported；生成同locator catalog后重跑，不放宽snapshot identity |
 
 ### 5. Good / Base / Bad Cases
 
-- Good：QAT functional call临时替换runtime weights为FP16-rounded STE tensor，optimizer仍持有原FP32 parameter，完成step后`state_dict()`名称和值域合同不变。
+- Good：第1个joint audit中codec/compiler/evaluator/proposal 13组都有真实更新；QAT functional call临时替换runtime weights为FP16-rounded STE tensor，optimizer仍持有原FP32 parameter，完成step后`state_dict()`名称和值域合同不变。
 - Good：Linux smoke与long均加载692 locator；smoke使用long相同的asset 12/evaluator 64/sampler 64 geometry，因此目标机review可用于估算long的VRAM和ETA。
+- Good：第9个group进入容量8的session时只有block首个request发生一次miss/create/evict，后续63步均hit且resident保持8；validation事件只出现在`profile/validation_reference_*`。
 - Base：Windows固定query micro-overfit只使用3-export activation subset，但每次重新发出reference query且`target_f`始终在`cuda:0`，它只证明数值可优化，不宣称泛化质量。
 - Bad：导出前调用`quantize_runtime_model()`原地覆盖master后继续训练；或QAT阶段只改INT8 grid而不让FP16 runtime weights进入forward。
+- Bad：前20k只训练codec，随后把该checkpoint当作可部署evaluator；或每step跨group轮转并把懒materialize时间误判为模型反向变慢。
 - Bad：Linux long沿用3-export Windows source list；或把`direction_count`改成8绕过producer的单方向合同。
 
 ### 6. Tests Required
 
-- unit：FP16 STE前向等于round-trip FP16且gradient为1；QAT groups覆盖全部runtime parameter groups但排除optimized teacher；四phase config精确验证；Linux generated config为692-source同semantic fingerprint；handoff无distributed/自动后续。
-- GPU：full model BF16/QAT finite、13组gradient/update、fixed proposal下降；真实Windows四phase在首个QAT step停点并恢复至complete。
-- online：fixed query cursor下四phase分别重复authoritative reference，初尾window记录真实下降且无response持久化；完整checkpoint evaluate与package export通过。
+- unit：FP16 STE前向等于round-trip FP16且gradient为1；proposal objective只给proposal group梯度；QAT groups覆盖全部runtime parameter groups但排除optimized teacher；两phase config精确验证；formal/diagnostic readiness正负例；training/validation backend profile隔离；Linux generated config为692-source同semantic fingerprint；handoff无自动后续。
+- GPU：full model BF16/QAT finite、13组gradient/update、fixed proposal下降；真实Windows两phase在首个QAT step停点并恢复至complete。
+- online：fixed query cursor下两phase分别重复authoritative reference，初尾window记录真实下降且无response持久化；完整formal checkpoint evaluate与package export通过。
 - viewer：package、catalog与scene material的source snapshot一致；PT/deferred两个slot ready且linear EXR finite。
 - static：config generator `--check`、full-cohort preflight、Linux launcher shell syntax、DDP rank0/checkpoint语义、Falcor clean、`git diff --check`。
 

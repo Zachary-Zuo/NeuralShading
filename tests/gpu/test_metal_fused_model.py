@@ -3,7 +3,12 @@ from __future__ import annotations
 import pytest
 import torch
 
-from ncls.learning.batches import AssetTileBatch
+from ncls.learning.batches import (
+    AssetTileBatch,
+    EvaluatorBatch,
+    MethodSamplerBatch,
+    TrainingConditioning,
+)
 from ncls.learning.methods.metal_fused import METHOD_DEFINITION
 from ncls.learning.models.metal_fused import (
     METAL_FUSED_REQUIRED_CONTEXT,
@@ -314,3 +319,96 @@ def test_proposal_group_has_finite_gradients_and_descends_on_fixed_density_targe
     assert observed_finite_nonzero
     assert float(final_loss.detach()) < float(initial_loss.detach())
     assert float(final_density.detach()) > float(initial_density.detach())
+
+
+def test_joint_proposal_objective_detaches_every_nonproposal_parameter() -> None:
+    pytest.importorskip("slangpy")
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is required")
+    device = torch.device("cuda:0")
+    torch.manual_seed(20260903)
+    model = MetalFusedNeuralMaterialModel.from_context(
+        METAL_FUSED_REQUIRED_CONTEXT
+    ).to(device)
+    values = _conditioning(device)
+    conditioning = TrainingConditioning(
+        "mdl.program@1", ("a" * 64,), values, {"fixture": True}
+    )
+    wi = torch.nn.functional.normalize(
+        torch.tensor([[[0.1, 0.3, 1.0]]], device=device), dim=-1
+    )
+    evaluator = EvaluatorBatch(
+        conditioning,
+        wi,
+        torch.full_like(wi, 0.25),
+    )
+    sampler = MethodSamplerBatch(
+        conditioning,
+        torch.tensor([[0.731, 0.217]], device=device),
+    )
+    loss, _ = METHOD_DEFINITION._proposal_objective(
+        model, {"evaluator": evaluator, "sampler": sampler}
+    )
+    loss.backward()
+
+    registry = METHOD_DEFINITION.parameter_registry(model)
+    for group, parameters in registry.items():
+        gradients = [parameter.grad for parameter in parameters]
+        if group == "proposal_sampler":
+            assert all(value is not None for value in gradients)
+            assert any(bool(torch.count_nonzero(value)) for value in gradients)
+        else:
+            assert all(value is None for value in gradients), group
+
+
+def test_end_to_end_step_zero_updates_evaluator_codec_teacher_and_proposal() -> None:
+    pytest.importorskip("slangpy")
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is required")
+    device = torch.device("cuda:0")
+    torch.manual_seed(20260903)
+    model = MetalFusedNeuralMaterialModel.from_context(
+        METAL_FUSED_REQUIRED_CONTEXT
+    ).to(device)
+    values = _conditioning(device)
+    conditioning = TrainingConditioning(
+        "mdl.program@1", ("a" * 64,), values, {"fixture": True}
+    )
+    wi = torch.nn.functional.normalize(
+        torch.tensor([[[0.1, 0.3, 1.0]]], device=device), dim=-1
+    )
+    batches = {
+        "asset": _asset_batch(device),
+        "evaluator": EvaluatorBatch(conditioning, wi, torch.full_like(wi, 0.25)),
+        "sampler": MethodSamplerBatch(
+            conditioning, torch.tensor([[0.731, 0.217]], device=device)
+        ),
+    }
+    try:
+        loss, metrics = METHOD_DEFINITION.training_objective(
+            model,
+            batches,
+            {
+                "name": "joint-coarse-to-fine",
+                "phase_step": 0,
+                "recipes": {
+                    "proposal_weight": {
+                        "schema": "linear-nonzero-ramp@1",
+                        "start": 0.05,
+                        "end": 1.0,
+                        "ramp_steps": 5000,
+                    }
+                },
+            },
+        )
+        loss.backward()
+    finally:
+        batches["asset"].release()
+    assert metrics["proposal_objective_weight"] == pytest.approx(0.05)
+    assert float(metrics["response_robust_loss"]) > 0.0
+    assert float(metrics["proposal_density_fit_loss"]) > 0.0
+    for group, parameters in METHOD_DEFINITION.parameter_registry(model).items():
+        gradients = [value.grad for value in parameters if value.grad is not None]
+        assert gradients, group
+        assert all(bool(torch.isfinite(value).all()) for value in gradients), group
+        assert any(bool(torch.count_nonzero(value)) for value in gradients), group

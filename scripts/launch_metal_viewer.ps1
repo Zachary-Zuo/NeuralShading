@@ -3,8 +3,11 @@ param(
     [string]$Configuration = "Release",
     [uint32]$Width = 1600,
     [uint32]$Height = 900,
-    [string]$CatalogRoot = "artifacts\viewer\metal-step00020000",
+    [string]$CatalogRoot = "artifacts\viewer\metal-step00120000",
+    [string]$Checkpoint = "artifacts\metal-linux-training\long\checkpoint.step00120000.pt",
     [switch]$AcceptNvidiaOmniverseTerms,
+    [switch]$DiagnosticPreview,
+    [uint32]$DiagnosticLimit = 0,
     [switch]$SkipPrepare,
     [switch]$SkipBuild
 )
@@ -18,6 +21,9 @@ $catalog = Join-Path (Join-Path $projectRoot $CatalogRoot) "catalog.json"
 if (-not $SkipPrepare -and -not (Test-Path -LiteralPath $catalog -PathType Leaf)) {
     & (Join-Path $PSScriptRoot "prepare_metal_viewer.ps1") `
         -OutputRoot $CatalogRoot `
+        -Checkpoint $Checkpoint `
+        -DiagnosticPreview:$DiagnosticPreview `
+        -DiagnosticLimit $DiagnosticLimit `
         -AcceptNvidiaOmniverseTerms:$AcceptNvidiaOmniverseTerms
     if (-not $?) { throw "Failed to prepare the linked Metal viewer catalog" }
 }
@@ -36,7 +42,7 @@ if (-not (Test-Path -LiteralPath $catalog -PathType Leaf)) {
 
 $arguments = @(
     "--material", $catalog,
-    "--bundle-root", (Join-Path (Join-Path $projectRoot $CatalogRoot) "manual-packages"),
+    "--bundle-root", (Join-Path (Join-Path $projectRoot $CatalogRoot) "packages"),
     "--evaluator-preview-lighting",
     "--width", $Width.ToString(),
     "--height", $Height.ToString()

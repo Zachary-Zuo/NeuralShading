@@ -80,6 +80,7 @@ _JOINT_GROUPS = (
     "hybrid_evaluator",
 )
 _PROPOSAL_GROUPS = ("proposal_sampler",)
+_END_TO_END_GROUPS = (*_JOINT_GROUPS, *_PROPOSAL_GROUPS)
 _QAT_REFINE_GROUPS = (
     *_CODEC_GROUPS,
     "typed_compiler",
@@ -218,126 +219,126 @@ _COMPONENTS = (
     _component(
         "role-aware-texture-stems",
         ("codec_role_stems",),
-        ("codec-warmup", "joint-appearance", "qat-refine"),
+        ("joint-coarse-to-fine", "qat-refine"),
         ("asset-tile",),
         ("codec_role_stems_trace",),
     ),
     _component(
         "bundle-set-shared-unet-encoder",
         ("codec_encoder",),
-        ("codec-warmup", "joint-appearance", "qat-refine"),
+        ("joint-coarse-to-fine", "qat-refine"),
         ("asset-tile",),
         ("codec_encoder_trace", "codec_bundle_attention_trace"),
     ),
     _component(
         "independent-high-low-qat-grids",
         ("quantization",),
-        ("codec-warmup", "joint-appearance", "qat-refine"),
+        ("joint-coarse-to-fine", "qat-refine"),
         ("asset-tile",),
         ("codec_quantization_trace", "codec_qat_loss"),
     ),
     _component(
         "shared-structured-decoder",
         ("codec_decoder",),
-        ("codec-warmup", "joint-appearance", "qat-refine"),
+        ("joint-coarse-to-fine", "qat-refine"),
         ("asset-tile",),
         ("codec_decoder_trace", "codec_structured_head_trace"),
     ),
     _component(
         "training-semantic-heads",
         ("codec_semantic_heads",),
-        ("codec-warmup", "joint-appearance", "qat-refine"),
+        ("joint-coarse-to-fine", "qat-refine"),
         ("asset-tile",),
         ("codec_semantic_heads_trace", "codec_semantic_loss"),
     ),
     _component(
         "bounded-rank8-asset-adapter",
         ("asset_adapter",),
-        ("codec-warmup", "joint-appearance", "qat-refine"),
+        ("joint-coarse-to-fine", "qat-refine"),
         ("asset-tile",),
         ("codec_adapter_trace",),
     ),
     _component(
         "pure-typed-set-compiler",
         ("typed_compiler",),
-        ("joint-appearance", "qat-refine"),
+        ("joint-coarse-to-fine", "qat-refine"),
         ("reference-evaluator",),
         ("typed_compiler_trace", "compiler_distillation_loss"),
     ),
     _component(
         "target-visible-optimized-state-control",
         ("optimized_state_teacher",),
-        ("joint-appearance",),
+        ("joint-coarse-to-fine",),
         ("reference-evaluator",),
         ("optimized_teacher_trace", "teacher_response_loss"),
     ),
     _component(
         "deterministic-spatial-access-two-mip-prepare",
         ("prepared_model",),
-        ("joint-appearance", "qat-refine"),
+        ("joint-coarse-to-fine", "qat-refine"),
         ("reference-evaluator",),
         ("spatial_access_trace", "adjacent_mip_trace"),
     ),
     _component(
         "learned-lobe-frames-and-view-prepare",
         ("prepared_model",),
-        ("joint-appearance", "qat-refine"),
+        ("joint-coarse-to-fine", "qat-refine"),
         ("reference-evaluator",),
         ("prepared_frames_trace", "prepared_view_trace"),
     ),
     _component(
         "raw-cartesian-direction",
         ("hybrid_evaluator",),
-        ("joint-appearance", "qat-refine"),
+        ("joint-coarse-to-fine", "qat-refine"),
         ("reference-evaluator",),
         ("direction_raw_trace",),
     ),
     _component(
         "stable-half-difference-direction",
         ("hybrid_evaluator",),
-        ("joint-appearance", "qat-refine"),
+        ("joint-coarse-to-fine", "qat-refine"),
         ("reference-evaluator",),
         ("direction_half_difference_trace",),
     ),
     _component(
         "shared-warped-angular-bank",
         ("angular_bank",),
-        ("joint-appearance", "qat-refine"),
+        ("joint-coarse-to-fine", "qat-refine"),
         ("reference-evaluator",),
         ("angular_multiscale_trace", "angular_difference_trace"),
     ),
     _component(
         "six-slot-source-aware-analytic-core",
         ("analytic_core", "typed_compiler"),
-        ("joint-appearance", "qat-refine"),
+        ("joint-coarse-to-fine", "qat-refine"),
         ("reference-evaluator",),
         ("analytic_core_trace", "analytic_core_loss"),
     ),
     _component(
         "bounded-multiplicative-correction",
         ("hybrid_evaluator",),
-        ("joint-appearance", "qat-refine"),
+        ("joint-coarse-to-fine", "qat-refine"),
         ("reference-evaluator",),
         ("multiplicative_correction_trace",),
     ),
     _component(
         "four-positive-residual-lobes",
         ("hybrid_evaluator", "typed_compiler"),
-        ("joint-appearance", "qat-refine"),
+        ("joint-coarse-to-fine", "qat-refine"),
         ("reference-evaluator",),
         ("positive_residual_lobes_trace",),
     ),
     _component(
         "free-positive-rgb-tail",
         ("hybrid_evaluator",),
-        ("joint-appearance", "qat-refine"),
+        ("joint-coarse-to-fine", "qat-refine"),
         ("reference-evaluator",),
         ("free_positive_tail_trace",),
     ),
     _component(
         "eleven-component-matched-proposal-mixture",
         ("proposal_sampler",),
-        ("proposal-fit", "qat-refine"),
+        ("joint-coarse-to-fine", "qat-refine"),
         ("reference-evaluator", "method-sampler"),
         (
             "proposal_state_trace",
@@ -354,7 +355,7 @@ _COMPONENTS = (
     _component(
         "folded-full-hemisphere-support",
         ("proposal_sampler",),
-        ("proposal-fit", "qat-refine"),
+        ("joint-coarse-to-fine", "qat-refine"),
         ("reference-evaluator", "method-sampler"),
         ("proposal_support_trace", "proposal_fallback_trace"),
         (
@@ -366,7 +367,7 @@ _COMPONENTS = (
     _component(
         "sample-pdf-throughput-identity",
         ("proposal_sampler",),
-        ("proposal-fit", "qat-refine"),
+        ("joint-coarse-to-fine", "qat-refine"),
         ("reference-evaluator", "method-sampler"),
         ("proposal_sample_pdf_trace", "proposal_weight_identity_trace"),
         (
@@ -378,8 +379,8 @@ _COMPONENTS = (
 )
 
 
-class _MetalQatRefineExecution(nn.Module):
-    """One functional-call boundary for the complete quantized runtime path."""
+class _MetalAppearanceExecution(nn.Module):
+    """Functional-call boundary for the evaluator/codec objective."""
 
     def __init__(
         self,
@@ -393,26 +394,25 @@ class _MetalQatRefineExecution(nn.Module):
     def forward(
         self, batches: Mapping[str, OnlineTrainingBatch]
     ) -> tuple[torch.Tensor, Mapping[str, torch.Tensor | float]]:
-        if set(batches) != {"asset", "evaluator", "sampler"}:
-            raise ValueError("Metal QAT refine requires asset, evaluator and sampler routes")
-        joint_loss, joint_metrics = self.definition.training_objective(
-            self.model,
-            {"asset": batches["asset"], "evaluator": batches["evaluator"]},
-            {"name": "joint-appearance"},
-        )
-        proposal_loss, proposal_metrics = self.definition._proposal_objective(
-            self.model,
-            {"evaluator": batches["evaluator"], "sampler": batches["sampler"]},
-        )
-        metrics = dict(joint_metrics)
-        metrics.update(proposal_metrics)
-        metrics.update(
-            {
-                "qat_refine_appearance_loss": joint_loss.detach(),
-                "qat_refine_proposal_loss": proposal_loss.detach(),
-            }
-        )
-        return joint_loss + proposal_loss, metrics
+        return self.definition._appearance_objective(self.model, batches)
+
+
+class _MetalProposalExecution(nn.Module):
+    """Functional-call boundary that makes proposal gradient ownership explicit."""
+
+    def __init__(
+        self,
+        model: MetalFusedNeuralMaterialModel,
+        definition: "MetalFusedMethodDefinition",
+    ) -> None:
+        super().__init__()
+        self.model = model
+        self.definition = definition
+
+    def forward(
+        self, batches: Mapping[str, OnlineTrainingBatch]
+    ) -> tuple[torch.Tensor, Mapping[str, torch.Tensor | float]]:
+        return self.definition._proposal_objective_impl(self.model, batches)
 
 
 class MetalFusedMethodDefinition(MethodDefinition):
@@ -665,27 +665,35 @@ class MetalFusedMethodDefinition(MethodDefinition):
         source = config.get("source")
         if not isinstance(source, Mapping) or source.get("family_id") != "mdl.program@1":
             raise ValueError("Metal fused training requires native MDL source semantics")
+        online_query = config.get("online_query")
+        group_schedule = (
+            online_query.get("group_schedule")
+            if isinstance(online_query, Mapping)
+            else None
+        )
+        if (
+            not isinstance(group_schedule, Mapping)
+            or set(group_schedule)
+            != {"recipe", "weight", "block_steps", "validation_offset_blocks"}
+            or group_schedule.get("recipe") != "group-block-balanced@1"
+            or group_schedule.get("weight") != "record-count"
+            or int(group_schedule.get("block_steps", 0)) < 1
+            or int(group_schedule.get("validation_offset_blocks", 0)) < 1
+        ):
+            raise ValueError("Metal online query requires the shared group-block-balanced schedule")
         phases = config.get("phases")
         if not isinstance(phases, list) or [item.get("name") for item in phases] != [
-            "codec-warmup",
-            "joint-appearance",
-            "proposal-fit",
+            "joint-coarse-to-fine",
             "qat-refine",
         ]:
-            raise ValueError("Metal full method requires codec, joint, proposal and QAT phases")
+            raise ValueError("Metal full method requires joint coarse-to-fine and QAT phases")
         expected_groups = {
-            "codec-warmup": list(_CODEC_GROUPS),
-            "joint-appearance": list(_JOINT_GROUPS),
-            "proposal-fit": list(_PROPOSAL_GROUPS),
+            "joint-coarse-to-fine": list(_END_TO_END_GROUPS),
             "qat-refine": list(_QAT_REFINE_GROUPS),
         }
         expected_routes = {
-            "codec-warmup": {"asset": "asset-tile"},
-            "joint-appearance": {
+            "joint-coarse-to-fine": {
                 "asset": "asset-tile",
-                "evaluator": "reference-evaluator",
-            },
-            "proposal-fit": {
                 "evaluator": "reference-evaluator",
                 "sampler": "method-sampler",
             },
@@ -696,14 +704,7 @@ class MetalFusedMethodDefinition(MethodDefinition):
             },
         }
         expected_losses = {
-            "codec-warmup": [
-                "semantic-reconstruction",
-                "normal-angular",
-                "structured-state",
-                "mip-consistency",
-                "grid-qat",
-            ],
-            "joint-appearance": [
+            "joint-coarse-to-fine": [
                 "codec-full",
                 "response-robust",
                 "linear-energy",
@@ -712,8 +713,6 @@ class MetalFusedMethodDefinition(MethodDefinition):
                 "analytic-core-preservation",
                 "teacher-response",
                 "compiler-functional-distillation",
-            ],
-            "proposal-fit": [
                 "proposal-forward-kl",
                 "proposal-density-fit",
                 "proposal-mode-coverage",
@@ -738,9 +737,7 @@ class MetalFusedMethodDefinition(MethodDefinition):
             ],
         }
         expected_precision = {
-            "codec-warmup": {"autocast": "fp32", "gradient_scaler": False},
-            "joint-appearance": {"autocast": "bfloat16", "gradient_scaler": False},
-            "proposal-fit": {"autocast": "bfloat16", "gradient_scaler": False},
+            "joint-coarse-to-fine": {"autocast": "bfloat16", "gradient_scaler": False},
             "qat-refine": {"autocast": "fp32", "gradient_scaler": False},
         }
         for phase in phases:
@@ -765,47 +762,37 @@ class MetalFusedMethodDefinition(MethodDefinition):
             recipes = phase.get("recipes")
             if not isinstance(recipes, Mapping) or recipes.get("profile_id") != "metal_fused_full_v1":
                 raise ValueError("Metal phase must freeze the full profile recipe")
+            proposal_weight = recipes.get("proposal_weight")
+            if (
+                not isinstance(proposal_weight, Mapping)
+                or proposal_weight.get("schema") != "linear-nonzero-ramp@1"
+                or not 0.0 < float(proposal_weight.get("start", 0.0))
+                <= float(proposal_weight.get("end", 0.0))
+                or int(proposal_weight.get("ramp_steps", 0)) < 1
+            ):
+                raise ValueError("Metal phases require a nonzero frozen proposal weight ramp")
             if phase.get("transition") is not None:
                 raise ValueError("Metal evaluator phases cannot hide an asset lifecycle transition")
-        qat_recipes = phases[3].get("recipes", {})
+        qat_recipes = phases[1].get("recipes", {})
         if (
             qat_recipes.get("runtime_quantization")
             != "fp16-runtime-ste-int8-grid-qat-sensitive-fp32@1"
         ):
             raise ValueError("Metal QAT refine requires the deployed precision simulation")
-        evaluator = next(
-            item for item in phases[1]["routes"] if item["name"] == "evaluator"
-        )
-        options = evaluator.get("options", {})
-        if (
-            options.get("direction_proposal") != "uniform-half-difference@1"
-            or int(options.get("source_patch_size", 0)) < 8
-            or not bool(options.get("asset_tile_coherent", False))
-        ):
-            raise ValueError("Metal joint route requires coherent real source patches")
-        proposal_evaluator = next(
-            item for item in phases[2]["routes"] if item["name"] == "evaluator"
-        )
-        proposal_sampler = next(
-            item for item in phases[2]["routes"] if item["name"] == "sampler"
-        )
-        if (
-            proposal_evaluator.get("options", {}).get("direction_proposal")
-            != "uniform-half-difference@1"
-            or proposal_sampler.get("options", {}).get("direction_proposal")
-            != "uniform-hemisphere-conditioning@1"
-        ):
-            raise ValueError("Metal proposal phase requires evaluator and sampler strata")
-        qat_routes = {item["name"]: item for item in phases[3]["routes"]}
-        if (
-            qat_routes["evaluator"].get("options", {}).get("direction_proposal")
-            != "uniform-half-difference@1"
-            or qat_routes["sampler"].get("options", {}).get("direction_proposal")
-            != "uniform-hemisphere-conditioning@1"
-            or int(qat_routes["evaluator"].get("options", {}).get("source_patch_size", 0)) < 8
-            or not bool(qat_routes["asset"].get("options", {}).get("asset_indices"))
-        ):
-            raise ValueError("Metal QAT refine requires all deployed asset/evaluator/sampler strata")
+        for phase in phases:
+            routes = {item["name"]: item for item in phase["routes"]}
+            if (
+                routes["evaluator"].get("options", {}).get("direction_proposal")
+                != "uniform-half-difference@1"
+                or routes["sampler"].get("options", {}).get("direction_proposal")
+                != "uniform-hemisphere-conditioning@1"
+                or int(routes["evaluator"].get("options", {}).get("source_patch_size", 0)) < 8
+                or not bool(routes["evaluator"].get("options", {}).get("asset_tile_coherent", False))
+                or not bool(routes["asset"].get("options", {}).get("asset_indices"))
+            ):
+                raise ValueError(
+                    "Metal end-to-end phases require all coherent asset/evaluator/sampler strata"
+                )
 
     def configure_phase(self, model: nn.Module, phase: Mapping[str, Any]) -> None:
         if not isinstance(model, MetalFusedNeuralMaterialModel):
@@ -837,7 +824,7 @@ class MetalFusedMethodDefinition(MethodDefinition):
             valid.to(value.dtype).sum(), min=1.0
         )
 
-    def _proposal_objective(
+    def _proposal_objective_impl(
         self,
         model: MetalFusedNeuralMaterialModel,
         batches: Mapping[str, OnlineTrainingBatch],
@@ -987,13 +974,69 @@ class MetalFusedMethodDefinition(MethodDefinition):
             "proposal_weight_identity_trace": (1.0 / (1.0 + identity_error.detach())),
         }
 
+    def _proposal_objective(
+        self,
+        model: MetalFusedNeuralMaterialModel,
+        batches: Mapping[str, OnlineTrainingBatch],
+        *,
+        quantize_runtime: bool = False,
+    ) -> tuple[torch.Tensor, Mapping[str, torch.Tensor | float]]:
+        """Run proposal fitting with gradients owned only by proposal_sampler.
+
+        The evaluator response is a detached training target and all shared
+        compiler/codec/evaluator parameters are functional constants.  This is
+        deliberately independent of phase-level ``requires_grad`` flags so the
+        contract remains true during end-to-end joint training.
+        """
+
+        execution = _MetalProposalExecution(model, self)
+        proposal_names = set(self.descriptor.parameter_groups["proposal_sampler"])
+        runtime_names = (
+            set(metal_runtime_parameter_names(model)) if quantize_runtime else set()
+        )
+        functional_state: dict[str, torch.Tensor] = {}
+        for name, value in execution.named_parameters():
+            model_name = name.removeprefix("model.")
+            current = (
+                fake_quantize_fp16_ste(value)
+                if model_name in runtime_names
+                else value
+            )
+            functional_state[name] = (
+                current if model_name in proposal_names else current.detach()
+            )
+        for name, value in execution.named_buffers():
+            functional_state[name] = value
+        return torch.func.functional_call(
+            execution,
+            functional_state,
+            (batches,),
+            strict=True,
+        )
+
+    @staticmethod
+    def _proposal_weight(phase: Mapping[str, Any]) -> float:
+        recipes = phase.get("recipes", {})
+        schedule = recipes.get("proposal_weight", {}) if isinstance(recipes, Mapping) else {}
+        start = float(schedule.get("start", 0.0))
+        end = float(schedule.get("end", 0.0))
+        ramp_steps = int(schedule.get("ramp_steps", 0))
+        phase_step = max(0, int(phase.get("phase_step", 0)))
+        if start <= 0.0 or end < start or ramp_steps < 1:
+            raise ValueError("Metal proposal weight schedule is invalid")
+        progress = min(1.0, phase_step / float(ramp_steps))
+        return start + (end - start) * progress
+
     def _qat_refine_objective(
         self,
         model: MetalFusedNeuralMaterialModel,
         batches: Mapping[str, OnlineTrainingBatch],
+        phase: Mapping[str, Any],
     ) -> tuple[torch.Tensor, Mapping[str, torch.Tensor | float]]:
+        if set(batches) != {"asset", "evaluator", "sampler"}:
+            raise ValueError("Metal QAT refine requires asset, evaluator and sampler routes")
         runtime_names = set(metal_runtime_parameter_names(model))
-        execution = _MetalQatRefineExecution(model, self)
+        execution = _MetalAppearanceExecution(model, self)
         functional_state: dict[str, torch.Tensor] = {}
         available_runtime_names: set[str] = set()
         quantization_error = []
@@ -1020,43 +1063,41 @@ class MetalFusedMethodDefinition(MethodDefinition):
             raise RuntimeError(
                 f"Metal QAT runtime state is not functionally reachable: {sorted(missing)}"
             )
-        loss, raw_metrics = torch.func.functional_call(
+        appearance_loss, raw_metrics = torch.func.functional_call(
             execution,
             functional_state,
-            (batches,),
+            ({"asset": batches["asset"], "evaluator": batches["evaluator"]},),
             strict=True,
         )
+        proposal_loss, proposal_metrics = self._proposal_objective(
+            model,
+            {"evaluator": batches["evaluator"], "sampler": batches["sampler"]},
+            quantize_runtime=True,
+        )
+        proposal_weight = self._proposal_weight(phase)
         metrics = dict(raw_metrics)
+        metrics.update(proposal_metrics)
+        metrics["qat_refine_appearance_loss"] = appearance_loss.detach()
+        metrics["qat_refine_proposal_loss"] = proposal_loss.detach()
+        metrics["proposal_objective_weight"] = proposal_weight
         metrics["runtime_fp16_quantization_trace"] = torch.stack(
             quantization_error
         ).mean()
-        return loss, metrics
+        return appearance_loss + proposal_weight * proposal_loss, metrics
 
-    def training_objective(
+    def _appearance_objective(
         self,
-        model: nn.Module,
+        model: MetalFusedNeuralMaterialModel,
         batches: Mapping[str, OnlineTrainingBatch],
-        phase: Mapping[str, Any],
     ) -> tuple[torch.Tensor, Mapping[str, torch.Tensor | float]]:
-        if not isinstance(model, MetalFusedNeuralMaterialModel):
-            raise TypeError("Metal fused method requires MetalFusedNeuralMaterialModel")
-        phase_name = str(phase.get("name"))
-        if phase_name == "proposal-fit":
-            return self._proposal_objective(model, batches)
-        if phase_name == "qat-refine":
-            return self._qat_refine_objective(model, batches)
         if "asset" not in batches or not isinstance(batches["asset"], AssetTileBatch):
             raise ValueError("Metal phases require the canonical asset-tile route")
         codec_loss, codec_metrics = model.codec_objective(batches["asset"])
         metrics: dict[str, torch.Tensor | float] = {
             name: value.detach() for name, value in codec_metrics.items()
         }
-        if phase_name == "codec-warmup":
-            if set(batches) != {"asset"}:
-                raise ValueError("Metal codec warmup accepts only its asset route")
-            return codec_loss, metrics
-        if phase_name != "joint-appearance" or set(batches) != {"asset", "evaluator"}:
-            raise ValueError("Metal joint appearance requires asset and evaluator routes")
+        if set(batches) != {"asset", "evaluator"}:
+            raise ValueError("Metal appearance objective requires asset and evaluator routes")
         evaluator_batch = batches["evaluator"]
         if not isinstance(evaluator_batch, EvaluatorBatch):
             raise ValueError("Metal evaluator route returned the wrong typed batch")
@@ -1165,6 +1206,39 @@ class MetalFusedMethodDefinition(MethodDefinition):
             }
         )
         return loss, metrics
+
+    def training_objective(
+        self,
+        model: nn.Module,
+        batches: Mapping[str, OnlineTrainingBatch],
+        phase: Mapping[str, Any],
+    ) -> tuple[torch.Tensor, Mapping[str, torch.Tensor | float]]:
+        if not isinstance(model, MetalFusedNeuralMaterialModel):
+            raise TypeError("Metal fused method requires MetalFusedNeuralMaterialModel")
+        phase_name = str(phase.get("name"))
+        if phase_name == "qat-refine":
+            return self._qat_refine_objective(model, batches, phase)
+        if phase_name != "joint-coarse-to-fine" or set(batches) != {
+            "asset",
+            "evaluator",
+            "sampler",
+        }:
+            raise ValueError(
+                "Metal joint coarse-to-fine requires asset, evaluator and sampler routes"
+            )
+        appearance_loss, appearance_metrics = self._appearance_objective(
+            model, {"asset": batches["asset"], "evaluator": batches["evaluator"]}
+        )
+        proposal_loss, proposal_metrics = self._proposal_objective(
+            model, {"evaluator": batches["evaluator"], "sampler": batches["sampler"]}
+        )
+        proposal_weight = self._proposal_weight(phase)
+        metrics = dict(appearance_metrics)
+        metrics.update(proposal_metrics)
+        metrics["joint_appearance_loss"] = appearance_loss.detach()
+        metrics["joint_proposal_loss"] = proposal_loss.detach()
+        metrics["proposal_objective_weight"] = proposal_weight
+        return appearance_loss + proposal_weight * proposal_loss, metrics
 
     def export_training_state(self, model: nn.Module) -> Mapping[str, torch.Tensor]:
         if not isinstance(model, MetalFusedNeuralMaterialModel):

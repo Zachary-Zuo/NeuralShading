@@ -226,7 +226,7 @@ MdlViewerCatalog loadMdlViewerCatalog(const std::filesystem::path& requestedPath
         requireSha256(result.checkpointDescriptorSha256, "checkpoint.checkpoint_descriptor_sha256");
         requireSha256(result.runtimeDescriptorSha256, "checkpoint.runtime_descriptor_sha256");
         require((result.checkpointCompatibility == "exact"
-                    || result.checkpointCompatibility == "state-schema-compatible-preview")
+                    || result.checkpointCompatibility == "exact-diagnostic-evaluator-preview")
                 && !result.methodKey.empty() && !result.checkpointPhase.empty(),
             "ViewerMaterialCatalog checkpoint metadata is incomplete");
     }

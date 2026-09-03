@@ -105,10 +105,10 @@ def _document() -> dict[str, object]:
                 "sha256": "d" * 64,
                 "checkpoint_descriptor_sha256": "0" * 64,
                 "runtime_descriptor_sha256": "f" * 64,
-                "compatibility": "state-schema-compatible-preview",
+                "compatibility": "exact-diagnostic-evaluator-preview",
                 "method_key": "metal-fused-neural-material",
                 "step": 20_000,
-                "phase": "joint-appearance",
+                "phase": "joint-coarse-to-fine",
             },
             "reference_runtime": {
                 "mdl_sdk": "2025.0.0-387700.1252",
@@ -133,8 +133,8 @@ def test_viewer_material_catalog_accepts_linked_typed_entry_without_loading_payl
         _document(), source_path=tmp_path / "catalog.json", verify_payloads=False
     )
     assert catalog.checkpoint_step == 20_000
-    assert catalog.checkpoint_phase == "joint-appearance"
-    assert catalog.checkpoint_compatibility == "state-schema-compatible-preview"
+    assert catalog.checkpoint_phase == "joint-coarse-to-fine"
+    assert catalog.checkpoint_compatibility == "exact-diagnostic-evaluator-preview"
     assert catalog.default_export_id == catalog.entries[0].export_id
     assert catalog.entries[0].metal == "brass"
 

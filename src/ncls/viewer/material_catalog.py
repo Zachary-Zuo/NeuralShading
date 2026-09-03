@@ -299,7 +299,7 @@ class ViewerMaterialCatalog:
             or checkpoint_step < 0
             or not checkpoint_phase
             or checkpoint_compatibility
-            not in {"exact", "state-schema-compatible-preview"}
+            not in {"exact", "exact-diagnostic-evaluator-preview"}
         ):
             raise ValueError("ViewerMaterialCatalog checkpoint metadata is invalid")
 

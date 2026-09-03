@@ -157,7 +157,10 @@ def build_training_review(
         (int(float(row.get("peak_memory_bytes", 0))) for row in training_rows),
         default=0,
     )
-    rates = [float(row["steps_per_second"]) for row in training_rows]
+    rates = [
+        float(row.get("rolling_steps_per_second", row["steps_per_second"]))
+        for row in training_rows
+    ]
     profile_keys = sorted(
         {
             name
@@ -200,6 +203,8 @@ def build_training_review(
             "training_elapsed_seconds": _segmented_training_elapsed(training_rows),
             "latest_process_elapsed_seconds": float(elapsed_seconds),
             "median_steps_per_second": median(rates) if rates else 0.0,
+            "median_rolling_steps_per_second": median(rates) if rates else 0.0,
+            "step_rate_basis": "log-window-step-wall@1",
             "peak_memory_bytes": peak_memory,
             "checkpoint_bytes": int(checkpoint_bytes),
             "metrics_bytes": int(metrics_bytes),

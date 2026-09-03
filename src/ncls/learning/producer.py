@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 from typing import Any, Mapping
@@ -28,6 +29,25 @@ from ncls.references.plan import (
     compile_single_program_plan,
 )
 from ncls.references.query import ReferenceBackendSession, ScatteringQuery
+
+
+def _group_block_sequence(
+    groups: tuple[ReferenceExecutionGroup, ...], plan_identity: str
+) -> tuple[ReferenceExecutionGroup, ...]:
+    """Return a deterministic record-weighted cycle with full-group prefix coverage."""
+
+    prefix = list(groups)
+    remainder = [
+        (group, ordinal)
+        for group in groups
+        for ordinal in range(1, len(group.records))
+    ]
+    remainder.sort(
+        key=lambda item: hashlib.sha256(
+            f"{plan_identity}:{item[0].group_id}:{item[1]}".encode("ascii")
+        ).digest()
+    )
+    return tuple(prefix + [group for group, _ in remainder])
 
 
 def _uniform_hemisphere(
@@ -150,10 +170,36 @@ class OnlineTrainingProducer:
             default=1,
         )
         self.backend = backend or create_reference_backend()
+        schedule = config.online_query.get("group_schedule")
+        self._group_schedule_recipe = (
+            str(schedule.get("recipe")) if isinstance(schedule, Mapping) else None
+        )
+        self._group_block_steps = (
+            int(schedule.get("block_steps", 0)) if isinstance(schedule, Mapping) else 0
+        )
+        self._group_validation_offset_blocks = (
+            int(schedule.get("validation_offset_blocks", 0))
+            if isinstance(schedule, Mapping)
+            else 0
+        )
+        if self._group_schedule_recipe is None:
+            self._group_sequence = self.plan.groups
+        elif (
+            self._group_schedule_recipe == "group-block-balanced@1"
+            and schedule.get("weight") == "record-count"
+            and self._group_block_steps >= 1
+            and self._group_validation_offset_blocks >= 1
+        ):
+            self._group_sequence = _group_block_sequence(
+                self.plan.groups, self.plan.identity
+            )
+        else:
+            raise ValueError("online query group_schedule is unsupported")
         self.session: ReferenceBackendSession = self.backend.open(
             self.plan,
             query_capacity=capacity,
             device=self.device,
+            requested_operations=("evaluate",),
         )
         if self.session.snapshots != snapshots:
             raise ValueError("online producer backend session disagrees with source locators")
@@ -209,6 +255,12 @@ class OnlineTrainingProducer:
         return generator
 
     def _select_group(self, request: TrainingRouteRequest) -> ReferenceExecutionGroup:
+        if self._group_schedule_recipe == "group-block-balanced@1":
+            block = request.global_step // self._group_block_steps
+            if bool(request.options.get("validation", False)):
+                block += self._group_validation_offset_blocks
+            sequence_index = block * self.ddp_world_size + self.ddp_rank
+            return self._group_sequence[sequence_index % len(self._group_sequence)]
         cursor = self._group_cursor.get(request.name, 0)
         self._group_cursor[request.name] = cursor + 1
         return self.plan.groups[cursor % len(self.plan.groups)]
@@ -269,6 +321,11 @@ class OnlineTrainingProducer:
                 "reference_backend_identity": self.reference_backend_identity,
                 "reference_execution_plan_identity": self.reference_execution_plan_identity,
                 "reference_execution_group_id": group.group_id,
+                "group_schedule_recipe": self._group_schedule_recipe or "route-round-robin@1",
+                "group_schedule_block_steps": self._group_block_steps,
+                "group_schedule_validation_offset_blocks": (
+                    self._group_validation_offset_blocks
+                ),
                 "source_adapter_identity": self.adapter.identity,
                 **provenance,
             },
@@ -578,6 +635,9 @@ class OnlineTrainingProducer:
 
     def end_iteration(self) -> None:
         self.session.end_iteration()
+
+    def profile_snapshot(self, *, reset: bool = False) -> Mapping[str, float]:
+        return self.session.profile_snapshot(reset=reset)
 
     def close(self) -> None:
         if self._closed:

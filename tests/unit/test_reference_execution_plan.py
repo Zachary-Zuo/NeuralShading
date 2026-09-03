@@ -98,8 +98,14 @@ class _SplitGroupDefinition(ReferenceProgramDefinition):
 
 class _FakeGroupSession:
     def __init__(self, group, **kwargs) -> None:
-        del kwargs
         self.group = group
+        self.requested_operations = tuple(kwargs["requested_operations"])
+        self.build_profile = {
+            "runtime_compile_seconds": 0.01,
+            "pass_build_seconds": 0.02,
+            "resource_bind_seconds": 0.03,
+            "slot_build_seconds": 0.04,
+        }
         self.device = torch.device("cpu")
         self.active_lease_count = 0
         self.closed = False
@@ -199,6 +205,51 @@ def test_multi_group_session_materializes_lazily_and_evicts_only_idle_lru(monkey
     assert first.closed
     assert not second.closed
     assert session.resident_group_ids == (plan.groups[1].group_id,)
+    session.close()
+
+
+def test_multi_group_session_freezes_operation_set_and_reports_cache_churn(monkeypatch) -> None:
+    definition = _SplitGroupDefinition()
+    snapshots = tuple(
+        SourceSnapshot(
+            "unit.family@1",
+            1,
+            "unit.schema@1",
+            str(index) * 64,
+            payload,
+        )
+        for index, payload in ((1, b"first"), (2, b"second"))
+    )
+    plan = compile_reference_execution_plan(
+        ((definition, snapshot) for snapshot in snapshots),
+        query_recipe={"recipe_id": "unit-operation-lazy@1"},
+    )
+    monkeypatch.setattr(query_module, "_ReferenceExecutionGroupSession", _FakeGroupSession)
+    session = ReferenceBackendSession(
+        plan,
+        backend_descriptor=SimpleNamespace(identity="b" * 64),
+        falcor=object(),
+        device_handle=_FakeDevice(),
+        query_capacity=1,
+        device="cpu",
+        max_resident_groups=1,
+        requested_operations=("evaluate",),
+    )
+    first = session._session(plan.groups[0].group_id)
+    assert first.requested_operations == ("evaluate",)
+    assert session._session(plan.groups[0].group_id) is first
+    session._session(plan.groups[1].group_id)
+    profile = session.profile_snapshot(reset=True)
+    assert profile["session_hits"] == 1.0
+    assert profile["session_misses"] == 2.0
+    assert profile["group_creations"] == 2.0
+    assert profile["group_evictions"] == 1.0
+    assert profile["resident_groups"] == 1.0
+    assert profile["group_runtime_compile_seconds"] == pytest.approx(0.02)
+    assert profile["group_pass_build_seconds_max"] == pytest.approx(0.02)
+    assert profile["group_resource_bind_seconds"] == pytest.approx(0.06)
+    assert profile["group_slot_build_seconds_max"] == pytest.approx(0.04)
+    assert session.profile_snapshot()["session_misses"] == 0.0
     session.close()
 
 

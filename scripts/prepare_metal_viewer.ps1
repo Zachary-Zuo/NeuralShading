@@ -1,7 +1,9 @@
 param(
-    [string]$OutputRoot = "artifacts\viewer\metal-step00020000",
-    [string]$Checkpoint = "artifacts\metal-linux-training\long\checkpoint.step00020000.pt",
+    [string]$OutputRoot = "artifacts\viewer\metal-step00120000",
+    [string]$Checkpoint = "artifacts\metal-linux-training\long\checkpoint.step00120000.pt",
     [string]$Registry = "references\mdl-vmaterials2-v1\metal-opaque-v1.json",
+    [switch]$DiagnosticPreview,
+    [uint32]$DiagnosticLimit = 0,
     [switch]$AcceptNvidiaOmniverseTerms
 )
 
@@ -27,9 +29,20 @@ if ($LASTEXITCODE -ne 0) { throw "Failed to build the formal MDL bridge" }
 
 Push-Location $projectRoot
 try {
-    & conda run --no-capture-output -n neural-shading `
-        python tools/viewer/prepare_metal_catalog.py `
-        --output-root $OutputRoot --checkpoint $Checkpoint --registry $Registry
+    $arguments = @(
+        "tools/viewer/prepare_metal_catalog.py",
+        "--output-root", $OutputRoot,
+        "--checkpoint", $Checkpoint,
+        "--registry", $Registry
+    )
+    if ($DiagnosticPreview) { $arguments += "--diagnostic-preview" }
+    if ($DiagnosticLimit -gt 0) {
+        if (-not $DiagnosticPreview) {
+            throw "DiagnosticLimit requires DiagnosticPreview"
+        }
+        $arguments += @("--diagnostic-limit", $DiagnosticLimit.ToString())
+    }
+    & conda run --no-capture-output -n neural-shading python @arguments
     if ($LASTEXITCODE -ne 0) { throw "Failed to prepare the linked Metal viewer catalog" }
 }
 finally {

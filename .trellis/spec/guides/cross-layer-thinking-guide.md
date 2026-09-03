@@ -205,6 +205,20 @@ backend.prepare → state.evaluate / state.sample / state.pdf → MIS / throughp
 
 具体合同与测试入口见 `../viewer/mdl-reference.md`。
 
+## Learned Checkpoint Capability Boundary
+
+当训练状态跨越`TrainingConfig → checkpoint → compiler/package → viewer`时，tensor存在、shape一致、数值finite和slot ready分别只证明局部结构或执行状态，不能推出目标runtime已经接受过训练：
+
+- [ ] phase cursor是否区分“即将进入phase”和“已经完成phase”？边界step不能仅凭phase名称推断能力。
+- [ ] 每个可部署capability是否有明确parameter-group依赖，并要求finite gradient、nonzero gradient和actual update三类coverage？
+- [ ] checkpoint是否与当前method descriptor/implementation完全同一identity？tensor schema兼容不能替代前向语义兼容。
+- [ ] formal与diagnostic是否由一个共享readiness owner判定？diagnostic必须显式请求、收窄capability，并在package/catalog/UI中保留不可误认的标记。
+- [ ] 学习证据是否沿同一exact checkpoint完成fixed query和viewer reference-neural对照？Python↔Slang parity只能证明两个实现一致，不能证明它们一致地学对了。
+- [ ] 训练吞吐是否按phase-local/rolling window记录，并把cache materialization、validation和checkpoint I/O分开？run-global均值不能证明后续phase没有结构性退化。
+- [ ] bounded LRU的访问序列是否与容量共同检查？当复用距离大于容量时，逐request round-robin会把“有cache”变成确定性的稳态thrash。
+
+具体生命周期、readiness、profile与回归入口见`../learning/online-training.md`、`../data/reference-query.md`和`../viewer/mdl-reference.md`。
+
 ---
 
 ## Cross-Platform Template Consistency

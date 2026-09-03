@@ -3,11 +3,11 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
 import shutil
-import time
 import uuid
 from typing import Mapping, cast
 
@@ -16,14 +16,18 @@ from tqdm import tqdm
 
 from ncls.bundle import write_scattering_package
 from ncls.core.identity import sha256_file, sha256_json, write_json_atomic
-from ncls.core.scattering import InstancePayload
+from ncls.core.scattering import BackendCapability, InstancePayload
 from ncls.core.source import SourceSnapshot, create_source_family
 from ncls.learning.conformance import MethodArtifactInventory, validate_artifact_coverage
 from ncls.learning.metal_asset_cook import MetalAssetCooker
 from ncls.learning.metal_runtime import pack_metal_asset, quantize_runtime_model
 from ncls.learning.methods import get_method
 from ncls.learning.source_adapters import MetalFusedMdlSourceAdapter
-from ncls.learning.training import TrainingConfig, load_checkpoint
+from ncls.learning.training import (
+    TrainingConfig,
+    assess_checkpoint_readiness,
+    load_checkpoint,
+)
 from ncls.paths import PROJECT_ROOT
 from ncls.references.mdl import (
     MdlCompiledArtifact,
@@ -41,12 +45,12 @@ from ncls.viewer import (
 
 DEFAULT_CHECKPOINT = (
     PROJECT_ROOT
-    / "artifacts/metal-linux-training/long/checkpoint.step00020000.pt"
+    / "artifacts/metal-linux-training/long/checkpoint.step00120000.pt"
 )
 DEFAULT_REGISTRY = (
     PROJECT_ROOT / "references/mdl-vmaterials2-v1/metal-opaque-v1.json"
 )
-DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "artifacts/viewer/metal-step00020000"
+DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "artifacts/viewer/metal-step00120000"
 MAX_MDL_COMPILE_WORKERS = 4
 
 
@@ -66,46 +70,18 @@ def _validate_slang_path_budget(output_root: Path) -> None:
         )
 
 
-def validate_preview_checkpoint(checkpoint: object, descriptor: object) -> str:
-    """Accept descriptor drift only when the frozen trainable/runtime state ABI is exact."""
+def validate_preview_checkpoint(
+    checkpoint: object, descriptor: object, *, diagnostic: bool = False
+) -> str:
+    """Require exact method identity plus explicit readiness for every preview."""
 
-    if (
-        checkpoint.method_key == descriptor.method_key
-        and checkpoint.method_descriptor_sha256 == descriptor.descriptor_sha256
-    ):
-        checkpoint.validate_method(descriptor)
-        return "exact"
-    if checkpoint.method_key != descriptor.method_key:
-        raise ValueError("preview checkpoint method key differs from the runtime method")
-    expected_manifest = {
-        "schema": "ncls.method-components@1",
-        "parameter_groups": {
-            name: list(values) for name, values in descriptor.parameter_groups.items()
-        },
-        "components": [component.to_dict() for component in descriptor.components],
-    }
-    if checkpoint.component_manifest != expected_manifest:
-        raise ValueError("preview checkpoint component manifest differs from runtime")
-    fields = {field.name: field for field in descriptor.tensor_state_schema}
-    if set(checkpoint.model_state) != set(fields):
-        raise ValueError("preview checkpoint tensor keys differ from runtime")
-    symbols: dict[str, int] = {}
-    for name, tensor in checkpoint.model_state.items():
-        field = fields[name]
-        if str(tensor.dtype).removeprefix("torch.") != field.dtype:
-            raise ValueError(f"preview checkpoint tensor {name!r} dtype differs")
-        if tensor.ndim != len(field.shape):
-            raise ValueError(f"preview checkpoint tensor {name!r} rank differs")
-        for expected, actual in zip(field.shape, tensor.shape, strict=True):
-            if isinstance(expected, int) and expected != actual:
-                raise ValueError(f"preview checkpoint tensor {name!r} shape differs")
-            if isinstance(expected, str):
-                previous = symbols.setdefault(expected, int(actual))
-                if previous != actual:
-                    raise ValueError(
-                        f"preview checkpoint symbolic dimension {expected!r} differs"
-                    )
-    return "state-schema-compatible-preview"
+    readiness = assess_checkpoint_readiness(
+        checkpoint,
+        descriptor,
+        mode="diagnostic-evaluator" if diagnostic else "formal",
+    )
+    readiness.require_ready()
+    return "exact-diagnostic-evaluator-preview" if diagnostic else "exact"
 
 
 def _portable(path: Path, root: Path) -> str:
@@ -171,20 +147,67 @@ def _artifact_sha256(artifact: MdlCompiledArtifact) -> str:
     )
 
 
+def _select_registry_records(
+    registry: MdlMetalRegistry,
+    locators: Mapping[tuple[str, str], Mapping[str, object]],
+    *,
+    diagnostic_preview: bool,
+    limit: int | None,
+) -> tuple[object, ...]:
+    registry_records = tuple(registry.exports)
+    registry_keys = {
+        (
+            str(record.exact_locator["module"]),
+            str(record.exact_locator["export"]),
+        )
+        for record in registry_records
+    }
+    locator_keys = set(locators)
+    if not diagnostic_preview:
+        if locator_keys != registry_keys:
+            raise ValueError(
+                "formal checkpoint source list does not cover the Metal registry exactly"
+            )
+        selected = registry_records
+    else:
+        unknown = locator_keys - registry_keys
+        if unknown:
+            raise ValueError(
+                "diagnostic checkpoint source list contains exports outside the Metal registry"
+            )
+        selected = tuple(
+            record
+            for record in registry_records
+            if (
+                str(record.exact_locator["module"]),
+                str(record.exact_locator["export"]),
+            )
+            in locator_keys
+        )
+        if not selected:
+            raise ValueError(
+                "diagnostic checkpoint source list has no Metal registry intersection"
+            )
+    if limit is not None:
+        if not diagnostic_preview:
+            raise ValueError(
+                "ViewerMaterialCatalog limit is only valid for diagnostic preview"
+            )
+        if not 1 <= limit <= len(selected):
+            raise ValueError(
+                "ViewerMaterialCatalog diagnostic limit is outside checkpoint coverage"
+            )
+        selected = selected[:limit]
+    return selected
+
+
 def _compile_reference_program(
     provider: MdlProgramProvider,
     snapshot: SourceSnapshot,
 ) -> MdlCompiledArtifact:
-    for attempt in range(4):
-        try:
-            return provider.compile_snapshot(snapshot)
-        except PermissionError:
-            if attempt == 3:
-                raise
-            # Windows can transiently deny the atomic directory publication
-            # while parallel MDL bridge processes finish closing their files.
-            time.sleep(0.05 * (2**attempt))
-    raise AssertionError("unreachable Metal reference compile retry state")
+    # Publication retry and winner validation belong to the shared provider so
+    # training and viewer materialization use one cross-platform policy.
+    return provider.compile_snapshot(snapshot)
 
 
 def _load_snapshot_with_provider(
@@ -242,6 +265,7 @@ def prepare_metal_catalog(
     registry_path: Path = DEFAULT_REGISTRY,
     *,
     limit: int | None = None,
+    diagnostic_preview: bool = False,
 ) -> ViewerMaterialCatalog:
     output_root = output_root.resolve()
     _validate_slang_path_budget(output_root)
@@ -252,9 +276,13 @@ def prepare_metal_catalog(
         # Payload integrity is checked when the viewer selects an entry. Avoid
         # rereading every hard-linked grid and decoded texture on every launch.
         catalog = ViewerMaterialCatalog.open(catalog_path, verify_payloads=False)
+        expected_compatibility = (
+            "exact-diagnostic-evaluator-preview" if diagnostic_preview else "exact"
+        )
         if (
             catalog.checkpoint_sha256 != sha256_file(checkpoint_path)
             or catalog.registry_sha256 != sha256_file(registry_path)
+            or catalog.checkpoint_compatibility != expected_compatibility
         ):
             raise ValueError(
                 "existing ViewerMaterialCatalog was built from another registry/checkpoint"
@@ -267,14 +295,18 @@ def prepare_metal_catalog(
 
     checkpoint = load_checkpoint(checkpoint_path)
     definition = get_method(checkpoint.method_key)
-    compatibility = validate_preview_checkpoint(checkpoint, definition.descriptor)
+    compatibility = validate_preview_checkpoint(
+        checkpoint, definition.descriptor, diagnostic=diagnostic_preview
+    )
+    readiness = assess_checkpoint_readiness(
+        checkpoint,
+        definition.descriptor,
+        mode="diagnostic-evaluator" if diagnostic_preview else "formal",
+    )
     config = TrainingConfig.from_dict(checkpoint.training_config)
     if str(config.source.get("family_id")) != "mdl.program@1":
         raise ValueError("Metal viewer catalog checkpoint has another source family")
     registry = MdlMetalRegistry.load(registry_path)
-    if limit is not None and not 1 <= limit <= len(registry.exports):
-        raise ValueError("ViewerMaterialCatalog diagnostic limit is outside registry bounds")
-    selected_records = registry.exports if limit is None else registry.exports[:limit]
     raw_registry = json.loads(registry_path.read_text(encoding="utf-8"))
     raw_by_export = {
         str(item["export_id"]): item for item in raw_registry["opaque_exports"]
@@ -285,8 +317,14 @@ def prepare_metal_catalog(
         )
         for item in config.source["materials"]
     }
-    if len(locators) != len(registry.exports):
-        raise ValueError("checkpoint source list does not cover the Metal registry exactly")
+    if len(locators) != len(config.source["materials"]):
+        raise ValueError("checkpoint source list contains duplicate Metal locators")
+    selected_records = _select_registry_records(
+        registry,
+        locators,
+        diagnostic_preview=diagnostic_preview,
+        limit=limit,
+    )
     module_roots = {
         str(locator["module_root"]) for locator in locators.values()
     }
@@ -325,6 +363,15 @@ def prepare_metal_catalog(
 
     payload = checkpoint.to_payload()
     program_payload = definition.compile_program(payload)
+    if diagnostic_preview:
+        evaluator_capabilities = int(
+            BackendCapability.PREPARE
+            | BackendCapability.EVALUATE
+            | BackendCapability.ANISOTROPIC_FRAME
+        )
+        program_payload = replace(
+            program_payload, capabilities=evaluator_capabilities
+        )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     context = payload["training_config"].get("model_context")
     if not isinstance(context, Mapping):
@@ -380,7 +427,7 @@ def prepare_metal_catalog(
         )
     for artifact in runtime_artifacts:
         artifact.require_runtime_supported()
-    phase = str(config.phases[checkpoint.phase_index].name)
+    phase = checkpoint.phase_name
     checkpoint_sha256 = sha256_file(checkpoint_path)
     target_types = (
         PROJECT_ROOT
@@ -489,6 +536,7 @@ def prepare_metal_catalog(
             )
             validation = dict(definition.package_validation(snapshot, payload))
             validation["checkpoint_step"] = checkpoint.global_step
+            validation["checkpoint_readiness"] = readiness.to_dict()
             package_root = staging / "packages" / record.export_id
             manifest = write_scattering_package(
                 package_root,
@@ -507,6 +555,7 @@ def prepare_metal_catalog(
                     "checkpoint_descriptor_sha256": checkpoint.method_descriptor_sha256,
                     "runtime_descriptor_sha256": definition.descriptor.descriptor_sha256,
                     "checkpoint_compatibility": compatibility,
+                    "checkpoint_readiness_mode": readiness.mode,
                     "viewer_catalog_export_id": record.export_id,
                 },
                 linked_content_store=objects,
@@ -603,12 +652,18 @@ def main() -> int:
         default=None,
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--diagnostic-preview",
+        action="store_true",
+        help="显式允许未完成但已有联合梯度证据的evaluate-only诊断预览",
+    )
     args = parser.parse_args()
     catalog = prepare_metal_catalog(
         args.output_root,
         args.checkpoint,
         args.registry,
         limit=args.diagnostic_limit,
+        diagnostic_preview=args.diagnostic_preview,
     )
     print(catalog.source_path)
     print(

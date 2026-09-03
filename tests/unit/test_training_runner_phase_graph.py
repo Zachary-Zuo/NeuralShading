@@ -160,6 +160,12 @@ class _RouteProducer:
     def __init__(self) -> None:
         self.generators: dict[str, torch.Generator] = {}
         self.counts: dict[str, int] = {}
+        self.profile = {
+            "session_hits": 0.0,
+            "session_misses": 0.0,
+            "group_creations": 0.0,
+            "group_build_seconds_max": 0.0,
+        }
         self._assets = DenseNativeAssetCollection(
             ((torch.zeros(1, 1, 1),),),
             ("fixture",),
@@ -179,6 +185,14 @@ class _RouteProducer:
         return generator
 
     def next_batch(self, request: TrainingRouteRequest) -> OnlineTrainingBatch:
+        if request.name.startswith("validation:"):
+            self.profile["session_misses"] += 1.0
+            self.profile["group_creations"] += 1.0
+            self.profile["group_build_seconds_max"] = max(
+                self.profile["group_build_seconds_max"], 0.25
+            )
+        else:
+            self.profile["session_hits"] += 1.0
         generator = self._generator(request)
         batch = request.batch_size
         conditioning = TrainingConditioning(
@@ -227,6 +241,13 @@ class _RouteProducer:
 
     def end_iteration(self) -> None:
         pass
+
+    def profile_snapshot(self, *, reset: bool = False) -> Mapping[str, float]:
+        result = {**self.profile, "resident_groups": 1.0}
+        if reset:
+            for name in self.profile:
+                self.profile[name] = 0.0
+        return result
 
     def close(self) -> None:
         pass
@@ -312,4 +333,49 @@ def test_runner_resume_matches_uninterrupted_phase_graph() -> None:
     assert all(
         value["parameter_update_observed"]
         for value in resumed.gradient_coverage.values()
+    )
+
+
+def test_runner_accounts_training_and_validation_backend_profiles_separately() -> None:
+    result = TrainingRunner(_PhaseMethod(), _RouteProducer(), _config()).run()
+    training_rows = [row for row in result.metrics if "loss" in row]
+    validation_rows = [row for row in result.metrics if "validation/loss" in row]
+
+    assert len(training_rows) == 4
+    assert sum(row["profile/reference_session_hits"] for row in training_rows) == 8.0
+    assert all(row["profile/reference_session_misses"] == 0.0 for row in training_rows)
+    assert all(
+        row["profile/reference_group_build_seconds_max"] == 0.0
+        for row in training_rows
+    )
+    assert all(row["profile/step_wall_window_count"] == 1.0 for row in training_rows)
+    assert all(row["profile/step_wall_seconds_mean"] > 0.0 for row in training_rows)
+    assert all(
+        row["profile/step_wall_seconds_median"]
+        == row["profile/step_wall_seconds_mean"]
+        for row in training_rows
+    )
+    assert all(
+        row["profile/batch_prepare_wall_seconds_median"]
+        == row["profile/batch_prepare_wall_seconds_mean"]
+        for row in training_rows
+    )
+    assert all(row["rolling_steps_per_second"] > 0.0 for row in training_rows)
+    assert all(row["phase_steps_per_second"] > 0.0 for row in training_rows)
+    assert len(validation_rows) == 2
+    assert all(
+        row["profile/validation_reference_session_hits"] == 0.0
+        for row in validation_rows
+    )
+    assert all(
+        row["profile/validation_reference_session_misses"] == 2.0
+        for row in validation_rows
+    )
+    assert all(
+        row["profile/validation_reference_group_creations"] == 2.0
+        for row in validation_rows
+    )
+    assert all(
+        row["profile/validation_reference_group_build_seconds_max"] == 0.25
+        for row in validation_rows
     )

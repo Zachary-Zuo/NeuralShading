@@ -6,6 +6,7 @@ import io
 import os
 from pathlib import Path
 import tempfile
+import time
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -267,6 +268,7 @@ class _ReferenceExecutionGroupSession:
         query_capacity: int,
         device: torch.device | str = "cuda:0",
         slot_count: int = 2,
+        requested_operations: Sequence[str] = ("evaluate", "sample", "pdf"),
     ) -> None:
         definition = group.definition
         values = group.snapshots
@@ -284,7 +286,9 @@ class _ReferenceExecutionGroupSession:
         self.snapshots = values
         self.query_capacity = int(query_capacity)
         self.requested_device = requested_device
+        runtime_started = time.perf_counter()
         self.runtime = definition.compile_runtime()
+        runtime_seconds = time.perf_counter() - runtime_started
         self.materials = tuple(record.material for record in group.records)
         source_modules: dict[str, tuple[bytes, Mapping[str, Any]]] = {}
         for material in self.materials:
@@ -310,6 +314,15 @@ class _ReferenceExecutionGroupSession:
         )
         self._falcor = falcor
         self._device = device_handle
+        operations = tuple(str(value) for value in requested_operations)
+        if (
+            not operations
+            or len(set(operations)) != len(operations)
+            or not set(operations).issubset({"evaluate", "sample", "pdf"})
+        ):
+            raise ValueError("reference requested_operations are invalid")
+        self.requested_operations = operations
+        pass_started = time.perf_counter()
         self._passes = {
             name: self._create_pass(entry)
             for name, entry in (
@@ -317,13 +330,25 @@ class _ReferenceExecutionGroupSession:
                 ("sample", "sampleReference"),
                 ("pdf", "pdfReference"),
             )
+            if name in operations
         }
+        pass_seconds = time.perf_counter() - pass_started
         self._resources: list[Any] = []
+        resource_started = time.perf_counter()
         self._static_bindings = self._create_static_bindings()
         for compute in self._passes.values():
             for usage, resource in self._static_bindings.items():
                 compute.globals[usage] = resource
+        resource_seconds = time.perf_counter() - resource_started
+        slot_started = time.perf_counter()
         self._slots = tuple(self._create_slot() for _ in range(slot_count))
+        slot_seconds = time.perf_counter() - slot_started
+        self.build_profile = {
+            "runtime_compile_seconds": runtime_seconds,
+            "pass_build_seconds": pass_seconds,
+            "resource_bind_seconds": resource_seconds,
+            "slot_build_seconds": slot_seconds,
+        }
         self.device = next(iter(self._slots[0].tensors.values())).device
         if self.device != requested_device:
             raise RuntimeError(
@@ -653,6 +678,10 @@ class _ReferenceExecutionGroupSession:
         footprint_samples: int = 1,
         source_execution_mode: str = "authoritative@1",
     ) -> tuple[_QuerySlot, ReferenceQueryLease, int, int]:
+        if operation not in self._passes:
+            raise RuntimeError(
+                f"reference operation {operation!r} was not requested when the session opened"
+            )
         if not 1 <= evaluation_samples <= 256:
             raise ValueError("reference evaluation_samples must lie in [1,256]")
         if not 1 <= footprint_samples <= 64:
@@ -783,6 +812,7 @@ class ReferenceBackendSession:
         device: torch.device | str = "cuda:0",
         slot_count: int = 2,
         max_resident_groups: int = 8,
+        requested_operations: Sequence[str] = ("evaluate", "sample", "pdf"),
     ) -> None:
         if not isinstance(plan, ReferenceExecutionPlan):
             raise TypeError("ReferenceBackendSession requires ReferenceExecutionPlan@1")
@@ -795,6 +825,14 @@ class ReferenceBackendSession:
         if max_resident_groups < 1:
             raise ValueError("reference backend max_resident_groups must be positive")
         self.max_resident_groups = int(max_resident_groups)
+        operations = tuple(str(value) for value in requested_operations)
+        if (
+            not operations
+            or len(set(operations)) != len(operations)
+            or not set(operations).issubset({"evaluate", "sample", "pdf"})
+        ):
+            raise ValueError("reference requested_operations are invalid")
+        self.requested_operations = operations
         self.reference_program_identity = sha256_json(
             {
                 "reference_execution_plan_identity": plan.identity,
@@ -806,6 +844,28 @@ class ReferenceBackendSession:
         self._slot_count = int(slot_count)
         self._groups = {group.group_id: group for group in plan.groups}
         self._sessions: OrderedDict[str, _ReferenceExecutionGroupSession] = OrderedDict()
+        self._profile: dict[str, int | float] = {
+            "session_hits": 0,
+            "session_misses": 0,
+            "group_creations": 0,
+            "group_evictions": 0,
+            "group_build_seconds": 0.0,
+            "group_build_seconds_max": 0.0,
+            "group_runtime_compile_seconds": 0.0,
+            "group_runtime_compile_seconds_max": 0.0,
+            "group_pass_build_seconds": 0.0,
+            "group_pass_build_seconds_max": 0.0,
+            "group_resource_bind_seconds": 0.0,
+            "group_resource_bind_seconds_max": 0.0,
+            "group_slot_build_seconds": 0.0,
+            "group_slot_build_seconds_max": 0.0,
+            "evaluate_requests": 0,
+            "evaluate_seconds": 0.0,
+            "sample_requests": 0,
+            "sample_seconds": 0.0,
+            "pdf_requests": 0,
+            "pdf_seconds": 0.0,
+        }
         self.device = self.requested_device
         self._global_to_local: dict[str, torch.Tensor] = {}
         for group in plan.groups:
@@ -833,8 +893,10 @@ class ReferenceBackendSession:
     def _session(self, group_id: str) -> _ReferenceExecutionGroupSession:
         session = self._sessions.get(group_id)
         if session is not None:
+            self._profile["session_hits"] += 1
             self._sessions.move_to_end(group_id)
             return session
+        self._profile["session_misses"] += 1
         try:
             group = self._groups[group_id]
         except KeyError as error:
@@ -852,6 +914,8 @@ class ReferenceBackendSession:
                 raise RuntimeError("all resident reference execution groups have active leases")
             evicted = self._sessions.pop(evicted_id)
             evicted.close()
+            self._profile["group_evictions"] += 1
+        build_started = time.perf_counter()
         session = _ReferenceExecutionGroupSession(
             group,
             backend_descriptor=self.backend_descriptor,
@@ -860,7 +924,21 @@ class ReferenceBackendSession:
             query_capacity=self.query_capacity,
             device=self.requested_device,
             slot_count=self._slot_count,
+            requested_operations=self.requested_operations,
         )
+        build_seconds = time.perf_counter() - build_started
+        self._profile["group_creations"] += 1
+        self._profile["group_build_seconds"] += build_seconds
+        self._profile["group_build_seconds_max"] = max(
+            self._profile["group_build_seconds_max"], build_seconds
+        )
+        for name, value in getattr(session, "build_profile", {}).items():
+            key = f"group_{name}"
+            maximum_key = f"{key}_max"
+            self._profile[key] += float(value)
+            self._profile[maximum_key] = max(
+                self._profile[maximum_key], float(value)
+            )
         if session.device != self.device:
             session.close()
             raise RuntimeError("reference execution groups mapped to different CUDA devices")
@@ -901,27 +979,42 @@ class ReferenceBackendSession:
         footprint_samples: int = 1,
         source_execution_mode: str = "authoritative@1",
     ) -> ReferenceEvaluateResult:
+        self._profile["evaluate_requests"] += 1
         session, local_query = self._route(query)
-        return session.evaluate(
-            local_query,
-            wi,
-            seeds,
-            evaluation_samples=evaluation_samples,
-            footprint_samples=footprint_samples,
-            source_execution_mode=source_execution_mode,
-        )
+        started = time.perf_counter()
+        try:
+            return session.evaluate(
+                local_query,
+                wi,
+                seeds,
+                evaluation_samples=evaluation_samples,
+                footprint_samples=footprint_samples,
+                source_execution_mode=source_execution_mode,
+            )
+        finally:
+            self._profile["evaluate_seconds"] += time.perf_counter() - started
 
     def sample(
         self, query: ScatteringQuery, seeds: torch.Tensor
     ) -> ReferenceSampleResult:
+        self._profile["sample_requests"] += 1
         session, local_query = self._route(query)
-        return session.sample(local_query, seeds)
+        started = time.perf_counter()
+        try:
+            return session.sample(local_query, seeds)
+        finally:
+            self._profile["sample_seconds"] += time.perf_counter() - started
 
     def pdf(
         self, query: ScatteringQuery, wi: torch.Tensor, seeds: torch.Tensor
     ) -> ReferencePdfResult:
+        self._profile["pdf_requests"] += 1
         session, local_query = self._route(query)
-        return session.pdf(local_query, wi, seeds)
+        started = time.perf_counter()
+        try:
+            return session.pdf(local_query, wi, seeds)
+        finally:
+            self._profile["pdf_seconds"] += time.perf_counter() - started
 
     def end_iteration(self) -> None:
         if self._closed:
@@ -929,6 +1022,14 @@ class ReferenceBackendSession:
         for session in self._sessions.values():
             session.assert_idle()
         self._device_handle.end_frame()
+
+    def profile_snapshot(self, *, reset: bool = False) -> Mapping[str, float]:
+        result = {str(name): float(value) for name, value in self._profile.items()}
+        result["resident_groups"] = float(len(self._sessions))
+        if reset:
+            for name in self._profile:
+                self._profile[name] = 0.0 if "seconds" in name else 0
+        return result
 
     def close(self) -> None:
         if self._closed:

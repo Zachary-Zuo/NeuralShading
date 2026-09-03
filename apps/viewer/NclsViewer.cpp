@@ -744,7 +744,9 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
     }
     if (mLinkedMdlMode && mReferenceSource.family == ncls::ReferenceFamily::Mdl
         && mReferenceSource.mdlCatalog && mReferenceSource.mdlCatalog->linked())
-        mStatus = "ViewerMaterialCatalog ready: step "
+        mStatus = (mReferenceSource.mdlCatalog->checkpointCompatibility == "exact"
+                ? "Formal ViewerMaterialCatalog ready: step "
+                : "Diagnostic evaluator-only preview ready: step ")
             + std::to_string(mReferenceSource.mdlCatalog->checkpointStep) + " / "
             + mReferenceSource.mdlCatalog->checkpointPhase + " / "
             + (mReferenceSource.mdlEdited ? "edited-preview" : "authored");
@@ -2922,7 +2924,10 @@ void NclsViewer::renderMdlUi(Gui::Widgets& widgets)
 
         const auto& entry = catalog.entries[mReferenceSource.mdlCatalogIndex];
         widgets.text("Preset: " + entry.displayName);
-        widgets.text("Training preview: step " + std::to_string(catalog.checkpointStep)
+        widgets.text((catalog.checkpointCompatibility == "exact"
+                ? "Formal neural material: step "
+                : "Diagnostic evaluator-only preview: step ")
+            + std::to_string(catalog.checkpointStep)
             + " / " + catalog.checkpointPhase + " / "
             + (mReferenceSource.mdlEdited ? "edited-preview" : "authored"));
         widgets.text("Viewer state: " + shortId(mReferenceSource.mdlEditStateSha256));

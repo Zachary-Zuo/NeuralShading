@@ -52,6 +52,7 @@ mdl.program@1 -> project MDL bridge -> locked MDL SDK target code
 - generated HLSL以`kind=slang-module-source`注入；argument block、RO segment、BSDF data、2D/3D texture与sampler均走通用typed binder。
 - 多typed state按generated module与resource binding进入同一个execution group，argument/RO使用显式16-byte aligned offsets。decoded texture/BSDF payload以`FileResourcePayload`指向verified provider cache；group key使用content hash而非主机path，lazy group首次执行才读取。
 - decoded payload的provider cache以SHA-256内容寻址；同一文件系统内可用hardlink复用，artifact与cache跨文件系统时必须使用临时文件加`os.replace`原子安装并保留artifact-local副本，不能因`EXDEV`退化为跳过校验或删除源文件。manifest、尺寸、路径和逐文件哈希检查在两种布局下都保持不变。
+- compiled artifact目录同样通过content-addressed临时目录原子发布。`os.replace(partial, target)`遇到瞬时`PermissionError`/`FileExistsError`时做固定次数指数退避；若target已经出现，视为并发winner并由正常artifact loader重新验证，不能覆盖target或用Windows专用旁路。重试耗尽则保留原异常并清理本进程partial。
 - 输入像素格式支持与 closure 输出支持是两个独立 capability。V1 decoded texture 至少支持 `Sint8`、`Rgb`、`Rgba`、`Rgb_16`、`Rgba_16`、`Float32`、`Float32<2/3/4>`、`Rgb_fp`、`Color`；`Rgba_16` 必须以每 texel 8 bytes 保留为 `uint16`，并绑定 `RGBA16Unorm`，不得量化为 8-bit。无对应 sRGB hardware view 的 uint16/float texture 可先无损归一化并显式线性化为 float32。
 - `geometry.cutout_opacity` 是输出/合成能力。当前 public evaluator 未实现它时，punched suede 必须以 `unsupported_reasons=["geometry.cutout_opacity"]` 失败关闭；这不允许 bridge 丢弃、跳过或降位其 `Rgba_16` cutout atlas。
 - 正式JPEG decoder固定独立`external/stb` pin/hash。不得从falcor2 import、链接或复制runtime。
@@ -76,12 +77,14 @@ mdl.program@1 -> project MDL bridge -> locked MDL SDK target code
 | Metal registry count/identity/source closure、role或slot上限漂移 | registry/build check拒绝 |
 | 同content resource位于不同state cache目录 | 以content hash判为同一binding；若descriptor不同仍拒绝group |
 | artifact输出目录与provider cache不在同一文件系统 | 使用跨设备复制保留两份payload；不得直接调用跨设备`os.replace`或`os.link`导致训练/测试失败 |
+| compiled artifact目录发布时被临时文件句柄拒绝 | 有界指数退避；target已由并发者发布则转入严格load，重试耗尽则失败并清理partial |
 | formal路径import/启动falcor2 | 静态边界测试失败 |
 
 ## 5. Good / Base / Bad Cases
 
 - Good：`Rgba_16` punched suede inspection 记录 `1024 * 1024 * 4 * 2` bytes 的 decoded runtime payload；typed binder 选择 `uint16/RGBA16Unorm`，随后仅因 public cutout 输出合同缺失而拒绝 evaluate。
 - Good：692个opaque locators进入registry，训练只选择batch所属group并懒加载该组资源；52-set collection用memmap按tile+halo读取source或BSDF table。
+- Good：两个worker并发编译同一snapshot时只有一个原子发布target，另一个发现content-addressed target后丢弃自身partial，并加载/校验winner产物。
 - Base：constant diffuse只绑定argument/RO buffer，canonical evaluate/sample/pdf均可运行。
 - Bad：看到 punched material 尚不可渲染，就跳过其 atlas、转成 8-bit，或把 preset 从 catalog 删除。
 - Bad：为MDL复制一个query shader或producer；正式失败后启动falcor2生成target。
@@ -91,6 +94,7 @@ mdl.program@1 -> project MDL bridge -> locked MDL SDK target code
 - unit：typed edit、path containment、artifact tamper、discovery sorted/exact export、catalog count/identity/signature、source/reference registry、formal/oracle import边界。
 - unit/integration：Metal registry regeneration/source closure、692/145拒绝边界、52 descriptors、16-bit与BSDF tile、typed-state train/validation split和lazy file tamper；
 - unit：内容寻址payload在同盘hardlink与跨盘`EXDEV`复制分支均保留字节、manifest完整性和artifact可加载性。
+- unit：compiled directory发布的瞬时`PermissionError`会重试；并发target已存在返回非publisher，且后续仍由artifact loader校验。
 - unit：用已知 16-bit pattern 断言 `_decoded_texture_binding()` 保留所有 bits，并返回 `dtype=uint16`、`format=rgba16-unorm`。
 - current-Falcor GPU：generic backend session evaluate/sample/pdf、analytic diffuse、texture/RO绑定与slot生命周期；倾斜`geometry.normal` fixture比较MDL SDK native response与`public f × input-frame cosine`；真实 punched atlas 必须断言 payload byte count 为 `width * height * 4 * 2`，Falcor texture format 为 `RGBA16Unorm`。
 - portability：Windows Release实际重编译；静态断言`SharedLibrary`同时含Windows/Linux loader、CLI plugin路径与`${CMAKE_DL_LIBS}`。Linux实际编译留在原生Linux gate。
@@ -137,4 +141,13 @@ MetalQuerySession(...)
 registry = MdlMetalRegistry.load(path)
 plan = compile_single_program_plan(mdl_reference, states, query_recipe=recipe)
 session = create_reference_backend().open(plan, query_capacity=capacity)
+```
+
+```python
+# 错：Windows首次PermissionError就把compile判死，或删除已存在target后重命名。
+os.replace(partial, target)
+
+# 对：共享content-addressed发布协议；无平台特判，winner必须通过正常load。
+published = publish_with_bounded_retry(partial, target)
+artifact = MdlCompiledArtifact.load(target, source_snapshot_id=snapshot.snapshot_id)
 ```

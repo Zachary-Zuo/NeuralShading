@@ -342,6 +342,8 @@ def test_linked_mdl_catalog_switches_reference_and_neural_from_one_typed_state()
     assert '"coordinates"' in catalog
     assert '"frame"' in catalog
     assert '"--evaluator-preview-lighting"' in launcher
+    assert '"packages"' in launcher
+    assert "manual-packages" not in launcher
     assert "learn train" not in launcher.lower()
     assert "learn train" not in exporter.lower()
 

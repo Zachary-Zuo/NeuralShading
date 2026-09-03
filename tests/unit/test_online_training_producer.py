@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from ncls.learning.batches import TrainingConditioning, TrainingRouteRequest
-from ncls.learning.producer import OnlineTrainingProducer
+from ncls.learning.producer import OnlineTrainingProducer, _group_block_sequence
 from ncls.learning.source_adaptation import (
     DenseNativeAssetCollection,
     NativeAssetRole,
@@ -122,6 +122,54 @@ def test_online_query_resume_rejects_typed_state_pool_drift_before_restoring_cur
     assert restored._request_count == producer._request_count
     assert restored._group_cursor == producer._group_cursor
     assert restored._asset_tile_cursor == producer._asset_tile_cursor
+
+
+def test_group_block_schedule_is_shared_by_routes_and_changes_only_at_boundary() -> None:
+    groups = tuple(SimpleNamespace(group_id=str(index)) for index in range(3))
+    producer = OnlineTrainingProducer.__new__(OnlineTrainingProducer)
+    producer._group_schedule_recipe = "group-block-balanced@1"
+    producer._group_block_steps = 64
+    producer._group_validation_offset_blocks = 1
+    producer._group_sequence = groups
+    producer.ddp_world_size = 1
+    producer.ddp_rank = 0
+    producer._group_cursor = {}
+
+    evaluator = TrainingRouteRequest(
+        "evaluator", "reference-evaluator", 1, 1, 63, 1, {}
+    )
+    sampler = TrainingRouteRequest(
+        "sampler", "method-sampler", 1, 1, 63, 2, {}
+    )
+    next_block = TrainingRouteRequest(
+        "evaluator", "reference-evaluator", 1, 1, 64, 3, {}
+    )
+    validation = TrainingRouteRequest(
+        "validation:evaluator",
+        "reference-evaluator",
+        1,
+        1,
+        63,
+        4,
+        {"validation": True},
+    )
+    assert producer._select_group(evaluator) is groups[0]
+    assert producer._select_group(sampler) is groups[0]
+    assert producer._select_group(next_block) is groups[1]
+    assert producer._select_group(validation) is groups[1]
+    assert producer._group_cursor == {}
+
+
+def test_group_block_cycle_has_full_prefix_and_exact_record_weighting() -> None:
+    groups = tuple(
+        SimpleNamespace(group_id=str(index), records=(object(),) * weight)
+        for index, weight in enumerate((1, 3, 2))
+    )
+    sequence = _group_block_sequence(groups, "a" * 64)
+    assert sequence[:3] == groups
+    assert len(sequence) == 6
+    assert [sequence.count(group) for group in groups] == [1, 3, 2]
+    assert sequence == _group_block_sequence(groups, "a" * 64)
 
 
 def test_asset_route_selects_explicit_cohort_and_round_robins_assets() -> None:

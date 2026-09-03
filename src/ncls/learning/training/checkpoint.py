@@ -168,6 +168,7 @@ class TrainingCheckpoint:
         if (
             descriptor.method_key != self.method_key
             or descriptor.descriptor_sha256 != self.method_descriptor_sha256
+            or descriptor.implementation_sha256 != self.implementation_identity
         ):
             raise ValueError("TrainingCheckpoint method descriptor identity mismatch")
         expected_manifest = {

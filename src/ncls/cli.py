@@ -28,6 +28,7 @@ from ncls.learning.producer import OnlineTrainingProducer
 from ncls.learning.training import (
     TrainingConfig,
     TrainingRunner,
+    assess_checkpoint_readiness,
     build_training_review,
     load_checkpoint,
     load_metric_rows,
@@ -375,7 +376,10 @@ def _learn_export(
 ) -> int:
     checkpoint = load_checkpoint(checkpoint_path)
     definition = get_method(checkpoint.method_key)
-    checkpoint.validate_method(definition.descriptor)
+    readiness = assess_checkpoint_readiness(
+        checkpoint, definition.descriptor, mode="formal"
+    )
+    readiness.require_ready()
     config = TrainingConfig.from_dict(checkpoint.training_config)
     family = create_source_family(str(config.source["family_id"]))
     materials = config.source["materials"]
@@ -397,6 +401,7 @@ def _learn_export(
     )
     validation = dict(definition.package_validation(snapshot, payload))
     validation["checkpoint_step"] = checkpoint.global_step
+    validation["checkpoint_readiness"] = readiness.to_dict()
     manifest = write_scattering_package(
         output,
         program_kind="method",
@@ -412,7 +417,8 @@ def _learn_export(
         provenance={
             "checkpoint_sha256": checkpoint_path.with_suffix(
                 checkpoint_path.suffix + ".sha256"
-            ).read_text(encoding="ascii").strip()
+            ).read_text(encoding="ascii").strip(),
+            "checkpoint_readiness_mode": "formal",
         },
     )
     print(f"ScatteringPackage@2 {manifest.package_id}: {output}")
