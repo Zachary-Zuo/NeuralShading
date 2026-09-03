@@ -190,6 +190,19 @@ backend.prepare → state.evaluate / state.sample / state.pdf → MIS / throughp
 
 具体 owner、错误矩阵与断言点见 `../viewer/conventions.md` 和 `../viewer/capture-harness.md`。
 
+## Large Linked Deployment Catalog Boundary
+
+当source registry、typed editor、reference artifact与neural package组成数百条viewer catalog时，不能把entry数量当成重资产数量：
+
+- [ ] 在任何native compile、GPU cook或package写出前，是否遍历全量entry并运行typed editor validator？抽查前N条不能覆盖稀有enum/vector schema。
+- [ ] authoring值是否在边界处规范化为runtime/UI类型，例如MDL enum对象转choice字符串、共享vector range转runtime支持的标量range？
+- [ ] 是否分别统计entry identity与唯一重资产identity（如`texture_set_id`）并按后者分组cook？
+- [ ] 相同content hash是否复用不可变payload，同时保持每个source/asset/instance的canonical identity？logical bytes不能用来估算hardlink后的物理占用。
+- [ ] 已有catalog的启动路径是否只做轻量identity/结构检查，并把大payload严格验证放在实际entry加载事务中？不要为了打印统计再次遍历全目录。
+- [ ] Windows并发生产者发布内容寻址目录时，是否处理`exists → atomic replace`之间的瞬时竞争/拒绝，并保持有界重试和不可加载partial边界？
+
+具体合同与测试入口见 `../viewer/mdl-reference.md`。
+
 ---
 
 ## Cross-Platform Template Consistency

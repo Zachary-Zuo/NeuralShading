@@ -30,6 +30,7 @@ Viewer.applyMaterialEditor(slot, method, candidate_parameter_view) -> atomic slo
 - live target保持同CUDA device；invalid reference行GPU压实补采；lease与prefetch不越过资源生命周期和checkpoint边界。
 - `TrainingCheckpoint@4`保存method/components、phase-local optimization、plan/asset/query/source identity与coverage，严格恢复。
 - `ScatteringPackage@2`独立计算program、asset、instance与package identity；viewer先验证全部section与typed resources，再原子绑定slot。
+- `write_scattering_package(..., linked_content_store=...)`只允许复用已经按canonical payload SHA-256登记的不可变文件；writer仍从输入bytes计算content hash与program/asset/instance/package identity。hardlink失败可回退为同bytes写出，不能因存储优化改变manifest或跳过entry实际绑定时的严格loader验证。
 - editable instance的`editor`与`compiler`必须同时存在或同时为空。editor递归验证native path/type/value/operation、normalization default、raw word地址与derived writes；raw和compiled usages必须指向instance section中的mutable structured buffers。host不能只验证当前value而让损坏的default或unsupported operation延迟到UI阶段失败。
 - viewer以`programId`缓存shader、shared weights和material compiler；asset/instance是slot-local binding。typed edit与package替换都先构造candidate buffers、上传raw state并编译compiled state，全部成功后才替换active slot。MDL package compatibility比较包含export/default/transitive resources的`sourceSnapshotId`，其他family比较各自native asset identity。
 - quality-first neural shader允许把大矩阵从完全展开改为有静态`MaxIters`的runtime loop，并由通用package renderer分块调度以适应平台watchdog；这种调度不得减层、减宽、跳权重或按source family新增renderer分支。具体tile尺寸是平台诊断值，不是方法身份或质量门。
@@ -43,6 +44,7 @@ Viewer.applyMaterialEditor(slot, method, candidate_parameter_view) -> atomic slo
 | config phase/component/parameter ownership不完整 | config/conformance拒绝 |
 | loss、gradient、update或checkpoint identity失败 | training/resume拒绝 |
 | package URI/hash/section identity/instance binding错误 | loader/viewer拒绝 |
+| linked content store把digest映射到未验证或不同内容 | writer/exporter拒绝，不发布package/catalog |
 | editable view的default类型、operation、word offset或mutable usage非法 | Python writer/loader与C++ viewer均在创建GPU binding前拒绝 |
 | typed edit compiler或candidate resource创建失败 | 丢弃candidate，保留旧slot buffers、editor value与accumulation identity |
 | MDL package用root `.mdl` hash替代canonical snapshot比较 | package不兼容；修正为`sourceSnapshotId`，不能放宽为任意同module source |
@@ -60,6 +62,7 @@ Viewer.applyMaterialEditor(slot, method, candidate_parameter_view) -> atomic slo
 
 - unit：registry、plan、asset collection、typed batches、phase resume、component conformance、checkpoint v4、package v2 tamper；
 - unit：editable instance roundtrip；unsupported operation、错误normalization default、越界word与非mutable usage逐项fail closed；viewer静态断言program cache只以`programId`为键且compiler先于slot move；
+- unit：同payload写两个package时content文件`samefile`，两个package仍分别通过严格loader并保持canonical identities；
 - GPU：五source同一backend plan/session，NVIDIA training core与package parity；
 - integration：LayerStack、MaterialX、固定MDL真实online两phase训练并reload/evaluate/export；
 - viewer：Release build、program cache/asset/instance双slot和Falcor clean；

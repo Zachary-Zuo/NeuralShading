@@ -8,6 +8,6 @@
 
 路径追踪的命中解码、frame 与 UV footprint 统一遵守 [path-surface.md](path-surface.md)。
 
-MDL source 的 catalog、artifact identity、动态 string module、资源绑定和原子 preset 切换遵守 [mdl-reference.md](mdl-reference.md)。
+MDL source 的旧六项catalog与registry-derived `ViewerMaterialCatalog@1`、artifact/component identity、动态 string module、linked typed edit、资源绑定和原子 preset 切换遵守 [mdl-reference.md](mdl-reference.md)。
 
 自动化 EXR/PNG 导出与 replay 的固定 spp、单 panel difference 尺寸统一遵守 [capture-harness.md](capture-harness.md)。
