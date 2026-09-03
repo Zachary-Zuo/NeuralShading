@@ -68,3 +68,10 @@
 - 原失败`medium_pitted_steel.pit_texture_selection`严格验证为`MediumPits`字符串；`Silver_Knurling.texture_scale`规范化为共享`0..2`range。
 - `tests/unit`：214 passed；Release build成功；默认full-catalog headless capture两slot均ready，slot 0为1 spp reference、slot 1为deferred neural，slot/difference EXR全finite。
 - 未运行训练、未修改checkpoint、训练config、Metal model/source adapter或evaluate/sample/pdf/prepare数学。
+
+## 9. 2026-09-03 交互卡死根治
+
+- 旧版默认1600×900会在一个`onFrameRender`内同步排空11,250个8×8 evaluator workgroup；真实进程从启动第12秒起持续`Responding=False`，私有内存约5.5 GiB。
+- 交互deferred现改为每frame一个workgroup，并按16×→8×→4×→2×→1×逐级精化；同配置30秒探针仅在首次shader编译峰值短暂2秒无响应，之后持续`Responding=True`，16×与8×全屏阶段均完成，runtime error为0。
+- 只为当前deferred mode懒建program pass；linked初始状态不重复创建reference pass或重复编译相同editor state。catalog在`ReferenceSource`候选/rollback间使用`shared_ptr<const ...>`，不再深拷贝17 MiB/692条元数据。稳定私有内存约3.93 GiB。
+- 320×240 headless继续使用stride=1完整tile，slot 0/1/difference EXR与改造前数值一致且全finite；unit suite 215 passed，Release build成功，Falcor clean。

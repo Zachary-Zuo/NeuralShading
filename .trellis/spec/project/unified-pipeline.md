@@ -33,7 +33,7 @@ Viewer.applyMaterialEditor(slot, method, candidate_parameter_view) -> atomic slo
 - `write_scattering_package(..., linked_content_store=...)`只允许复用已经按canonical payload SHA-256登记的不可变文件；writer仍从输入bytes计算content hash与program/asset/instance/package identity。hardlink失败可回退为同bytes写出，不能因存储优化改变manifest或跳过entry实际绑定时的严格loader验证。
 - editable instance的`editor`与`compiler`必须同时存在或同时为空。editor递归验证native path/type/value/operation、normalization default、raw word地址与derived writes；raw和compiled usages必须指向instance section中的mutable structured buffers。host不能只验证当前value而让损坏的default或unsupported operation延迟到UI阶段失败。
 - viewer以`programId`缓存shader、shared weights和material compiler；asset/instance是slot-local binding。typed edit与package替换都先构造candidate buffers、上传raw state并编译compiled state，全部成功后才替换active slot。MDL package compatibility比较包含export/default/transitive resources的`sourceSnapshotId`，其他family比较各自native asset identity。
-- quality-first neural shader允许把大矩阵从完全展开改为有静态`MaxIters`的runtime loop，并由通用package renderer分块调度以适应平台watchdog；这种调度不得减层、减宽、跳权重或按source family新增renderer分支。具体tile尺寸是平台诊断值，不是方法身份或质量门。
+- quality-first neural shader允许把大矩阵从完全展开改为有静态`MaxIters`的runtime loop，并由通用package renderer分块调度以适应平台watchdog；这种调度不得减层、减宽、跳权重或按source family新增renderer分支。交互viewer还必须把tile调度跨frame time-slice，并可用明确标注的coarse-to-fine空间预览先反馈全屏；headless/capture仍排空`stride=1`精确tile。具体tile尺寸与交互stride是平台调度状态，不是方法身份或质量门。
 
 ## 4. Validation & Error Matrix
 

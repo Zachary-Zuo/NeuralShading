@@ -36,6 +36,8 @@ static project modules:
 - 692个entry有独立source/asset/instance identity，但重资产按52个`texture_set_id`分组：每个texture set只执行一次encoder-only cook，同哈希program/grid/reference payload通过NTFS hardlink物化，跨卷不支持hardlink时才复制。hardlink只改变存储，不改变package content hash或identity；内容映射只能接收已验证SHA-256的文件。
 - native MDL runtime compile可在准备工具内有界并发，Windows原子发布若瞬时返回`PermissionError/WinError 5`可做短退避重试；cache key、最终manifest和artifact identity仍由正式provider拥有。中断后已原子提交的provider cache可复用，catalog staging本身仍不可加载。
 - 已存在catalog的准备入口只验证catalog canonical identity、registry/checkpoint输入identity与结构，不遍历全部hardlink payload，也不为日志重新统计logical bytes；C++在实际选择entry时严格验证该entry的artifact/package并以candidate事务提交。
+- `ReferenceSource`中的`ViewerMaterialCatalog@1`是大体积不可变元数据，候选选择、typed edit和事务rollback必须共享同一catalog对象，不能为每次候选深拷贝692条parameter view。shared neural program的GPU pass按实际slot mode懒创建；默认deferred不得预编译未使用的package path tracer。初始linked transaction若reference state已安装，也不得重复创建同一MDL scene pass或重复编译同一typed instance。
+- quality-first evaluator的8×8 workgroup只是TDR上限，不是交互frame预算。交互deferred每帧最多提交一个workgroup，并以16×→8×→4×→2×→1×的coarse-to-fine stride逐级覆盖全屏；每级用代表性G-buffer sample填充对应block，UI显示当前stride/tile进度，任一相机/材质/灯光reset从16×重新开始。headless/capture固定`stride=1`并在导出前完成全部tile，不能把交互coarse preview写成正式结果。
 - step 20000 checkpoint若descriptor identity与当前runtime不同，只允许在method key、component manifest以及全部tensor name/dtype/rank/shape完全一致时，显式标记`state-schema-compatible-preview`；UI/capture必须同时显示checkpoint/runtime descriptor和compatibility，不能伪装为exact或泛化结论。
 - editable parameter当前允许bool/int/enum/float/float2/color。每个leaf同时含registry-derived `responsibility`、MDL argument `offset/size/type`和已有typed runtime mapping；`coordinates`、`frame`与metal/finish/aging/coating使用相同descriptor遍历，不按参数名增加viewer分支。
 - linked edit以base authored argument block和base snapshot为锚；同一完整values map先生成`ViewerMaterialState@1`，再分别patch reference argument candidate与neural raw candidate并运行现有`nclsCompileMaterial`。values map必须恰好覆盖全部editable path，type、enum、finite、int32及hard min/max任一失败都拒绝。
@@ -69,6 +71,8 @@ static project modules:
 | enum default仍为MDL对象，或vector normalization range未规范化 | 692-entry editor预检报材质名/export ID并终止；不得开始reference compile或asset cook |
 | linked content的声明SHA-256与来源文件不符 | 准备阶段拒绝；不得把错误hardlink写入package |
 | Windows并发cache目录原子发布瞬时拒绝 | 有界短退避重试；超过次数后保留既有cache/staging边界并明确失败 |
+| 交互deferred在单个frame内遍历完整tile lattice，或每tile同步`submit(true)`直到全图结束 | viewer响应性门失败；改为跨frame单workgroup推进，headless才允许同步排空 |
+| candidate复制完整catalog，或deferred启动同时创建未使用的package PT pass | 内存/启动门失败；catalog共享不可变所有权，program pass按slot mode懒创建 |
 | falcor2 import、launch 或 runtime fallback 出现在 viewer 路径 | boundary test 失败 |
 | MDL evaluate 配通用 cosine/GGX proposal，或 MIS 使用非 canonical MDL PDF | 数值正确性失败；不得发布 viewer/capture |
 | `sample` 返回 absorb、非有限方向/weight，或连续事件 PDF 非正 | 终止该路径；不得换 generic proposal 冒充同一 estimator |
@@ -78,11 +82,13 @@ static project modules:
 
 - Good：car paint 的 evaluate/sample/pdf 来自同一 generated module；路径使用 `bsdf_over_pdf`，环境 NEE 用 MDL PDF 做 MIS，1024 spp 中 flakes 形成连续材质结构而不是随机白点。
 - Good：选择`brass/sheet` authored preset后左侧装载该export的canonical MDL artifact，右侧按component identity懒加载同entry package；修改`texture_scale`或round-corner参数时两侧从同一typed value提交。
+- Good：quality-first evaluator在1600×900交互启动时先跨frame完成16×全屏反馈，再逐级精化；消息泵可在每个workgroup后处理输入。相同scene的headless capture直接以stride=1完成精确网格。
 - Good：692个entry按`texture_set_id`分组物化；66个共享同一texture set的preset只cook一次大grid，但各自保留独立argument block、editor state和instance identity。
 - Base：默认 car paint 在 shaderball 上运行；其他 scene slot 继续使用 LayerStack fallback，不产生第二份 MDL generated program。catalog 选择 scratched aluminum 时仍记录同一 snapshot/artifact identity。
 - Base：关闭linked mode后保留旧manual slots/package选择器；继续选择catalog preset只更新reference且保持manual mode。
 - Bad：viewer 直接读 `.mdl` 自行猜参数；从 falcor2 复制 shader/binary；用固定 roughness GGX 采样任意 MDL closure；hash 失败后显示旧图却把新 asset 写入 capture；为混合多 MDL program 文本重命名 generated symbols。
 - Bad：按692个entry反复写出并重哈希同一百MiB级grid，或在每次已有catalog启动时递归统计logical bytes；这会让准备/启动时间与逻辑重复量绑定，而不是与唯一内容量绑定。
+- Bad：虽然拆成8×8 workgroup，却在一次`onFrameRender`内循环11,250个tile并逐个同步submit；它只避免单dispatch触发TDR，仍会让Windows消息泵持续无响应。
 - Bad：用preset display name或列表序号猜右侧package，或先覆盖active argument/raw buffer再运行compiler；失败时会造成左右错配且无法回滚。
 
 ## 6. Tests Required
@@ -91,6 +97,7 @@ static project modules:
 - unit/static：`ViewerMaterialCatalog@1` exact-field/canonical-id/path containment、duplicate/hanging binding、六类responsibility、bool/int/enum/float/float2/color、完整values map、hard range、program cache和candidate commit顺序；脚本静态断言无训练入口。
 - exporter：先预检全部692个editor contracts；正式registry/checkpoint输出692 entries、145 rejected cutout、一个program、52个texture sets及692个独立asset/instance/reference identity。相同content digest必须`samefile`或跨卷安全复制；任一中途失败后output root不存在。
 - exporter回归：至少包含对象形态enum default、共享scalar的`float2` range、Windows cache发布瞬时`PermissionError`、已有catalog快速返回，以及原报错的`medium_pitted_steel`严格artifact/package加载。
+- viewer静态：断言交互deferred调用单tile入口、该入口无循环和同步submit、stride按16/8/4/2/1推进；headless仍调用完整tile入口且显式`gPreviewStride=1`。Windows真实进程在默认1600×900启动后至少连续采样30秒`Responding`，首次shader编译允许短暂峰值，但不能持续无响应。
 - GPU canonical backend：固定 diffuse artifact 上验证 sampled direction/event 有效，sample PDF 等于 formal PDF，`bsdf_over_pdf == evaluate * |n_s·wi| / pdf`；容差按 float32 formal query 冻结，不能根据结果调宽。
 - Release：`scripts/build_viewer.ps1 -Configuration Release`，必须编译 C++ 和真实 string module入口，随后 Falcor clean。
 - headless：car paint 与 glazed ceramic 各做 1024 spp shaderball capture；EXR shape正确、全 finite，manifest identity 匹配。对现场缺陷回归还要报告 max/high quantile 与基于局部邻域的孤立 firefly 数，不能只报告 finite。
@@ -137,6 +144,15 @@ write_scattering_package(
     linked_content_store=verified_objects,
 )
 ViewerMaterialCatalog.open(catalog_path, verify_payloads=False)
+```
+
+```cpp
+// 错：交互frame同步排空完整网格；每个tile安全不代表frame可交互。
+for (auto tile : allTiles) { execute(tile); submit(true); }
+
+// 对：交互每frame推进一个tile并逐级精化；headless单独排空stride=1网格。
+if (headless) executeAllTiles(/* stride = */ 1u);
+else executeOneTile(progressiveCursor);
 ```
 
 ```slang

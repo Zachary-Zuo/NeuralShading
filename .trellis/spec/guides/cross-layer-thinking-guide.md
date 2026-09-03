@@ -200,6 +200,8 @@ backend.prepare → state.evaluate / state.sample / state.pdf → MIS / throughp
 - [ ] 相同content hash是否复用不可变payload，同时保持每个source/asset/instance的canonical identity？logical bytes不能用来估算hardlink后的物理占用。
 - [ ] 已有catalog的启动路径是否只做轻量identity/结构检查，并把大payload严格验证放在实际entry加载事务中？不要为了打印统计再次遍历全目录。
 - [ ] Windows并发生产者发布内容寻址目录时，是否处理`exists → atomic replace`之间的瞬时竞争/拒绝，并保持有界重试和不可加载partial边界？
+- [ ] 大catalog是否以共享不可变对象进入候选/rollback，而不是每次复制全部entry JSON？shared program是否只为实际slot mode懒建GPU pass？
+- [ ] watchdog-safe tile是否真正跨交互frame time-slice？单frame内循环全部tile再逐个同步submit仍会冻结窗口；交互可逐级coarse-to-fine，headless/capture必须保持stride=1精确输出。
 
 具体合同与测试入口见 `../viewer/mdl-reference.md`。
 
