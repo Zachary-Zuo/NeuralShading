@@ -262,6 +262,9 @@ def test_package_program_runtime_is_shared_by_program_identity() -> None:
     assert "mProgramGpuRuntimes.find(method.program->programId)" in runtime
     assert "runtime->programId = method.program->programId" in runtime
     assert "mProgramGpuRuntimes.emplace(runtime->programId, runtime)" in runtime
+    assert "mode == ncls::SlotMode::Deferred && !runtime->pDeferredPass" in runtime
+    assert "mode == ncls::SlotMode::PathTracing && !runtime->pPathPass" in runtime
+    assert "programGpuRuntime(method, candidate.contract.mode)" in viewer
     assert "method.asset.assetId" not in runtime
     assert "method.instance.instanceId" not in runtime
 
@@ -292,6 +295,9 @@ def test_typed_material_edit_compiles_candidate_before_atomic_replacement() -> N
 def test_linked_mdl_catalog_switches_reference_and_neural_from_one_typed_state() -> None:
     viewer = Path("apps/viewer/NclsViewer.cpp").read_text(encoding="utf-8")
     reference = Path("apps/viewer/ReferenceSource.cpp").read_text(encoding="utf-8")
+    reference_header = Path("apps/viewer/ReferenceSource.h").read_text(
+        encoding="utf-8"
+    )
     catalog = Path("apps/viewer/MdlReference.cpp").read_text(encoding="utf-8")
     launcher = Path("scripts/launch_metal_viewer.ps1").read_text(encoding="utf-8")
     exporter = Path("tools/viewer/prepare_metal_catalog.py").read_text(
@@ -308,6 +314,8 @@ def test_linked_mdl_catalog_switches_reference_and_neural_from_one_typed_state()
         )
     ]
     assert 'schemaName == "ncls.viewer-material-catalog"' in reference
+    assert "std::shared_ptr<const MdlViewerCatalog> mdlCatalog;" in reference_header
+    assert "std::make_shared<const MdlViewerCatalog>" in reference
     assert '"ViewerMaterialCatalog entry"' in catalog
     assert "ensureLinkedMdlProgram(entry)" in linked
     assert "installReferenceSource(std::move(source), catalogPath);" in linked
@@ -338,7 +346,19 @@ def test_linked_mdl_catalog_switches_reference_and_neural_from_one_typed_state()
     assert "learn train" not in exporter.lower()
 
 
-def test_package_rendering_uses_generic_tdr_safe_tiles_without_model_shortcuts() -> None:
+def test_powershell_viewer_entrypoints_do_not_reuse_stale_native_exit_codes() -> None:
+    build = Path("scripts/build_viewer.ps1").read_text(encoding="utf-8")
+    launch = Path("scripts/launch_metal_viewer.ps1").read_text(encoding="utf-8")
+
+    assert '& (Join-Path $PSScriptRoot "fetch_viewer_assets.ps1")' in build
+    assert 'if (-not $?) { throw "Failed to provision the fixed viewer scene" }' in build
+    assert 'if (-not $?) { throw "Failed to prepare the linked Metal viewer catalog" }' in launch
+    assert 'if (-not $?) { throw "Failed to build NclsViewer" }' in launch
+    assert 'if ($LASTEXITCODE -ne 0) { throw "Failed to provision' not in build
+    assert "$LASTEXITCODE" not in launch
+
+
+def test_package_rendering_time_slices_interactive_preview_without_model_shortcuts() -> None:
     viewer = Path("apps/viewer/NclsViewer.cpp").read_text(encoding="utf-8")
     header = Path("apps/viewer/NclsViewer.h").read_text(encoding="utf-8")
     deferred = Path("apps/viewer/shaders/DeferredRenderer.cs.slang").read_text(
@@ -347,20 +367,38 @@ def test_package_rendering_uses_generic_tdr_safe_tiles_without_model_shortcuts()
     path = Path("apps/viewer/shaders/PackagePathTracer.cs.slang").read_text(
         encoding="utf-8"
     )
-    dispatch = viewer[
+    full_dispatch = viewer[
         viewer.index("void NclsViewer::executePackageTiles") :
+        viewer.index("void NclsViewer::executeInteractivePackageTile")
+    ]
+    interactive_dispatch = viewer[
+        viewer.index("void NclsViewer::executeInteractivePackageTile") :
         viewer.index("void NclsViewer::renderPackagePath")
+    ]
+    deferred_render = viewer[
+        viewer.index("void NclsViewer::renderApproximation") :
+        viewer.index("void NclsViewer::executePackageTiles")
     ]
 
     assert "kPackageDispatchTileWidth = 8u" in viewer
     assert "kPackageDispatchTileRows = 8u" in viewer
+    assert "kInteractiveDeferredInitialStride = 16u" in viewer
     assert "void executePackageTiles(" in header
-    assert 'root[constantBufferName]["gDispatchOffset"] = uint2(column, row);' in dispatch
-    assert "pRenderContext->submit(true)" in dispatch
-    assert "ReferenceFamily::Mdl" not in dispatch
-    assert "metal" not in dispatch.lower()
-    assert viewer.count("executePackageTiles(pRenderContext") == 2
+    assert "void executeInteractivePackageTile(" in header
+    assert 'root[constantBufferName]["gDispatchOffset"] = uint2(column, row);' in full_dispatch
+    assert "pRenderContext->submit(true)" in full_dispatch
+    assert "pRenderContext->submit(true)" not in interactive_dispatch
+    assert "for (" not in interactive_dispatch
+    assert "if (mOptions.headless)" in deferred_render
+    assert "executeInteractivePackageTile(" in deferred_render
+    assert "deferredPreviewStride /= 2u" in deferred_render
+    assert "ReferenceFamily::Mdl" not in full_dispatch + interactive_dispatch
+    assert "metal" not in (full_dispatch + interactive_dispatch).lower()
+    assert viewer.count("executePackageTiles(") == 3
     for shader in (deferred, path):
         assert "uint2 gDispatchOffset;" in shader
-        assert "dispatchThreadID.xy + gDispatchOffset" in shader
         assert "[numthreads(8, 8, 1)]" in shader
+    assert "dispatchThreadID.xy + gDispatchOffset" in path
+    assert "previewPixel = dispatchThreadID.xy + gDispatchOffset" in deferred
+    assert "uint gPreviewStride;" in deferred
+    assert "blockOrigin + stride" in deferred

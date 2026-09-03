@@ -15,6 +15,7 @@ cbuffer ApproximationCB
 {
     uint2 gFrameDim;
     uint2 gDispatchOffset;
+    uint gPreviewStride;
     uint gUseEnvironment;
     float gEnvironmentRotation;
     float gEnvironmentIntensity;
@@ -63,76 +64,90 @@ float3 nclsEnvironment(float3 direction)
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
-    const uint2 pixel = dispatchThreadID.xy + gDispatchOffset;
-    if (any(pixel >= gFrameDim)) return;
+    const uint stride = max(gPreviewStride, 1u);
+    const uint2 previewPixel = dispatchThreadID.xy + gDispatchOffset;
+    const uint2 previewDim = (gFrameDim + stride - 1u) / stride;
+    if (any(previewPixel >= previewDim)) return;
+    const uint2 blockOrigin = previewPixel * stride;
+    const uint2 pixel = min(blockOrigin + stride / 2u, gFrameDim - 1u);
     const float4 positionDepth = gPositionDepth[pixel];
     const float3 viewWorld = normalize(gViewDirection[pixel].xyz);
+    float3 outputValue;
     if (positionDepth.w < 0.0f)
     {
-        const float3 background = gUseEnvironment != 0u ? nclsEnvironment(-viewWorld) : float3(0.025f, 0.03f, 0.04f);
-        gApproximation[pixel] = float4(background, 1.0f);
-        return;
+        outputValue = gUseEnvironment != 0u
+            ? nclsEnvironment(-viewWorld)
+            : float3(0.025f, 0.03f, 0.04f);
     }
-    const uint index = pixel.y * gFrameDim.x + pixel.x;
-    const float3 position = positionDepth.xyz;
-    const float3 normal = normalize(gNormal[pixel].xyz);
-    const float3 tangent = normalize(gTangent[pixel].xyz);
-    const float2 uv = gTexCoord[pixel].xy;
-    const float4 uvGrad = gTexCoordGrad[pixel];
-    const NclsScatteringContext context = nclsViewerMethodContext(
-        position, normal, tangent, viewWorld,
-        uv, uvGrad.xy, uvGrad.zw,
-        nclsViewerHashFloat(index), gMaterialId[pixel]);
-    const NclsPackageBackend backend = nclsCreatePackageBackend();
-    const NclsPackageState state = backend.prepare(
-        context, nclsLoadPackageMaterial(gCompiledMaterialIndex));
-    float3 radiance = float3(0.0f);
-    if (gUseSun != 0u)
-        radiance += nclsApproximationDirection(state, context, normalize(gSunDirection), index + 1u)
-            * gSunColor * gSunIntensity;
-    if (gUsePoint != 0u)
+    else
     {
-        const float3 toLight = gPointPosition - position;
-        const float distanceSquared = max(dot(toLight, toLight), 1e-4f);
-        radiance += nclsApproximationDirection(state, context, toLight, index + 2u)
-            * gPointColor * (gPointIntensity / distanceSquared);
-    }
-    if (gUseRectangle != 0u)
-    {
-        const float3 lightNormal = normalize(cross(gRectangleAxisU, gRectangleAxisV));
-        const float area = 4.0f * length(cross(gRectangleAxisU, gRectangleAxisV));
-        [loop]
-        for (uint sampleIndex = 0u; sampleIndex < gRectangleQueryBudget; ++sampleIndex)
+        const uint index = pixel.y * gFrameDim.x + pixel.x;
+        const float3 position = positionDepth.xyz;
+        const float3 normal = normalize(gNormal[pixel].xyz);
+        const float3 tangent = normalize(gTangent[pixel].xyz);
+        const float2 uv = gTexCoord[pixel].xy;
+        const float4 uvGrad = gTexCoordGrad[pixel];
+        const NclsScatteringContext context = nclsViewerMethodContext(
+            position, normal, tangent, viewWorld,
+            uv, uvGrad.xy, uvGrad.zw,
+            nclsViewerHashFloat(index), gMaterialId[pixel]);
+        const NclsPackageBackend backend = nclsCreatePackageBackend();
+        const NclsPackageState state = backend.prepare(
+            context, nclsLoadPackageMaterial(gCompiledMaterialIndex));
+        float3 radiance = float3(0.0f);
+        if (gUseSun != 0u)
+            radiance += nclsApproximationDirection(state, context, normalize(gSunDirection), index + 1u)
+                * gSunColor * gSunIntensity;
+        if (gUsePoint != 0u)
         {
-            const float2 u = nclsViewerHammersley(sampleIndex, gRectangleQueryBudget);
-            const float3 lightPoint = gRectangleCenter
-                + (2.0f * u.x - 1.0f) * gRectangleAxisU
-                + (2.0f * u.y - 1.0f) * gRectangleAxisV;
-            const float3 toLight = lightPoint - position;
+            const float3 toLight = gPointPosition - position;
             const float distanceSquared = max(dot(toLight, toLight), 1e-4f);
-            const float3 wiWorld = normalize(toLight);
-            const float lightCosine = max(dot(lightNormal, -wiWorld), 0.0f);
-            radiance += nclsApproximationDirection(
-                state, context, wiWorld, index + 17u * sampleIndex + 3u)
-                * gRectangleColor * gRectangleIntensity
-                * (area * lightCosine / (distanceSquared * float(gRectangleQueryBudget)));
+            radiance += nclsApproximationDirection(state, context, toLight, index + 2u)
+                * gPointColor * (gPointIntensity / distanceSquared);
         }
-    }
-    if (gUseEnvironment != 0u)
-    {
-        // A shared deterministic quadrature avoids pixel-scrambled salt-and-pepper noise
-        // on the realtime side. This is bounded lighting work, not temporal accumulation.
-        float3 environmentIntegral = float3(0.0f);
-        [loop]
-        for (uint sampleIndex = 0u; sampleIndex < gEnvironmentQueryBudget; ++sampleIndex)
+        if (gUseRectangle != 0u)
         {
-            const float2 u = nclsViewerHammersley(sampleIndex, gEnvironmentQueryBudget);
-            const float3 wiWorld = nclsViewerToWorld(nclsViewerUniformHemisphere(u), normal, tangent);
-            environmentIntegral += nclsApproximationDirection(
-                state, context, wiWorld, index + 31u * sampleIndex + 5u)
-                * nclsEnvironment(wiWorld);
+            const float3 lightNormal = normalize(cross(gRectangleAxisU, gRectangleAxisV));
+            const float area = 4.0f * length(cross(gRectangleAxisU, gRectangleAxisV));
+            [loop]
+            for (uint sampleIndex = 0u; sampleIndex < gRectangleQueryBudget; ++sampleIndex)
+            {
+                const float2 u = nclsViewerHammersley(sampleIndex, gRectangleQueryBudget);
+                const float3 lightPoint = gRectangleCenter
+                    + (2.0f * u.x - 1.0f) * gRectangleAxisU
+                    + (2.0f * u.y - 1.0f) * gRectangleAxisV;
+                const float3 toLight = lightPoint - position;
+                const float distanceSquared = max(dot(toLight, toLight), 1e-4f);
+                const float3 wiWorld = normalize(toLight);
+                const float lightCosine = max(dot(lightNormal, -wiWorld), 0.0f);
+                radiance += nclsApproximationDirection(
+                    state, context, wiWorld, index + 17u * sampleIndex + 3u)
+                    * gRectangleColor * gRectangleIntensity
+                    * (area * lightCosine / (distanceSquared * float(gRectangleQueryBudget)));
+            }
         }
-        radiance += environmentIntegral * (2.0f * NCLS_VIEWER_PI / float(gEnvironmentQueryBudget));
+        if (gUseEnvironment != 0u)
+        {
+            // A shared deterministic quadrature avoids pixel-scrambled salt-and-pepper noise
+            // on the realtime side. This is bounded lighting work, not temporal accumulation.
+            float3 environmentIntegral = float3(0.0f);
+            [loop]
+            for (uint sampleIndex = 0u; sampleIndex < gEnvironmentQueryBudget; ++sampleIndex)
+            {
+                const float2 u = nclsViewerHammersley(sampleIndex, gEnvironmentQueryBudget);
+                const float3 wiWorld = nclsViewerToWorld(nclsViewerUniformHemisphere(u), normal, tangent);
+                environmentIntegral += nclsApproximationDirection(
+                    state, context, wiWorld, index + 31u * sampleIndex + 5u)
+                    * nclsEnvironment(wiWorld);
+            }
+            radiance += environmentIntegral * (2.0f * NCLS_VIEWER_PI / float(gEnvironmentQueryBudget));
+        }
+        outputValue = max(radiance, 0.0f);
     }
-    gApproximation[pixel] = float4(max(radiance, 0.0f), 1.0f);
+    const uint2 blockEnd = min(blockOrigin + stride, gFrameDim);
+    [loop]
+    for (uint y = blockOrigin.y; y < blockEnd.y; ++y)
+        [loop]
+        for (uint x = blockOrigin.x; x < blockEnd.x; ++x)
+            gApproximation[uint2(x, y)] = float4(outputValue, 1.0f);
 }

@@ -28,6 +28,7 @@ namespace
 {
 constexpr uint32_t kPackageDispatchTileWidth = 8u;
 constexpr uint32_t kPackageDispatchTileRows = 8u;
+constexpr uint32_t kInteractiveDeferredInitialStride = 16u;
 
 constexpr uint32_t kMaximumSceneMaterials = 64;
 constexpr uint32_t kDefaultCapturePathTracingSpp = 1024;
@@ -691,10 +692,10 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
     scanPackages();
     if (mOptions.comparisonSelectionExplicit
         && mReferenceSource.family == ncls::ReferenceFamily::Mdl
-        && mReferenceSource.mdlCatalog.linked()
-        && mReferenceSource.mdlCatalogIndex < mReferenceSource.mdlCatalog.entries.size())
+        && mReferenceSource.mdlCatalog && mReferenceSource.mdlCatalog->linked()
+        && mReferenceSource.mdlCatalogIndex < mReferenceSource.mdlCatalog->entries.size())
     {
-        const auto& entry = mReferenceSource.mdlCatalog.entries[mReferenceSource.mdlCatalogIndex];
+        const auto& entry = mReferenceSource.mdlCatalog->entries[mReferenceSource.mdlCatalogIndex];
         const bool requestsLinkedPackage = std::find(
             mOptions.requestedSlotPackages.begin(),
             mOptions.requestedSlotPackages.end(),
@@ -730,10 +731,10 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
     }
     if (mOptions.comparisonSelectionExplicit
         && mReferenceSource.family == ncls::ReferenceFamily::Mdl
-        && mReferenceSource.mdlCatalog.linked()
-        && mReferenceSource.mdlCatalogIndex < mReferenceSource.mdlCatalog.entries.size())
+        && mReferenceSource.mdlCatalog && mReferenceSource.mdlCatalog->linked()
+        && mReferenceSource.mdlCatalogIndex < mReferenceSource.mdlCatalog->entries.size())
     {
-        const auto& entry = mReferenceSource.mdlCatalog.entries[mReferenceSource.mdlCatalogIndex];
+        const auto& entry = mReferenceSource.mdlCatalog->entries[mReferenceSource.mdlCatalogIndex];
         for (auto& slot : mComparisonSlots)
         {
             const auto* selected = slotProgram(slot);
@@ -742,10 +743,10 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
         }
     }
     if (mLinkedMdlMode && mReferenceSource.family == ncls::ReferenceFamily::Mdl
-        && mReferenceSource.mdlCatalog.linked())
+        && mReferenceSource.mdlCatalog && mReferenceSource.mdlCatalog->linked())
         mStatus = "ViewerMaterialCatalog ready: step "
-            + std::to_string(mReferenceSource.mdlCatalog.checkpointStep) + " / "
-            + mReferenceSource.mdlCatalog.checkpointPhase + " / "
+            + std::to_string(mReferenceSource.mdlCatalog->checkpointStep) + " / "
+            + mReferenceSource.mdlCatalog->checkpointPhase + " / "
             + (mReferenceSource.mdlEdited ? "edited-preview" : "authored");
     else
         mStatus = mPrograms.empty()
@@ -1129,6 +1130,8 @@ void NclsViewer::createSceneReferencePass()
     for (const auto& [materialId, binding] : mInactiveSceneMaterials) registerMdl(binding.source);
     if (mdlSource)
     {
+        if (!mdlSource->mdlCatalog)
+            throw std::runtime_error("MDL scene source has no viewer catalog");
         const auto& artifact = *mdlSource->mdlArtifact;
         const std::string generatedModule =
             "#define MDL_NUM_TEXTURE_RESULTS 16\n"
@@ -1137,8 +1140,8 @@ void NclsViewer::createSceneReferencePass()
             "#define RENDERER_STATE_TYPE NclsMdlRendererState\n"
             "#define NCLS_MDL_TEXTURE_COUNT "
             + std::to_string(std::max<size_t>(1u, artifact.textures.size())) + "\n"
-            + readUtf8File(mdlSource->mdlCatalog.targetCodeTypesPath) + "\n"
-            + readUtf8File(mdlSource->mdlCatalog.rendererRuntimePath) + "\n"
+            + readUtf8File(mdlSource->mdlCatalog->targetCodeTypesPath) + "\n"
+            + readUtf8File(mdlSource->mdlCatalog->rendererRuntimePath) + "\n"
             + artifact.generatedCode;
         program.addShaderModule("NclsMdlGenerated").addString(
             generatedModule, artifact.root / "ncls_mdl_viewer_generated.slang");
@@ -1344,7 +1347,7 @@ void NclsViewer::scanPackages()
 {
     const bool autoLink = mLinkedMdlMode
         && mReferenceSource.family == ncls::ReferenceFamily::Mdl
-        && mReferenceSource.mdlCatalog.linked()
+        && mReferenceSource.mdlCatalog && mReferenceSource.mdlCatalog->linked()
         && !mOptions.comparisonSelectionExplicit;
     std::array<std::string, 2> previousIds;
     std::array<bool, 2> previousSources{};
@@ -1443,29 +1446,38 @@ ref<ComputePass> NclsViewer::createProgramPathPass(const ncls::ViewerProgram& me
 }
 
 std::shared_ptr<NclsViewer::ProgramGpuRuntime> NclsViewer::programGpuRuntime(
-    const ncls::ViewerProgram& method)
+    const ncls::ViewerProgram& method,
+    ncls::SlotMode mode)
 {
     const auto found = mProgramGpuRuntimes.find(method.program->programId);
-    if (found != mProgramGpuRuntimes.end()) return found->second;
-    auto runtime = std::make_shared<ProgramGpuRuntime>();
-    runtime->programId = method.program->programId;
-    for (const auto& descriptor : method.program->blobs)
+    std::shared_ptr<ProgramGpuRuntime> runtime;
+    if (found != mProgramGpuRuntimes.end()) runtime = found->second;
+    else
     {
-        const auto inserted = runtime->buffers.emplace(
-            descriptor.usage, createPackageBuffer(getDevice(), descriptor));
-        if (!inserted.second) throw std::runtime_error("program buffer usage is duplicated");
+        runtime = std::make_shared<ProgramGpuRuntime>();
+        runtime->programId = method.program->programId;
+        for (const auto& descriptor : method.program->blobs)
+        {
+            const auto inserted = runtime->buffers.emplace(
+                descriptor.usage, createPackageBuffer(getDevice(), descriptor));
+            if (!inserted.second) throw std::runtime_error("program buffer usage is duplicated");
+        }
+        for (const auto& descriptor : method.program->samplers)
+        {
+            const auto inserted = runtime->samplers.emplace(
+                descriptor.usage, createPackageSampler(getDevice(), descriptor));
+            if (!inserted.second) throw std::runtime_error("program sampler usage is duplicated");
+        }
+        mProgramGpuRuntimes.emplace(runtime->programId, runtime);
     }
-    for (const auto& descriptor : method.program->samplers)
-    {
-        const auto inserted = runtime->samplers.emplace(
-            descriptor.usage, createPackageSampler(getDevice(), descriptor));
-        if (!inserted.second) throw std::runtime_error("program sampler usage is duplicated");
-    }
-    runtime->pDeferredPass = createProgramPass(
-        "NclsViewer/shaders/DeferredRenderer.cs.slang", method);
-    if ((method.program->capabilities & (4u | 8u)) == (4u | 8u))
+
+    if (mode == ncls::SlotMode::Deferred && !runtime->pDeferredPass)
+        runtime->pDeferredPass = createProgramPass(
+            "NclsViewer/shaders/DeferredRenderer.cs.slang", method);
+    if (mode == ncls::SlotMode::PathTracing && !runtime->pPathPass
+        && (method.program->capabilities & (4u | 8u)) == (4u | 8u))
         runtime->pPathPass = createProgramPathPass(method);
-    if (method.instance.editable())
+    if (method.instance.editable() && !runtime->pMaterialCompilerPass)
     {
         ProgramDesc program;
         program.addShaderLibrary(method.program->shaderModule)
@@ -1475,7 +1487,6 @@ std::shared_ptr<NclsViewer::ProgramGpuRuntime> NclsViewer::programGpuRuntime(
         runtime->pMaterialCompilerPass = ComputePass::create(
             getDevice(), program, defines, true);
     }
-    mProgramGpuRuntimes.emplace(runtime->programId, runtime);
     return runtime;
 }
 
@@ -1756,11 +1767,15 @@ uint32_t NclsViewer::ensureLinkedMdlProgram(const ncls::MdlCatalogEntry& entry)
 
 void NclsViewer::applyLinkedMdlSource(ncls::ReferenceSource source)
 {
-    if (source.family != ncls::ReferenceFamily::Mdl || !source.mdlCatalog.linked()
-        || source.mdlCatalogIndex >= source.mdlCatalog.entries.size())
+    if (source.family != ncls::ReferenceFamily::Mdl || !source.mdlCatalog
+        || !source.mdlCatalog->linked()
+        || source.mdlCatalogIndex >= source.mdlCatalog->entries.size())
         throw std::runtime_error("linked MDL activation requires a ViewerMaterialCatalog entry");
-    const auto entry = source.mdlCatalog.entries[source.mdlCatalogIndex];
+    const auto entry = source.mdlCatalog->entries[source.mdlCatalogIndex];
     const uint32_t programIndex = ensureLinkedMdlProgram(entry);
+    const bool sourceAlreadyInstalled = mReferenceSource.family == ncls::ReferenceFamily::Mdl
+        && mReferenceSource.mdlCatalog
+        && referenceSourceStateHash(mReferenceSource) == referenceSourceStateHash(source);
 
     const auto previousSource = mReferenceSource;
     const auto previousGpu = mSourceGpu;
@@ -1773,10 +1788,10 @@ void NclsViewer::applyLinkedMdlSource(ncls::ReferenceSource source)
     const bool previousLinkedMdlMode = mLinkedMdlMode;
     const double previousAccumulationSeconds = mAccumulationSeconds;
     const bool previousVisibilityDirty = mVisibilityDirty;
-    const auto catalogPath = source.mdlCatalog.sourcePath;
+    const auto catalogPath = source.mdlCatalog->sourcePath;
     try
     {
-        installReferenceSource(std::move(source), catalogPath);
+        if (!sourceAlreadyInstalled) installReferenceSource(std::move(source), catalogPath);
         mComparisonSlots[0].contract.mode = ncls::SlotMode::PathTracing;
         activateComparisonSlot(0u, 1u);
         mComparisonSlots[1].contract.mode = ncls::SlotMode::Deferred;
@@ -1788,7 +1803,8 @@ void NclsViewer::applyLinkedMdlSource(ncls::ReferenceSource source)
                 mComparisonSlots[1].contract.diagnostic.empty()
                     ? "linked MDL comparison did not become ready"
                     : mComparisonSlots[1].contract.diagnostic);
-        applyMaterialEditor(mComparisonSlots[1], *selected, mReferenceSource.mdlParameterView);
+        if (mComparisonSlots[1].editorView != mReferenceSource.mdlParameterView)
+            applyMaterialEditor(mComparisonSlots[1], *selected, mReferenceSource.mdlParameterView);
         mLinkedMdlMode = true;
         mFreezeReference = false;
         mStatus = "Linked MDL reference and neural preview applied atomically: "
@@ -1933,6 +1949,9 @@ void NclsViewer::resizeComparisonSlot(ComparisonSlotRuntime& slot)
     slot.ping = 0u;
     slot.spp = 0u;
     slot.resetAccumulation = true;
+    slot.deferredPreviewStride = 1u;
+    slot.deferredTileIndex = 0u;
+    slot.deferredComplete = false;
 }
 
 void NclsViewer::activateComparisonSlot(uint32_t slotIndex, uint32_t selection)
@@ -1981,7 +2000,7 @@ void NclsViewer::activateComparisonSlot(uint32_t slotIndex, uint32_t selection)
             }
             if (candidate.contract.status == ncls::SlotStatus::Ready)
             {
-                candidate.programRuntime = programGpuRuntime(method);
+                candidate.programRuntime = programGpuRuntime(method, candidate.contract.mode);
                 auto addBlob = [&](const ncls::ViewerTypedBlob& descriptor) {
                     const auto inserted = candidate.buffers.emplace(
                         descriptor.usage,
@@ -2241,33 +2260,109 @@ void NclsViewer::renderApproximation(RenderContext* pRenderContext, ComparisonSl
     root["ApproximationCB"]["gEnvironmentQueryBudget"] = method->program->environmentQueryBudget;
     root["ApproximationCB"]["gRectangleQueryBudget"] = method->program->rectangleQueryBudget;
     bindLighting(root, "ApproximationCB");
+    if (slot.resetAccumulation)
+    {
+        pRenderContext->clearUAV(slot.pDeferred->getUAV().get(), float4(0.f));
+        slot.deferredPreviewStride = mOptions.headless ? 1u : kInteractiveDeferredInitialStride;
+        slot.deferredTileIndex = 0u;
+        slot.deferredComplete = false;
+        slot.resetAccumulation = false;
+    }
+    if (slot.deferredComplete) return;
+
     beginTiming(slot.timing);
-    executePackageTiles(pRenderContext, slot.programRuntime->pDeferredPass, "ApproximationCB");
+    if (mOptions.headless)
+    {
+        root["ApproximationCB"]["gPreviewStride"] = 1u;
+        executePackageTiles(
+            pRenderContext,
+            slot.programRuntime->pDeferredPass,
+            "ApproximationCB",
+            mViewWidth,
+            mOutputHeight);
+        slot.deferredComplete = true;
+    }
+    else
+    {
+        const uint32_t stride = slot.deferredPreviewStride;
+        const uint32_t dispatchWidth = (mViewWidth + stride - 1u) / stride;
+        const uint32_t dispatchHeight = (mOutputHeight + stride - 1u) / stride;
+        const uint32_t tileColumns = (dispatchWidth + kPackageDispatchTileWidth - 1u)
+            / kPackageDispatchTileWidth;
+        const uint32_t tileRows = (dispatchHeight + kPackageDispatchTileRows - 1u)
+            / kPackageDispatchTileRows;
+        const uint32_t tileCount = tileColumns * tileRows;
+        root["ApproximationCB"]["gPreviewStride"] = stride;
+        executeInteractivePackageTile(
+            pRenderContext,
+            slot.programRuntime->pDeferredPass,
+            "ApproximationCB",
+            dispatchWidth,
+            dispatchHeight,
+            slot.deferredTileIndex);
+        if (++slot.deferredTileIndex >= tileCount)
+        {
+            logInfo("Interactive neural preview completed {}x refinement ({}x{} logical samples)",
+                slot.deferredPreviewStride, dispatchWidth, dispatchHeight);
+            if (slot.deferredPreviewStride > 1u)
+            {
+                slot.deferredPreviewStride /= 2u;
+                slot.deferredTileIndex = 0u;
+            }
+            else slot.deferredComplete = true;
+        }
+    }
     endTiming(slot.timing);
 }
 
 void NclsViewer::executePackageTiles(
     RenderContext* pRenderContext,
     const ref<ComputePass>& pPass,
-    const char* constantBufferName)
+    const char* constantBufferName,
+    uint32_t dispatchWidth,
+    uint32_t dispatchHeight)
 {
     auto root = pPass->getRootVar();
-    for (uint32_t row = 0u; row < mOutputHeight; row += kPackageDispatchTileRows)
+    for (uint32_t row = 0u; row < dispatchHeight; row += kPackageDispatchTileRows)
     {
-        for (uint32_t column = 0u; column < mViewWidth; column += kPackageDispatchTileWidth)
+        for (uint32_t column = 0u; column < dispatchWidth; column += kPackageDispatchTileWidth)
         {
             root[constantBufferName]["gDispatchOffset"] = uint2(column, row);
             pPass->execute(
                 pRenderContext,
-                std::min(kPackageDispatchTileWidth, mViewWidth - column),
-                std::min(kPackageDispatchTileRows, mOutputHeight - row));
+                std::min(kPackageDispatchTileWidth, dispatchWidth - column),
+                std::min(kPackageDispatchTileRows, dispatchHeight - row));
             // A completed workgroup is the scheduling boundary that remains
             // reliable under Windows TDR for a quality-first neural program.
-            const bool lastTile = row + kPackageDispatchTileRows >= mOutputHeight
-                && column + kPackageDispatchTileWidth >= mViewWidth;
+            const bool lastTile = row + kPackageDispatchTileRows >= dispatchHeight
+                && column + kPackageDispatchTileWidth >= dispatchWidth;
             if (!lastTile) pRenderContext->submit(true);
         }
     }
+}
+
+void NclsViewer::executeInteractivePackageTile(
+    RenderContext* pRenderContext,
+    const ref<ComputePass>& pPass,
+    const char* constantBufferName,
+    uint32_t dispatchWidth,
+    uint32_t dispatchHeight,
+    uint32_t tileIndex)
+{
+    const uint32_t tileColumns = (dispatchWidth + kPackageDispatchTileWidth - 1u)
+        / kPackageDispatchTileWidth;
+    const uint32_t tileRows = (dispatchHeight + kPackageDispatchTileRows - 1u)
+        / kPackageDispatchTileRows;
+    if (tileColumns == 0u || tileRows == 0u || tileIndex >= tileColumns * tileRows)
+        throw std::runtime_error("interactive package tile is outside the preview grid");
+    const uint32_t column = (tileIndex % tileColumns) * kPackageDispatchTileWidth;
+    const uint32_t row = (tileIndex / tileColumns) * kPackageDispatchTileRows;
+    auto root = pPass->getRootVar();
+    root[constantBufferName]["gDispatchOffset"] = uint2(column, row);
+    pPass->execute(
+        pRenderContext,
+        std::min(kPackageDispatchTileWidth, dispatchWidth - column),
+        std::min(kPackageDispatchTileRows, dispatchHeight - row));
 }
 
 void NclsViewer::renderPackagePath(RenderContext* pRenderContext, ComparisonSlotRuntime& slot)
@@ -2303,7 +2398,12 @@ void NclsViewer::renderPackagePath(RenderContext* pRenderContext, ComparisonSlot
     bindLighting(root, "PackagePathTracerCB");
     pRenderContext->clearUAV(slot.pNoiseStats->getUAV().get(), uint4(0u));
     beginTiming(slot.timing);
-    executePackageTiles(pRenderContext, slot.programRuntime->pPathPass, "PackagePathTracerCB");
+    executePackageTiles(
+        pRenderContext,
+        slot.programRuntime->pPathPass,
+        "PackagePathTracerCB",
+        mViewWidth,
+        mOutputHeight);
     endTiming(slot.timing);
     slot.ping = next;
     slot.spp += samplesThisFrame;
@@ -2679,15 +2779,15 @@ void NclsViewer::renderMaterialUi(Gui::Widgets& widgets)
 
 void NclsViewer::renderMdlUi(Gui::Widgets& widgets)
 {
-    if (!mReferenceSource.mdlArtifact
-        || mReferenceSource.mdlCatalogIndex >= mReferenceSource.mdlCatalog.entries.size())
+    if (!mReferenceSource.mdlCatalog || !mReferenceSource.mdlArtifact
+        || mReferenceSource.mdlCatalogIndex >= mReferenceSource.mdlCatalog->entries.size())
     {
         widgets.text("MDL source has no validated compiled artifact.");
         return;
     }
-    if (mReferenceSource.mdlCatalog.linked())
+    if (mReferenceSource.mdlCatalog->linked())
     {
-        auto& catalog = mReferenceSource.mdlCatalog;
+        const auto& catalog = *mReferenceSource.mdlCatalog;
         uint32_t family = 0u;
         const Gui::DropdownList families = {{0u, "Metal / opaque vMaterials 2"}};
         widgets.dropdown("Material family", families, family);
@@ -2844,8 +2944,8 @@ void NclsViewer::renderMdlUi(Gui::Widgets& widgets)
     }
 
     Gui::DropdownList presets;
-    for (uint32_t index = 0u; index < mReferenceSource.mdlCatalog.entries.size(); ++index)
-        presets.push_back({index, mReferenceSource.mdlCatalog.entries[index].displayName});
+    for (uint32_t index = 0u; index < mReferenceSource.mdlCatalog->entries.size(); ++index)
+        presets.push_back({index, mReferenceSource.mdlCatalog->entries[index].displayName});
     uint32_t selected = mReferenceSource.mdlCatalogIndex;
     if (widgets.dropdown("vMaterials preset", presets, selected)
         && selected != mReferenceSource.mdlCatalogIndex)
@@ -2853,7 +2953,7 @@ void NclsViewer::renderMdlUi(Gui::Widgets& widgets)
         try
         {
             auto candidate = ncls::selectMdlCatalogEntry(mReferenceSource, selected);
-            installReferenceSource(std::move(candidate), mReferenceSource.mdlCatalog.sourcePath);
+            installReferenceSource(std::move(candidate), mReferenceSource.mdlCatalog->sourcePath);
             mFreezeReference = false;
             mStatus = "Loaded formal MDL artifact in current Falcor 8: " + mReferenceSource.displayName;
         }
@@ -2862,7 +2962,7 @@ void NclsViewer::renderMdlUi(Gui::Widgets& widgets)
             mStatus = "MDL preset switch failed; previous material preserved: " + std::string(error.what());
         }
     }
-    const auto& entry = mReferenceSource.mdlCatalog.entries[mReferenceSource.mdlCatalogIndex];
+    const auto& entry = mReferenceSource.mdlCatalog->entries[mReferenceSource.mdlCatalogIndex];
     widgets.text("Asset id: " + entry.assetId);
     widgets.text("Source snapshot: " + shortId(entry.sourceSnapshotId));
     widgets.text("Compiled artifact: " + shortId(mReferenceSource.mdlArtifact->artifactSha256));
@@ -3123,10 +3223,29 @@ void NclsViewer::onGuiRender(Gui* pGui)
         if (group)
         {
             if (mLinkedMdlMode && mReferenceSource.family == ncls::ReferenceFamily::Mdl
-                && mReferenceSource.mdlCatalog.linked())
+                && mReferenceSource.mdlCatalog && mReferenceSource.mdlCatalog->linked())
             {
                 group.text("Linked mode: left is the MDL reference; right is the matched neural evaluator.");
                 group.text("Right renderer: deferred evaluator preview");
+                const auto& preview = mComparisonSlots[1];
+                if (preview.contract.mode == ncls::SlotMode::Deferred && preview.ready())
+                {
+                    if (preview.deferredComplete) group.text("Right preview: exact-resolution refinement complete");
+                    else
+                    {
+                        const uint32_t stride = std::max(preview.deferredPreviewStride, 1u);
+                        const uint32_t dispatchWidth = (mViewWidth + stride - 1u) / stride;
+                        const uint32_t dispatchHeight = (mOutputHeight + stride - 1u) / stride;
+                        const uint32_t tileColumns = (dispatchWidth + kPackageDispatchTileWidth - 1u)
+                            / kPackageDispatchTileWidth;
+                        const uint32_t tileRows = (dispatchHeight + kPackageDispatchTileRows - 1u)
+                            / kPackageDispatchTileRows;
+                        group.text("Right preview: " + std::to_string(stride)
+                            + "x progressive refinement, tile "
+                            + std::to_string(std::min(preview.deferredTileIndex, tileColumns * tileRows))
+                            + "/" + std::to_string(tileColumns * tileRows));
+                    }
+                }
                 if (const auto* method = slotProgram(mComparisonSlots[1]))
                     group.text("Matched package: " + shortId(method->packageId));
                 group.text("Disable linked mode in Material to expose manual slot/package controls.");
@@ -3257,7 +3376,8 @@ void NclsViewer::loadMaterial(const std::filesystem::path& path)
 
 void NclsViewer::installReferenceSource(ncls::ReferenceSource source, const std::filesystem::path& path)
 {
-    const bool linkedMdl = source.family == ncls::ReferenceFamily::Mdl && source.mdlCatalog.linked();
+    const bool linkedMdl = source.family == ncls::ReferenceFamily::Mdl
+        && source.mdlCatalog && source.mdlCatalog->linked();
     auto gpu = createSourceGpuResources(source);
     const auto previousSource = mReferenceSource;
     const auto previousGpu = mSourceGpu;
@@ -3692,8 +3812,9 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
             {"source_state_sha256", ncls::referenceSourceStateHash(source)},
             {"source_path", source.sourcePath.string()},
             {"mdl_asset_id", source.family == ncls::ReferenceFamily::Mdl
-                && source.mdlCatalogIndex < source.mdlCatalog.entries.size()
-                    ? source.mdlCatalog.entries[source.mdlCatalogIndex].assetId : std::string()},
+                && source.mdlCatalog
+                && source.mdlCatalogIndex < source.mdlCatalog->entries.size()
+                    ? source.mdlCatalog->entries[source.mdlCatalogIndex].assetId : std::string()},
             {"mdl_compiled_artifact_sha256", source.family == ncls::ReferenceFamily::Mdl
                 && source.mdlArtifact ? source.mdlArtifact->artifactSha256 : std::string()},
         });
@@ -3739,10 +3860,10 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
     nlohmann::json viewerMaterialBinding = nlohmann::json::object();
     nlohmann::json viewerMaterialState = nlohmann::json::object();
     if (mReferenceSource.family == ncls::ReferenceFamily::Mdl
-        && mReferenceSource.mdlCatalog.linked()
-        && mReferenceSource.mdlCatalogIndex < mReferenceSource.mdlCatalog.entries.size())
+        && mReferenceSource.mdlCatalog && mReferenceSource.mdlCatalog->linked()
+        && mReferenceSource.mdlCatalogIndex < mReferenceSource.mdlCatalog->entries.size())
     {
-        const auto& catalog = mReferenceSource.mdlCatalog;
+        const auto& catalog = *mReferenceSource.mdlCatalog;
         const auto& entry = catalog.entries[mReferenceSource.mdlCatalogIndex];
         viewerMaterialBinding = {
             {"catalog_id", catalog.catalogId},
@@ -3779,8 +3900,9 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         {"viewer_material_state", viewerMaterialState},
         {"source_material_asset_sha256", mReferenceSource.sourceSha256},
         {"mdl_asset_id", mReferenceSource.family == ncls::ReferenceFamily::Mdl
-            && mReferenceSource.mdlCatalogIndex < mReferenceSource.mdlCatalog.entries.size()
-                ? mReferenceSource.mdlCatalog.entries[mReferenceSource.mdlCatalogIndex].assetId : std::string()},
+            && mReferenceSource.mdlCatalog
+            && mReferenceSource.mdlCatalogIndex < mReferenceSource.mdlCatalog->entries.size()
+                ? mReferenceSource.mdlCatalog->entries[mReferenceSource.mdlCatalogIndex].assetId : std::string()},
         {"mdl_compiled_artifact_sha256", mReferenceSource.family == ncls::ReferenceFamily::Mdl
             && mReferenceSource.mdlArtifact ? mReferenceSource.mdlArtifact->artifactSha256 : std::string()},
         {"mdl_sdk", mReferenceSource.family == ncls::ReferenceFamily::Mdl

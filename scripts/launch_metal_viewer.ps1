@@ -19,11 +19,11 @@ if (-not $SkipPrepare -and -not (Test-Path -LiteralPath $catalog -PathType Leaf)
     & (Join-Path $PSScriptRoot "prepare_metal_viewer.ps1") `
         -OutputRoot $CatalogRoot `
         -AcceptNvidiaOmniverseTerms:$AcceptNvidiaOmniverseTerms
-    if ($LASTEXITCODE -ne 0) { throw "Failed to prepare the linked Metal viewer catalog" }
+    if (-not $?) { throw "Failed to prepare the linked Metal viewer catalog" }
 }
 if (-not $SkipBuild) {
     & (Join-Path $PSScriptRoot "build_viewer.ps1") -Configuration $Configuration
-    if ($LASTEXITCODE -ne 0) { throw "Failed to build NclsViewer" }
+    if (-not $?) { throw "Failed to build NclsViewer" }
 }
 
 $viewer = Join-Path $projectRoot "external\Falcor\build\windows-vs2022\bin\$Configuration\NclsViewer.exe"

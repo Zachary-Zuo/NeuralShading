@@ -37,7 +37,9 @@ struct ReferenceSource
     std::filesystem::path materialXMetalnessTexture;
     std::filesystem::path materialXNormalTexture;
     std::filesystem::path materialXDisplacementTexture;
-    MdlViewerCatalog mdlCatalog;
+    // The catalog owns roughly 17 MiB of immutable taxonomy/editor JSON. A
+    // candidate material switch must share it instead of copying all 692 entries.
+    std::shared_ptr<const MdlViewerCatalog> mdlCatalog;
     uint32_t mdlCatalogIndex = 0;
     std::shared_ptr<const MdlCompiledArtifact> mdlArtifact;
     std::vector<uint8_t> mdlAuthoredArgumentBlock;

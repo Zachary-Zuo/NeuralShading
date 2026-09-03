@@ -701,16 +701,16 @@ ReferenceSource loadReferenceSource(const std::filesystem::path& path)
         {
             ReferenceSource source;
             source.family = ReferenceFamily::Mdl;
-            source.mdlCatalog = loadMdlViewerCatalog(path);
+            source.mdlCatalog = std::make_shared<const MdlViewerCatalog>(loadMdlViewerCatalog(path));
             const auto found = std::find_if(
-                source.mdlCatalog.entries.begin(), source.mdlCatalog.entries.end(),
+                source.mdlCatalog->entries.begin(), source.mdlCatalog->entries.end(),
                 [&](const MdlCatalogEntry& entry) {
-                    return (source.mdlCatalog.linked() ? entry.exportId : entry.assetId)
-                        == source.mdlCatalog.defaultAssetId;
+                    return (source.mdlCatalog->linked() ? entry.exportId : entry.assetId)
+                        == source.mdlCatalog->defaultAssetId;
                 });
-            if (found == source.mdlCatalog.entries.end())
+            if (found == source.mdlCatalog->entries.end())
                 throw std::runtime_error("MDL viewer catalog default asset is missing");
-            source.mdlCatalogIndex = static_cast<uint32_t>(found - source.mdlCatalog.entries.begin());
+            source.mdlCatalogIndex = static_cast<uint32_t>(found - source.mdlCatalog->entries.begin());
             return selectMdlCatalogEntry(source, source.mdlCatalogIndex);
         }
         ReferenceSource source;
@@ -725,15 +725,16 @@ ReferenceSource loadReferenceSource(const std::filesystem::path& path)
 
 ReferenceSource selectMdlCatalogEntry(const ReferenceSource& source, uint32_t index)
 {
-    if (source.family != ReferenceFamily::Mdl || index >= source.mdlCatalog.entries.size())
+    if (source.family != ReferenceFamily::Mdl || !source.mdlCatalog
+        || index >= source.mdlCatalog->entries.size())
         throw std::runtime_error("MDL catalog selection is out of range");
     ReferenceSource result = source;
-    const auto& entry = result.mdlCatalog.entries[index];
+    const auto& entry = result.mdlCatalog->entries[index];
     result.mdlArtifact = loadMdlCompiledArtifact(entry);
     result.mdlAuthoredArgumentBlock = result.mdlArtifact->argumentBlock;
     result.mdlParameterView = entry.parameterView;
     result.mdlCatalogIndex = index;
-    result.sourcePath = result.mdlCatalog.sourcePath;
+    result.sourcePath = result.mdlCatalog->sourcePath;
     result.sourceSha256 = entry.sourceSnapshotId;
     result.displayName = entry.displayName;
     result.mdlEdited = false;
@@ -787,10 +788,10 @@ ReferenceSource applyMdlCatalogParameterView(
     const ReferenceSource& source,
     const json& parameterView)
 {
-    if (source.family != ReferenceFamily::Mdl || !source.mdlArtifact
-        || source.mdlCatalogIndex >= source.mdlCatalog.entries.size())
+    if (source.family != ReferenceFamily::Mdl || !source.mdlCatalog || !source.mdlArtifact
+        || source.mdlCatalogIndex >= source.mdlCatalog->entries.size())
         throw std::runtime_error("MDL typed edit requires a selected catalog entry");
-    const auto& entry = source.mdlCatalog.entries[source.mdlCatalogIndex];
+    const auto& entry = source.mdlCatalog->entries[source.mdlCatalogIndex];
     if (!entry.linked()) throw std::runtime_error("legacy MDL catalog entries are not typed-editable");
     validateViewerTypedParameterView(parameterView);
     if (parameterView.at("snapshot_id") != entry.sourceSnapshotId)
@@ -879,8 +880,8 @@ ReferenceSource applyMdlCatalogParameterView(
     const json values = mdlParameterValues(parameterView);
     const json identity = {
         {"schema", "ncls.viewer-material-state@1"},
-        {"catalog_id", source.mdlCatalog.catalogId},
-        {"registry_identity", source.mdlCatalog.registryIdentity},
+        {"catalog_id", source.mdlCatalog->catalogId},
+        {"registry_identity", source.mdlCatalog->registryIdentity},
         {"export_id", entry.exportId},
         {"base_source_snapshot_id", entry.sourceSnapshotId},
         {"values", values},
@@ -947,18 +948,19 @@ json referenceSourceStatePayload(const ReferenceSource& source)
         payload["source_sha256"] = source.sourceSha256;
         break;
     case ReferenceFamily::Mdl:
-        if (!source.mdlArtifact || source.mdlCatalogIndex >= source.mdlCatalog.entries.size())
+        if (!source.mdlCatalog || !source.mdlArtifact
+            || source.mdlCatalogIndex >= source.mdlCatalog->entries.size())
             throw std::runtime_error("MDL source has no validated compiled artifact");
-        payload["asset_id"] = source.mdlCatalog.entries[source.mdlCatalogIndex].assetId;
+        payload["asset_id"] = source.mdlCatalog->entries[source.mdlCatalogIndex].assetId;
         payload["source_snapshot_id"] = source.sourceSha256;
         payload["compiled_artifact_sha256"] = source.mdlArtifact->artifactSha256;
         payload["texture_filtering"] = "explicit-lod0";
-        if (source.mdlCatalog.linked())
+        if (source.mdlCatalog->linked())
         {
             payload["viewer_material_state"] = {
-                {"catalog_id", source.mdlCatalog.catalogId},
-                {"registry_identity", source.mdlCatalog.registryIdentity},
-                {"export_id", source.mdlCatalog.entries[source.mdlCatalogIndex].exportId},
+                {"catalog_id", source.mdlCatalog->catalogId},
+                {"registry_identity", source.mdlCatalog->registryIdentity},
+                {"export_id", source.mdlCatalog->entries[source.mdlCatalogIndex].exportId},
                 {"base_source_snapshot_id", source.sourceSha256},
                 {"values", mdlParameterValues(source.mdlParameterView)},
                 {"state_sha256", source.mdlEditStateSha256},
@@ -1046,21 +1048,23 @@ ReferenceSource deserializeReferenceSourceState(
             throw std::runtime_error("viewer scene MDL catalog is missing: " + sourcePath.string());
         source = loadReferenceSource(sourcePath);
         const std::string assetId = document.at("asset_id").get<std::string>();
+        if (!source.mdlCatalog)
+            throw std::runtime_error("viewer scene MDL source has no catalog");
         const auto found = std::find_if(
-            source.mdlCatalog.entries.begin(), source.mdlCatalog.entries.end(),
+            source.mdlCatalog->entries.begin(), source.mdlCatalog->entries.end(),
             [&](const MdlCatalogEntry& entry) { return entry.assetId == assetId; });
-        if (found == source.mdlCatalog.entries.end())
+        if (found == source.mdlCatalog->entries.end())
             throw std::runtime_error("viewer scene MDL asset is not present in the catalog: " + assetId);
         source = selectMdlCatalogEntry(
-            source, static_cast<uint32_t>(found - source.mdlCatalog.entries.begin()));
+            source, static_cast<uint32_t>(found - source.mdlCatalog->entries.begin()));
         if (document.contains("viewer_material_state"))
         {
-            if (!source.mdlCatalog.linked())
+            if (!source.mdlCatalog->linked())
                 throw std::runtime_error("viewer scene linked MDL state requires a ViewerMaterialCatalog");
             const auto& state = document.at("viewer_material_state");
-            if (state.at("catalog_id") != source.mdlCatalog.catalogId
-                || state.at("registry_identity") != source.mdlCatalog.registryIdentity
-                || state.at("export_id") != source.mdlCatalog.entries[source.mdlCatalogIndex].exportId
+            if (state.at("catalog_id") != source.mdlCatalog->catalogId
+                || state.at("registry_identity") != source.mdlCatalog->registryIdentity
+                || state.at("export_id") != source.mdlCatalog->entries[source.mdlCatalogIndex].exportId
                 || state.at("base_source_snapshot_id") != source.sourceSha256)
                 throw std::runtime_error("viewer scene linked MDL identity mismatch");
             auto view = source.mdlParameterView;

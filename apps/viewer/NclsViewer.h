@@ -152,6 +152,9 @@ private:
         uint32_t ping = 0;
         uint32_t spp = 0;
         bool resetAccumulation = true;
+        uint32_t deferredPreviewStride = 1u;
+        uint32_t deferredTileIndex = 0u;
+        bool deferredComplete = false;
 
         bool ready() const { return contract.status == ncls::SlotStatus::Ready; }
     };
@@ -182,7 +185,8 @@ private:
     Falcor::ref<Falcor::ComputePass> createProgramPathPass(
         const ncls::ViewerProgram& method);
     std::shared_ptr<ProgramGpuRuntime> programGpuRuntime(
-        const ncls::ViewerProgram& method);
+        const ncls::ViewerProgram& method,
+        ncls::SlotMode mode);
     void compileMaterialInstance(
         ProgramGpuRuntime& runtime,
         const ncls::ViewerProgram& method,
@@ -214,7 +218,16 @@ private:
     void executePackageTiles(
         Falcor::RenderContext* pRenderContext,
         const Falcor::ref<Falcor::ComputePass>& pPass,
-        const char* constantBufferName);
+        const char* constantBufferName,
+        uint32_t dispatchWidth,
+        uint32_t dispatchHeight);
+    void executeInteractivePackageTile(
+        Falcor::RenderContext* pRenderContext,
+        const Falcor::ref<Falcor::ComputePass>& pPass,
+        const char* constantBufferName,
+        uint32_t dispatchWidth,
+        uint32_t dispatchHeight,
+        uint32_t tileIndex);
     void renderComposite(Falcor::RenderContext* pRenderContext);
     void beginTiming(PassTiming& timing);
     void endTiming(PassTiming& timing);

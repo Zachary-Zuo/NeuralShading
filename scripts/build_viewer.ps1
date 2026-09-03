@@ -16,7 +16,7 @@ $cmake = Join-Path $falcorRoot "tools\.packman\cmake\bin\cmake.exe"
 $expectedCommit = "9dc819c162b2070335c65060436041690b7937f8"
 
 & (Join-Path $PSScriptRoot "fetch_viewer_assets.ps1")
-if ($LASTEXITCODE -ne 0) { throw "Failed to provision the fixed viewer scene" }
+if (-not $?) { throw "Failed to provision the fixed viewer scene" }
 
 if (-not (Test-Path -LiteralPath $cmake -PathType Leaf)) {
     throw "Falcor packman CMake was not found: $cmake"
