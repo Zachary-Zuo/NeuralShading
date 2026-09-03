@@ -111,6 +111,14 @@ std::vector<float> numericComponents(const nlohmann::json& value)
     return result;
 }
 
+std::string lowerAscii(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+    return value;
+}
+
 bool editorValuesCompatible(const nlohmann::json& source, const nlohmann::json& target)
 {
     if (!editableRuntimeNode(source) || !editableRuntimeNode(target)) return false;
@@ -424,6 +432,7 @@ ViewerOptions parseOptions(int argc, char** argv)
     {
         if (std::string(argv[index]) != "--replay") continue;
         options.replayPath = argv[index + 1];
+        options.comparisonSelectionExplicit = true;
         std::ifstream stream(options.replayPath);
         if (!stream) throw std::runtime_error("cannot open replay manifest: " + options.replayPath.string());
         const nlohmann::json replay = nlohmann::json::parse(stream);
@@ -487,26 +496,34 @@ ViewerOptions parseOptions(int argc, char** argv)
         const std::string argument = argv[index];
         if (argument == "--bundle-root") options.packageRoot = value(index, "--bundle-root");
         else if (argument == "--material") options.materialPath = value(index, "--material");
-        else if (argument == "--method") options.requestedPackageId = value(index, "--method");
+        else if (argument == "--method")
+        {
+            options.requestedPackageId = value(index, "--method");
+            options.comparisonSelectionExplicit = true;
+        }
         else if (argument == "--slot0-package")
         {
             options.requestedSlotPackages[0] = value(index, "--slot0-package");
             options.hasRequestedSlots = true;
+            options.comparisonSelectionExplicit = true;
         }
         else if (argument == "--slot1-package")
         {
             options.requestedSlotPackages[1] = value(index, "--slot1-package");
             options.hasRequestedSlots = true;
+            options.comparisonSelectionExplicit = true;
         }
         else if (argument == "--slot0-mode")
         {
             options.requestedSlotModes[0] = parseSlotMode(value(index, "--slot0-mode"), "--slot0-mode");
             options.hasRequestedSlots = true;
+            options.comparisonSelectionExplicit = true;
         }
         else if (argument == "--slot1-mode")
         {
             options.requestedSlotModes[1] = parseSlotMode(value(index, "--slot1-mode"), "--slot1-mode");
             options.hasRequestedSlots = true;
+            options.comparisonSelectionExplicit = true;
         }
         else if (argument == "--environment") options.environmentPath = value(index, "--environment");
         else if (argument == "--reference-geometry") options.referenceGeometryPath = value(index, "--reference-geometry");
@@ -514,6 +531,15 @@ ViewerOptions parseOptions(int argc, char** argv)
         else if (argument == "--viewer-scene") options.viewerScenePath = value(index, "--viewer-scene");
         else if (argument == "--capture") options.captureManifest = value(index, "--capture");
         else if (argument == "--frames") options.frameCount = static_cast<uint32_t>(std::stoul(value(index, "--frames")));
+        else if (argument == "--reference-spp")
+        {
+            options.captureTargetSpp = static_cast<uint32_t>(std::stoul(value(index, "--reference-spp")));
+            if (options.captureTargetSpp == 0u)
+                throw std::runtime_error("--reference-spp must be positive");
+        }
+        else if (argument == "--reference-samples-per-frame")
+            options.captureSamplesPerDispatch = std::clamp(
+                static_cast<uint32_t>(std::stoul(value(index, "--reference-samples-per-frame"))), 1u, 16u);
         else if (argument == "--width") options.width = static_cast<uint32_t>(std::stoul(value(index, "--width")));
         else if (argument == "--height") options.height = static_cast<uint32_t>(std::stoul(value(index, "--height")));
         else if (argument == "--headless") options.headless = true;
@@ -524,7 +550,8 @@ ViewerOptions parseOptions(int argc, char** argv)
             std::cout
                 << "NclsViewer [--bundle-root DIR] [--material FILE] [--replay CAPTURE.json] [--viewer-scene FILE] "
                    "[--reference-geometry SCENE] [--environment HDRI] "
-                   "[--headless --frames N --capture FILE] "
+                   "[--headless --frames N --capture FILE --reference-spp N "
+                   "--reference-samples-per-frame N] "
                    "[--method SHA256] [--evaluator-preview-lighting] "
                    "[--slot0-package ID --slot0-mode path-tracing|deferred] "
                    "[--slot1-package ID --slot1-mode path-tracing|deferred] "
@@ -662,7 +689,21 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
         throw std::runtime_error("the viewer requires a loaded scene and the unified scene reference path");
     resizeResources(getTargetFbo()->getWidth(), getTargetFbo()->getHeight());
     scanPackages();
-    if (mOptions.hasRequestedSlots)
+    if (mOptions.comparisonSelectionExplicit
+        && mReferenceSource.family == ncls::ReferenceFamily::Mdl
+        && mReferenceSource.mdlCatalog.linked()
+        && mReferenceSource.mdlCatalogIndex < mReferenceSource.mdlCatalog.entries.size())
+    {
+        const auto& entry = mReferenceSource.mdlCatalog.entries[mReferenceSource.mdlCatalogIndex];
+        const bool requestsLinkedPackage = std::find(
+            mOptions.requestedSlotPackages.begin(),
+            mOptions.requestedSlotPackages.end(),
+            entry.packageId) != mOptions.requestedSlotPackages.end()
+            || mOptions.requestedPackageId == entry.packageId;
+        if (requestsLinkedPackage) ensureLinkedMdlProgram(entry);
+    }
+    if (mOptions.hasRequestedSlots
+        && (!mLinkedMdlMode || mOptions.comparisonSelectionExplicit))
     {
         for (uint32_t slotIndex = 0u; slotIndex < mComparisonSlots.size(); ++slotIndex)
         {
@@ -687,9 +728,29 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
             throw std::runtime_error("replay ScatteringPackage did not pass compatibility/parity: " + mOptions.requestedPackageId);
         selectProgram(requested);
     }
-    mStatus = mPrograms.empty()
-        ? "No compatible neural evaluator bundle was found; showing a full-width reference."
-        : "GPU-parity-validated neural evaluator bundles found; the method selection starts empty.";
+    if (mOptions.comparisonSelectionExplicit
+        && mReferenceSource.family == ncls::ReferenceFamily::Mdl
+        && mReferenceSource.mdlCatalog.linked()
+        && mReferenceSource.mdlCatalogIndex < mReferenceSource.mdlCatalog.entries.size())
+    {
+        const auto& entry = mReferenceSource.mdlCatalog.entries[mReferenceSource.mdlCatalogIndex];
+        for (auto& slot : mComparisonSlots)
+        {
+            const auto* selected = slotProgram(slot);
+            if (selected && selected->packageId == entry.packageId)
+                applyMaterialEditor(slot, *selected, mReferenceSource.mdlParameterView);
+        }
+    }
+    if (mLinkedMdlMode && mReferenceSource.family == ncls::ReferenceFamily::Mdl
+        && mReferenceSource.mdlCatalog.linked())
+        mStatus = "ViewerMaterialCatalog ready: step "
+            + std::to_string(mReferenceSource.mdlCatalog.checkpointStep) + " / "
+            + mReferenceSource.mdlCatalog.checkpointPhase + " / "
+            + (mReferenceSource.mdlEdited ? "edited-preview" : "authored");
+    else
+        mStatus = mPrograms.empty()
+            ? "No compatible neural evaluator bundle was found; showing a full-width reference."
+            : "GPU-parity-validated neural evaluator bundles found; the method selection starts empty.";
 }
 
 void NclsViewer::createPasses()
@@ -1281,6 +1342,10 @@ float3 NclsViewer::cameraPosition() const
 
 void NclsViewer::scanPackages()
 {
+    const bool autoLink = mLinkedMdlMode
+        && mReferenceSource.family == ncls::ReferenceFamily::Mdl
+        && mReferenceSource.mdlCatalog.linked()
+        && !mOptions.comparisonSelectionExplicit;
     std::array<std::string, 2> previousIds;
     std::array<bool, 2> previousSources{};
     for (uint32_t slotIndex = 0u; slotIndex < mComparisonSlots.size(); ++slotIndex)
@@ -1295,6 +1360,17 @@ void NclsViewer::scanPackages()
         mPackageFailures.clear();
         activateComparisonSlot(0u, previousSources[0] ? 1u : 0u);
         activateComparisonSlot(1u, previousSources[1] ? 1u : 0u);
+        if (autoLink)
+        {
+            try { applyLinkedMdlSource(mReferenceSource); }
+            catch (const std::exception& error)
+            {
+                mStatus = "Linked MDL package load failed; previous comparison preserved: "
+                    + std::string(error.what());
+                if (mOptions.headless) throw;
+            }
+            return;
+        }
         mStatus = "ScatteringPackage directory is absent; running reference-only: " + mOptions.packageRoot.string();
         logInfo("No ScatteringPackage directory at '{}'; running reference-only", mOptions.packageRoot);
         return;
@@ -1322,6 +1398,16 @@ void NclsViewer::scanPackages()
             for (uint32_t index = 0u; index < mPrograms.size(); ++index)
                 if (mPrograms[index].packageId == previousIds[slotIndex]) selection = index + 2u;
         activateComparisonSlot(slotIndex, selection);
+    }
+    if (autoLink)
+    {
+        try { applyLinkedMdlSource(mReferenceSource); }
+        catch (const std::exception& error)
+        {
+            mStatus = "Linked MDL package load failed; previous comparison preserved: "
+                + std::string(error.what());
+            if (mOptions.headless) throw;
+        }
     }
 }
 
@@ -1586,6 +1672,13 @@ bool NclsViewer::renderMaterialEditor(Gui::Widgets& widgets, nlohmann::json& edi
                 float value = jsonValue.get<float>();
                 if (parent.var(label.c_str(), value, minimum, maximum, step)) { jsonValue = value; changed = true; }
             }
+            const auto& normalization = node.at("metadata").at("runtime").at("normalization");
+            if (normalization.contains("default") && jsonValue != normalization.at("default")
+                && parent.button(("Reset##" + path).c_str(), true))
+            {
+                jsonValue = normalization.at("default");
+                changed = true;
+            }
             return;
         }
         if (!node.contains("children") || !node.at("children").is_array()) return;
@@ -1619,6 +1712,103 @@ void NclsViewer::applyMaterialEditor(
     slot.resetAccumulation = true;
     mFreezeReference = false;
     mStatus = "Typed material edit compiled and atomically applied.";
+}
+
+uint32_t NclsViewer::ensureLinkedMdlProgram(const ncls::MdlCatalogEntry& entry)
+{
+    if (!entry.linked()) throw std::runtime_error("MDL catalog entry has no linked neural package");
+    for (uint32_t index = 0u; index < mPrograms.size(); ++index)
+    {
+        const auto& method = mPrograms[index];
+        if (method.packageId != entry.packageId) continue;
+        if (method.program->programId != entry.programId
+            || method.asset.assetId != entry.packageAssetId
+            || method.instance.instanceId != entry.instanceId
+            || method.asset.sourceSnapshotId != entry.sourceSnapshotId)
+            throw std::runtime_error("linked MDL package identity collides with another loaded binding");
+        return index;
+    }
+
+    auto method = ncls::loadScatteringPackage(entry.packageRoot);
+    if (method.packageId != entry.packageId
+        || method.program->programId != entry.programId
+        || method.asset.assetId != entry.packageAssetId
+        || method.instance.instanceId != entry.instanceId
+        || method.asset.sourceSnapshotId != entry.sourceSnapshotId
+        || method.asset.sourceFamilyId != "mdl.program@1")
+        throw std::runtime_error("linked MDL package does not match the catalog binding");
+    if (!method.instance.editable())
+        throw std::runtime_error("linked MDL package has no typed runtime editor");
+    std::string parityError;
+    if (!runParityProbe(method, parityError))
+        throw std::runtime_error("linked MDL package GPU parity failed: " + parityError);
+    for (const auto& loaded : mPrograms)
+        if (loaded.program->programId == method.program->programId)
+        {
+            method.program = loaded.program;
+            break;
+        }
+    logInfo("Lazily accepted linked MDL package '{}' ({})",
+        method.displayName, shortId(method.packageId));
+    mPrograms.push_back(std::move(method));
+    return static_cast<uint32_t>(mPrograms.size() - 1u);
+}
+
+void NclsViewer::applyLinkedMdlSource(ncls::ReferenceSource source)
+{
+    if (source.family != ncls::ReferenceFamily::Mdl || !source.mdlCatalog.linked()
+        || source.mdlCatalogIndex >= source.mdlCatalog.entries.size())
+        throw std::runtime_error("linked MDL activation requires a ViewerMaterialCatalog entry");
+    const auto entry = source.mdlCatalog.entries[source.mdlCatalogIndex];
+    const uint32_t programIndex = ensureLinkedMdlProgram(entry);
+
+    const auto previousSource = mReferenceSource;
+    const auto previousGpu = mSourceGpu;
+    const auto previousDisplayName = mMaterialDisplayName;
+    const auto previousPath = mMaterialPath;
+    const auto previousMetadata = mpReferenceMaterialMetadata;
+    const auto previousPass = mpReferencePathPass;
+    const auto previousSlots = mComparisonSlots;
+    const bool previousFreeze = mFreezeReference;
+    const bool previousLinkedMdlMode = mLinkedMdlMode;
+    const double previousAccumulationSeconds = mAccumulationSeconds;
+    const bool previousVisibilityDirty = mVisibilityDirty;
+    const auto catalogPath = source.mdlCatalog.sourcePath;
+    try
+    {
+        installReferenceSource(std::move(source), catalogPath);
+        mComparisonSlots[0].contract.mode = ncls::SlotMode::PathTracing;
+        activateComparisonSlot(0u, 1u);
+        mComparisonSlots[1].contract.mode = ncls::SlotMode::Deferred;
+        activateComparisonSlot(1u, programIndex + 2u);
+        const auto* selected = slotProgram(mComparisonSlots[1]);
+        if (!mComparisonSlots[0].ready() || !mComparisonSlots[1].ready()
+            || !selected || selected->packageId != entry.packageId)
+            throw std::runtime_error(
+                mComparisonSlots[1].contract.diagnostic.empty()
+                    ? "linked MDL comparison did not become ready"
+                    : mComparisonSlots[1].contract.diagnostic);
+        applyMaterialEditor(mComparisonSlots[1], *selected, mReferenceSource.mdlParameterView);
+        mLinkedMdlMode = true;
+        mFreezeReference = false;
+        mStatus = "Linked MDL reference and neural preview applied atomically: "
+            + mReferenceSource.displayName;
+    }
+    catch (...)
+    {
+        mReferenceSource = previousSource;
+        mSourceGpu = previousGpu;
+        mMaterialDisplayName = previousDisplayName;
+        mMaterialPath = previousPath;
+        mpReferenceMaterialMetadata = previousMetadata;
+        mpReferencePathPass = previousPass;
+        mComparisonSlots = previousSlots;
+        mFreezeReference = previousFreeze;
+        mLinkedMdlMode = previousLinkedMdlMode;
+        mAccumulationSeconds = previousAccumulationSeconds;
+        mVisibilityDirty = previousVisibilityDirty;
+        throw;
+    }
 }
 
 bool NclsViewer::runParityProbe(const ncls::ViewerProgram& method, std::string& error)
@@ -2495,6 +2685,164 @@ void NclsViewer::renderMdlUi(Gui::Widgets& widgets)
         widgets.text("MDL source has no validated compiled artifact.");
         return;
     }
+    if (mReferenceSource.mdlCatalog.linked())
+    {
+        auto& catalog = mReferenceSource.mdlCatalog;
+        uint32_t family = 0u;
+        const Gui::DropdownList families = {{0u, "Metal / opaque vMaterials 2"}};
+        widgets.dropdown("Material family", families, family);
+
+        std::vector<std::string> metals;
+        for (const auto& entry : catalog.entries) metals.push_back(entry.metal);
+        std::sort(metals.begin(), metals.end());
+        metals.erase(std::unique(metals.begin(), metals.end()), metals.end());
+        Gui::DropdownList metalChoices = {{0u, "All metals"}};
+        uint32_t selectedMetal = 0u;
+        for (uint32_t index = 0u; index < metals.size(); ++index)
+        {
+            metalChoices.push_back({index + 1u, metals[index]});
+            if (mMdlMetalFilter == metals[index]) selectedMetal = index + 1u;
+        }
+        if (widgets.dropdown("Metal", metalChoices, selectedMetal))
+            mMdlMetalFilter = selectedMetal == 0u ? std::string() : metals[selectedMetal - 1u];
+
+        std::vector<std::string> finishes;
+        for (const auto& entry : catalog.entries)
+            if (mMdlMetalFilter.empty() || entry.metal == mMdlMetalFilter)
+                finishes.push_back(entry.finish);
+        std::sort(finishes.begin(), finishes.end());
+        finishes.erase(std::unique(finishes.begin(), finishes.end()), finishes.end());
+        if (!mMdlFinishFilter.empty()
+            && std::find(finishes.begin(), finishes.end(), mMdlFinishFilter) == finishes.end())
+            mMdlFinishFilter.clear();
+        Gui::DropdownList finishChoices = {{0u, "All finishes"}};
+        uint32_t selectedFinish = 0u;
+        for (uint32_t index = 0u; index < finishes.size(); ++index)
+        {
+            finishChoices.push_back({index + 1u, finishes[index]});
+            if (mMdlFinishFilter == finishes[index]) selectedFinish = index + 1u;
+        }
+        if (widgets.dropdown("Finish", finishChoices, selectedFinish))
+            mMdlFinishFilter = selectedFinish == 0u ? std::string() : finishes[selectedFinish - 1u];
+
+        widgets.textbox("Search preset (Enter to apply)", mMdlPresetSearch);
+        const std::string search = lowerAscii(mMdlPresetSearch);
+        std::vector<uint32_t> filtered;
+        Gui::DropdownList presets;
+        for (uint32_t index = 0u; index < catalog.entries.size(); ++index)
+        {
+            const auto& entry = catalog.entries[index];
+            const std::string searchable = lowerAscii(
+                entry.displayName + " " + entry.metal + " " + entry.finish);
+            if ((!mMdlMetalFilter.empty() && entry.metal != mMdlMetalFilter)
+                || (!mMdlFinishFilter.empty() && entry.finish != mMdlFinishFilter)
+                || (!search.empty() && searchable.find(search) == std::string::npos))
+                continue;
+            filtered.push_back(index);
+            presets.push_back({index, entry.displayName});
+        }
+        uint32_t requestedIndex = mReferenceSource.mdlCatalogIndex;
+        if (!filtered.empty()
+            && std::find(filtered.begin(), filtered.end(), requestedIndex) == filtered.end())
+            requestedIndex = filtered.front();
+        if (filtered.empty()) widgets.text("No authored preset matches the current filters.");
+        else widgets.dropdown("Authored preset", presets, requestedIndex);
+
+        const auto catalogPath = catalog.sourcePath;
+        auto installCandidate = [&](ncls::ReferenceSource candidate) {
+            if (mLinkedMdlMode) applyLinkedMdlSource(std::move(candidate));
+            else
+            {
+                installReferenceSource(std::move(candidate), catalogPath);
+                mLinkedMdlMode = false;
+            }
+        };
+        if (!filtered.empty() && requestedIndex != mReferenceSource.mdlCatalogIndex)
+        {
+            try
+            {
+                auto candidate = ncls::selectMdlCatalogEntry(mReferenceSource, requestedIndex);
+                installCandidate(std::move(candidate));
+            }
+            catch (const std::exception& error)
+            {
+                mStatus = "Linked preset switch failed; previous comparison preserved: "
+                    + std::string(error.what());
+            }
+        }
+
+        bool requestedLinked = mLinkedMdlMode;
+        if (widgets.checkbox("Link reference and neural preview", requestedLinked)
+            && requestedLinked != mLinkedMdlMode)
+        {
+            if (requestedLinked)
+            {
+                try { applyLinkedMdlSource(mReferenceSource); }
+                catch (const std::exception& error)
+                {
+                    mStatus = "Could not enable linked preview: " + std::string(error.what());
+                }
+            }
+            else
+            {
+                mLinkedMdlMode = false;
+                mStatus = "Manual comparison mode enabled; slot controls are available under Advanced.";
+            }
+        }
+
+        auto candidateView = mReferenceSource.mdlParameterView;
+        if (renderMaterialEditor(widgets, candidateView))
+        {
+            try
+            {
+                auto candidate = ncls::applyMdlCatalogParameterView(mReferenceSource, candidateView);
+                installCandidate(std::move(candidate));
+            }
+            catch (const std::exception& error)
+            {
+                mStatus = "Linked typed edit failed; previous comparison preserved: "
+                    + std::string(error.what());
+            }
+        }
+        if (mReferenceSource.mdlEdited && widgets.button("Reset material to authored values"))
+        {
+            try
+            {
+                const auto& selectedEntry = catalog.entries[mReferenceSource.mdlCatalogIndex];
+                auto candidate = ncls::applyMdlCatalogParameterView(
+                    mReferenceSource, selectedEntry.parameterView);
+                installCandidate(std::move(candidate));
+            }
+            catch (const std::exception& error)
+            {
+                mStatus = "Material reset failed; previous comparison preserved: "
+                    + std::string(error.what());
+            }
+        }
+
+        const auto& entry = catalog.entries[mReferenceSource.mdlCatalogIndex];
+        widgets.text("Preset: " + entry.displayName);
+        widgets.text("Training preview: step " + std::to_string(catalog.checkpointStep)
+            + " / " + catalog.checkpointPhase + " / "
+            + (mReferenceSource.mdlEdited ? "edited-preview" : "authored"));
+        widgets.text("Viewer state: " + shortId(mReferenceSource.mdlEditStateSha256));
+        Gui::Group diagnostics = widgets.group("Identity diagnostics", false);
+        if (diagnostics)
+        {
+            diagnostics.text("Catalog: " + shortId(catalog.catalogId));
+            diagnostics.text("Registry: " + shortId(catalog.registryIdentity));
+            diagnostics.text("Checkpoint compatibility: " + catalog.checkpointCompatibility);
+            diagnostics.text("Export: " + shortId(entry.exportId));
+            diagnostics.text("Source snapshot: " + shortId(entry.sourceSnapshotId));
+            diagnostics.text("Program / asset / instance: " + shortId(entry.programId)
+                + " / " + shortId(entry.packageAssetId) + " / " + shortId(entry.instanceId));
+            diagnostics.text("Compiled artifact: " + shortId(mReferenceSource.mdlArtifact->artifactSha256));
+            diagnostics.text("MDL SDK: " + mReferenceSource.mdlArtifact->mdlSdk);
+            diagnostics.text("Filtering: ExplicitLod(0); UV derivatives are not consumed in V1");
+        }
+        return;
+    }
+
     Gui::DropdownList presets;
     for (uint32_t index = 0u; index < mReferenceSource.mdlCatalog.entries.size(); ++index)
         presets.push_back({index, mReferenceSource.mdlCatalog.entries[index].displayName});
@@ -2774,6 +3122,17 @@ void NclsViewer::onGuiRender(Gui* pGui)
         Gui::Group group = window.group("Comparison slots", false);
         if (group)
         {
+            if (mLinkedMdlMode && mReferenceSource.family == ncls::ReferenceFamily::Mdl
+                && mReferenceSource.mdlCatalog.linked())
+            {
+                group.text("Linked mode: left is the MDL reference; right is the matched neural evaluator.");
+                group.text("Right renderer: deferred evaluator preview");
+                if (const auto* method = slotProgram(mComparisonSlots[1]))
+                    group.text("Matched package: " + shortId(method->packageId));
+                group.text("Disable linked mode in Material to expose manual slot/package controls.");
+            }
+            else
+            {
             Gui::DropdownList methodList = {{0, "Empty"}, {1, "Source reference"}};
             for (uint32_t index = 0; index < mPrograms.size(); ++index)
             {
@@ -2829,6 +3188,7 @@ void NclsViewer::onGuiRender(Gui* pGui)
                         }
                     }
                 }
+            }
             }
             if (group.button("Rescan ScatteringPackages")) scanPackages();
             if (!mPackageFailures.empty())
@@ -2897,6 +3257,7 @@ void NclsViewer::loadMaterial(const std::filesystem::path& path)
 
 void NclsViewer::installReferenceSource(ncls::ReferenceSource source, const std::filesystem::path& path)
 {
+    const bool linkedMdl = source.family == ncls::ReferenceFamily::Mdl && source.mdlCatalog.linked();
     auto gpu = createSourceGpuResources(source);
     const auto previousSource = mReferenceSource;
     const auto previousGpu = mSourceGpu;
@@ -2928,6 +3289,7 @@ void NclsViewer::installReferenceSource(ncls::ReferenceSource source, const std:
     }
     if (mReferenceSource.family == ncls::ReferenceFamily::LayerStack) updateMaterialBuffer();
     else resetReference(mReferenceSource.family == ncls::ReferenceFamily::MaterialX);
+    mLinkedMdlMode = linkedMdl;
     for (uint32_t slotIndex = 0u; slotIndex < mComparisonSlots.size(); ++slotIndex)
         activateComparisonSlot(slotIndex, mComparisonSlots[slotIndex].uiValue);
 }
@@ -3374,6 +3736,35 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
             {"linear_output", slot.ready() ? slotPaths[slotIndex].filename().string() : std::string()},
         });
     }
+    nlohmann::json viewerMaterialBinding = nlohmann::json::object();
+    nlohmann::json viewerMaterialState = nlohmann::json::object();
+    if (mReferenceSource.family == ncls::ReferenceFamily::Mdl
+        && mReferenceSource.mdlCatalog.linked()
+        && mReferenceSource.mdlCatalogIndex < mReferenceSource.mdlCatalog.entries.size())
+    {
+        const auto& catalog = mReferenceSource.mdlCatalog;
+        const auto& entry = catalog.entries[mReferenceSource.mdlCatalogIndex];
+        viewerMaterialBinding = {
+            {"catalog_id", catalog.catalogId},
+            {"registry_identity", catalog.registryIdentity},
+            {"registry_sha256", catalog.registrySha256},
+            {"checkpoint_sha256", catalog.checkpointSha256},
+            {"checkpoint_descriptor_sha256", catalog.checkpointDescriptorSha256},
+            {"runtime_descriptor_sha256", catalog.runtimeDescriptorSha256},
+            {"checkpoint_compatibility", catalog.checkpointCompatibility},
+            {"method_key", catalog.methodKey},
+            {"checkpoint_step", catalog.checkpointStep},
+            {"checkpoint_phase", catalog.checkpointPhase},
+            {"export_id", entry.exportId},
+            {"source_snapshot_id", entry.sourceSnapshotId},
+            {"package_id", entry.packageId},
+            {"program_id", entry.programId},
+            {"asset_id", entry.packageAssetId},
+            {"instance_id", entry.instanceId},
+        };
+        viewerMaterialState = ncls::serializeReferenceSourceState(
+            mReferenceSource, manifestPath.parent_path()).at("viewer_material_state");
+    }
     nlohmann::json manifest = {
         {"format_name", "ncls.viewer-capture"},
         {"format_version", 4},
@@ -3384,6 +3775,8 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         {"source_material_family_id", mReferenceSource.familyId()},
         {"source_material_sha256", mReferenceSource.sourceSha256},
         {"source_material_state_sha256", ncls::referenceSourceStateHash(mReferenceSource)},
+        {"viewer_material_binding", viewerMaterialBinding},
+        {"viewer_material_state", viewerMaterialState},
         {"source_material_asset_sha256", mReferenceSource.sourceSha256},
         {"mdl_asset_id", mReferenceSource.family == ncls::ReferenceFamily::Mdl
             && mReferenceSource.mdlCatalogIndex < mReferenceSource.mdlCatalog.entries.size()

@@ -113,5 +113,7 @@ struct ViewerProgram
 struct PackageFailure { std::filesystem::path path; std::string reason; };
 struct PackageScanResult { std::vector<ViewerProgram> programs; std::vector<PackageFailure> failures; };
 
+void validateViewerTypedParameterView(const nlohmann::json& view);
+ViewerProgram loadScatteringPackage(const std::filesystem::path& root);
 PackageScanResult scanScatteringPackages(const std::filesystem::path& root, const std::filesystem::path& runtimeShaderDirectory);
 } // namespace ncls

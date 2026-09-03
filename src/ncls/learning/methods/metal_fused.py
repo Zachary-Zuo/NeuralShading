@@ -559,6 +559,32 @@ class MetalFusedMethodDefinition(MethodDefinition):
         argument_names = set(source.arguments)
         derived: dict[str, list[dict[str, Any]]] = {}
 
+        def normalization_range(
+            parameter: Mapping[str, Any],
+        ) -> dict[str, float]:
+            if "minimum" in parameter and "maximum" in parameter:
+                minimum = parameter["minimum"]
+                maximum = parameter["maximum"]
+            elif "soft_minimum" in parameter and "soft_maximum" in parameter:
+                minimum = parameter["soft_minimum"]
+                maximum = parameter["soft_maximum"]
+            else:
+                return {}
+
+            def shared_bound(name: str, value: Any) -> float:
+                if isinstance(value, (list, tuple)):
+                    if not value or any(component != value[0] for component in value):
+                        raise ValueError(
+                            f"Metal editor {name} must be shared by all vector components"
+                        )
+                    value = value[0]
+                return float(value)
+
+            return {
+                "minimum": shared_bound("minimum", minimum),
+                "maximum": shared_bound("maximum", maximum),
+            }
+
         def select(names: tuple[str, ...]) -> str | None:
             return next((name for name in names if name in argument_names), None)
 
@@ -606,21 +632,11 @@ class MetalFusedMethodDefinition(MethodDefinition):
                     "discrete_word": METAL_RAW_OFFSETS["discrete"] + index,
                     "type_word": METAL_RAW_OFFSETS["type"] + index,
                     "normalization": {
-                        "default": parameter.get("value", 0.0),
-                        **(
-                            {"minimum": parameter["minimum"]}
-                            if "minimum" in parameter
-                            else {"minimum": parameter["soft_minimum"]}
-                            if "soft_minimum" in parameter
-                            else {}
-                        ),
-                        **(
-                            {"maximum": parameter["maximum"]}
-                            if "maximum" in parameter
-                            else {"maximum": parameter["soft_maximum"]}
-                            if "soft_maximum" in parameter
-                            else {}
-                        ),
+                        # The source parameter view is the canonical typed UI
+                        # representation. In particular, MDL enum arguments are
+                        # normalized from {"name", "value"} to their choice name.
+                        "default": node["value"],
+                        **normalization_range(parameter),
                     },
                     "derived_writes": derived.get(str(name), []),
                 }

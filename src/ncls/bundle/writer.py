@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, MutableMapping
 
 from ncls.core.identity import safe_relative_uri, sha256_bytes, sha256_json, write_json_atomic
 from ncls.core.scattering import (
@@ -57,6 +58,7 @@ def write_scattering_package(
     validation: Mapping[str, Any],
     provenance: Mapping[str, Any],
     instance_payload: InstancePayload | None = None,
+    linked_content_store: MutableMapping[str, Path] | None = None,
 ) -> ScatteringPackageManifest:
     """写出唯一的ScatteringPackage@2 program/asset/instance布局。"""
 
@@ -129,14 +131,28 @@ def write_scattering_package(
         contents[uri] = json.dumps(
             value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
+    content_hashes = {
+        uri: sha256_bytes(payload) for uri, payload in sorted(contents.items())
+    }
     for uri, payload in contents.items():
         safe_relative_uri(uri)
         path = target / uri
         path.parent.mkdir(parents=True, exist_ok=True)
+        digest = content_hashes[uri]
+        existing = (
+            None
+            if linked_content_store is None
+            else linked_content_store.get(digest)
+        )
+        if existing is not None:
+            try:
+                os.link(existing, path)
+                continue
+            except OSError:
+                pass
         path.write_bytes(payload)
-    content_hashes = {
-        uri: sha256_bytes(payload) for uri, payload in sorted(contents.items())
-    }
+        if linked_content_store is not None:
+            linked_content_store.setdefault(digest, path)
     program = {
         "module": "program/entry",
         "defines": dict(program_payload.defines),

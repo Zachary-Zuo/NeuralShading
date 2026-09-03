@@ -1,6 +1,7 @@
 #include "ReferenceSource.h"
 
 #include "Hash.h"
+#include "ScatteringPackage.h"
 
 #include <nlohmann/json.hpp>
 #include <pugixml.hpp>
@@ -8,9 +9,12 @@
 #include <algorithm>
 #include <cmath>
 #include <cctype>
+#include <cstring>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
@@ -691,14 +695,19 @@ ReferenceSource loadReferenceSource(const std::filesystem::path& path)
         if (!stream) throw std::runtime_error("cannot open source material: " + path.string());
         const json document = json::parse(stream);
         if (document.value("schema_name", "") == "ncls.openpbr-material") return loadOpenPbr(path, document);
-        if (document.value("schema_name", "") == "ncls.mdl-viewer-catalog")
+        const std::string schemaName = document.value("schema_name", "");
+        if (schemaName == "ncls.mdl-viewer-catalog"
+            || schemaName == "ncls.viewer-material-catalog")
         {
             ReferenceSource source;
             source.family = ReferenceFamily::Mdl;
             source.mdlCatalog = loadMdlViewerCatalog(path);
             const auto found = std::find_if(
                 source.mdlCatalog.entries.begin(), source.mdlCatalog.entries.end(),
-                [&](const MdlCatalogEntry& entry) { return entry.assetId == source.mdlCatalog.defaultAssetId; });
+                [&](const MdlCatalogEntry& entry) {
+                    return (source.mdlCatalog.linked() ? entry.exportId : entry.assetId)
+                        == source.mdlCatalog.defaultAssetId;
+                });
             if (found == source.mdlCatalog.entries.end())
                 throw std::runtime_error("MDL viewer catalog default asset is missing");
             source.mdlCatalogIndex = static_cast<uint32_t>(found - source.mdlCatalog.entries.begin());
@@ -721,10 +730,167 @@ ReferenceSource selectMdlCatalogEntry(const ReferenceSource& source, uint32_t in
     ReferenceSource result = source;
     const auto& entry = result.mdlCatalog.entries[index];
     result.mdlArtifact = loadMdlCompiledArtifact(entry);
+    result.mdlAuthoredArgumentBlock = result.mdlArtifact->argumentBlock;
+    result.mdlParameterView = entry.parameterView;
     result.mdlCatalogIndex = index;
     result.sourcePath = result.mdlCatalog.sourcePath;
     result.sourceSha256 = entry.sourceSnapshotId;
     result.displayName = entry.displayName;
+    result.mdlEdited = false;
+    result.mdlEditStateSha256.clear();
+    if (entry.linked())
+        result = applyMdlCatalogParameterView(result, result.mdlParameterView);
+    return result;
+}
+
+namespace
+{
+json mdlParameterValues(const json& parameterView)
+{
+    json values = json::object();
+    std::function<void(const json&)> collect = [&](const json& node) {
+        if (node.value("editable", false))
+            values[node.at("path").get<std::string>()] = node.at("value");
+        for (const auto& child : node.at("children")) collect(child);
+    };
+    collect(parameterView.at("root"));
+    return values;
+}
+
+void setMdlParameterValues(json& parameterView, const json& values)
+{
+    if (!values.is_object()) throw std::runtime_error("MDL viewer parameter values must be an object");
+    std::set<std::string> remaining;
+    for (auto item = values.begin(); item != values.end(); ++item) remaining.insert(item.key());
+    size_t expected = 0u;
+    std::function<void(json&)> apply = [&](json& node) {
+        if (node.value("editable", false))
+        {
+            ++expected;
+            const std::string path = node.at("path").get<std::string>();
+            if (values.contains(path))
+            {
+                node["value"] = values.at(path);
+                remaining.erase(path);
+            }
+        }
+        for (auto& child : node["children"]) apply(child);
+    };
+    apply(parameterView["root"]);
+    if (!remaining.empty() || values.size() != expected)
+        throw std::runtime_error("MDL viewer state must contain exactly every editable parameter path");
+    validateViewerTypedParameterView(parameterView);
+}
+} // namespace
+
+ReferenceSource applyMdlCatalogParameterView(
+    const ReferenceSource& source,
+    const json& parameterView)
+{
+    if (source.family != ReferenceFamily::Mdl || !source.mdlArtifact
+        || source.mdlCatalogIndex >= source.mdlCatalog.entries.size())
+        throw std::runtime_error("MDL typed edit requires a selected catalog entry");
+    const auto& entry = source.mdlCatalog.entries[source.mdlCatalogIndex];
+    if (!entry.linked()) throw std::runtime_error("legacy MDL catalog entries are not typed-editable");
+    validateViewerTypedParameterView(parameterView);
+    if (parameterView.at("snapshot_id") != entry.sourceSnapshotId)
+        throw std::runtime_error("MDL typed edit parameter view has a stale base snapshot");
+
+    auto artifact = std::make_shared<MdlCompiledArtifact>(*source.mdlArtifact);
+    artifact->argumentBlock = source.mdlAuthoredArgumentBlock;
+    if (artifact->argumentBlock.empty())
+        throw std::runtime_error("MDL typed edit requires an argument block");
+    auto writeBytes = [&](uint32_t offset, const void* data, size_t size) {
+        if (size == 0u || size_t(offset) + size > artifact->argumentBlock.size())
+            throw std::runtime_error("MDL typed edit write is outside the argument block");
+        std::memcpy(artifact->argumentBlock.data() + offset, data, size);
+    };
+    std::function<void(const json&)> patch = [&](const json& node) {
+        if (node.value("editable", false))
+        {
+            const auto& write = node.at("metadata").at("reference_write");
+            const uint32_t offset = write.at("offset").get<uint32_t>();
+            const uint32_t size = write.at("size").get<uint32_t>();
+            const std::string mdlType = write.at("mdl_type").get<std::string>();
+            const auto& value = node.at("value");
+            const auto requireInHardRange = [&](double item) {
+                if (node.contains("minimum") && item < node.at("minimum").get<double>())
+                    throw std::runtime_error("MDL typed edit is below the hard minimum");
+                if (node.contains("maximum") && item > node.at("maximum").get<double>())
+                    throw std::runtime_error("MDL typed edit is above the hard maximum");
+            };
+            if (mdlType == "bool")
+            {
+                if (size != 1u || !value.is_boolean()) throw std::runtime_error("invalid MDL bool write");
+                const uint8_t converted = value.get<bool>() ? 1u : 0u;
+                writeBytes(offset, &converted, sizeof(converted));
+            }
+            else if (mdlType == "int")
+            {
+                if (size != 4u || (!value.is_number_integer() && !value.is_number_unsigned()))
+                    throw std::runtime_error("invalid MDL int write");
+                const int64_t wide = value.get<int64_t>();
+                if (wide < std::numeric_limits<int32_t>::min()
+                    || wide > std::numeric_limits<int32_t>::max())
+                    throw std::runtime_error("MDL int edit is outside int32 range");
+                requireInHardRange(static_cast<double>(wide));
+                const int32_t converted = static_cast<int32_t>(wide);
+                writeBytes(offset, &converted, sizeof(converted));
+            }
+            else if (mdlType == "enum")
+            {
+                if (size != 4u || !value.is_string() || !write.contains("choices")
+                    || !write.at("choices").contains(value.get<std::string>()))
+                    throw std::runtime_error("invalid MDL enum write");
+                const int32_t converted = write.at("choices").at(value.get<std::string>()).get<int32_t>();
+                writeBytes(offset, &converted, sizeof(converted));
+            }
+            else
+            {
+                const size_t components = mdlType == "float" ? 1u
+                    : mdlType == "float2" ? 2u : mdlType == "color" ? 3u : 0u;
+                if (components == 0u || size != components * sizeof(float))
+                    throw std::runtime_error("invalid MDL floating-point write descriptor");
+                std::array<float, 3> converted{};
+                if (components == 1u)
+                {
+                    if (!value.is_number()) throw std::runtime_error("invalid MDL float write");
+                    converted[0] = value.get<float>();
+                }
+                else
+                {
+                    if (!value.is_array() || value.size() != components)
+                        throw std::runtime_error("invalid MDL vector write");
+                    for (size_t component = 0u; component < components; ++component)
+                        converted[component] = value.at(component).get<float>();
+                }
+                if (!std::all_of(converted.begin(), converted.begin() + components,
+                        [](float item) { return std::isfinite(item); }))
+                    throw std::runtime_error("MDL typed edit contains a non-finite value");
+                for (size_t component = 0u; component < components; ++component)
+                    requireInHardRange(converted[component]);
+                writeBytes(offset, converted.data(), size);
+            }
+        }
+        for (const auto& child : node.at("children")) patch(child);
+    };
+    patch(parameterView.at("root"));
+
+    const json values = mdlParameterValues(parameterView);
+    const json identity = {
+        {"schema", "ncls.viewer-material-state@1"},
+        {"catalog_id", source.mdlCatalog.catalogId},
+        {"registry_identity", source.mdlCatalog.registryIdentity},
+        {"export_id", entry.exportId},
+        {"base_source_snapshot_id", entry.sourceSnapshotId},
+        {"values", values},
+    };
+    const std::string canonical = identity.dump();
+    ReferenceSource result = source;
+    result.mdlArtifact = std::move(artifact);
+    result.mdlParameterView = parameterView;
+    result.mdlEditStateSha256 = sha256Hex(canonical.data(), canonical.size());
+    result.mdlEdited = values != mdlParameterValues(entry.parameterView);
     return result;
 }
 
@@ -787,6 +953,18 @@ json referenceSourceStatePayload(const ReferenceSource& source)
         payload["source_snapshot_id"] = source.sourceSha256;
         payload["compiled_artifact_sha256"] = source.mdlArtifact->artifactSha256;
         payload["texture_filtering"] = "explicit-lod0";
+        if (source.mdlCatalog.linked())
+        {
+            payload["viewer_material_state"] = {
+                {"catalog_id", source.mdlCatalog.catalogId},
+                {"registry_identity", source.mdlCatalog.registryIdentity},
+                {"export_id", source.mdlCatalog.entries[source.mdlCatalogIndex].exportId},
+                {"base_source_snapshot_id", source.sourceSha256},
+                {"values", mdlParameterValues(source.mdlParameterView)},
+                {"state_sha256", source.mdlEditStateSha256},
+                {"status", source.mdlEdited ? "edited-preview" : "authored"},
+            };
+        }
         break;
     }
     return payload;
@@ -875,6 +1053,23 @@ ReferenceSource deserializeReferenceSourceState(
             throw std::runtime_error("viewer scene MDL asset is not present in the catalog: " + assetId);
         source = selectMdlCatalogEntry(
             source, static_cast<uint32_t>(found - source.mdlCatalog.entries.begin()));
+        if (document.contains("viewer_material_state"))
+        {
+            if (!source.mdlCatalog.linked())
+                throw std::runtime_error("viewer scene linked MDL state requires a ViewerMaterialCatalog");
+            const auto& state = document.at("viewer_material_state");
+            if (state.at("catalog_id") != source.mdlCatalog.catalogId
+                || state.at("registry_identity") != source.mdlCatalog.registryIdentity
+                || state.at("export_id") != source.mdlCatalog.entries[source.mdlCatalogIndex].exportId
+                || state.at("base_source_snapshot_id") != source.sourceSha256)
+                throw std::runtime_error("viewer scene linked MDL identity mismatch");
+            auto view = source.mdlParameterView;
+            setMdlParameterValues(view, state.at("values"));
+            source = applyMdlCatalogParameterView(source, view);
+            if (state.at("state_sha256") != source.mdlEditStateSha256
+                || state.at("status") != (source.mdlEdited ? "edited-preview" : "authored"))
+                throw std::runtime_error("viewer scene linked MDL edit state mismatch");
+        }
         if (source.sourceSha256 != expectedSourceHash)
             throw std::runtime_error("viewer scene MDL source snapshot mismatch");
         if (!source.mdlArtifact

@@ -36,6 +36,7 @@ struct ViewerOptions
     std::array<ncls::SlotMode, 2> requestedSlotModes{
         ncls::SlotMode::PathTracing, ncls::SlotMode::PathTracing};
     bool hasRequestedSlots = false;
+    bool comparisonSelectionExplicit = false;
     bool headless = false;
     bool verboseConsole = false;
     bool evaluatorPreviewLighting = false;
@@ -195,6 +196,8 @@ private:
         ComparisonSlotRuntime& slot,
         const ncls::ViewerProgram& method,
         nlohmann::json editorView);
+    uint32_t ensureLinkedMdlProgram(const ncls::MdlCatalogEntry& entry);
+    void applyLinkedMdlSource(ncls::ReferenceSource source);
     bool runParityProbe(const ncls::ViewerProgram& method, std::string& error);
     void selectProgram(int32_t methodIndex);
     void activateComparisonSlot(uint32_t slotIndex, uint32_t selection);
@@ -246,6 +249,10 @@ private:
     std::string mReferenceGeometrySha256;
     std::string mMaterialDisplayName = "Default layered material";
     std::string mStatus;
+    std::string mMdlMetalFilter;
+    std::string mMdlFinishFilter;
+    std::string mMdlPresetSearch;
+    bool mLinkedMdlMode = false;
 
     std::vector<ncls::ViewerProgram> mPrograms;
     std::vector<ncls::PackageFailure> mPackageFailures;

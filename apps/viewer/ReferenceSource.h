@@ -40,6 +40,10 @@ struct ReferenceSource
     MdlViewerCatalog mdlCatalog;
     uint32_t mdlCatalogIndex = 0;
     std::shared_ptr<const MdlCompiledArtifact> mdlArtifact;
+    std::vector<uint8_t> mdlAuthoredArgumentBlock;
+    nlohmann::json mdlParameterView;
+    std::string mdlEditStateSha256;
+    bool mdlEdited = false;
     std::filesystem::path sourcePath;
     std::string displayName = "Default layered material";
     std::string sourceSha256;
@@ -51,6 +55,9 @@ ReferenceSource makeDefaultReferenceSource();
 ReferenceSource makeDefaultReferenceSource(ReferenceFamily family);
 ReferenceSource loadReferenceSource(const std::filesystem::path& path);
 ReferenceSource selectMdlCatalogEntry(const ReferenceSource& source, uint32_t index);
+ReferenceSource applyMdlCatalogParameterView(
+    const ReferenceSource& source,
+    const nlohmann::json& parameterView);
 nlohmann::json serializeReferenceSourceState(
     const ReferenceSource& source,
     const std::filesystem::path& manifestDirectory);

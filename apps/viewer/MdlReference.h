@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 namespace ncls
 {
 struct MdlTextureResource
@@ -40,12 +42,37 @@ struct MdlCatalogEntry
     std::string sourceSnapshotId;
     std::string artifactSha256;
     std::filesystem::path artifactRoot;
+    std::string exportId;
+    std::string metal;
+    std::string finish;
+    std::string graphId;
+    std::string textureSetId;
+    std::string parameterSchemaId;
+    std::string packageId;
+    std::filesystem::path packageRoot;
+    std::string programId;
+    std::string packageAssetId;
+    std::string instanceId;
+    nlohmann::json parameterView;
+
+    bool linked() const { return !packageId.empty(); }
 };
 
 struct MdlViewerCatalog
 {
     std::filesystem::path sourcePath;
     std::string catalogSha256;
+    std::string catalogId;
+    std::string registryIdentity;
+    std::string registrySha256;
+    std::string checkpointSha256;
+    std::string checkpointDescriptorSha256;
+    std::string runtimeDescriptorSha256;
+    std::string checkpointCompatibility;
+    std::string methodKey;
+    std::string checkpointPhase;
+    uint32_t checkpointStep = 0;
+    uint32_t rejectedCutoutCount = 0;
     std::string mdlSdk;
     std::string defaultAssetId;
     std::filesystem::path targetCodeTypesPath;
@@ -53,6 +80,8 @@ struct MdlViewerCatalog
     std::filesystem::path rendererRuntimePath;
     std::string rendererRuntimeSha256;
     std::vector<MdlCatalogEntry> entries;
+
+    bool linked() const { return !catalogId.empty() && !entries.empty() && entries.front().linked(); }
 };
 
 MdlViewerCatalog loadMdlViewerCatalog(const std::filesystem::path& path);

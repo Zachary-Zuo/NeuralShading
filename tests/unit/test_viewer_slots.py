@@ -289,6 +289,55 @@ def test_typed_material_edit_compiles_candidate_before_atomic_replacement() -> N
     assert "previous slot binding preserved" in activation
 
 
+def test_linked_mdl_catalog_switches_reference_and_neural_from_one_typed_state() -> None:
+    viewer = Path("apps/viewer/NclsViewer.cpp").read_text(encoding="utf-8")
+    reference = Path("apps/viewer/ReferenceSource.cpp").read_text(encoding="utf-8")
+    catalog = Path("apps/viewer/MdlReference.cpp").read_text(encoding="utf-8")
+    launcher = Path("scripts/launch_metal_viewer.ps1").read_text(encoding="utf-8")
+    exporter = Path("tools/viewer/prepare_metal_catalog.py").read_text(
+        encoding="utf-8"
+    )
+
+    linked = viewer[
+        viewer.index("void NclsViewer::applyLinkedMdlSource") :
+        viewer.index("bool NclsViewer::runParityProbe")
+    ]
+    on_load = viewer[
+        viewer.index("void NclsViewer::onLoad") : viewer.index(
+            "void NclsViewer::createPasses"
+        )
+    ]
+    assert 'schemaName == "ncls.viewer-material-catalog"' in reference
+    assert '"ViewerMaterialCatalog entry"' in catalog
+    assert "ensureLinkedMdlProgram(entry)" in linked
+    assert "installReferenceSource(std::move(source), catalogPath);" in linked
+    assert "mComparisonSlots[0].contract.mode = ncls::SlotMode::PathTracing;" in linked
+    assert "mComparisonSlots[1].contract.mode = ncls::SlotMode::Deferred;" in linked
+    assert "applyMaterialEditor(mComparisonSlots[1]" in linked
+    assert linked.index("applyMaterialEditor(mComparisonSlots[1]") < linked.index(
+        "mLinkedMdlMode = true;"
+    )
+    for restored in (
+        "mReferenceSource = previousSource;",
+        "mComparisonSlots = previousSlots;",
+        "mLinkedMdlMode = previousLinkedMdlMode;",
+        "mAccumulationSeconds = previousAccumulationSeconds;",
+    ):
+        assert restored in linked
+    assert '"viewer_material_binding"' in viewer
+    assert '"viewer_material_state"' in viewer
+    assert "selected->packageId == entry.packageId" in on_load
+    assert (
+        "applyMaterialEditor(slot, *selected, mReferenceSource.mdlParameterView);"
+        in on_load
+    )
+    assert '"coordinates"' in catalog
+    assert '"frame"' in catalog
+    assert '"--evaluator-preview-lighting"' in launcher
+    assert "learn train" not in launcher.lower()
+    assert "learn train" not in exporter.lower()
+
+
 def test_package_rendering_uses_generic_tdr_safe_tiles_without_model_shortcuts() -> None:
     viewer = Path("apps/viewer/NclsViewer.cpp").read_text(encoding="utf-8")
     header = Path("apps/viewer/NclsViewer.h").read_text(encoding="utf-8")

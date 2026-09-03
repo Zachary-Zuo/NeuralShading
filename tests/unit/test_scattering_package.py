@@ -33,6 +33,41 @@ def test_scattering_package_roundtrip_has_program_asset_instance_identities(tmp_
         ScatteringPackage.open(package_root)
 
 
+def test_scattering_package_writer_hardlinks_shared_content(tmp_path):
+    source = SourceSnapshot("ncls.layer-stack@1", 1, "fixture", "a" * 64, b"{}")
+    program = METHOD_DEFINITION.compile_program({})
+    asset = METHOD_DEFINITION.compile_asset(source, {})
+    linked_content_store = {}
+    manifests = []
+    roots = []
+    for name in ("first", "second"):
+        root = tmp_path / name
+        roots.append(root)
+        manifests.append(
+            write_scattering_package(
+                root,
+                program_kind="method",
+                program_key=METHOD_DEFINITION.descriptor.method_key,
+                program_version=1,
+                program_descriptor_sha256=METHOD_DEFINITION.descriptor.descriptor_sha256,
+                runtime_abi=METHOD_DEFINITION.descriptor.runtime_abi,
+                source=source,
+                program_payload=program,
+                asset_payload=asset,
+                validation={"status": "passed"},
+                provenance={"test": True},
+                linked_content_store=linked_content_store,
+            )
+        )
+
+    logical = next(iter(manifests[0].asset["blobs"]))
+    first = roots[0] / manifests[0].files[logical]
+    second = roots[1] / manifests[1].files[logical]
+    assert first.samefile(second)
+    ScatteringPackage.open(roots[0])
+    ScatteringPackage.open(roots[1])
+
+
 def test_scattering_package_rejects_removed_format(tmp_path):
     root = tmp_path / "package"
     root.mkdir()

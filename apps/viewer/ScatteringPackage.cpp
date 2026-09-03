@@ -541,6 +541,16 @@ ViewerProgram loadPackage(const std::filesystem::path& root)
 }
 } // namespace
 
+void validateViewerTypedParameterView(const nlohmann::json& view)
+{
+    validateTypedParameterView(view);
+}
+
+ViewerProgram loadScatteringPackage(const std::filesystem::path& root)
+{
+    return loadPackage(std::filesystem::absolute(root).lexically_normal());
+}
+
 PackageScanResult scanScatteringPackages(const std::filesystem::path& root, const std::filesystem::path&)
 {
     PackageScanResult result;
@@ -555,7 +565,7 @@ PackageScanResult scanScatteringPackages(const std::filesystem::path& root, cons
     for (const auto& candidate : candidates)
         try
         {
-            auto loaded = loadPackage(candidate);
+            auto loaded = loadScatteringPackage(candidate);
             const auto found = programCache.find(loaded.program->programId);
             if (found == programCache.end())
                 programCache.emplace(loaded.program->programId, loaded.program);
