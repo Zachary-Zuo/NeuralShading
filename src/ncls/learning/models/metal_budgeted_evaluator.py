@@ -210,7 +210,7 @@ class MetalBudgetedPrepare(nn.Module):
             (
                 program.resource_variant,
                 asset.mip_choice,
-                (program.frame_state[:, 0] > 0.5).to(torch.int64),
+                program.resource_and_flags[:, 6].to(torch.int64),
                 (program.access_state[:, 7] > 0.5).to(torch.int64),
             ),
             dim=1,

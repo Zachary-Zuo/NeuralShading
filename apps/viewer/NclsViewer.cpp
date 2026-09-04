@@ -1893,7 +1893,8 @@ bool NclsViewer::runParityProbe(const ncls::ViewerProgram& method, std::string& 
         std::vector<ref<Sampler>> samplers;
         for (const auto& resource : method.asset.resources)
         {
-            if (resource.dtype == "texture2d-rgba16float-dds@1")
+            if (resource.dtype == "texture2d-rgba16float-dds@1"
+                || resource.dtype == "texture2d-rgba8-snorm-dds@1")
             {
                 auto texture = Texture::createFromFile(getDevice(), resource.path, false, false);
                 if (!texture || texture->getWidth() != resource.shape.at(0)
@@ -2046,7 +2047,8 @@ void NclsViewer::activateComparisonSlot(uint32_t slotIndex, uint32_t selection)
                 for (const auto& descriptor : method.instance.blobs) addBlob(descriptor);
                 for (const auto& resource : method.asset.resources)
                 {
-                    if (resource.dtype == "texture2d-rgba16float-dds@1")
+                    if (resource.dtype == "texture2d-rgba16float-dds@1"
+                        || resource.dtype == "texture2d-rgba8-snorm-dds@1")
                     {
                         auto value = Texture::createFromFile(getDevice(), resource.path, false, false);
                         if (!value || value->getWidth() != resource.shape.at(0)

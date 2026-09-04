@@ -32,10 +32,10 @@ def test_resolved_training_plan_roundtrips_embedded_checkpoint_manifest() -> Non
             1,
             2,
         ),
-        (
-            "configs/training/runs/metal-budgeted-hybrid-pilot.yaml",
-            "metal",
-            "5bfad2a3aae549f81b56ec91dbfcb247c94812b28edc8de443c96d845851ea0e",
+            (
+                "configs/training/runs/metal-budgeted-hybrid-pilot.yaml",
+                "metal",
+                "5d6fbd3e5b5b056c0dff0361a22642133e4722a2adb1b47c78bfaec36bb6f415",
             1,
             2048,
         ),
@@ -60,10 +60,10 @@ def test_resolved_training_plan_roundtrips_embedded_checkpoint_manifest() -> Non
             1,
             2,
         ),
-        (
-            "configs/training/runs/metal-budgeted-direct-pilot.yaml",
-            "metal",
-            "1287df01859e6e41c0d94c8bce271f626811ec584e181d2e6ea9f285aabe311a",
+            (
+                "configs/training/runs/metal-budgeted-direct-pilot.yaml",
+                "metal",
+                "aa7aaeba0535b4767efb5af573c6d2e5fc8902bf1c785e9113d779d10539a034",
             1,
             2048,
         ),

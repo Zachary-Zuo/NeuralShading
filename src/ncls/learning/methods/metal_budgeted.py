@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+import re
 from typing import Any, Mapping, Sequence
 
 import torch
 from torch import nn
 
 from ncls.core.identity import sha256_json
+from ncls.bundle import RGBA8_SNORM_DDS_DTYPE, encode_rgba8_snorm_dds
 from ncls.core.scattering import (
     BackendCapability,
     InstancePayload,
@@ -35,6 +37,16 @@ from ncls.learning.method import (
 )
 from ncls.learning.methods.contracts import MethodPlugin
 from ncls.learning.metal_runtime import fake_quantize_fp16_ste
+from ncls.learning.metal_budgeted_asset_cook import MetalBudgetedAssetCompiler
+from ncls.learning.metal_budgeted_runtime import (
+    METAL_BUDGETED_COMPILED_WORD_COUNT,
+    evaluate_metal_budgeted_cooked_asset,
+    metal_budgeted_runtime_parameter_names,
+    pack_metal_budgeted_compiled_material,
+    pack_metal_budgeted_program,
+    quantize_metal_budgeted_program_state,
+    quantize_metal_budgeted_runtime_model,
+)
 from ncls.learning.models.metal_budgeted import (
     METAL_BUDGETED_REQUIRED_CONTEXT,
     MetalBudgetedModel,
@@ -119,20 +131,37 @@ def metal_budgeted_parameter_groups(
     return {name: tuple(values) for name, values in groups.items()}
 
 
-def metal_budgeted_runtime_parameter_names(
-    model: MetalBudgetedModel,
-) -> frozenset[str]:
-    names = {
-        name
-        for name, _ in model.named_parameters()
-        if name.startswith("typed_compiler.")
-        or name.startswith("prepared_model.")
-        or name.startswith("evaluator.")
-        or name == "asset.variant_scale_bias.weight"
-    }
-    if not names or any(name.startswith("asset.detail_encoder.") for name in names):
-        raise ValueError("Metal budgeted runtime parameter classification drifted")
-    return frozenset(names)
+_PARITY_VIEW = (0.17364818, -0.33682409, 0.92541658)
+_PARITY_LIGHTS = (
+    (0.0, 0.0, 1.0),
+    (0.34202015, 0.16317591, 0.92541658),
+    (-0.49240388, 0.41317591, 0.76604444),
+    (0.71984631, -0.60402277, 0.34202015),
+)
+
+
+def _module_closure(entry: Path) -> dict[str, bytes]:
+    include_pattern = re.compile(rb'^\s*#include\s+"([^"]+)"', re.MULTILINE)
+    shader_root = PROJECT_ROOT / "shaders"
+    pending = [entry.resolve()]
+    result: dict[str, bytes] = {}
+    while pending:
+        path = pending.pop()
+        try:
+            relative = path.relative_to(shader_root).as_posix()
+        except ValueError as error:
+            raise ValueError(
+                f"Metal budgeted shader dependency escapes shader root: {path}"
+            ) from error
+        if relative in result:
+            continue
+        payload = path.read_bytes()
+        result[relative] = payload
+        for match in include_pattern.finditer(payload):
+            dependency = (path.parent / match.group(1).decode("utf-8")).resolve()
+            if dependency.is_file():
+                pending.append(dependency)
+    return result
 
 
 def _implementation_sha256() -> str:
@@ -144,8 +173,15 @@ def _implementation_sha256() -> str:
         PROJECT_ROOT / "src/ncls/learning/models/metal_budgeted_evaluator.py",
         PROJECT_ROOT / "src/ncls/learning/models/metal_budgeted_sampler.py",
         PROJECT_ROOT / "src/ncls/learning/models/metal_budgeted_profile.py",
+        PROJECT_ROOT / "src/ncls/learning/metal_budgeted_asset_cook.py",
+        PROJECT_ROOT / "src/ncls/learning/metal_budgeted_runtime.py",
         PROJECT_ROOT / "src/ncls/learning/appearance_metrics.py",
         PROJECT_ROOT / "src/ncls/learning/source_adapters.py",
+        PROJECT_ROOT / "src/ncls/bundle/typed_texture.py",
+        PROJECT_ROOT / "shaders/ncls/backends/metal_budgeted/metal_budgeted.slang",
+        PROJECT_ROOT / "shaders/ncls/backends/metal_budgeted/metal_budgeted_common.slang",
+        PROJECT_ROOT / "shaders/ncls/backends/metal_budgeted/metal_budgeted_asset.slang",
+        PROJECT_ROOT / "shaders/ncls/backends/metal_budgeted/metal_budgeted_evaluator.slang",
         METAL_BUDGETED_LAYOUT_PATH,
     )
     digest = hashlib.sha256()
@@ -780,21 +816,220 @@ class MetalBudgetedMethodDefinition(MethodDefinition):
             restored[name] = value.to(target.device)
         model.load_state_dict(restored, strict=True)
 
+    def _deployment(
+        self,
+        snapshot: SourceSnapshot,
+        checkpoint: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        self.descriptor.adaptation_contract(snapshot)
+        cache_key = (snapshot.snapshot_id, id(checkpoint))
+        cached = getattr(self, "_deployment_cache", None)
+        if isinstance(cached, tuple) and cached[0] == cache_key:
+            return cached[1]
+        state_ids = checkpoint.get("source_snapshot_ids")
+        state = checkpoint.get("model_state")
+        training_config = checkpoint.get("training_config")
+        if (
+            not isinstance(state_ids, (list, tuple))
+            or snapshot.snapshot_id not in map(str, state_ids)
+            or not isinstance(state, Mapping)
+            or not isinstance(training_config, Mapping)
+        ):
+            raise ValueError(
+                "Metal budgeted deployment requires a checkpoint containing this source"
+            )
+        context = training_config.get("model_context")
+        if not isinstance(context, Mapping):
+            raise ValueError("Metal budgeted deployment checkpoint has no model_context")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = self.create_trainable(context).to(device)
+        if not isinstance(model, MetalBudgetedModel):
+            raise TypeError("Metal budgeted deployment requires MetalBudgetedModel")
+        self.restore_training_state(model, state)
+        quantize_metal_budgeted_runtime_model(model)
+        adapter = MetalBudgetedMdlSourceAdapter((snapshot,), device)
+        try:
+            tensors = adapter.compiler_tensors_for_source(0, device=device)
+            asset_index = adapter.asset_index_for_source(0)
+            asset = MetalBudgetedAssetCompiler(
+                model,
+                adapter.native_assets(),
+            ).compile(asset_index)
+            with torch.no_grad():
+                program_state = model.compile_program_state(tensors)
+                program_state = quantize_metal_budgeted_program_state(
+                    program_state
+                )
+        finally:
+            adapter.close()
+        result = {
+            "model": model,
+            "tensors": tensors,
+            "asset": asset,
+            "program_state": program_state,
+        }
+        self._deployment_cache = (cache_key, result)
+        return result
+
     def compile_program(self, checkpoint: Mapping[str, Any]) -> RuntimePayload:
-        del checkpoint
-        raise RuntimeError("Metal budgeted Slang deployment is produced after pilot selection")
+        state = checkpoint.get("model_state")
+        training_config = checkpoint.get("training_config")
+        if not isinstance(state, Mapping) or not isinstance(training_config, Mapping):
+            raise ValueError(
+                "Metal budgeted runtime compilation requires checkpoint model_state"
+            )
+        context = training_config.get("model_context")
+        if not isinstance(context, Mapping):
+            raise ValueError("Metal budgeted runtime compilation requires model_context")
+        model = self.create_trainable(context)
+        if not isinstance(model, MetalBudgetedModel):
+            raise TypeError("Metal budgeted runtime requires MetalBudgetedModel")
+        self.restore_training_state(model, state)
+        quantize_metal_budgeted_runtime_model(model)
+        packed = pack_metal_budgeted_program(model)
+        module = "ncls/backends/metal_budgeted/metal_budgeted.slang"
+        closure = _module_closure(PROJECT_ROOT / "shaders" / module)
+        capabilities = int(
+            BackendCapability.PREPARE
+            | BackendCapability.EVALUATE
+            | BackendCapability.ANISOTROPIC_FRAME
+        )
+        return RuntimePayload(
+            module,
+            closure,
+            {"shared-weights": packed.payload},
+            {
+                "shared-weights": {
+                    "kind": "structured-buffer",
+                    "dtype": "packed-float16x2-uint32@1",
+                    "shape": [len(packed.payload) // 4],
+                    "stride": 4,
+                    "alignment": 16,
+                    "usage": "gNclsRuntimeWeights",
+                }
+            },
+            capabilities,
+            packed.defines,
+        )
 
     def compile_asset(
         self, snapshot: SourceSnapshot, checkpoint: Mapping[str, Any]
     ) -> MaterialPayload:
-        del snapshot, checkpoint
-        raise RuntimeError("Metal budgeted asset cook is produced after pilot selection")
+        asset = self._deployment(snapshot, checkpoint)["asset"]
+        detail_height, detail_width = asset.detail_levels[0].shape[:2]
+        context_height, context_width = asset.context_levels[0].shape[:2]
+        return MaterialPayload(
+            snapshot.snapshot_id,
+            {},
+            {},
+            {
+                "metal-budgeted-detail.dds": encode_rgba8_snorm_dds(
+                    asset.detail_levels
+                ),
+                "metal-budgeted-context.dds": encode_rgba8_snorm_dds(
+                    asset.context_levels
+                ),
+            },
+            {
+                "metal-budgeted-detail.dds": {
+                    "dtype": RGBA8_SNORM_DDS_DTYPE,
+                    "shape": [
+                        detail_width,
+                        detail_height,
+                        len(asset.detail_levels),
+                        4,
+                    ],
+                    "stride": 4,
+                    "alignment": 16,
+                    "usage": "gNclsMetalBudgetedDetail",
+                },
+                "metal-budgeted-context.dds": {
+                    "dtype": RGBA8_SNORM_DDS_DTYPE,
+                    "shape": [
+                        context_width,
+                        context_height,
+                        len(asset.context_levels),
+                        4,
+                    ],
+                    "stride": 4,
+                    "alignment": 16,
+                    "usage": "gNclsMetalBudgetedContext",
+                },
+            },
+            {
+                "metal-budgeted-latent": {
+                    "kind": "sampler",
+                    "usage": "gNclsMetalBudgetedSampler",
+                    "filter": "linear",
+                    "address_mode": asset.address_mode,
+                }
+            },
+        )
 
     def compile_instance(
         self, snapshot: SourceSnapshot, checkpoint: Mapping[str, Any]
     ) -> InstancePayload:
-        del snapshot, checkpoint
-        raise RuntimeError("Metal budgeted instance pack is produced after pilot selection")
+        deployment = self._deployment(snapshot, checkpoint)
+        compiled = pack_metal_budgeted_compiled_material(
+            deployment["program_state"], deployment["asset"]
+        )
+        return InstancePayload(
+            {"compiled_material_index": 0},
+            {"compiled-material": compiled},
+            {
+                "compiled-material": {
+                    "kind": "structured-buffer",
+                    "dtype": "ncls-metal-budgeted-compiled-material@1",
+                    "shape": [METAL_BUDGETED_COMPILED_WORD_COUNT],
+                    "stride": 4,
+                    "alignment": 16,
+                    "usage": "gNclsCompiledMaterials",
+                }
+            },
+        )
+
+    def package_validation(
+        self,
+        snapshot: SourceSnapshot,
+        checkpoint: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        deployment = self._deployment(snapshot, checkpoint)
+        with torch.no_grad():
+            expected = evaluate_metal_budgeted_cooked_asset(
+                deployment["model"],
+                deployment["asset"],
+                deployment["tensors"],
+                uv=(0.0, 0.0),
+                mip_level=0.0,
+                filter_random=0.0,
+                wo=_PARITY_VIEW,
+                wi=_PARITY_LIGHTS,
+            )
+        packed = pack_metal_budgeted_program(deployment["model"])
+        asset = deployment["asset"]
+        return {
+            "status": "gpu-parity-required",
+            "scope": "diagnostic-evaluator-only",
+            "parity": {
+                "oracle": "metal-budgeted-fp16-snorm8-python@1",
+                "uv": [0.0, 0.0],
+                "mip_level": 0.0,
+                "view": list(_PARITY_VIEW),
+                "lights": [list(value) for value in _PARITY_LIGHTS],
+                "expected_f": expected.tolist(),
+                "relative_tolerance": 3e-2,
+                "absolute_tolerance": 5e-4,
+            },
+            "storage": {
+                "B_shared": len(packed.payload),
+                "B_asset": sum(
+                    level.nbytes
+                    for levels in (asset.detail_levels, asset.context_levels)
+                    for level in levels
+                ),
+                "B_instance": 4 * METAL_BUDGETED_COMPILED_WORD_COUNT,
+            },
+        }
 
     def validate_training_config(self, config: Mapping[str, Any]) -> None:
         if config.get("source_adaptation_id") != MetalBudgetedMdlSourceAdapter.adapter_id:

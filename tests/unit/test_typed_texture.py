@@ -5,8 +5,11 @@ import pytest
 
 from ncls.bundle.typed_texture import (
     RGBA16F_DDS_DTYPE,
+    RGBA8_SNORM_DDS_DTYPE,
     encode_rgba16f_dds,
+    encode_rgba8_snorm_dds,
     inspect_rgba16f_dds,
+    inspect_rgba8_snorm_dds,
     validate_typed_resource,
 )
 
@@ -44,3 +47,25 @@ def test_rgba16f_dds_rejects_noncanonical_mip_extents() -> None:
             np.zeros((4, 4, 4), dtype=np.float32),
             np.zeros((3, 2, 4), dtype=np.float32),
         ))
+
+
+def test_rgba8_snorm_dds_roundtrip_and_validation() -> None:
+    levels = (
+        np.arange(8 * 4 * 4, dtype=np.int8).reshape(4, 8, 4),
+        np.full((2, 4, 4), -37, dtype=np.int8),
+        np.full((1, 2, 4), 91, dtype=np.int8),
+    )
+    payload = encode_rgba8_snorm_dds(levels)
+    assert inspect_rgba8_snorm_dds(payload) == (8, 4, 3)
+    validate_typed_resource(
+        payload,
+        {
+            "dtype": RGBA8_SNORM_DDS_DTYPE,
+            "shape": [8, 4, 3, 4],
+            "stride": 4,
+            "alignment": 16,
+            "usage": "gDetail",
+        },
+    )
+    with pytest.raises(ValueError, match="payload length"):
+        inspect_rgba8_snorm_dds(payload[:-1])

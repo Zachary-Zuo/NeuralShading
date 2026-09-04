@@ -441,37 +441,41 @@ ViewerProgram loadPackage(const std::filesystem::path& root)
             && resource.alignment > 0u && !resource.usage.empty(), "typed resource descriptor is invalid");
         require(std::all_of(resource.shape.begin(), resource.shape.end(), [](uint32_t value) { return value > 0u; }),
             "typed resource shape must be positive");
-        if (resource.dtype == "texture2d-rgba16float-dds@1")
+        const bool rgba16f = resource.dtype == "texture2d-rgba16float-dds@1";
+        const bool rgba8Snorm = resource.dtype == "texture2d-rgba8-snorm-dds@1";
+        if (rgba16f || rgba8Snorm)
         {
             const auto bytes = readBytes(resource.path);
             require(bytes.size() >= 148u && std::memcmp(bytes.data(), "DDS ", 4u) == 0,
-                "RGBA16F resource is not a DDS file");
+                "typed RGBA resource is not a DDS file");
             require(readU32(bytes, 4u) == 124u && readU32(bytes, 76u) == 32u
                 && readU32(bytes, 80u) == 4u && std::memcmp(bytes.data() + 84u, "DX10", 4u) == 0,
-                "RGBA16F DDS legacy header is invalid");
+                "typed RGBA DDS legacy header is invalid");
             const uint32_t height = readU32(bytes, 12u);
             const uint32_t width = readU32(bytes, 16u);
             const uint32_t mipCount = readU32(bytes, 28u);
+            const uint32_t texelBytes = rgba16f ? 8u : 4u;
+            const uint32_t dxgiFormat = rgba16f ? 10u : 31u;
             require(width > 0u && height > 0u && mipCount > 0u
-                && readU32(bytes, 20u) == width * 8u && readU32(bytes, 24u) == 0u
-                && readU32(bytes, 128u) == 10u && readU32(bytes, 132u) == 3u
+                && readU32(bytes, 20u) == width * texelBytes && readU32(bytes, 24u) == 0u
+                && readU32(bytes, 128u) == dxgiFormat && readU32(bytes, 132u) == 3u
                 && readU32(bytes, 136u) == 0u && readU32(bytes, 140u) == 1u
                 && readU32(bytes, 144u) == 0u,
-                "DDS resource is not a 2D RGBA16F texture");
+                "DDS resource format disagrees with its typed RGBA descriptor");
             uint64_t expectedBytes = 148u;
             uint32_t mipWidth = width;
             uint32_t mipHeight = height;
             for (uint32_t mip = 0u; mip < mipCount; ++mip)
             {
-                expectedBytes += uint64_t(mipWidth) * uint64_t(mipHeight) * 8u;
+                expectedBytes += uint64_t(mipWidth) * uint64_t(mipHeight) * texelBytes;
                 mipWidth = std::max(1u, mipWidth / 2u);
                 mipHeight = std::max(1u, mipHeight / 2u);
             }
             require(bytes.size() == expectedBytes,
-                "RGBA16F DDS payload length disagrees with its mip chain");
+                "typed RGBA DDS payload length disagrees with its mip chain");
             require(resource.shape == std::vector<uint32_t>({width, height, mipCount, 4u})
-                && resource.stride == 8u && resource.alignment >= 16u,
-                "RGBA16F DDS descriptor disagrees with its header");
+                && resource.stride == texelBytes && resource.alignment >= 16u,
+                "typed RGBA DDS descriptor disagrees with its header");
         }
         else
             throw std::runtime_error("unsupported typed package resource dtype: " + resource.dtype);
