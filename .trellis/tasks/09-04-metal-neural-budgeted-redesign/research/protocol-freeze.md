@@ -202,3 +202,4 @@ authored 参数 state 固定为 registry default：`texture_scale=[1,1]`、`text
 - `scope`：新增独立`metal_budgeted_hybrid_center_detail_v5` pilot profile。它恢复v3 shared-slot softmax，只把Detail encoder的`center`改为请求texel单点；Context仍是完整patch均值，feature维数、参数数、网络层、两次RGBA8读取、PreparedState 160 B、evaluate 11,392 MAC、source/query/loss/optimizer/seed均不变。
 - `controls`：划痕青铜与开裂钢各fresh运行v3 2×2-center control与v5 center-texel candidate；GPU 5–9、per-rank batch2048、global batch10240、step256 cap和validation recipe matched。新ABI identity下旧control不能代替fresh control。
 - `interpretation`：共同step256按256条同序validation row做20,000次paired bootstrap。若两项材质spatial都改善且aggregate/peak没有一致退化，登记为下一轮优先结构；否则保留分材质trade-off。该pilot不改变当前v3 Windows交付，也不自动生成v6或延长step。
+- `outcome`：实现`55640e0`下四组fresh DDP5均完成。青铜v5的appearance改善`-0.000756`，但peak/spatial分别退化`+0.004659/+0.000136`；钢的appearance/peak/spatial分别退化`+0.000172/+0.001209/+0.0000620`，所列95% CI均不跨零。单点输入幅度增加没有带来正确空间方向，v5按规则停止于step256，不替换v3、不延长。

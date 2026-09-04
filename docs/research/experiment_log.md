@@ -8,6 +8,8 @@
 
 同日主pair与双package交付完成后，按用户的剩余时间授权补做特征材质diagnostic。per-rank batch `512/1024/2048`的96-step probe得到约`21.1k/42.4k/87.7k` global work units/s，且batch2048峰值仅约1.37 GiB/rank，因此四项probe统一采用per-rank `2048`、global `10,240`。黄铜和阳极氧化铝的step128→256 appearance明显改善；划痕青铜与开裂钢的spatial几乎不动，定位到局部高频路径。随后fresh v3/v4 role-separated Detail matched pilot显示：青铜spatial只改善`-0.000140`但peak退化`+0.004411`，钢的spatial与aggregate appearance分别退化`+0.0000546/+0.000742`，95% CI均不跨零。该v4是正确但无跨材质净收益的empirical outcome，停止于step256；可交付模型仍为v3 hybrid/direct。详细冻结口径、bootstrap区间与artifact位置见任务`research/characteristic-probes.md`。
 
+后续fixed-batch spatial-only容量诊断显示，现有路径128步也只能把青铜/钢预测梯度从`0.00309/0.00112`提高到`0.00806/0.00219`，远小于target `0.50342/0.25905`；各参数组梯度finite/nonzero。center-texel v5再验证“取消输入平滑”假设：青铜和钢的spatial分别显著退化`+0.000136/+0.0000620`，peak也都退化。至此可排除单纯增益、role softmax和单点中心三个局部修补；下一轮应把二维signed局部结构和至少color/normal/packed的高分辨率带宽作为显式配置轴，而不是增加step或spatial loss权重。
+
 | 日期 | run ID | 候选+配置 | 数据版本 | 预算档 | seeds | 方向 L1 (med/p95) | 能量误差 (med/p95) | 结论 | artifacts |
 |---|---|---|---|---|---|---|---|---|---|
 | 2026-08-25 | `4ce8bd54ddd0b7c27d279cc4ece426c200488f3aab15b366a9d841c41719a27b` | M1 FiLM S | LayerStack P1 v1 `0513d0c8…` | 25k（实际 25k） | `20260824` × 1 | 0.0506 / 0.1196 | 0.0116 / 0.2169 | median 略高于 0.05 参考线；`C_eval` 1.2e5 MAC、state 512 B、烘焙资产 5.6 KB 超 framework §0.1 软线，非部署候选 | `artifacts/runs/p1-film-s-seed-20260824/` |

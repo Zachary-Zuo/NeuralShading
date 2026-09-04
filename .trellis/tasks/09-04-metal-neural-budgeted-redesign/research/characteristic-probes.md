@@ -75,6 +75,17 @@ fresh v3 checkpoint各加载一个固定online batch，只优化现有非sampler
 
 检查patch几何发现，偶数尺寸8×8 patch以索引4对应请求texel，但v3 Detail的`center`使用索引3/4的2×2均值。四个固定batch中，若只观察真实中心texel，相邻UV的raw变化在青铜从`0.01198`增至`0.01948`，在钢从`0.00445`增至`0.00631`，分别多出约63%和42%。这说明高频信号在learned encoder之前已被额外平滑，足以支持一个不增加运行时成本的center-texel matched pilot；它仍需实验确认，不能由输入幅度直接推断最终质量。
 
+## center-texel Detail matched pilot
+
+实现`55640e0`只把Detail encoder的局部中心从索引3/4的2×2均值换成请求texel索引4；v3 control、其他网络和运行时预算不变。两材质各fresh运行v3/v5到step256，四组均完成且复现control轨迹。candidate-minus-control paired bootstrap结果如下：
+
+| 材质 | appearance Δ | peak Δ | spatial Δ | 判断 |
+|---|---:|---:|---:|---|
+| 划痕青铜 | `-0.000756 [-0.001004,-0.000515]` | `+0.004659 [+0.004059,+0.005223]` | `+0.000136 [+0.000093,+0.000180]` | 平均log/linear改善，但peak与spatial显著退化 |
+| 开裂涂漆钢 | `+0.000172 [+0.000048,+0.000295]` | `+0.001209 [+0.000928,+0.001491]` | `+0.0000620 [+0.0000489,+0.0000751]` | aggregate、peak与spatial均显著退化 |
+
+v5停止在diagnostic candidate，不延长、不替换v3。v4和v5共同说明：消除角色竞争或增加单点变化幅度都只能重新分配误差，不能恢复正确空间方向。当前encoder还把8×8 patch压成center/high-pass/context三个无方向均值；而青铜活跃变化以normal/packed为主，钢同时有color/normal/packed。后续优先项因此是两个高分辨率RGBA plane共同承载带signed x/y局部导数的8维特征，并显式报告相对当前“一张全分辨率Detail + 一张1/4线性分辨率Context”的asset bytes增量；它不是本轮已经验证的结论。
+
 ## 预先解释规则
 
 - high-frequency与composite的spatial仍接近target自身梯度尺度、而其他appearance下降：支持“Detail高频通路是跨材质瓶颈”，下一轮优先显式role-separated Detail/Context，而不是增加主干宽度或仅加spatial loss权重。
@@ -82,4 +93,4 @@ fresh v3 checkpoint各加载一个固定online batch，只优化现有非sampler
 - 四项行为差异明显：保留机制特定结论，下一轮做小型混合cohort，不宣称一个局部修复普适。
 - 四项出现一致的finite/梯度/身份失败：先分类实现或protocol缺陷，不解释模型质量。
 
-四项probe与增益诊断固定写入`artifacts/metal-budgeted-probes/characteristic-v1/`；role-separated matched pilot固定写入`artifacts/metal-budgeted-probes/role-detail-v1/`。stdout、metrics、checkpoint、review与dmon不进入根仓库。本文件只追加实际结果和跨材质解释，不反写选择规则。
+四项probe与增益诊断固定写入`artifacts/metal-budgeted-probes/characteristic-v1/`；role-separated matched pilot固定写入`artifacts/metal-budgeted-probes/role-detail-v1/`；center-texel matched pilot固定写入`artifacts/metal-budgeted-probes/center-detail-v1/`。stdout、metrics、checkpoint、review与dmon不进入根仓库。本文件只追加实际结果和跨材质解释，不反写选择规则。
