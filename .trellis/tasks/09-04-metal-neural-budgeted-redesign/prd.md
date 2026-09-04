@@ -56,7 +56,7 @@
 
 - 用户已授权约 12 小时的连续监督、范围内修复和分段本地 commit；不得 push。监督必须以进程退出、checkpoint/metric 事件和低频 heartbeat 驱动，完整 stdout/stderr 写入 `artifacts/`，不在对话中做秒级轮询或转储逐 step 日志。
 - 使用物理 GPU 5–9 运行一个五卡 DDP 作业；hybrid 与 direct 不并发争抢卡，而是在共同的 stop/resume 里程碑间交替执行。两侧必须使用相同 world size、per-rank batch、source/query、loss、optimizer、schedule、precision和验证 cadence。
-- 五卡保持冻结配置的 per-rank batch 64，因此 global batch 为 320、每 step 全局 work units 为单卡协议的五倍。该运行使用独立 `ddp5` artifact/plan identity；hybrid/direct 之间可比较，但不能冒充原单卡 2048-step pilot或与其按 step 直接合并统计。
+- 旧`@1`五卡before-profile使用per-rank batch 64、global batch 320；吞吐profile后新`@2` pair冻结per-rank batch 512、global batch 2560、每16 step report与two-step reference packing。两代使用独立artifact/plan identity；新hybrid/direct之间可比较，但不能与旧结果按step直接合并统计。
 - 先完成 DDP step-0/短步 smoke 与 checkpoint/resume，再按 `128/256/512/1024/2048` 共同里程碑交替推进。若实现修复改变 resolved plan、method/data/query identity或训练数值语义，旧 checkpoint 不继续混用，两侧从相同有效边界重跑。
 - 对每个里程碑分析 appearance、proposal、chroma、逐通道 peak、spatial gradient、required-group gradient/update、rank straggler、reference/cache 与显存；有限且下降的 total loss 本身不足以判定模型有效。
 - 最终至少保留 hybrid 与 direct 两个 exact-identity checkpoint，并为两者生成 Windows viewer 可消费的 diagnostic evaluator package/catalog。未完成 formal readiness 或缺少 `sample/pdf` 的候选必须明确标注 diagnostic，不能显示为 formal ready。

@@ -6,7 +6,7 @@ extends: metal-budgeted-hybrid-pilot
 compatible_methods: [metal]
 payload:
   training:
-    recipe_id: metal-budgeted-tungsten-direct-pilot-2048@1
+    recipe_id: metal-budgeted-tungsten-direct-efficient-pilot-2048@2
     correspondence_id: metal-budgeted-semantic-direct-control@1
     model_context:
       profile_id: metal_budgeted_direct_control_v1
@@ -16,7 +16,7 @@ payload:
         routes: &routes
           - name: evaluator
             kind: reference-evaluator
-            batch_size: 64
+            batch_size: 512
             direction_count: 1
             seed_offset: 0
             options:
@@ -35,7 +35,7 @@ payload:
               maximum_rejection_rounds: 64
           - name: sampler
             kind: method-sampler
-            batch_size: 64
+            batch_size: 512
             direction_count: 1
             seed_offset: 1
             options:
@@ -99,9 +99,9 @@ payload:
           gradient_scaler: false
         checkpoint_boundary: true
         transition: null
-        log_interval: 1
+        log_interval: 16
         gradient_audit_interval: 128
-        prefetch_depth: 1
+        prefetch_depth: 2
       - name: deployment-qat-refine
         steps: 256
         routes: *routes
@@ -140,9 +140,9 @@ payload:
           gradient_scaler: false
         checkpoint_boundary: true
         transition: null
-        log_interval: 1
+        log_interval: 16
         gradient_audit_interval: 128
-        prefetch_depth: 1
+        prefetch_depth: 2
     validation:
       interval: 128
       batches: 256

@@ -145,3 +145,12 @@ authored 参数 state 固定为 registry default：`texture_scale=[1,1]`、`text
 - `rerun required`：每个材质/混合cohort使用独立source、query、config和checkpoint identity，不能resume Tungsten checkpoint或互相覆盖。实现bug改变identity时只重跑受影响的专项；主paired结果除非共享实现语义被改变，否则不重跑。
 
 探索结果只登记design direction和候选优先级，不增加本任务hard gate，也不授权第二seed、teacher、旧full、formal 692-source long或无界模型变体循环。
+
+## 9. 2026-09-05 吞吐与 batch 修订
+
+- `trigger`：用户观察到GPU远未满载，明确要求先优化通用训练架构并允许增大batch，再推进更多direct/hybrid实验。
+- `invalidated evidence`：§7的per-rank batch 64和原`@1`执行调度不再是后续主pair的冻结recipe；它们已执行到共同step128并作为before-profile保留，不能resume到新recipe。
+- `scope impact`：source、query、model shape、loss、optimizer、schedule、precision、seed和2048-step基础cap不变。validation改为窗口级一次packed reduce但保留全部逐batch记录；新`@2` recipe使用每16 step report、prefetch/reference batch steps 2，并在预登记64/128/256/512中选择per-rank 512、global batch 2560。每step样本预算扩大，因此必须同时报告累计work units，不能与`@1`按step合并。
+- `rerun required`：hybrid/direct从新config identity fresh step0开始；两侧使用相同batch、topology和cadence。`@1` checkpoint只作性能/早期结构诊断，不参与`@2`最终选择。
+
+选择依据是同source/query/model的64-step DDP5 profile：batch 64/128/256/512的global work units/s中位数约为2,936/5,350/10,465/23,354，而Torch peak显存约705/707/709/748 MiB/rank。512支配本轮候选，达到预登记上限后不再因尚有显存余量事后扩大profile cap。

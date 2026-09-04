@@ -17,16 +17,16 @@ Windows 单卡：
   --output artifacts/training/nvidia-smoke/checkpoint.pt
 ```
 
-Linux 单卡：
+Linux固定五卡Metal pair：
 
 ```bash
-bash scripts/run_falcor_python.sh -m ncls train \
+bash scripts/run_falcor_python.sh --gpus 5,6,7,8,9 -- -m ncls train \
   configs/training/runs/metal-budgeted-hybrid-pilot.yaml \
-  --devices 0 \
+  --devices 5,6,7,8,9 \
   --output artifacts/metal-budgeted-pilot/hybrid/checkpoint.pt
 ```
 
-当前 Metal direct/hybrid single-material pilot 只在原生 Linux 单 GPU串行执行；Windows 不运行online reference、完整validation、pilot或runtime baseline。精确的step-0 calibration、step-128恢复点和matched direct命令见[Metal Linux pilot](metal_linux_training.md)。
+当前Metal direct/hybrid single-material pilot只在原生Linux按固定GPU 5–9 DDP5拓扑串行执行；Windows不运行online reference、完整validation、pilot或runtime baseline。精确的step-0 calibration、共同恢复点和matched direct命令见[Metal Linux pilot](metal_linux_training.md)。
 
 当 `--devices` 只有一个序号时直接单卡执行；Linux 传多个序号时自动启动一个 torchrun/NCCL 作业，Windows 多卡明确拒绝：
 

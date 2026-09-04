@@ -65,7 +65,7 @@ ncls eval worker|collect ...
 
 ## 5. Good / Base / Bad Cases
 
-- Good：一个 YAML 把 `method=metal`、`data=mdl-metal-budgeted-tungsten` 与 budgeted pilot recipe 组合；同一 plugin/data/engine 合同可在支持的执行环境运行，但当前 single-material pilot 明确只交给 Linux 单 GPU。
+- Good：一个YAML把`method=metal`、`data=mdl-metal-budgeted-tungsten`与budgeted pilot recipe组合；同一plugin/data/engine合同可在支持的执行环境运行，当前single-material pair通过Linux统一launcher在固定GPU 5–9 DDP5拓扑串行执行。它不构成scaling研究，Windows仍不运行online pilot。
 - Good：多个 native source state 编入 grouped plan，由同一 online session 产生 typed batch；method deployment facet独立输出三段 package，viewer 只解释公共 schema。
 - Base：单 source、无纹理、单 phase、单 GPU 仍走同一 resolver/plugin/session/engine/checkpoint，不新增简化入口。
 - Bad：runner 按 source family 选择 producer；exporter 识别 method 名补 artifact；新增 `configs/learning/*.json` 或 `ncls learn` fallback；用 `@版本` 作为公开 model 名。

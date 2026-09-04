@@ -12,7 +12,7 @@
 ## 当前实施断点（2026-09-05）
 
 - Windows 端已完成新 profile、Python 数学核心、训练合同与 CPU 单测；不在本机执行 online reference、pilot、完整 runtime baseline 或旧 long。
-- direct/hybrid pilot 已组成同 source、query、loss、optimizer、schedule、precision 与 encoder-only asset 输入的 matched pair；运行状态是 `pending-on-target-host`，只交给原生 Linux 单 GPU执行。
+- direct/hybrid pilot已组成同source、query、loss、optimizer、schedule、precision与encoder-only asset输入的matched pair；Linux DDP5 step0/8/128与吞吐profile已执行，新`@2` pair等待fresh共同里程碑训练。
 - product registry 已因 public CLI 必须先解析新 pilot 而提前切换到 `metal_budgeted`；这只是依赖顺序调整，不代表结构已经入选。Slang/package facet 仍须等待 Linux pilot 按预登记规则选择 hybrid 或 direct 后实现。
 - 旧 full 只保留历史实现与显式对照用途；当前阶段不通过兼容 shim 让旧 run 冒充 canonical `metal`。
 - pre-Linux `trellis-check` 已完成：checkpoint diagnostic readiness 由各方法 descriptor 的强校验 policy 声明，通用训练层不再按 Metal method key 分支；Windows 纯 CPU `tests/unit` 为 335 passed，layout/compileall/diff/Falcor clean 均通过。旧 `mdl-metal-full` fragment 保持历史语义，新全 cohort 使用独立 `mdl-metal-budgeted-full` identity。Linux handoff 在本任务 scoped commit 完成后重新生成，以冻结可直接同步的 commit identity。
@@ -80,7 +80,7 @@ Rollback point R2：任何 Python 主形态需要越过 20k/192B 才能闭合接
 - [x] pure compiler与optimized ProgramState control分角色训练/报告；不把teacher结果写成editability。
 - [x] 先在 GPU 5–9 完成 budgeted objective 的 DDP step-0/8、rank mapping、checkpoint/resume与teardown smoke；真实缺陷按公共 DDP 合同修复并补测试。
 - [ ] 以`@1`共同step-128证据定位training/validation热点；实现窗口级validation packed reduce与bounded lookahead，补齐单机/DDP等价性和异常清理测试。
-- [ ] 用同source/query/model做旧/新执行路径bounded profile；新matched recipe固定低频report和depth=2，并在per-rank batch 64/128/256/512中选吞吐—显存Pareto点，若work units/s或validation wall没有净改善则回退相应轴。
+- [x] 用同source/query/model做旧/新执行路径bounded profile；新matched recipe固定每16 step report、depth/reference batch steps=2，并在per-rank batch 64/128/256/512中选出512这一吞吐—显存Pareto点。
 - [ ] 在新recipe fresh前审查direct/hybrid输出责任、appearance分项、proposal权重/梯度与calibration量级；实现缺陷修复后才开始长段。
 - [ ] 以`0/8/128/256/512/1024/2048`共同里程碑交替训练direct/hybrid DDP5 pair，保存分项loss、独立validation、rank stage/profile和完整日志；满足设计§15.7时才成对延长到最多4096。
 - [ ] 按预登记规则比较microdetail、RGB/chroma、peak、energy和成本；输出 `research/single-material-selection.md`。

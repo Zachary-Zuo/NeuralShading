@@ -38,3 +38,24 @@
 - hybrid/direct validation wall分别约`50.99/54.26 s`，validation reference session produce仅约`22.22/22.92 s`。剩余时间与当前每batch一次DDP report、descriptor control collective和逐scalar host读取相符，属于公共reporting/调度热点，不是模型显存不足或reference evaluate kernel本身占满全程。
 - step128的256-batch validation appearance mean为hybrid `1.5644`、direct `3.8383`；peak分别`1.5740/5.2536`，spatial gradient几乎相同（`0.2856/0.2855`）。这是同一早期里程碑的明显差异，但在架构吞吐修复和fresh matched pair前不形成最终选择。
 - 触发：用户要求先提高通用实验效率并在早期结果不足时继续。旧`@1` pair在step128停止，作为before-profile；engine等价优化可对其作性能回归，但任何cadence/prefetch/训练计划变化使用新identity并fresh运行。
+
+## 通用吞吐修复与 batch geometry profile：commit `735cc56`
+
+- validation在不改变256条逐batch全rank平均记录的前提下改为窗口级一次packed collective；旧hybrid checkpoint从128继续到256的真实验证由`50.986 s`降到`41.254 s`，约改善19%。同一窗口reference session produce约`21.8 s`，说明后续热点是reference生产和逐batch inference，不再是metric collective。
+- 新`@2` recipe固定每16 step report、phase prefetch depth 2、`reference_batch_steps=2`。在同一hybrid/source/query/model上做fresh 64-step DDP5 probe；前三个稳定16-step窗口结果如下，均为diagnostic profile，不用于质量选择：
+
+| per-rank batch | global batch | median step wall | median global work units/s | Torch peak MiB/rank | run elapsed（含calibration） |
+|---:|---:|---:|---:|---:|---:|
+| 64 | 320 | 0.2180 s | 2,935.7 | 705.3 | 41.84 s |
+| 128 | 640 | 0.2392 s | 5,350.1 | 706.5 | 34.80 s |
+| 256 | 1,280 | 0.2446 s | 10,465.2 | 708.9 | 33.66 s |
+| 512 | 2,560 | 0.2192 s | 23,354.4 | 747.6 | 27.95 s |
+
+- 512在本轮预登记候选中同时给出最高吞吐和很小的显存增量，选择为新pair共同batch；不因它尚未填满48 GiB显存而事后扩大profile cap。artifact位于`artifacts/metal-budgeted-throughput/735cc56/b{064,128,256,512}/`，每个目录含exact plan/checkpoint/review、完整训练log与2秒间隔GPU dmon。
+- 相对旧`@1` step128稳定global work units/s约1,739，新512 probe约提升13.4倍；其中约8倍来自batch工作量增长，其余来自低频report和two-step生产。两种结构后续都必须从新config identity fresh开始，累计work units与global batch必须随step共同报告。
+
+## step-128 后的模型/loss审查假设
+
+- hybrid在step128→256的validation appearance由`1.5644→1.2286`，gate平方均值由`0.3305→0.4587`，positive RGB平方均值约`1e-5`；当前结构主要表现为“learned gate调制analytic lobes”，神经positive residual几乎未参与。这是结构行为证据，不先判为实现错误。
+- direct step128 validation appearance为`3.8383`、peak为`5.2536`，明显弱于hybrid；它的positive RGB平方均值约`0.0091`，说明`bias=-5`后仍已开始离开零输出，并非零梯度。是否属于初始化/稀疏peak loss导致的优化问题，需要在新batch512 fresh pair的相同optimizer-update里程碑复查，不能用旧batch64早期值直接定论。
+- direct与hybrid的proposal fallback分别约`0.826/0.495`（hybrid step128），虽然proposal参数只接收proposal loss，但其输入semantic state受各自appearance训练影响；差异是模型耦合结果，不是DDP reduce错误。后续同时审查proposal有效率、density NLL和fallback轨迹。

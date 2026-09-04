@@ -7,14 +7,14 @@ compatible_methods: [metal]
 payload:
   training:
     run_class: profile
-    recipe_id: metal-budgeted-tungsten-hybrid-pilot-2048@1
+    recipe_id: metal-budgeted-tungsten-hybrid-efficient-pilot-2048@2
     phases:
       - name: joint-response-fit
         steps: 1792
         routes: &routes
           - name: evaluator
             kind: reference-evaluator
-            batch_size: 64
+            batch_size: 512
             direction_count: 1
             seed_offset: 0
             options:
@@ -33,7 +33,7 @@ payload:
               maximum_rejection_rounds: 64
           - name: sampler
             kind: method-sampler
-            batch_size: 64
+            batch_size: 512
             direction_count: 1
             seed_offset: 1
             options:
@@ -97,9 +97,9 @@ payload:
           gradient_scaler: false
         checkpoint_boundary: true
         transition: null
-        log_interval: 1
+        log_interval: 16
         gradient_audit_interval: 128
-        prefetch_depth: 1
+        prefetch_depth: 2
       - name: deployment-qat-refine
         steps: 256
         routes: *routes
@@ -138,9 +138,9 @@ payload:
           gradient_scaler: false
         checkpoint_boundary: true
         transition: null
-        log_interval: 1
+        log_interval: 16
         gradient_audit_interval: 128
-        prefetch_depth: 1
+        prefetch_depth: 2
     validation:
       interval: 128
       batches: 256

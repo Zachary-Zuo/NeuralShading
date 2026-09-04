@@ -17,7 +17,7 @@
 
 本轮 Windows 只做 unit、静态 layout 和必要的纯模型小测试。不要在 Windows 启动 online reference、256-batch validation、single-material pilot、完整 runtime baseline 或旧 long；这些操作曾造成整机失去响应，而且不能提供当前结构选择所需的 Linux matched 证据。
 
-正式运行只使用原生 Linux 单 GPU。它不是 DDP scaling 实验，不自动追加 seed、formal cohort、teacher 或旧 long。
+正式运行使用原生Linux和统一多GPU launcher。当前固定拓扑是物理GPU 5–9上的五卡DDP；它不是DDP scaling实验，不自动追加seed、formal cohort、teacher或旧long。
 
 ## 冻结的 matched pair
 
@@ -27,8 +27,9 @@
 | source | Tungsten Brushed Medium Light Brushing exact locator | 相同 |
 | train phase | 1792 step `joint-response-fit` | 相同 |
 | QAT phase | 256 step `deployment-qat-refine` | 相同 |
-| batch / direction | 64 / 1 | 相同 |
+| per-rank batch / global batch / direction | 512 / 2560 / 1 | 相同 |
 | validation | 每128 step，256 batch，seed `2026090402` | 相同 |
+| report / reference packing | 每16 step / 2 logical step | 相同 |
 | asset mode | `encoder-only@1` | 相同 |
 | 唯一结构轴 | hybrid correspondence/profile | direct correspondence/profile |
 
@@ -45,7 +46,7 @@ conda run -n neural-shading python tools/learning/build_metal_linux_handoff.py \
   --output artifacts/09-04-metal-neural-budgeted-redesign/linux-pilot-handoff.json
 ```
 
-清单包含 method descriptor、direct/hybrid profile、配置 hash、单 GPU命令和 `automatic_followups=[]`。目标机未执行前，`linux_execution_status`保持`pending-on-target-host`。
+清单中的单GPU命令只保留为可移植fallback，不是本轮DDP5证据入口；当前执行以本页下方GPU 5–9命令、checkpoint内resolved plan和任务research记录为准。
 
 ## Linux 执行顺序
 
@@ -56,30 +57,27 @@ CUDA_VISIBLE_DEVICES=0 bash scripts/deploy_reference_linux.sh
 CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls reference doctor
 ```
 
-然后严格按交接清单中的命令串行执行。每个候选先停在 step 0，产生 calibration checkpoint，并做独立 validation：
+然后严格串行执行两个候选。每个候选先停在step 0产生calibration checkpoint；以下示例由launcher把每个rank的Torch映射为`cuda:0`，同时让Falcor使用对应物理adapter：
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls train \
+bash scripts/run_falcor_python.sh --gpus 5,6,7,8,9 -- -m ncls train \
   configs/training/runs/metal-budgeted-hybrid-pilot.yaml \
-  --devices 0 --stop-at-step 0 \
+  --devices 5,6,7,8,9 --stop-at-step 0 \
   --output artifacts/metal-budgeted-pilot/hybrid/checkpoint.pt
-
-CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls validate \
-  artifacts/metal-budgeted-pilot/hybrid/checkpoint.pt --batches 256 --device 0
 ```
 
 先运行到可恢复的 step 128，再从同一 checkpoint 继续到冻结的 2048-step cap：
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls train \
+bash scripts/run_falcor_python.sh --gpus 5,6,7,8,9 -- -m ncls train \
   configs/training/runs/metal-budgeted-hybrid-pilot.yaml \
-  --devices 0 --resume artifacts/metal-budgeted-pilot/hybrid/checkpoint.pt \
+  --devices 5,6,7,8,9 --resume artifacts/metal-budgeted-pilot/hybrid/checkpoint.pt \
   --stop-at-step 128 \
   --output artifacts/metal-budgeted-pilot/hybrid/checkpoint.pt
 
-CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls train \
+bash scripts/run_falcor_python.sh --gpus 5,6,7,8,9 -- -m ncls train \
   configs/training/runs/metal-budgeted-hybrid-pilot.yaml \
-  --devices 0 --resume artifacts/metal-budgeted-pilot/hybrid/checkpoint.pt \
+  --devices 5,6,7,8,9 --resume artifacts/metal-budgeted-pilot/hybrid/checkpoint.pt \
   --output artifacts/metal-budgeted-pilot/hybrid/checkpoint.pt
 ```
 
@@ -103,7 +101,7 @@ tail -f artifacts/metal-budgeted-pilot/hybrid/checkpoint.metrics.jsonl
 nvidia-smi dmon -s pucvmet -d 5
 ```
 
-达到 cap 后按预登记规则比较微小划痕的 paired-UV/spatial-gradient、逐通道 RGB/chroma、高光 peak/energy 与相同静态成本。质量较低是可以接受并必须如实记录的 empirical outcome；不得自动增加step、seed、asset refinement或模型宽度。
+达到cap后按预登记规则比较微小划痕的paired-UV/spatial-gradient、逐通道RGB/chroma、高光peak/energy与相同静态成本。`128/256 step`只是早期探针；实现正确时继续共同里程碑。若2048后选择仍不确定，只能按任务中预登记的单seed matched extension继续，不自动增加seed、asset refinement或模型宽度。
 
 ## 结构选择后的边界
 

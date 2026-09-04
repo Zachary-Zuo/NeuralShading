@@ -327,7 +327,7 @@ bash scripts/run_falcor_python.sh --gpus 5,6,7,8,9 -- \
 
 每个 rank 内 Torch/SlangPy 只见 `cuda:0`，Falcor 使用对应物理 adapter。任何单独设置 `NCLS_FALCOR_GPU_INDEX`、绕过 launcher 的 `torchrun` 或多作业共享 GPU 5–9 都不是本轮证据。
 
-冻结 recipe 的 `batch_size=64` 解释为 per-rank batch，DDP5 global batch 为 320。schedule 仍按 optimizer step 计数，source/query stream按 `(world_size, rank)` 分区。resolved plan、checkpoint 与报告必须记录五卡 topology；本轮 direct/hybrid 是新的 matched DDP5 pair，不与原单卡协议按 step 混为一组。
+旧`@1` recipe的`batch_size=64`解释为per-rank batch，DDP5 global batch为320，只保留为before-profile。新`@2` recipe经§15.7有界profile后冻结per-rank batch 512、global batch 2560。schedule仍按optimizer step计数，source/query stream按`(world_size, rank)`分区；resolved plan、checkpoint与报告必须记录五卡topology、global batch和累计work units，新pair不与旧协议按step混为一组。
 
 ### 15.2 交替状态机
 

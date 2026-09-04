@@ -4,7 +4,7 @@
 
 下表是迁移前与迁移过程中的历史证据，其中HDF5/corpus及旧checkpoint字段仅用于说明历史，不属于当前online pipeline，也不保留reader、config或磁盘数据。新的正式run必须以source snapshot、reference plan/query/asset identity和`TrainingCheckpoint@1`登记。
 
-2026-09-05 已冻结 Metal budgeted Tungsten single-material direct/hybrid diagnostic pair：两个候选同为10,368 evaluate MAC、160 B PreparedState和两次asset读取，使用独立profile identity但共享source/query/loss/optimizer/QAT与2048-step cap。当前只有实现与Linux交接清单，`linux_execution_status=pending-on-target-host`；尚无observed quality，因此不在下表伪造正式run或选择结论。
+2026-09-05 已在Linux物理GPU 5–9上完成Metal budgeted Tungsten pair的DDP正确性与吞吐诊断：旧batch64 pair到共同step128，hybrid/direct validation appearance mean为`1.5644/3.8383`，只作早期观察；随后公共validation packed reduce把同规格验证从`50.99 s`降到`41.25 s`。在新调度下per-rank batch 64/128/256/512的64-step probe中，global work units/s中位数约为`2,936/5,350/10,465/23,354`，peak显存均低于0.75 GiB/rank，因此`@2` pair冻结batch512、每16 step report和two-step reference packing。以上仍是diagnostic，不在下表冒充正式run或结构选择；详细身份与证据见任务`research/ddp5-supervision.md`和`artifacts/metal-budgeted-throughput/735cc56/`。
 
 | 日期 | run ID | 候选+配置 | 数据版本 | 预算档 | seeds | 方向 L1 (med/p95) | 能量误差 (med/p95) | 结论 | artifacts |
 |---|---|---|---|---|---|---|---|---|---|
