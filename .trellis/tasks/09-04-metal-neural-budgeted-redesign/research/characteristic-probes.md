@@ -69,6 +69,12 @@
 
 角色分离能改变误差分配，却没有形成跨材质净收益；因此v4停在diagnostic candidate，不替换可交付v3，也不继续增加step。结合增益probe，下一结构问题已经缩小为：四通道Detail本身能否从局部patch提取与paired target梯度方向一致的充分统计量。后续小诊断应先测raw patch feature到paired reference差分的可预测性，再决定是重做离线局部编码器、显式保留导数/方向通道，还是需要增加有界asset带宽；不再优先调整softmax、loss权重或主干宽度。
 
+## fixed-batch容量与中心采样诊断
+
+fresh v3 checkpoint各加载一个固定online batch，只优化现有非sampler参数128步。划痕青铜的target/predicted log-gradient为`0.50342/0.00309`，spatial error从`0.50398`变为`0.50463`，预测梯度只到`0.00806`；开裂钢为`0.25905/0.00112`，error仅从`0.25912`降到`0.25857`，预测梯度为`0.00219`。asset encoder、typed compiler、semantic prepare和directional evaluator梯度均finite/nonzero，因此不是断梯度；当前局部表示连单batch都难以承载目标变化。
+
+检查patch几何发现，偶数尺寸8×8 patch以索引4对应请求texel，但v3 Detail的`center`使用索引3/4的2×2均值。四个固定batch中，若只观察真实中心texel，相邻UV的raw变化在青铜从`0.01198`增至`0.01948`，在钢从`0.00445`增至`0.00631`，分别多出约63%和42%。这说明高频信号在learned encoder之前已被额外平滑，足以支持一个不增加运行时成本的center-texel matched pilot；它仍需实验确认，不能由输入幅度直接推断最终质量。
+
 ## 预先解释规则
 
 - high-frequency与composite的spatial仍接近target自身梯度尺度、而其他appearance下降：支持“Detail高频通路是跨材质瓶颈”，下一轮优先显式role-separated Detail/Context，而不是增加主干宽度或仅加spatial loss权重。

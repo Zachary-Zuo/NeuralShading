@@ -195,3 +195,10 @@ authored 参数 state 固定为 registry default：`texture_scale=[1,1]`、`text
 - `scope`：分别从fresh v3划痕青铜、开裂钢step256 checkpoint加载一个固定online validation batch；只在内存中对除proposal sampler外的现有参数做128步spatial L1优化，learning rate `3e-4`。不保存模型、不改变recipe/source/query/profile/runtime预算，也不作为候选或质量对照。
 - `interpretation`：若fixed-batch spatial error显著下降且predicted gradient接近target，说明路径具有局部记忆/表达能力，下一轮优先研究训练目标解耦和显式监督；若误差仍接近target gradient，说明当前asset/evaluator信息带宽或结构是硬瓶颈，下一轮优先有界导数通道或asset带宽消融。单batch overfit不能证明未见UV泛化。
 - `stop`：每材质只运行一次、最多128步；无论结果如何都不自动训练新profile。
+
+## 15. 2026-09-05 center-texel Detail pilot
+
+- `trigger`：§14显示现有模型对固定batch做128步spatial-only优化仍几乎无法提高预测梯度；进一步审计发现8×8 source patch的请求texel位于索引4，而现有Detail输入把索引3/4做2×2均值。四batch测得真实中心texel的paired raw变化比该均值在青铜/钢分别高约63%/42%，表明learned encoder之前存在可避免的高频衰减。
+- `scope`：新增独立`metal_budgeted_hybrid_center_detail_v5` pilot profile。它恢复v3 shared-slot softmax，只把Detail encoder的`center`改为请求texel单点；Context仍是完整patch均值，feature维数、参数数、网络层、两次RGBA8读取、PreparedState 160 B、evaluate 11,392 MAC、source/query/loss/optimizer/seed均不变。
+- `controls`：划痕青铜与开裂钢各fresh运行v3 2×2-center control与v5 center-texel candidate；GPU 5–9、per-rank batch2048、global batch10240、step256 cap和validation recipe matched。新ABI identity下旧control不能代替fresh control。
+- `interpretation`：共同step256按256条同序validation row做20,000次paired bootstrap。若两项材质spatial都改善且aggregate/peak没有一致退化，登记为下一轮优先结构；否则保留分材质trade-off。该pilot不改变当前v3 Windows交付，也不自动生成v6或延长step。
