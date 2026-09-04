@@ -56,6 +56,19 @@
 
 因此瓶颈不是单纯的数值增益。现有共享slot softmax先让所有语义角色竞争同一权重，再把每个slot的四维输出混入同一个Detail RGBA；放大后虽然有更多局部变化，方向却未与target对齐。后续pilot必须改变信息路由，使Detail四通道各自对应`color/normal/scalar/packed`角色；Context仍保留共享低频聚合。这个变化不增加纹理读取、PreparedState或evaluator MAC，也不改变source/query/loss。
 
+## role-separated Detail matched pilot
+
+实现`a5e4de7`新增`metal_budgeted_hybrid_role_detail_v4`：它只把Detail改为四个角色各自在同角色slot内softmax，并分别写入一个RGBA通道；v3 shared聚合control路径保持原样。两项材质都在物理GPU 5–9上fresh运行v3/v4到step256，per-rank batch为`2048`、global batch为`10,240`，每组累计`5,242,880`个route work units。四组均完整写出checkpoint/review，无OOM、DDP错误、非有限metric或显存回归；bronze约3分25秒/组、steel约4分7秒/组，峰值分别约`1.66/3.26 GiB/rank`。
+
+共同step256的256条同序validation row做20,000次paired bootstrap，candidate-minus-control结果如下；负值表示v4改善：
+
+| 材质 | appearance Δ | peak Δ | spatial Δ | 判断 |
+|---|---:|---:|---:|---|
+| 划痕青铜 | `+0.000237 [-0.000090,+0.000557]` | `+0.004411 [+0.003617,+0.005190]` | `-0.000140 [-0.000179,-0.000101]` | aggregate无可确认变化，spatial改善极小且peak显著退化 |
+| 开裂涂漆钢 | `+0.000742 [+0.000568,+0.000918]` | `-0.001371 [-0.001781,-0.000955]` | `+0.0000546 [+0.0000410,+0.0000684]` | aggregate与spatial均显著退化，只改善chroma/peak |
+
+角色分离能改变误差分配，却没有形成跨材质净收益；因此v4停在diagnostic candidate，不替换可交付v3，也不继续增加step。结合增益probe，下一结构问题已经缩小为：四通道Detail本身能否从局部patch提取与paired target梯度方向一致的充分统计量。后续小诊断应先测raw patch feature到paired reference差分的可预测性，再决定是重做离线局部编码器、显式保留导数/方向通道，还是需要增加有界asset带宽；不再优先调整softmax、loss权重或主干宽度。
+
 ## 预先解释规则
 
 - high-frequency与composite的spatial仍接近target自身梯度尺度、而其他appearance下降：支持“Detail高频通路是跨材质瓶颈”，下一轮优先显式role-separated Detail/Context，而不是增加主干宽度或仅加spatial loss权重。
@@ -63,4 +76,4 @@
 - 四项行为差异明显：保留机制特定结论，下一轮做小型混合cohort，不宣称一个局部修复普适。
 - 四项出现一致的finite/梯度/身份失败：先分类实现或protocol缺陷，不解释模型质量。
 
-artifact固定写入`artifacts/metal-budgeted-probes/characteristic-v1/`；stdout、metrics、checkpoint、review与dmon不进入根仓库。本文件只追加实际结果和跨材质解释，不反写选择规则。
+四项probe与增益诊断固定写入`artifacts/metal-budgeted-probes/characteristic-v1/`；role-separated matched pilot固定写入`artifacts/metal-budgeted-probes/role-detail-v1/`。stdout、metrics、checkpoint、review与dmon不进入根仓库。本文件只追加实际结果和跨材质解释，不反写选择规则。

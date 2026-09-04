@@ -83,7 +83,7 @@ Rollback point R2：任何 Python 主形态需要越过 20k/192B 才能闭合接
 - [x] 先在 GPU 5–9 完成 budgeted objective 的 DDP step-0/8、rank mapping、checkpoint/resume与teardown smoke；真实缺陷按公共 DDP 合同修复并补测试。
 - [x] 以`@1`共同step-128证据定位training/validation热点；实现窗口级validation packed reduce与bounded lookahead，补齐单机/DDP等价性和异常清理测试。
 - [x] 用同source/query/model做旧/新执行路径bounded profile；新matched recipe固定每16 step report、depth/reference batch steps=2，并在per-rank batch 64/128/256/512中选出512这一吞吐—显存Pareto点。
-- [ ] 按用户新增授权在主pair交付后执行per-rank 1024/2048的96-step有界吞吐probe；按`research/characteristic-probes.md`的预登记规则选择后续四项专项probe共同batch，不回改主pair。
+- [x] 按用户新增授权在主pair交付后执行per-rank 1024/2048的96-step有界吞吐probe；按`research/characteristic-probes.md`的预登记规则选择后续四项专项probe共同batch，不回改主pair。
 - [x] 在新recipe fresh前审查direct/hybrid输出责任、appearance分项、proposal权重/梯度与calibration量级；v1共同step512确认direct并非零梯度，同时定位求值器只消费前8维semantic state的架构缺陷。
 - [x] 以`0/8/128/256/512/1024/2048`共同里程碑交替训练direct/hybrid DDP5 pair，保存分项loss、独立validation、rank stage/profile和完整日志；满足设计§15.7时才成对延长到最多4096。
 - [x] 按预登记规则比较microdetail、RGB/chroma、peak、energy和成本；输出 `research/single-material-selection.md`。
@@ -139,8 +139,8 @@ Rollback point R5：代表性cohort或runtime结果低于预期但正确时如�
 
 依赖：hybrid/direct主训练与比较完成，两个Windows diagnostic package/catalog已生成并通过Linux侧验证，且12小时时间仍有余额。
 
-- [ ] 从registry按机制选择最多3个exact locator：Beckmann例外、一个paint/crack/patina复合recipe、一个diffuse contamination或强结构纹理；记录选择依据，不按结果挑样本。
-- [ ] 用入选profile做每材质单seed、最多256-step diagnostic probe，分方向/颜色/峰值/空间/analytic contribution报告。
+- [x] 从registry按机制选择四个exact locator：平滑有色金属、Beckmann例外、强划痕和paint/crack复合材质；这是用户追加授权后的冻结扩展，选择依据不按结果挑样本。
+- [x] 用入选profile做每材质单seed、256-step diagnostic probe，分颜色、峰值、空间与内部analytic/neural contribution报告。
 - [ ] 仅当至少两个专项指向同一failure mechanism时，运行一个单seed、最多512-step的小型mixed cohort普适性检查。
 - [ ] 输出`research/characteristic-material-probes.md`，把结构方向写成“失败假设→所需机制→预算增量→下一轮验证”，不自动实现多个新变体。
 

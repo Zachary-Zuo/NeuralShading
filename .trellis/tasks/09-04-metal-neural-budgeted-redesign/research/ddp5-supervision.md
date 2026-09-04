@@ -4,6 +4,8 @@
 
 本文件记录 GPU 5–9 上 hybrid/direct matched pair 的里程碑、实现缺陷、修复身份与实验解释。完整 stdout/stderr、checkpoint、metrics和机器采样保存在 `artifacts/metal-budgeted-pilot/ddp5-20260905/`，不提交到根仓库。
 
+> 后续状态说明：下文在v3 step512处的“不再创建v4”是当时主pair未交付前的局部停止决定。主pair、双package和Windows handoff完成后，用户授权用剩余时间做专项探索；该探索另以fresh matched v4 pilot执行，结果见`characteristic-probes.md`，不反写早先里程碑的历史决策。
+
 ## Attempt 1：hybrid fresh step 0
 
 - 时间：2026-09-05 01:44（Asia/Shanghai）

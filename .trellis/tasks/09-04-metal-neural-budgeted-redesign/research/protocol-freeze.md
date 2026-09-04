@@ -185,5 +185,6 @@ authored 参数 state 固定为 registry default：`texture_scale=[1,1]`、`text
 - `controls`：在划痕青铜与开裂涂漆钢上各fresh运行v3 shared聚合control与v4 role-separated candidate；物理GPU 5–9、per-rank batch2048、global batch10240、step256 cap与validation recipe matched。已有旧identity v3结果只作假设来源，不代替新implementation identity下的fresh control。
 - `interpretation`：用共同step256的256条同序validation row做candidate-minus-control paired bootstrap，报告appearance/log/linear/chroma/peak/spatial及内部信号。observed quality不设hard gate，不自动生成v5；若空间改善伴随主要appearance/peak退化，则登记trade-off并回到多通道角色分配设计，而不是继续调gain。
 - `deployment class`：pilot仍满足两次固定读取、160 B PreparedState和11,392 evaluate dense MAC硬合同；它不是新的Windows交付前置，当前可交付v3 pair保持不变。
+- `outcome`：实现`a5e4de7`下四组fresh DDP5均完成。划痕青铜v4的spatial只改善`-0.000140`，但peak退化`+0.004411`且aggregate appearance的95% CI跨零；开裂钢v4的spatial退化`+0.0000546`、aggregate退化`+0.000742`，两项CI均不跨零。因此角色分离不具备跨材质净收益，候选按规则停止在step256；不延长、不替换v3交付、不自动创建v5。
 
 这属于“跨层合同 + 测试覆盖缺口”：纹理内部随机值无法区分zero padding与wrap，合成测试还绕过了最终DDS只读buffer。防复发由三层共同承担：CPU边界unit、真实GPU边界fixture、最终package自加载parity。
