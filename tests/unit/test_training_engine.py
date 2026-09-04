@@ -5,8 +5,8 @@ from ncls.learning.training import (
 )
 from tests.unit.test_training_runner_phase_graph import (
     _PhaseMethod,
-    _RouteProducer,
     _config,
+    _data_session,
     _plugin,
 )
 
@@ -29,7 +29,7 @@ def test_training_engine_emits_fixed_lifecycle_without_method_specific_hooks() -
     hook = _RecordingHook()
     bus = TrainingEventBus((HookBinding("record", hook, "fatal", False),))
     result = TrainingEngine(
-        _plugin(_PhaseMethod()), _RouteProducer(), _config(), event_bus=bus
+        _plugin(_PhaseMethod()), _data_session(), _config(), event_bus=bus
     ).run()
 
     kinds = [event.kind for event in hook.events]

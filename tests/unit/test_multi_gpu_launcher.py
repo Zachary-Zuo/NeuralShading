@@ -57,5 +57,6 @@ def test_training_engine_uses_real_ddp_reducer_instead_of_parameter_collectives(
     assert "torch.distributed" not in engine
     assert "DistributedDataParallel(" in distributed
     assert "gradient_as_bucket_view=True" in distributed
-    assert "find_unused_parameters=True" in distributed
+    assert "find_unused_parameters=False" in distributed
+    assert "static_graph=True" in distributed
     assert 'backend="gloo"' in distributed

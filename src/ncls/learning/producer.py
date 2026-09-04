@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import hashlib
 import math
-from typing import Any, Mapping
+from dataclasses import dataclass
+from typing import Any, Mapping, cast
 
 import torch
 
 from ncls.core.identity import sha256_json
 from ncls.core.source import create_source_family
-from ncls.data import DataExecutionPlan, PipelineTrace
+from ncls.data import (
+    DataExecutionPlan,
+    LogicalReferenceRequest,
+    OnlineStepRequest,
+    PipelineTrace,
+    ReferenceScheduler,
+)
 from ncls.learning.batches import (
     AssetTileBatch,
     EvaluatorBatch,
@@ -97,6 +104,15 @@ def _half_difference_directions(
     return views, lights
 
 
+@dataclass(frozen=True)
+class _EvaluatorLogicalRequest:
+    request: TrainingRouteRequest
+    group: ReferenceExecutionGroup
+    generator: torch.Generator
+    request_index: int
+    dispatch_identity: str
+
+
 class OnlineTrainingProducer:
     """唯一 online producer；source 差异只存在于 registry-selected adapters。"""
 
@@ -161,7 +177,7 @@ class OnlineTrainingProducer:
                 if route.kind != "asset-tile"
             ),
             default=1,
-        )
+        ) * data_execution_plan.reference_batch_steps
         self.backend = backend or create_reference_backend()
         reference_inflight = data_execution_plan.reference_inflight
         reference_slots = reference_inflight + 1
@@ -240,26 +256,43 @@ class OnlineTrainingProducer:
                 "partition": {
                     "world_size": self.ddp_world_size,
                     "gpu_indices": list(self.ddp_gpu_indices),
-                    "recipe": "rank-strided-route-seed@1",
+                    "recipe": "rank-strided-logical-request-seed@1",
                 },
             }
         query_stream_manifest["data_execution_plan_identity"] = (
             self.data_execution_plan_identity
         )
         self.query_stream_identity = sha256_json(query_stream_manifest)
-        self._generators: dict[str, torch.Generator] = {}
         self._request_count: dict[str, int] = {}
         self._group_cursor: dict[str, int] = {}
         self._asset_tile_cursor: dict[str, int] = {}
+        self._reference_logical_id = 0
+        self._reference_scheduler = ReferenceScheduler[
+            _EvaluatorLogicalRequest, EvaluatorBatch
+        ](
+            self._dispatch_evaluator_requests,
+            capability=self.backend.descriptor.concurrency,
+            batch_steps=data_execution_plan.reference_batch_steps,
+            ready_capacity=data_execution_plan.ready_batches,
+            maximum_inflight=data_execution_plan.reference_inflight,
+            trace=self.pipeline_trace,
+        )
         self._closed = False
 
-    def _generator(self, request: TrainingRouteRequest) -> torch.Generator:
-        generator = self._generators.get(request.name)
-        if generator is None:
-            generator = torch.Generator(device=self.device)
-            generator.manual_seed(request.seed)
-            self._generators[request.name] = generator
-        return generator
+    def _reserve_request(
+        self, request: TrainingRouteRequest
+    ) -> tuple[int, torch.Generator]:
+        request_index = self._request_count.get(request.name, 0)
+        self._request_count[request.name] = request_index + 1
+        digest = hashlib.sha256(
+            (
+                f"ncls.logical-request-seed@1:{request.name}:"
+                f"{request.seed}:{request_index}"
+            ).encode("utf-8")
+        ).digest()
+        generator = torch.Generator(device=self.device)
+        generator.manual_seed(int.from_bytes(digest[:8], "big") & ((1 << 63) - 1))
+        return request_index, generator
 
     def _select_group(self, request: TrainingRouteRequest) -> ReferenceExecutionGroup:
         if self._group_schedule_recipe == "group-block-balanced@1":
@@ -273,9 +306,12 @@ class OnlineTrainingProducer:
         return self.plan.groups[cursor % len(self.plan.groups)]
 
     def _conditioning(
-        self, request: TrainingRouteRequest, group: ReferenceExecutionGroup
-    ) -> tuple[TrainingConditioning, torch.Generator, torch.Tensor | None]:
-        generator = self._generator(request)
+        self,
+        request: TrainingRouteRequest,
+        group: ReferenceExecutionGroup,
+        generator: torch.Generator,
+        request_index: int,
+    ) -> tuple[TrainingConditioning, torch.Tensor | None]:
         execution_source_indices = self.adapter.execution_source_indices(
             group.global_source_indices, request
         )
@@ -316,8 +352,6 @@ class OnlineTrainingProducer:
             request.options,
             execution_source_indices=execution_source_indices,
         )
-        request_index = self._request_count.get(request.name, 0)
-        self._request_count[request.name] = request_index + 1
         conditioning = TrainingConditioning(
             self.snapshots[0].family_id,
             self.source_snapshot_ids,
@@ -344,7 +378,7 @@ class OnlineTrainingProducer:
                 **provenance,
             },
         )
-        return conditioning, generator, evaluator_wi
+        return conditioning, evaluator_wi
 
     @staticmethod
     def _query(conditioning: TrainingConditioning) -> ScatteringQuery:
@@ -358,19 +392,111 @@ class OnlineTrainingProducer:
             uv_dy=tensors.get("uv_dy"),
         )
 
-    def next_batch(self, request: TrainingRouteRequest) -> OnlineTrainingBatch:
+    def _produce_route(self, request: TrainingRouteRequest) -> OnlineTrainingBatch:
         if self._closed:
             raise RuntimeError("online training producer is closed")
         if request.kind == "asset-tile":
             return self._asset_tile_batch(request)
         group = self._select_group(request)
         if request.kind == "method-sampler":
-            conditioning, generator, _ = self._conditioning(request, group)
+            request_index, generator = self._reserve_request(request)
+            conditioning, _ = self._conditioning(
+                request, group, generator, request_index
+            )
             sample_u = torch.rand(
                 (request.batch_size, 2), generator=generator, device=self.device
             )
             return MethodSamplerBatch(conditioning, sample_u)
-        return self._evaluator_batch(request, group)
+        raise RuntimeError("reference-evaluator routes require the packed dispatcher")
+
+    def prefetch_steps(self, requests: tuple[OnlineStepRequest, ...]) -> None:
+        if self._closed:
+            raise RuntimeError("online training producer is closed")
+        # Only the block schedule can be inspected without advancing a route
+        # cursor. Other schedules remain correct and simply do no early host work.
+        if self._group_schedule_recipe != "group-block-balanced@1":
+            return
+        visited: set[tuple[str, int]] = set()
+        for step in requests:
+            for route in step.routes.values():
+                if not isinstance(route, TrainingRouteRequest):
+                    raise TypeError("online producer requires TrainingRouteRequest routes")
+                if route.kind == "asset-tile":
+                    continue
+                group = self._select_group(route)
+                identity = (group.group_id, route.global_step)
+                if identity in visited:
+                    continue
+                self.adapter.prefetch_host(group.global_source_indices, route)
+                visited.add(identity)
+
+    def produce_steps(
+        self, requests: tuple[OnlineStepRequest, ...]
+    ) -> tuple[Mapping[str, OnlineTrainingBatch], ...]:
+        if self._closed:
+            raise RuntimeError("online training producer is closed")
+        produced: list[dict[str, OnlineTrainingBatch]] = [
+            {} for _ in requests
+        ]
+        evaluator_slots: dict[int, tuple[int, str]] = {}
+        try:
+            for step_index, step in enumerate(requests):
+                for slot, route in step.routes.items():
+                    if not isinstance(route, TrainingRouteRequest):
+                        raise TypeError("online producer requires TrainingRouteRequest routes")
+                    if route.kind != "reference-evaluator":
+                        produced[step_index][slot] = self._produce_route(route)
+                        continue
+                    group = self._select_group(route)
+                    request_index, generator = self._reserve_request(route)
+                    dispatch_identity = sha256_json(
+                        {
+                            "schema": "ncls.reference-packed-dispatch@1",
+                            "execution_group_id": group.group_id,
+                            "direction_count": route.direction_count,
+                            "options": dict(route.options),
+                            "online_query": dict(self.config.online_query),
+                        }
+                    )
+                    logical_id = self._reference_logical_id
+                    self._reference_logical_id += 1
+                    self._reference_scheduler.submit(
+                        LogicalReferenceRequest(
+                            logical_id,
+                            dispatch_identity,
+                            _EvaluatorLogicalRequest(
+                                route,
+                                group,
+                                generator,
+                                request_index,
+                                dispatch_identity,
+                            ),
+                            {
+                                "step_logical_id": step.logical_id,
+                                "route_slot": slot,
+                                "reference_execution_group_id": group.group_id,
+                            },
+                        )
+                    )
+                    evaluator_slots[logical_id] = (step_index, slot)
+            while evaluator_slots:
+                scheduled = self._reference_scheduler.next_result()
+                try:
+                    step_index, slot = evaluator_slots.pop(scheduled.logical_id)
+                    produced[step_index][slot] = scheduled.payload
+                finally:
+                    scheduled.release()
+            self._reference_scheduler.assert_idle()
+        except BaseException:
+            try:
+                self._reference_scheduler.discard_boundary()
+            except BaseException:
+                pass
+            for batches in reversed(produced):
+                for batch in reversed(tuple(batches.values())):
+                    batch.release()
+            raise
+        return tuple(produced)
 
     def _asset_tile_batch(self, request: TrainingRouteRequest) -> AssetTileBatch:
         assets = self.adapter.native_assets()
@@ -475,122 +601,203 @@ class OnlineTrainingProducer:
             },
         )
 
-    def _evaluator_batch(
-        self, request: TrainingRouteRequest, group: ReferenceExecutionGroup
-    ) -> EvaluatorBatch:
-        """在 GPU 上压实有效 reference 查询，材质局部 horizon 不构成批次失败。"""
+    def _dispatch_evaluator_requests(
+        self,
+        packed: tuple[
+            LogicalReferenceRequest[_EvaluatorLogicalRequest], ...
+        ],
+    ) -> tuple[EvaluatorBatch, ...]:
+        """Pack same-group logical requests while preserving per-request RNG."""
 
-        accepted_conditioning: dict[str, list[torch.Tensor]] = {}
-        accepted_wi: list[torch.Tensor] = []
-        accepted_f: list[torch.Tensor] = []
-        first_conditioning: TrainingConditioning | None = None
-        candidate_count = 0
-        accepted_count = 0
-        rejection_rounds = 0
-        maximum_rounds = int(request.options.get("maximum_rejection_rounds", 64))
-        if maximum_rounds < 1:
-            raise ValueError("maximum_rejection_rounds must be positive")
-        evaluation_samples = int(
-            request.options.get(
-                "evaluation_samples",
-                self.config.online_query.get("evaluation_samples", 1),
-            )
-        )
-        footprint_samples = int(
-            request.options.get(
-                "footprint_samples",
-                self.config.online_query.get("footprint_samples", 1),
-            )
-        )
-        source_execution_mode = str(
-            request.options.get(
-                "source_execution_mode",
-                self.config.online_query.get("source_execution_mode", "authoritative@1"),
-            )
-        )
-        while accepted_count < request.batch_size:
-            if rejection_rounds >= maximum_rounds:
-                raise RuntimeError(
-                    "reference evaluator could not fill a valid online batch within "
-                    f"{maximum_rounds} rejection rounds"
+        if not packed:
+            return ()
+        payloads = tuple(item.payload for item in packed)
+        if len({item.dispatch_identity for item in payloads}) != 1:
+            raise RuntimeError("packed evaluator requests disagree on dispatch identity")
+        states = [
+            {
+                "accepted_conditioning": {},
+                "accepted_wi": [],
+                "accepted_f": [],
+                "first_conditioning": None,
+                "candidate_count": 0,
+                "accepted_count": 0,
+                "rejection_rounds": 0,
+            }
+            for _ in payloads
+        ]
+        active = list(range(len(payloads)))
+        while active:
+            candidates: list[
+                tuple[int, TrainingConditioning, torch.Tensor, torch.Tensor]
+            ] = []
+            for index in active:
+                payload = payloads[index]
+                request = payload.request
+                state = states[index]
+                maximum_rounds = int(
+                    request.options.get("maximum_rejection_rounds", 64)
                 )
-            remaining = request.batch_size - accepted_count
-            candidate_request = TrainingRouteRequest(
-                request.name,
-                request.kind,
-                remaining,
-                request.direction_count,
-                request.global_step,
-                request.seed,
-                request.options,
+                if maximum_rounds < 1:
+                    raise ValueError("maximum_rejection_rounds must be positive")
+                if int(state["rejection_rounds"]) >= maximum_rounds:
+                    raise RuntimeError(
+                        "reference evaluator could not fill a valid online batch within "
+                        f"{maximum_rounds} rejection rounds"
+                    )
+                remaining = request.batch_size - int(state["accepted_count"])
+                candidate_request = TrainingRouteRequest(
+                    request.name,
+                    request.kind,
+                    remaining,
+                    request.direction_count,
+                    request.global_step,
+                    request.seed,
+                    request.options,
+                )
+                conditioning, evaluator_wi = self._conditioning(
+                    candidate_request,
+                    payload.group,
+                    payload.generator,
+                    payload.request_index,
+                )
+                if state["first_conditioning"] is None:
+                    state["first_conditioning"] = conditioning
+                if evaluator_wi is None:
+                    raise AssertionError("reference-evaluator route did not create wi")
+                wi = evaluator_wi[:, None, :]
+                seeds = torch.randint(
+                    0,
+                    2**31 - 1,
+                    (remaining, request.direction_count),
+                    generator=payload.generator,
+                    device=self.device,
+                    dtype=torch.int64,
+                )
+                candidates.append((index, conditioning, wi, seeds))
+            tensor_keys = tuple(candidates[0][1].tensors)
+            if any(tuple(item[1].tensors) != tensor_keys for item in candidates):
+                raise RuntimeError("packed evaluator conditioning fields disagree")
+            combined_conditioning = TrainingConditioning(
+                candidates[0][1].source_family_id,
+                candidates[0][1].source_snapshot_ids,
+                {
+                    name: torch.cat(
+                        [item[1].tensors[name] for item in candidates], dim=0
+                    )
+                    for name in tensor_keys
+                },
+                candidates[0][1].provenance,
             )
-            conditioning, generator, evaluator_wi = self._conditioning(
-                candidate_request, group
+            combined_wi = torch.cat([item[2] for item in candidates], dim=0)
+            combined_seeds = torch.cat([item[3] for item in candidates], dim=0)
+            first_request = payloads[candidates[0][0]].request
+            evaluation_samples = int(
+                first_request.options.get(
+                    "evaluation_samples",
+                    self.config.online_query.get("evaluation_samples", 1),
+                )
             )
-            if first_conditioning is None:
-                first_conditioning = conditioning
-            if evaluator_wi is None:
-                raise AssertionError("reference-evaluator route did not create wi")
-            wi = evaluator_wi[:, None, :]
-            seeds = torch.randint(
-                0,
-                2**31 - 1,
-                (remaining, request.direction_count),
-                generator=generator,
-                device=self.device,
-                dtype=torch.int64,
+            footprint_samples = int(
+                first_request.options.get(
+                    "footprint_samples",
+                    self.config.online_query.get("footprint_samples", 1),
+                )
+            )
+            source_execution_mode = str(
+                first_request.options.get(
+                    "source_execution_mode",
+                    self.config.online_query.get(
+                        "source_execution_mode", "authoritative@1"
+                    ),
+                )
             )
             result = self.session.evaluate(
-                self._query(conditioning),
-                wi,
-                seeds,
+                self._query(combined_conditioning),
+                combined_wi,
+                combined_seeds,
                 evaluation_samples=evaluation_samples,
                 footprint_samples=footprint_samples,
                 source_execution_mode=source_execution_mode,
             )
             try:
-                selected = torch.nonzero(
-                    result.valid.all(dim=1), as_tuple=False
-                ).flatten()
-                take = int(selected.shape[0])
-                if take:
-                    for name, value in conditioning.tensors.items():
-                        accepted_conditioning.setdefault(name, []).append(
-                            value.index_select(0, selected)
+                offset = 0
+                following: list[int] = []
+                for index, conditioning, wi, _ in candidates:
+                    state = states[index]
+                    count = conditioning.batch_size
+                    local_valid = result.valid[offset : offset + count]
+                    selected = torch.nonzero(
+                        local_valid.all(dim=1), as_tuple=False
+                    ).flatten()
+                    take = int(selected.shape[0])
+                    if take:
+                        accepted_conditioning = state["accepted_conditioning"]
+                        assert isinstance(accepted_conditioning, dict)
+                        for name, value in conditioning.tensors.items():
+                            accepted_conditioning.setdefault(name, []).append(
+                                value.index_select(0, selected)
+                            )
+                        accepted_wi = state["accepted_wi"]
+                        accepted_f = state["accepted_f"]
+                        assert isinstance(accepted_wi, list)
+                        assert isinstance(accepted_f, list)
+                        accepted_wi.append(wi.index_select(0, selected))
+                        accepted_f.append(
+                            result.f[offset : offset + count].index_select(
+                                0, selected
+                            )
                         )
-                    accepted_wi.append(wi.index_select(0, selected))
-                    accepted_f.append(result.f.index_select(0, selected))
-                    accepted_count += take
+                        state["accepted_count"] = int(state["accepted_count"]) + take
+                    state["candidate_count"] = int(state["candidate_count"]) + count
+                    state["rejection_rounds"] = int(state["rejection_rounds"]) + 1
+                    if int(state["accepted_count"]) < payloads[index].request.batch_size:
+                        following.append(index)
+                    offset += count
+                active = following
             finally:
                 result.lease.release()
-            candidate_count += remaining
-            rejection_rounds += 1
-        if first_conditioning is None:
-            raise AssertionError("reference-evaluator route did not create conditioning")
-        tensors = {
-            name: torch.cat(values, dim=0)[: request.batch_size]
-            for name, values in accepted_conditioning.items()
-        }
-        provenance = {
-            **first_conditioning.provenance,
-            "candidate_count": candidate_count,
-            "rejected_count": candidate_count - request.batch_size,
-            "rejection_rounds": rejection_rounds,
-            "evaluation_samples": evaluation_samples,
-            "footprint_samples": footprint_samples,
-            "source_execution_mode": source_execution_mode,
-        }
-        compacted = TrainingConditioning(
-            first_conditioning.source_family_id,
-            first_conditioning.source_snapshot_ids,
-            tensors,
-            provenance,
-        )
-        return EvaluatorBatch(
-            compacted,
-            torch.cat(accepted_wi, dim=0)[: request.batch_size],
-            torch.cat(accepted_f, dim=0)[: request.batch_size],
-        )
+        batches: list[EvaluatorBatch] = []
+        for payload, state in zip(payloads, states, strict=True):
+            request = payload.request
+            first_conditioning = state["first_conditioning"]
+            if not isinstance(first_conditioning, TrainingConditioning):
+                raise AssertionError("reference-evaluator route did not create conditioning")
+            accepted_conditioning = state["accepted_conditioning"]
+            accepted_wi = state["accepted_wi"]
+            accepted_f = state["accepted_f"]
+            assert isinstance(accepted_conditioning, dict)
+            assert isinstance(accepted_wi, list)
+            assert isinstance(accepted_f, list)
+            tensors = {
+                name: torch.cat(values, dim=0)[: request.batch_size]
+                for name, values in accepted_conditioning.items()
+            }
+            provenance = {
+                **first_conditioning.provenance,
+                "candidate_count": int(state["candidate_count"]),
+                "rejected_count": int(state["candidate_count"]) - request.batch_size,
+                "rejection_rounds": int(state["rejection_rounds"]),
+                "evaluation_samples": evaluation_samples,
+                "footprint_samples": footprint_samples,
+                "source_execution_mode": source_execution_mode,
+                "reference_dispatch_identity": payload.dispatch_identity,
+                "reference_dispatch_logical_steps": len(packed),
+            }
+            compacted = TrainingConditioning(
+                first_conditioning.source_family_id,
+                first_conditioning.source_snapshot_ids,
+                tensors,
+                provenance,
+            )
+            batches.append(
+                EvaluatorBatch(
+                    compacted,
+                    torch.cat(accepted_wi, dim=0)[: request.batch_size],
+                    torch.cat(accepted_f, dim=0)[: request.batch_size],
+                )
+            )
+        return tuple(batches)
 
     @property
     def native_asset_collection_identity(self) -> str:
@@ -600,40 +807,31 @@ class OnlineTrainingProducer:
         return self.adapter.native_assets()
 
     def state_dict(self) -> Mapping[str, Any]:
+        self._reference_scheduler.assert_idle()
         return {
             "query_stream_identity": self.query_stream_identity,
             "typed_state_pool_identity": self.typed_state_pool_identity,
-            "generator_states": {
-                name: generator.get_state()
-                for name, generator in self._generators.items()
-            },
             "request_count": dict(self._request_count),
             "group_cursor": dict(self._group_cursor),
             "asset_tile_cursor": dict(self._asset_tile_cursor),
+            "reference_logical_id": self._reference_logical_id,
         }
 
     def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        self._reference_scheduler.assert_idle()
         if set(state) != {
             "query_stream_identity",
             "typed_state_pool_identity",
-            "generator_states",
             "request_count",
             "group_cursor",
             "asset_tile_cursor",
+            "reference_logical_id",
         }:
             raise ValueError("online query stream state fields are invalid")
         if state["query_stream_identity"] != self.query_stream_identity:
             raise ValueError("online query stream state identity mismatch")
         if state["typed_state_pool_identity"] != self.typed_state_pool_identity:
             raise ValueError("online typed-state pool identity mismatch")
-        generators: dict[str, torch.Generator] = {}
-        for name, generator_state in dict(state["generator_states"]).items():
-            if not isinstance(generator_state, torch.Tensor):
-                raise ValueError("online query generator state must be a tensor")
-            generator = torch.Generator(device=self.device)
-            generator.set_state(generator_state.cpu())
-            generators[str(name)] = generator
-        self._generators = generators
         self._request_count = {
             str(name): int(value)
             for name, value in dict(state["request_count"]).items()
@@ -646,8 +844,12 @@ class OnlineTrainingProducer:
             str(name): int(value)
             for name, value in dict(state["asset_tile_cursor"]).items()
         }
+        self._reference_logical_id = int(state["reference_logical_id"])
+        if self._reference_logical_id < 0:
+            raise ValueError("online reference logical cursor is invalid")
 
     def end_iteration(self) -> None:
+        self._reference_scheduler.assert_idle()
         self.session.end_iteration()
 
     def profile_snapshot(self, *, reset: bool = False) -> Mapping[str, float]:
@@ -661,11 +863,23 @@ class OnlineTrainingProducer:
     def close(self) -> None:
         if self._closed:
             return
+        scheduler = self._reference_scheduler
+        adapter = self.adapter
+        session = self.session
         try:
-            self.adapter.close()
+            scheduler.close()
         finally:
-            self.session.close()
-            self._closed = True
+            try:
+                adapter.close()
+            finally:
+                session.close()
+                # Release Python owners of CUDA tensors/native sessions while
+                # both runtimes are still fully alive, not during interpreter
+                # global teardown.
+                self.adapter = cast(Any, None)
+                self.session = cast(Any, None)
+                self._reference_scheduler = cast(Any, None)
+                self._closed = True
 
 
 __all__ = ["OnlineTrainingProducer"]

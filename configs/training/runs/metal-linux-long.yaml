@@ -9,7 +9,7 @@ execution:
   num_workers: 2
   host_prefetch: 2
   ready_batches: 2
-  reference_batch_steps: 1
+  reference_batch_steps: 2
   reference_inflight: 1
   transfer_streams: 0
   residency:

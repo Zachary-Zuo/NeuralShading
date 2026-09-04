@@ -5,8 +5,13 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from ncls.data import LogicalReferenceRequest
 from ncls.learning.batches import TrainingConditioning, TrainingRouteRequest
-from ncls.learning.producer import OnlineTrainingProducer, _group_block_sequence
+from ncls.learning.producer import (
+    OnlineTrainingProducer,
+    _EvaluatorLogicalRequest,
+    _group_block_sequence,
+)
 from ncls.learning.source_adaptation import (
     DenseNativeAssetCollection,
     NativeAssetRole,
@@ -50,6 +55,31 @@ class _RejectingSession:
         return SimpleNamespace(valid=mask[:, None], f=f, lease=lease)
 
 
+class _AllValidSession:
+    def __init__(self) -> None:
+        self.batch_sizes: list[int] = []
+
+    def evaluate(
+        self,
+        query,
+        wi,
+        seeds,
+        *,
+        evaluation_samples,
+        footprint_samples,
+        source_execution_mode,
+    ):
+        del wi, seeds, evaluation_samples, footprint_samples, source_execution_mode
+        self.batch_sizes.append(query.batch_size)
+        lease = _Lease()
+        target = query.wo[:, None, 0:1].expand(-1, 1, 3).clone()
+        return SimpleNamespace(
+            valid=torch.ones((query.batch_size, 1), dtype=torch.bool),
+            f=target,
+            lease=lease,
+        )
+
+
 def test_evaluator_batch_compacts_reference_horizon_rejections() -> None:
     producer = OnlineTrainingProducer.__new__(OnlineTrainingProducer)
     producer.device = torch.device("cpu")
@@ -58,8 +88,9 @@ def test_evaluator_batch_compacts_reference_horizon_rejections() -> None:
     generator = torch.Generator().manual_seed(9)
     cursor = 0
 
-    def conditioning(request, group):
+    def conditioning(request, group, request_generator, request_index):
         del group
+        assert request_generator is generator
         nonlocal cursor
         values = torch.arange(cursor, cursor + request.batch_size, dtype=torch.float32)
         cursor += request.batch_size
@@ -73,17 +104,27 @@ def test_evaluator_batch_compacts_reference_horizon_rejections() -> None:
             },
             {
                 "route_name": request.name,
-                "request_index": len(producer.session.leases),
+                "request_index": request_index,
                 "reference_execution_group_id": "fixture-group",
             },
         )
-        return result, generator, wo
+        return result, wo
 
     producer._conditioning = conditioning
     request = TrainingRouteRequest(
         "evaluator", "reference-evaluator", 4, 1, 0, 7, {}
     )
-    batch = producer._evaluator_batch(request, SimpleNamespace())
+    group = SimpleNamespace(group_id="fixture-group")
+    batch = producer._dispatch_evaluator_requests(
+        (
+            LogicalReferenceRequest(
+                0,
+                "dispatch",
+                _EvaluatorLogicalRequest(request, group, generator, 0, "dispatch"),
+                {},
+            ),
+        )
+    )[0]
 
     torch.testing.assert_close(
         batch.conditioning.tensors["wo"][:, 0],
@@ -96,15 +137,124 @@ def test_evaluator_batch_compacts_reference_horizon_rejections() -> None:
     assert all(lease.released for lease in producer.session.leases)
 
 
+def test_packed_evaluator_matches_one_step_dispatch_with_one_backend_call() -> None:
+    def build(session: _AllValidSession) -> OnlineTrainingProducer:
+        producer = OnlineTrainingProducer.__new__(OnlineTrainingProducer)
+        producer.device = torch.device("cpu")
+        producer.config = SimpleNamespace(online_query={"evaluation_samples": 1})
+        producer.session = session
+
+        def conditioning(request, group, generator, request_index):
+            values = torch.rand(request.batch_size, generator=generator)
+            wo = torch.stack(
+                (values, torch.zeros_like(values), torch.ones_like(values)), dim=1
+            )
+            return (
+                TrainingConditioning(
+                    "fixture.family",
+                    ("a" * 64,),
+                    {
+                        "source_index": torch.zeros(
+                            request.batch_size, dtype=torch.int64
+                        ),
+                        "wo": wo,
+                    },
+                    {
+                        "route_name": request.name,
+                        "request_index": request_index,
+                        "reference_execution_group_id": group.group_id,
+                    },
+                ),
+                wo,
+            )
+
+        producer._conditioning = conditioning
+        return producer
+
+    group = SimpleNamespace(group_id="fixture-group")
+    requests = tuple(
+        TrainingRouteRequest(
+            "evaluator", "reference-evaluator", 3, 1, index, 7, {}
+        )
+        for index in range(2)
+    )
+
+    baseline_session = _AllValidSession()
+    baseline_producer = build(baseline_session)
+    baseline = tuple(
+        baseline_producer._dispatch_evaluator_requests(
+            (
+                LogicalReferenceRequest(
+                    index,
+                    "dispatch",
+                    _EvaluatorLogicalRequest(
+                        request,
+                        group,
+                        torch.Generator().manual_seed(20 + index),
+                        index,
+                        "dispatch",
+                    ),
+                    {},
+                ),
+            )
+        )[0]
+        for index, request in enumerate(requests)
+    )
+
+    packed_session = _AllValidSession()
+    packed_producer = build(packed_session)
+    packed = packed_producer._dispatch_evaluator_requests(
+        tuple(
+            LogicalReferenceRequest(
+                index,
+                "dispatch",
+                _EvaluatorLogicalRequest(
+                    request,
+                    group,
+                    torch.Generator().manual_seed(20 + index),
+                    index,
+                    "dispatch",
+                ),
+                {},
+            )
+            for index, request in enumerate(requests)
+        )
+    )
+
+    assert baseline_session.batch_sizes == [3, 3]
+    assert packed_session.batch_sizes == [6]
+    for expected, actual in zip(baseline, packed, strict=True):
+        torch.testing.assert_close(expected.conditioning.tensors["wo"], actual.conditioning.tensors["wo"])
+        torch.testing.assert_close(expected.target_f, actual.target_f)
+        assert actual.provenance["reference_dispatch_logical_steps"] == 2
+
+
+def test_logical_request_rng_does_not_depend_on_execution_plan_identity() -> None:
+    request = TrainingRouteRequest(
+        "phase:evaluator", "reference-evaluator", 3, 1, 7, 19, {}
+    )
+    values = []
+    for identity in ("baseline-plan", "packed-plan"):
+        producer = OnlineTrainingProducer.__new__(OnlineTrainingProducer)
+        producer.device = torch.device("cpu")
+        producer.query_stream_identity = identity
+        producer._request_count = {}
+        request_index, generator = producer._reserve_request(request)
+        values.append((request_index, torch.rand(8, generator=generator)))
+    assert values[0][0] == values[1][0] == 0
+    torch.testing.assert_close(values[0][1], values[1][1])
+
+
 def test_online_query_resume_rejects_typed_state_pool_drift_before_restoring_cursors() -> None:
     producer = OnlineTrainingProducer.__new__(OnlineTrainingProducer)
     producer.device = torch.device("cpu")
     producer.query_stream_identity = "a" * 64
     producer.typed_state_pool_identity = "b" * 64
-    producer._generators = {}
     producer._request_count = {"evaluator": 3}
     producer._group_cursor = {"evaluator": 2}
     producer._asset_tile_cursor = {"asset": 7}
+    producer._reference_logical_id = 5
+    producer._reference_scheduler = SimpleNamespace(assert_idle=lambda: None)
     state = producer.state_dict()
     changed = {**state, "typed_state_pool_identity": "c" * 64}
     with pytest.raises(ValueError, match="typed-state pool identity mismatch"):
@@ -114,14 +264,16 @@ def test_online_query_resume_rejects_typed_state_pool_drift_before_restoring_cur
     restored.device = torch.device("cpu")
     restored.query_stream_identity = producer.query_stream_identity
     restored.typed_state_pool_identity = producer.typed_state_pool_identity
-    restored._generators = {}
     restored._request_count = {}
     restored._group_cursor = {}
     restored._asset_tile_cursor = {}
+    restored._reference_logical_id = 0
+    restored._reference_scheduler = SimpleNamespace(assert_idle=lambda: None)
     restored.load_state_dict(state)
     assert restored._request_count == producer._request_count
     assert restored._group_cursor == producer._group_cursor
     assert restored._asset_tile_cursor == producer._asset_tile_cursor
+    assert restored._reference_logical_id == producer._reference_logical_id
 
 
 def test_group_block_schedule_is_shared_by_routes_and_changes_only_at_boundary() -> None:

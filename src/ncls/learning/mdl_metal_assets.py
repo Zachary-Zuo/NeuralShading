@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -237,6 +238,10 @@ class MdlMetalNativeAssetCollection:
         self._host_pipeline: HostPipeline | None = None
         self._host_prefetch = 0
         self._host_request_id = 0
+        self._host_scheduled: deque[
+            tuple[int, int, NativeAssetDomain]
+        ] = deque()
+        self._host_scheduled_keys: set[tuple[int, str]] = set()
 
     @property
     def collection_id(self) -> str:
@@ -793,6 +798,71 @@ class MdlMetalNativeAssetCollection:
             domain,
         )
 
+    @staticmethod
+    def _host_resource_key(
+        resource: tuple[int, int, NativeAssetDomain]
+    ) -> tuple[int, str]:
+        return resource[0], resource[2].domain_id
+
+    def _submit_host_resource(
+        self, resource: tuple[int, int, NativeAssetDomain]
+    ) -> bool:
+        if self._host_pipeline is None:
+            return False
+        if self._host_pipeline.pending_requests >= self._host_prefetch:
+            return False
+        current_asset, _, domain = resource
+        key = self._host_resource_key(resource)
+        if key in self._host_scheduled_keys:
+            return False
+        if self._gpu_residency is None:
+            raise RuntimeError("Metal GPU residency is not configured")
+        if self._gpu_residency.is_resident(self._resident_key(current_asset, domain)):
+            return False
+        if self._resident_estimate(domain) > self._gpu_residency.budget_bytes:
+            raise ValueError(
+                "Metal resident mip exceeds the configured residency budget"
+            )
+        slot_index = int(domain.domain_id.removeprefix("slot-"))
+        self._host_pipeline.submit(
+            HostRequest(
+                self._host_request_id,
+                self._host_decode_request(current_asset, slot_index, domain),
+                {
+                    "asset_index": current_asset,
+                    "domain_id": domain.domain_id,
+                },
+            )
+        )
+        self._host_request_id += 1
+        self._host_scheduled.append(resource)
+        self._host_scheduled_keys.add(key)
+        return True
+
+    def prefetch_gpu_sampling(
+        self, active_asset_indices: tuple[int, ...]
+    ) -> None:
+        """Submit host-only mip decode without touching CUDA or residency state."""
+
+        if self._host_pipeline is None:
+            return
+        if any(
+            value < 0 or value >= len(self.descriptors)
+            for value in active_asset_indices
+        ):
+            raise ValueError("Metal active asset index is out of range")
+        resources = tuple(
+            (current_asset, slot_position, domain)
+            for current_asset in active_asset_indices
+            for slot_position, domain in enumerate(
+                self.descriptors[current_asset].domains
+            )
+        )
+        for resource in resources:
+            if self._host_pipeline.pending_requests >= self._host_prefetch:
+                break
+            self._submit_host_resource(resource)
+
     def _sample_resident_patches(
         self,
         asset_index: torch.Tensor,
@@ -827,61 +897,31 @@ class MdlMetalNativeAssetCollection:
                 self.descriptors[current_asset].domains
             )
         )
-        scheduled: list[tuple[int, int, NativeAssetDomain]] = []
-        missing = []
-        if self._host_pipeline is not None:
-            assert self._gpu_residency is not None
-            for resource in resources:
-                current_asset, _, domain = resource
-                if not self._gpu_residency.is_resident(
-                    self._resident_key(current_asset, domain)
-                ):
-                    if self._resident_estimate(domain) > self._gpu_residency.budget_bytes:
-                        raise ValueError(
-                            "Metal resident mip exceeds the configured residency budget"
-                        )
-                    missing.append(resource)
-            missing_cursor = 0
-
-            def submit_next() -> None:
-                nonlocal missing_cursor
-                if missing_cursor >= len(missing):
-                    return
-                current_asset, _, domain = missing[missing_cursor]
-                slot_index = int(domain.domain_id.removeprefix("slot-"))
-                self._host_pipeline.submit(
-                    HostRequest(
-                        self._host_request_id,
-                        self._host_decode_request(
-                            current_asset, slot_index, domain
-                        ),
-                        {
-                            "asset_index": current_asset,
-                            "domain_id": domain.domain_id,
-                        },
-                    )
-                )
-                self._host_request_id += 1
-                scheduled.append(missing[missing_cursor])
-                missing_cursor += 1
-
-            for _ in range(min(self._host_prefetch, len(missing))):
-                submit_next()
+        self.prefetch_gpu_sampling(active_asset_indices)
         with self._gpu_trace.measure("metal.gpu-sample-resident-patches"):
-            for current_asset, slot_position, domain in resources:
+            for resource in resources:
+                current_asset, slot_position, domain = resource
                 asset_mask = asset_index == current_asset
                 slot_index = int(domain.domain_id.removeprefix("slot-"))
                 decoded_levels = None
-                if scheduled and scheduled[0] == (
-                    current_asset,
-                    slot_position,
-                    domain,
-                ):
+                resident = self._gpu_residency is not None and self._gpu_residency.is_resident(
+                    self._resident_key(current_asset, domain)
+                )
+                if self._host_scheduled and not resident:
                     assert self._host_pipeline is not None
+                    if self._host_scheduled[0] != resource:
+                        expected = self._host_scheduled[0]
+                        raise RuntimeError(
+                            "Metal host prefetch order disagrees with logical request: "
+                            f"expected asset={expected[0]} domain={expected[2].domain_id}, "
+                            f"got asset={current_asset} domain={domain.domain_id}"
+                        )
                     result = self._host_pipeline.next_result()
-                    scheduled.pop(0)
+                    self._host_scheduled.popleft()
+                    self._host_scheduled_keys.remove(
+                        self._host_resource_key(resource)
+                    )
                     decoded_levels = tuple(result.payload)
-                    submit_next()
                 lease = self._acquire_resident_slot(
                     current_asset, slot_index, domain, decoded_levels
                 )
@@ -911,6 +951,7 @@ class MdlMetalNativeAssetCollection:
                         )
                 finally:
                     lease.release()
+                self.prefetch_gpu_sampling(active_asset_indices)
         return (
             patches,
             self._gpu_slot_mask.index_select(0, asset_index),
@@ -942,6 +983,8 @@ class MdlMetalNativeAssetCollection:
         if self._host_pipeline is not None:
             self._host_pipeline.close()
             self._host_pipeline = None
+            self._host_scheduled.clear()
+            self._host_scheduled_keys.clear()
         if self._gpu_residency is None:
             return
         self._gpu_residency.close()

@@ -3,6 +3,7 @@ from .contracts import (
     OnlineBatch,
     OnlineDataSession,
     OnlineProducer,
+    OnlineStepRequest,
     TrainingDataDefinition,
     TrainingRouteKind,
 )
@@ -28,7 +29,7 @@ from .reference_scheduler import (
     ReferenceScheduler,
     ScheduledReferenceResult,
 )
-from .session import SynchronousOnlineDataSession
+from .session import OnlineStepBatch, PipelineOnlineDataSession
 from .tracing import PipelineTrace, PipelineTraceSnapshot
 
 __all__ = [
@@ -47,6 +48,8 @@ __all__ = [
     "OnlineBatch",
     "OnlineDataSession",
     "OnlineProducer",
+    "OnlineStepBatch",
+    "OnlineStepRequest",
     "RankPartition",
     "ResidentAllocation",
     "ResidencyCapacityError",
@@ -54,7 +57,7 @@ __all__ = [
     "ResidencyLease",
     "ReferenceScheduler",
     "ScheduledReferenceResult",
-    "SynchronousOnlineDataSession",
+    "PipelineOnlineDataSession",
     "PipelineTrace",
     "PipelineTraceSnapshot",
     "TrainingDataDefinition",

@@ -3,6 +3,7 @@ import sys
 import pytest
 
 import ncls.cli as cli
+import ncls.learning.training.launch as training_launch
 from ncls.learning.training import (
     distributed_command,
     prepare_process_environment,
@@ -100,6 +101,7 @@ def test_new_train_entry_rejects_windows_multi_gpu_before_producer(
         raise AssertionError("GPU/reference producer must not be constructed")
 
     monkeypatch.setattr(cli, "OnlineTrainingProducer", forbidden)
+    monkeypatch.setattr(training_launch.platform, "system", lambda: "Windows")
     with pytest.raises(RuntimeError, match="only on Linux with NCCL"):
         cli.main(
             [

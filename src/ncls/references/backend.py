@@ -415,11 +415,18 @@ def create_reference_backend(
     )
 
 
+def close_reference_backend_devices() -> None:
+    """Release process-owned Falcor devices after all backend sessions close."""
+
+    _FALCOR_DEVICE_CACHE.clear()
+
+
 __all__ = [
     "ReferenceBackendCapability",
     "ReferenceConcurrencyCapability",
     "ReferenceBackendDescriptor",
     "ReferenceBackendReport",
     "ReferenceCapabilityStatus",
+    "close_reference_backend_devices",
     "create_reference_backend",
 ]

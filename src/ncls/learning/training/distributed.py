@@ -187,9 +187,9 @@ class DistributedContext:
             owner,
             device_ids=[device_index],
             output_device=device_index,
-            find_unused_parameters=True,
+            find_unused_parameters=False,
             gradient_as_bucket_view=True,
-            static_graph=False,
+            static_graph=True,
         )
         return owner, wrapped
 

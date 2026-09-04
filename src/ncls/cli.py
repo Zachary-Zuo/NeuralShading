@@ -18,7 +18,7 @@ from ncls.core.material import (
     validate_material_program,
 )
 from ncls.core.source import create_source_family
-from ncls.data import DataExecutionPlan, SynchronousOnlineDataSession
+from ncls.data import DataExecutionPlan, PipelineOnlineDataSession
 from ncls.learning.batches import TrainingRouteRequest
 from ncls.learning.evaluation_package import compile_evaluation_package
 from ncls.learning.methods import get_method_plugin
@@ -45,7 +45,10 @@ from ncls.learning.training import (
 from ncls.learning.training.config import TrainingConfig
 from ncls.learning.training.hooks import TensorBoardHook, VisualEvalHook
 from ncls.paths import PROJECT_ROOT
-from ncls.references.backend import create_reference_backend
+from ncls.references.backend import (
+    close_reference_backend_devices,
+    create_reference_backend,
+)
 from ncls.visual_eval import VisualEvalCollector, VisualEvalSpool
 from ncls.visual_eval import VisualEvalWorker, WindowsViewerExecutor
 
@@ -106,6 +109,8 @@ def _run_training(
     if ddp_world > 1 and output.is_absolute() is False:
         output = output.resolve()
     setup_error: BaseException | None = None
+    producer = None
+    data_session = None
     try:
         config = resolved_plan.to_runtime_config()
         plugin = get_method_plugin(resolved_plan.selection.method)
@@ -124,16 +129,30 @@ def _run_training(
             execution_context=execution_context,
             data_execution_plan=data_execution_plan,
         )
-        data_session = SynchronousOnlineDataSession(
+        data_session = PipelineOnlineDataSession(
             producer,
-            data_execution_plan.session_identity,
+            execution_plan_identity=data_execution_plan.session_identity,
+            ready_capacity=data_execution_plan.ready_batches,
+            production_batch_steps=data_execution_plan.reference_batch_steps,
         )
     except BaseException as error:
         setup_error = error
     try:
         distributed.synchronize_rank_errors("training data setup", setup_error)
-    except BaseException:
-        distributed.close()
+    except BaseException as distributed_setup_error:
+        rollback_error: BaseException | None = None
+        try:
+            if data_session is not None:
+                data_session.close()
+            elif producer is not None:
+                producer.close()
+        except BaseException as error:
+            rollback_error = error
+        finally:
+            close_reference_backend_devices()
+            distributed.close()
+        if rollback_error is not None:
+            raise distributed_setup_error from rollback_error
         raise
     gpu_indices = list(resolved_plan.execution.devices)
     metrics_path = output.with_name(f"{output.stem}.metrics.jsonl")
@@ -398,6 +417,7 @@ def _run_training(
         except BaseException as error:
             if cleanup_error is None:
                 cleanup_error = error
+        close_reference_backend_devices()
         try:
             if run_completed:
                 distributed.synchronize_rank_errors(
@@ -530,6 +550,12 @@ def _validate_checkpoint(checkpoint_path: Path, batches: int, device: int) -> in
         execution_context=execution_context,
         data_execution_plan=data_execution_plan,
     )
+    data_session = PipelineOnlineDataSession(
+        producer,
+        execution_plan_identity=data_execution_plan.session_identity,
+        ready_capacity=data_execution_plan.ready_batches,
+        production_batch_steps=data_execution_plan.reference_batch_steps,
+    )
     try:
         expected = evaluation.data_identity
         actual = {
@@ -563,26 +589,31 @@ def _validate_checkpoint(checkpoint_path: Path, batches: int, device: int) -> in
         losses: list[float] = []
         with torch.no_grad():
             for index in range(batches):
-                route_batches = {}
+                requests = {
+                    route.name: TrainingRouteRequest(
+                        f"validation:{route.name}",
+                        route.kind,
+                        route.batch_size,
+                        route.direction_count,
+                        evaluation.global_step,
+                        config.seed + route.seed_offset + index,
+                        {
+                            **dict(route.options),
+                            "recipes": dict(phase.recipes),
+                            "validation": True,
+                        },
+                    )
+                    for route in phase.routes
+                }
+                logical_id = data_session.submit_step(
+                    requests,
+                    boundary_id=f"validation:{phase.name}:{index}",
+                )
+                step_batch = data_session.acquire_step(logical_id)
                 try:
-                    for route in phase.routes:
-                        request = TrainingRouteRequest(
-                            f"validation:{route.name}",
-                            route.kind,
-                            route.batch_size,
-                            route.direction_count,
-                            evaluation.global_step,
-                            config.seed + route.seed_offset + index,
-                            {
-                                **dict(route.options),
-                                "recipes": dict(phase.recipes),
-                                "validation": True,
-                            },
-                        )
-                        route_batches[route.name] = producer.next_batch(request)
                     loss, _ = plugin.objective.compute(
                         model,
-                        route_batches,
+                        step_batch.batches,
                         {
                             "name": phase.name,
                             "phase_index": phase_index,
@@ -599,11 +630,12 @@ def _validate_checkpoint(checkpoint_path: Path, batches: int, device: int) -> in
                     )
                     losses.append(float(loss))
                 finally:
-                    for batch in reversed(tuple(route_batches.values())):
-                        batch.release()
-                    producer.end_iteration()
+                    step_batch.release()
     finally:
-        producer.close()
+        try:
+            data_session.close()
+        finally:
+            close_reference_backend_devices()
     print(
         f"Validation method={evaluation.public_method_key} step={evaluation.global_step} "
         f"batches={batches} mean_loss={sum(losses) / len(losses):.9g}"

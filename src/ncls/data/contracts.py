@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping, Protocol, runtime_checkable
+from typing import Any, Literal, Mapping, Protocol, Sequence, runtime_checkable
 
 
 TrainingRouteKind = Literal["asset-tile", "reference-evaluator", "method-sampler"]
@@ -33,6 +33,23 @@ class OnlineBatch(Protocol):
     def release(self) -> None: ...
 
 
+@dataclass(frozen=True)
+class OnlineStepRequest:
+    """One ordered, platform-neutral training step submitted to the data plane."""
+
+    logical_id: int
+    boundary_id: str
+    routes: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        routes = dict(self.routes)
+        if self.logical_id < 0 or not self.boundary_id or not routes:
+            raise ValueError("online step identity, boundary and routes are required")
+        if any(not isinstance(name, str) or not name for name in routes):
+            raise ValueError("online step route slots must be nonempty strings")
+        object.__setattr__(self, "routes", routes)
+
+
 @runtime_checkable
 class OnlineProducer(Protocol):
     device: Any
@@ -43,7 +60,11 @@ class OnlineProducer(Protocol):
     source_contracts: tuple[Mapping[str, Any], ...]
     source_snapshot_ids: tuple[str, ...]
 
-    def next_batch(self, request: Any) -> OnlineBatch: ...
+    def prefetch_steps(self, requests: tuple[OnlineStepRequest, ...]) -> None: ...
+
+    def produce_steps(
+        self, requests: tuple[OnlineStepRequest, ...]
+    ) -> Sequence[Mapping[str, OnlineBatch]]: ...
 
     def state_dict(self) -> Mapping[str, Any]: ...
 
@@ -71,13 +92,21 @@ class OnlineDataSession(Protocol):
     @property
     def consumed_batches(self) -> int: ...
 
-    def next_batch(self, request: Any) -> OnlineBatch: ...
+    @property
+    def submission_capacity(self) -> int: ...
+
+    @property
+    def production_batch_steps(self) -> int: ...
+
+    def submit_step(self, routes: Mapping[str, Any], *, boundary_id: str) -> int: ...
+
+    def acquire_step(self, logical_id: int) -> Any: ...
+
+    def cancel_pending(self) -> None: ...
 
     def state_dict(self) -> Mapping[str, Any]: ...
 
     def load_state_dict(self, state: Mapping[str, Any]) -> None: ...
-
-    def end_iteration(self) -> None: ...
 
     def profile_snapshot(self, *, reset: bool = False) -> Mapping[str, float]: ...
 

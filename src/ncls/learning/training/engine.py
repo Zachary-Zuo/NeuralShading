@@ -15,7 +15,7 @@ from torch import nn
 from tqdm import tqdm
 
 from ncls.core.identity import sha256_json
-from ncls.data import OnlineDataSession
+from ncls.data import OnlineDataSession, OnlineStepBatch
 from ncls.learning.batches import (
     AssetTileBatch,
     EvaluatorBatch,
@@ -46,7 +46,7 @@ class TrainingRunResult:
 class _PreparedStep:
     global_step: int
     batches: dict[str, OnlineTrainingBatch]
-    iteration_ended: bool
+    step_batch: OnlineStepBatch
     preparation_seconds: float
 
 
@@ -349,53 +349,50 @@ class TrainingEngine:
         if not isinstance(batch, expected):
             raise TypeError(f"{route.kind} route returned the wrong batch type")
 
-    def _batches(
+    def _route_requests(
         self,
         phase: TrainingPhase,
         step: int,
         *,
         validation: bool = False,
-    ) -> dict[str, OnlineTrainingBatch]:
-        result: dict[str, OnlineTrainingBatch] = {}
+    ) -> dict[str, TrainingRouteRequest]:
+        return {
+            route.name: self._request(phase, route, step, validation=validation)
+            for route in phase.routes
+        }
+
+    def _acquire_submitted_step(
+        self,
+        phase: TrainingPhase,
+        step: int,
+        logical_id: int,
+    ) -> _PreparedStep:
+        started = time.perf_counter()
+        step_batch = self.data_session.acquire_step(logical_id)
         try:
+            result = dict(step_batch.batches)
             for route in phase.routes:
-                batch = self.data_session.next_batch(
-                    self._request(phase, route, step, validation=validation)
-                )
+                batch = result[route.name]
                 self._validate_batch_type(route, batch)
-                result[route.name] = batch
         except BaseException:
-            for batch in reversed(tuple(result.values())):
-                batch.release()
+            step_batch.release()
             raise
         identities = {
             (batch.provenance.get("route_name"), batch.provenance.get("request_index"))
             for batch in result.values()
         }
         if len(identities) != len(result):
-            for batch in reversed(tuple(result.values())):
-                batch.release()
+            step_batch.release()
             raise RuntimeError("training routes reused one query stream request")
-        return result
-
-    @staticmethod
-    def _is_detached(batches: Mapping[str, OnlineTrainingBatch]) -> bool:
-        return all(getattr(batch, "lease", None) is None for batch in batches.values())
-
-    def _prepare_step(self, phase: TrainingPhase, step: int) -> _PreparedStep:
-        started = time.perf_counter()
-        batches = self._batches(phase, step)
-        preparation_seconds = time.perf_counter() - started
-        detached = self._is_detached(batches)
-        if detached:
-            self.data_session.end_iteration()
-        return _PreparedStep(step, batches, detached, preparation_seconds)
+        return _PreparedStep(
+            step,
+            result,
+            step_batch,
+            max(step_batch.consumer_wait_seconds, time.perf_counter() - started),
+        )
 
     def _release_prepared(self, prepared: _PreparedStep) -> None:
-        for batch in reversed(tuple(prepared.batches.values())):
-            batch.release()
-        if not prepared.iteration_ended:
-            self.data_session.end_iteration()
+        prepared.step_batch.release()
 
     def _active_named_parameters(
         self, model: nn.Module, phase: TrainingPhase
@@ -603,14 +600,23 @@ class TrainingEngine:
     ) -> list[Mapping[str, float]]:
         phase = self.config.phases[phase_index]
         rows: list[Mapping[str, float]] = []
-        for _ in range(int(self.config.validation["batches"])):
-            batches = self._batches(phase, global_step, validation=True)
-            prepared = _PreparedStep(global_step, batches, False, 0.0)
+        for batch_index in range(int(self.config.validation["batches"])):
+            logical_id = self.data_session.submit_step(
+                self._route_requests(
+                    phase, global_step, validation=True
+                ),
+                boundary_id=(
+                    f"validation:{phase.name}:{global_step}:{batch_index}"
+                ),
+            )
+            prepared = self._acquire_submitted_step(
+                phase, global_step, logical_id
+            )
             try:
                 with torch.no_grad(), self._autocast(phase):
                     loss, metrics = self.plugin.objective.compute(
                         model,
-                        batches,
+                        prepared.batches,
                         self._phase_context(
                             phase_index, phase_step, global_step, validation=True
                         ),
@@ -933,7 +939,7 @@ class TrainingEngine:
         latest_checkpoint_step = -1
         if callable(profile_snapshot):
             profile_snapshot(reset=True)
-        queue: deque[_PreparedStep] = deque()
+        queue: deque[tuple[int, int]] = deque()
         bar = self.progress_factory(
             total=target_step - global_step,
             desc="train",
@@ -967,17 +973,28 @@ class TrainingEngine:
                 )
                 phase_end = self.config.phase_start_step(phase_index) + phase.steps
                 barrier = min(target_step, phase_end, next_validation)
-                while len(queue) < phase.prefetch_depth:
+                lookahead = min(
+                    self.data_session.submission_capacity,
+                    max(
+                        phase.prefetch_depth,
+                        self.data_session.production_batch_steps,
+                    ),
+                )
+                while len(queue) < lookahead:
                     next_step = global_step + len(queue)
                     if next_step >= barrier:
                         break
-                    prepared = self._prepare_step(phase, next_step)
-                    queue.append(prepared)
-                    if not prepared.iteration_ended:
-                        break
+                    logical_id = self.data_session.submit_step(
+                        self._route_requests(phase, next_step),
+                        boundary_id=f"training:{phase.name}:{barrier}",
+                    )
+                    queue.append((next_step, logical_id))
                 if not queue:
-                    queue.append(self._prepare_step(phase, global_step))
-                prepared = queue.popleft()
+                    raise RuntimeError("training data lookahead produced no logical step")
+                prepared_step, logical_id = queue.popleft()
+                prepared = self._acquire_submitted_step(
+                    phase, prepared_step, logical_id
+                )
                 preparation_window.append(prepared.preparation_seconds)
                 for batch in prepared.batches.values():
                     provenance = batch.provenance
@@ -1492,8 +1509,9 @@ class TrainingEngine:
             )
             raise
         finally:
-            while queue:
-                self._release_prepared(queue.popleft())
+            if queue:
+                queue.clear()
+                self.data_session.cancel_pending()
             bar.close()
 
         if global_step == self.config.total_steps:

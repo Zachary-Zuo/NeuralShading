@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import platform
+import time
 from typing import Any, Mapping
 
 import pytest
@@ -90,6 +91,44 @@ def test_two_rank_nccl_reducer_and_control_plane() -> None:
         assert logging["profile/ddp_bucket_count"] >= 1.0
         assert logging["profile/ddp_parameter_tensors"] == 1.0
         assert logging["profile/ddp_parameter_bytes"] == 4.0
+
+        started = time.monotonic()
+        if distributed.rank == 1:
+            time.sleep(0.1)
+        distributed.synchronize_rank_errors("integration:data-skew", None)
+        assert time.monotonic() - started >= 0.08
+
+        delayed_commit = distributed.run_rank_zero(
+            "integration:checkpoint-delay",
+            lambda: (time.sleep(0.1), "committed")[1],
+        )
+        assert delayed_commit == ("committed" if distributed.is_rank_zero else None)
+
+        with pytest.raises(
+            (RuntimeError, ValueError), match="injected rank-one data failure"
+        ):
+            distributed.synchronize_rank_errors(
+                "integration:data-stage",
+                (
+                    ValueError("injected rank-one data failure")
+                    if distributed.rank == 1
+                    else None
+                ),
+            )
+        with pytest.raises(
+            (RuntimeError, OSError), match="injected rank-zero write failure"
+        ):
+            distributed.run_rank_zero(
+                "integration:checkpoint-write",
+                lambda: (_ for _ in ()).throw(
+                    OSError("injected rank-zero write failure")
+                ),
+            )
+        with pytest.raises(RuntimeError, match="descriptor mismatch"):
+            distributed.validate_descriptor(
+                "integration:phase-descriptor",
+                {"rank-specific-value": distributed.rank},
+            )
     except BaseException as error:
         local_error = error
     try:

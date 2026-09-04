@@ -13,6 +13,11 @@ T = TypeVar("T")
 R = TypeVar("R")
 
 
+def _closed_dispatcher(requests: tuple[Any, ...]) -> Any:
+    del requests
+    raise RuntimeError("reference scheduler is closed")
+
+
 @dataclass(frozen=True)
 class LogicalReferenceRequest(Generic[T]):
     logical_id: int
@@ -264,6 +269,9 @@ class ReferenceScheduler(Generic[T, R]):
         self._pending.clear()
         while self._ready:
             self._ready.popleft().release()
+        # A bound dispatcher otherwise forms producer -> scheduler -> producer.
+        # Breaking it is important for deterministic native backend teardown.
+        self._dispatcher = cast(Any, _closed_dispatcher)
         self._closed = True
 
 

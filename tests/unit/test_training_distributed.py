@@ -22,6 +22,7 @@ from tests.unit.test_training_runner_phase_graph import (
     _PhaseMethod,
     _RouteProducer,
     _config,
+    _data_session,
     _plugin,
 )
 
@@ -300,7 +301,7 @@ def test_non_rank_zero_checkpoint_does_not_encode_full_model_state() -> None:
     producer = _RouteProducer()
     engine = TrainingEngine(
         plugin,
-        producer,
+        _data_session(producer),
         _config(),
         distributed_context=_RankOneCheckpointContext(),  # type: ignore[arg-type]
     )

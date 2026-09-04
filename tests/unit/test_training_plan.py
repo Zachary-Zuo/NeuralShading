@@ -34,7 +34,7 @@ def test_resolved_training_plan_roundtrips_embedded_checkpoint_manifest() -> Non
         (
             "configs/training/runs/metal-windows-smoke.yaml",
             "metal",
-            "c68ddeb0c0d512e84af4056d00fdbda4e5c726842dadcfd2a44dd5654b8941cd",
+            "288226d90187c2dcdff6b0babf92c5cef5102a40c69b1e6652e5995ff5be71f9",
             3,
             16,
         ),
@@ -62,14 +62,14 @@ def test_resolved_training_plan_roundtrips_embedded_checkpoint_manifest() -> Non
         (
             "configs/training/runs/metal-linux-smoke.yaml",
             "metal",
-            "52499bb901b9c42d56dc825a64728e5f9a12a91b166e166be5156ad71467b7b5",
+            "28f754f2c5c128e32a11c110168f4a541099ccb4fbc01f61189da9a8f61b99da",
             692,
             16,
         ),
         (
             "configs/training/runs/metal-linux-long.yaml",
             "metal",
-            "72d309799b86011fc71c8c27da056df6f938a302130dc3732ed8e8338196f9cb",
+            "166f28c28f4ef58569ae459d0f90b694238585ce04c3b88d4b4e6ebe04a5ecd0",
             692,
             120000,
         ),

@@ -7,6 +7,7 @@ import torch
 
 from ncls.core.scattering import MaterialPayload, RuntimePayload
 from ncls.core.source import SourceSnapshot
+from ncls.data import OnlineStepRequest, PipelineOnlineDataSession
 from ncls.learning.batches import (
     EvaluatorBatch,
     MethodSamplerBatch,
@@ -187,7 +188,7 @@ class _RouteProducer:
             self.generators[request.name] = generator
         return generator
 
-    def next_batch(self, request: TrainingRouteRequest) -> OnlineTrainingBatch:
+    def _produce_route(self, request: TrainingRouteRequest) -> OnlineTrainingBatch:
         if request.name.startswith("validation:"):
             self.profile["session_misses"] += 1.0
             self.profile["group_creations"] += 1.0
@@ -220,6 +221,20 @@ class _RouteProducer:
         return MethodSamplerBatch(
             conditioning, torch.rand((batch, 2), generator=generator)
         )
+
+    def produce_steps(
+        self, requests: tuple[OnlineStepRequest, ...]
+    ) -> tuple[Mapping[str, OnlineTrainingBatch], ...]:
+        return tuple(
+            {
+                slot: self._produce_route(route)
+                for slot, route in step.routes.items()
+            }
+            for step in requests
+        )
+
+    def prefetch_steps(self, requests: tuple[OnlineStepRequest, ...]) -> None:
+        del requests
 
     def native_assets(self) -> NativeAssetCollection:
         return self._assets
@@ -324,18 +339,29 @@ def _config() -> TrainingConfig:
     )
 
 
+def _data_session(
+    producer: _RouteProducer | None = None,
+) -> PipelineOnlineDataSession:
+    return PipelineOnlineDataSession(
+        _RouteProducer() if producer is None else producer,
+        execution_plan_identity="fixture-plan",
+        ready_capacity=2,
+        production_batch_steps=2,
+    )
+
+
 def test_runner_resume_matches_uninterrupted_phase_graph() -> None:
     definition = _PhaseMethod()
-    full = TrainingEngine(_plugin(definition), _RouteProducer(), _config()).run().checkpoint
-    partial = TrainingEngine(_plugin(definition), _RouteProducer(), _config()).run(
+    full = TrainingEngine(_plugin(definition), _data_session(), _config()).run().checkpoint
+    partial = TrainingEngine(_plugin(definition), _data_session(), _config()).run(
         stop_at_step=2
     ).checkpoint
     assert partial.phase_name == "finetune" and partial.phase_step == 0
-    resumed = TrainingEngine(_plugin(definition), _RouteProducer(), _config()).run(
+    resumed = TrainingEngine(_plugin(definition), _data_session(), _config()).run(
         resume=partial
     ).checkpoint
     assert resumed.phase_name == "complete"
-    assert set(resumed.query_stream_state["generator_states"]) == {
+    assert set(resumed.query_stream_state["producer"]["generator_states"]) == {
         "bootstrap:evaluator", "bootstrap:sampler",
         "finetune:evaluator", "finetune:sampler",
         "validation:finetune:evaluator", "validation:finetune:sampler",
@@ -352,7 +378,7 @@ def test_runner_resume_matches_uninterrupted_phase_graph() -> None:
 
 def test_runner_accounts_training_and_validation_backend_profiles_separately() -> None:
     result = TrainingEngine(
-        _plugin(_PhaseMethod()), _RouteProducer(), _config()
+        _plugin(_PhaseMethod()), _data_session(), _config()
     ).run()
     training_rows = [row for row in result.metrics if "loss" in row]
     validation_rows = [row for row in result.metrics if "validation/loss" in row]

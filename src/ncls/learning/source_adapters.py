@@ -87,6 +87,13 @@ class MethodSourceAdapter(ABC):
     ) -> None:
         del plan, trace
 
+    def prefetch_host(
+        self,
+        candidates: Sequence[int],
+        request: TrainingRouteRequest,
+    ) -> None:
+        del candidates, request
+
     def execution_source_indices(
         self,
         candidates: Sequence[int],
@@ -387,7 +394,7 @@ class MetalFusedMdlSourceAdapter(MethodSourceAdapter):
         if len(roots) != 1:
             raise ValueError("one Metal run requires one canonical vMaterials module root")
         self._assets = MdlMetalNativeAssetCollection(
-            self.registry, next(iter(roots)), working_set_capacity=16
+            self.registry, next(iter(roots)), working_set_capacity=32
         )
         self._asset_indices = {
             descriptor.asset_id: index
@@ -487,6 +494,21 @@ class MetalFusedMdlSourceAdapter(MethodSourceAdapter):
             trace=trace,
             num_workers=plan.num_workers,
             host_prefetch=plan.host_prefetch,
+        )
+
+    def prefetch_host(
+        self,
+        candidates: Sequence[int],
+        request: TrainingRouteRequest,
+    ) -> None:
+        execution_sources = self.execution_source_indices(candidates, request)
+        self._assets.prefetch_gpu_sampling(
+            tuple(
+                dict.fromkeys(
+                    self._source_asset_indices[source_index]
+                    for source_index in execution_sources
+                )
+            )
         )
 
     def close(self) -> None:

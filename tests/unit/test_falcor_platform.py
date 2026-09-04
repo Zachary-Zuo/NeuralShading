@@ -6,7 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from ncls.references.backend import create_reference_backend
+from ncls.references.backend import (
+    close_reference_backend_devices,
+    create_reference_backend,
+)
 from ncls.references.programs import discover_reference_programs
 
 
@@ -46,6 +49,9 @@ def test_reference_backend_reuses_process_device(tmp_path) -> None:
     first = backend._create_device(_FakeFalcor)  # noqa: SLF001
     second = backend._create_device(_FakeFalcor)  # noqa: SLF001
     assert second is first
+    close_reference_backend_devices()
+    third = backend._create_device(_FakeFalcor)  # noqa: SLF001
+    assert third is not first
 
 
 def test_reference_backend_selects_explicit_physical_gpu(tmp_path, monkeypatch) -> None:
