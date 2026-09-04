@@ -358,7 +358,7 @@ stall 判定必须同时参考最近 metric/checkpoint 时间、进程存活、G
 - rank-local reference、metric schema、checkpoint commit或teardown错误按公共合同修复；不得用增大 timeout 代替根因修复。
 - 只改变 supervisor、错误报告或不参与 identity 的 instrumentation 时，可从 exact checkpoint 继续。
 - 改变 model/data/query/loss/optimizer/schedule/precision、calibration或 resolved identity 时，两侧都从相同边界重跑；旧产物保留并标为 superseded，不覆盖。
-- 效果差但实现正确时按冻结 failure classification 收尾，不自动扩宽网络、增加 seed或超过 2048-step cap。
+- 效果差但实现正确时按冻结 failure classification 收尾，不自动扩宽网络或增加 seed；是否进入已授权的 2048→4096 matched extension 只按 §15.7 的预登记条件判断。
 
 ### 15.5 两模型 Windows 交付
 
@@ -379,3 +379,18 @@ stall 判定必须同时参考最近 metric/checkpoint 时间、进程存活、G
 4. 本轮不自动新增第二seed、teacher、大于主budget的结构或多个网络变体。若证据指向新的表示轴，只形成带失败假设、预算增量和验证方案的下一轮候选，不在剩余时间里循环改到效果变好。
 
 专项材料和probe cap是本轮用户授权下的资源上限，不是quality gate。任何结果都必须区分implementation/protocol defect与正常empirical outcome，并以exact locator、query identity和artifact路径追溯。
+
+### 15.7 吞吐优先执行与训练扩展规则
+
+执行顺序固定为：真实慢段 profile → 通用 engine/data/DDP 热点修复 → 等价性与吞吐 A/B → 模型/loss 审查 → 新 identity 的 matched pair → package/Windows 交付 → §15.6 剩余时间探索。GPU utilization 只是定位信号；优化判断以真实 work units/s、validation wall time、显存和数值等价证据为准。
+
+首轮 128-step profile 已使原计划中“直接沿 @1 recipe 继续长训”的证据失效：训练的 `prefetch_depth=1` 使 reference 生产与 model step 串行，`log_interval=1` 在每步触发 CUDA timing sync、metric reduce 和 rank gather；validation 又逐 batch 执行相同的 packed collective。公共修复必须满足：
+
+1. validation 保留原来每个 batch 的全 rank 平均行和顺序，只把同一窗口的 scalar metric 堆叠后做一次 collective；不能把 256 条样本压成一个均值而丢失 bootstrap 单元；
+2. validation 与 training 共用 phase-local bounded lookahead，队列不得跨 validation、phase 或 checkpoint 边界；异常路径必须释放已取得 batch 并 drain 未完成工作；
+3. 新matched recipe把profile/report cadence降到不高于每16 step一次，并把prefetch depth提到2；随后在旧64基线上只对per-rank batch`128/256/512`做有界真实profile，以global work units/s、step wall、GPU利用和peak memory的Pareto选择共同batch。是否保留每个轴由同source/query/model的A/B证据决定；改变cadence/depth/batch后使用新的recipe/config identity并fresh训练，两侧完全matched；
+4. validation 的 batch 数和 seed 暂不因吞吐结果减少。若优化后仍由 reference 生产主导，优先接受真实成本或做独立 packing 等价性实验，不静默削减评测证据。
+
+`128/256` 只回答运行正确和早期趋势；正常情况下继续到 `512/1024/2048`。在 2048 共同里程碑，只有同时满足以下条件才进入一个预登记的 `deployment-qat-extended` matched phase，最多到 4096：实现/数值检查通过；hybrid/direct 选择的 paired bootstrap CI 仍跨零；最近三个共同 validation 里至少一侧的 appearance 主指标改善趋势有 bootstrap 支持；剩余 timebox 足以让两侧到达同一下一里程碑。任一条件不满足就不延长。扩展沿用单 seed 与相同静态结构，不把更多 step 当作保证质量的手段。
+
+本节由用户2026-09-05明确改变优先级、授权早期结果不足时继续实验并同意增大batch所触发。影响范围是训练engine的等价reporting路径、pilot recipe identity、每step样本几何和本轮资源cap；不改变source GT、query recipe、20k/192 B hard bound或验收门。旧`@1` DDP5 step-128证据保留为before-profile；新recipe必须fresh重跑，旧checkpoint不resume到新identity。

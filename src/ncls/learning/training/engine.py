@@ -765,49 +765,104 @@ class TrainingEngine:
         global_step: int,
     ) -> list[Mapping[str, float]]:
         phase = self.config.phases[phase_index]
-        rows: list[Mapping[str, float]] = []
-        for batch_index in range(int(self.config.validation["batches"])):
-            logical_id = self.data_session.submit_step(
-                self._route_requests(
-                    phase, global_step, validation=True
-                ),
-                boundary_id=(
-                    f"validation:{phase.name}:{global_step}:{batch_index}"
-                ),
-            )
-            prepared = self._acquire_submitted_step(
-                phase, global_step, logical_id
-            )
-            try:
-                with torch.no_grad(), self._autocast(phase):
-                    loss, metrics = self.plugin.objective.compute(
-                        model,
-                        prepared.batches,
-                        self._phase_context(
-                            phase_index, phase_step, global_step, validation=True
-                        ),
+        batch_count = int(self.config.validation["batches"])
+        lookahead = min(
+            self.data_session.submission_capacity,
+            max(phase.prefetch_depth, self.data_session.production_batch_steps),
+        )
+        queue: deque[tuple[int, int]] = deque()
+        submitted = 0
+        losses: list[torch.Tensor] = []
+        metric_columns: dict[str, list[torch.Tensor]] = {}
+        metric_names: tuple[str, ...] | None = None
+        boundary_id = f"validation:{phase.name}:{global_step}"
+        bar = self.progress_factory(
+            total=batch_count,
+            desc="validation",
+            unit="batch",
+            disable=not self.distributed.is_rank_zero,
+            leave=False,
+        )
+        try:
+            for batch_index in range(batch_count):
+                while len(queue) < lookahead and submitted < batch_count:
+                    logical_id = self.data_session.submit_step(
+                        self._route_requests(phase, global_step, validation=True),
+                        boundary_id=boundary_id,
                     )
-                    report_loss, report_metrics = self._ddp_report(
-                        loss,
-                        metrics,
-                        scope=f"validation:{phase.name}:metrics",
-                    )
-                row = {
-                    "step": float(global_step),
-                    "phase_index": float(phase_index),
-                    "validation/loss": float(report_loss.detach()),
-                }
-                validate_objective_outputs(
-                    self.plugin.descriptor, phase.name, metrics
+                    queue.append((submitted, logical_id))
+                    submitted += 1
+                queued_index, logical_id = queue.popleft()
+                if queued_index != batch_index:
+                    raise RuntimeError("validation lookahead lost deterministic order")
+                prepared = self._acquire_submitted_step(
+                    phase, global_step, logical_id
                 )
-                for name, value in report_metrics.items():
-                    row[f"validation/{name}"] = (
-                        float(value.detach()) if isinstance(value, torch.Tensor) else float(value)
+                try:
+                    with torch.no_grad(), self._autocast(phase):
+                        loss, metrics = self.plugin.objective.compute(
+                            model,
+                            prepared.batches,
+                            self._phase_context(
+                                phase_index, phase_step, global_step, validation=True
+                            ),
+                        )
+                    validate_objective_outputs(
+                        self.plugin.descriptor, phase.name, metrics
                     )
-                rows.append(row)
-            finally:
-                self._release_prepared(prepared)
-        return rows
+                    current_names = tuple(sorted(metrics))
+                    if metric_names is None:
+                        metric_names = current_names
+                        metric_columns = {name: [] for name in metric_names}
+                    elif current_names != metric_names:
+                        raise RuntimeError(
+                            "validation objective metric schema changed within one window"
+                        )
+                    losses.append(loss.detach().reshape(()))
+                    for name in metric_names:
+                        value = metrics[name]
+                        tensor = (
+                            value.detach().to(device=loss.device)
+                            if isinstance(value, torch.Tensor)
+                            else torch.tensor(float(value), device=loss.device)
+                        )
+                        if tensor.ndim != 0:
+                            raise ValueError(
+                                "validation reporting metrics must be scalar"
+                            )
+                        metric_columns[name].append(tensor)
+                finally:
+                    self._release_prepared(prepared)
+                bar.update(1)
+        except BaseException:
+            if queue:
+                queue.clear()
+                self.data_session.cancel_pending()
+            raise
+        finally:
+            bar.close()
+        if queue or submitted != batch_count or metric_names is None:
+            raise RuntimeError("validation reporting window did not drain")
+        report_losses, report_metrics = self.distributed.reduce_report_rows(
+            torch.stack(losses),
+            {
+                name: torch.stack(metric_columns[name])
+                for name in metric_names
+            },
+            scope=f"validation:{phase.name}:metric-rows",
+        )
+        return [
+            {
+                "step": float(global_step),
+                "phase_index": float(phase_index),
+                "validation/loss": report_losses[index],
+                **{
+                    f"validation/{name}": report_metrics[name][index]
+                    for name in metric_names
+                },
+            }
+            for index in range(batch_count)
+        ]
 
     def _component_manifest(self) -> dict[str, Any]:
         descriptor = self.plugin.descriptor

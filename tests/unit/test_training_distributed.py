@@ -139,6 +139,11 @@ def _gloo_worker(rank: int, init_uri: str, output_dir: str) -> None:
             metrics,
             scope="test:metrics",
         )
+        report_row_losses, report_row_metrics = context.reduce_report_rows(
+            torch.tensor([rank + 1.0, 2.0 * (rank + 1.0)]),
+            {"quadratic": torch.tensor([rank + 3.0, 2.0 * (rank + 3.0)])},
+            scope="test:metric-rows",
+        )
         rank_stats = context.rank_statistics(
             {"prepare": float(rank + 1)},
             scope="test:stages",
@@ -215,6 +220,8 @@ def _gloo_worker(rank: int, init_uri: str, output_dir: str) -> None:
             "parameter": float(model.weight.detach()),
             "report_loss": float(report_loss),
             "report_metric": float(report_metrics["quadratic"]),
+            "report_row_losses": report_row_losses,
+            "report_row_metrics": report_row_metrics,
             "rank_stats": rank_stats,
             "gathered": gathered,
             "rank_zero_result": rank_zero_result,
@@ -252,6 +259,14 @@ def test_gloo_contract_covers_reducer_metrics_rank_state_and_failures(
     assert [row["parameter"] for row in rows] == pytest.approx([0.5, 0.5])
     assert [row["report_loss"] for row in rows] == pytest.approx([2.5, 2.5])
     assert [row["report_metric"] for row in rows] == pytest.approx([2.5, 2.5])
+    assert all(
+        row["report_row_losses"] == pytest.approx([1.5, 3.0])
+        for row in rows
+    )
+    assert all(
+        row["report_row_metrics"]["quadratic"] == pytest.approx([3.5, 7.0])
+        for row in rows
+    )
     assert rows[0]["rank_stats"] == rows[1]["rank_stats"] == {
         "prepare_rank_0": 1.0,
         "prepare_rank_1": 2.0,

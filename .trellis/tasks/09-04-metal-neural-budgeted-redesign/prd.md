@@ -63,6 +63,14 @@
 - 约 12 小时是本轮执行 timebox，不是伪造成功的验收门；到时按已完成的共同里程碑给出证据结论、失败分类、可恢复位置与下一步方向。
 - 只有 hybrid/direct训练、比较、双Windows diagnostic package与必要正确性检查已经交付且12小时时间仍有余额，才进入后置探索。探索先研究少量机制鲜明的单材质，再决定是否值得扩到小型混合cohort；它只形成设计方向与候选优先级，不阻塞主任务完成。
 
+### 8. 2026-09-05 吞吐优先与自适应训练增补
+
+- 用户进一步明确执行优先级为：先依据真实 profile 优化通用训练架构与同步/验证调度，再审查模型结构和 loss，随后成对推进 hybrid/direct，最后才使用剩余时间做额外实验。性能修改必须优先消除占主导的公共热点，不能为了提高瞬时 GPU utilization 改写 reference、query 或 loss 语义。
+- `128/256 step` 是正确性、吞吐与早期趋势探针，不是质量结论 cap。两侧在实现正确时继续到共同的 `512/1024/2048` 里程碑；若 2048 后结构选择仍不确定、至少一侧在冻结 validation 上仍有统计支持的改善趋势且 timebox 足够，可按设计中的预登记扩展阶段成对继续到最多 4096 step。扩展保持同一 seed、source/query、静态模型预算和 matched 轴，不自动新增 seed 或 sweep。
+- 任何影响训练数值、batch 几何、数据顺序、loss、optimizer、schedule、precision 或 resolved identity 的效率改动都产生新 recipe/checkpoint identity，hybrid/direct 从同一 fresh 边界重跑。只改变等价 metric 聚合、进度频率或不参与梯度的 profile 实现时，可保留旧结果作为性能对照，但不得覆盖旧 artifact。
+- 在 GPU 5–9 上允许把per-rank batch从旧基线64提高到128/256/512做有界吞吐profile；以稳定段global work units/s、step wall、GPU利用和peak memory的Pareto选取共同batch，不按单个`nvidia-smi`快照选择。新pair两侧必须使用同一入选batch，并同时报告global batch和累计work units；大batch run不得与batch64旧证据按step直接比较。
+- 12 小时内不因某个早期里程碑信息不足而向用户请求是否继续；只在安全、权限或任务范围出现新的实质阻塞时才停下。任务、执行顺序、checkpoint、failure classification 和本地 commit 由当前 Trellis task 与 continuous goal 持久化，不依赖单个对话上下文。
+
 ## Acceptance Criteria
 
 - [ ] 【需求交付｜来源：用户本轮要求】冻结经用户确认的主 profile 预算表，清楚区分硬性静态边界、实测目标和诊断性 teacher 额度，并为每个 hard 数值记录 `source / scope / why_hard / failure_action`。

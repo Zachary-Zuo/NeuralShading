@@ -17,6 +17,7 @@
 - 旧 full 只保留历史实现与显式对照用途；当前阶段不通过兼容 shim 让旧 run 冒充 canonical `metal`。
 - pre-Linux `trellis-check` 已完成：checkpoint diagnostic readiness 由各方法 descriptor 的强校验 policy 声明，通用训练层不再按 Metal method key 分支；Windows 纯 CPU `tests/unit` 为 335 passed，layout/compileall/diff/Falcor clean 均通过。旧 `mdl-metal-full` fragment 保持历史语义，新全 cohort 使用独立 `mdl-metal-budgeted-full` identity。Linux handoff 在本任务 scoped commit 完成后重新生成，以冻结可直接同步的 commit identity。
 - 用户于 2026-09-05 授权在当前 Linux 主机 GPU 5–9 上进行约 12 小时持续监督，并要求范围内 DDP/实现修复、及时本地 commit、neural 设计结论及 hybrid/direct 两个 Windows 可检视模型。本轮新增 `ddp5` 执行身份、事件驱动监督和双 diagnostic package 交付；它不恢复旧 full，不扩大 20k/192 B hard bound，也不把 5 卡 step 数冒充原单卡样本预算。
+- 用户随后把通用吞吐架构和模型/loss审查提升为继续长训前的最高优先级，并授权早期step信息不足时按预登记条件继续实验。旧`@1` pair在共同step 128停止为before-profile；公共优化与新recipe验证后，hybrid/direct从fresh identity重新开始。
 
 ## Phase 0：冻结现状与旧基线
 
@@ -77,8 +78,11 @@ Rollback point R2：任何 Python 主形态需要越过 20k/192B 才能闭合接
 - [x] 方法配置固定 `joint-response-fit → deployment-qat-refine`；appearance从step 1启用，curriculum只登记真实 direction/LOD/peak变化。
 - [x] asset cook实现 encoder-only、bounded refinement、direct control三种独立 identity，共用部署shape。
 - [x] pure compiler与optimized ProgramState control分角色训练/报告；不把teacher结果写成editability。
-- [ ] 先在 GPU 5–9 完成 budgeted objective 的 DDP step-0/8、rank mapping、checkpoint/resume与teardown smoke；真实缺陷按公共 DDP 合同修复并补测试。
-- [ ] 以 `0/8/128/256/512/1024/2048` 共同里程碑交替训练 direct/hybrid DDP5 pair，保存分项 loss、独立validation、rank stage/profile和完整日志。
+- [x] 先在 GPU 5–9 完成 budgeted objective 的 DDP step-0/8、rank mapping、checkpoint/resume与teardown smoke；真实缺陷按公共 DDP 合同修复并补测试。
+- [ ] 以`@1`共同step-128证据定位training/validation热点；实现窗口级validation packed reduce与bounded lookahead，补齐单机/DDP等价性和异常清理测试。
+- [ ] 用同source/query/model做旧/新执行路径bounded profile；新matched recipe固定低频report和depth=2，并在per-rank batch 64/128/256/512中选吞吐—显存Pareto点，若work units/s或validation wall没有净改善则回退相应轴。
+- [ ] 在新recipe fresh前审查direct/hybrid输出责任、appearance分项、proposal权重/梯度与calibration量级；实现缺陷修复后才开始长段。
+- [ ] 以`0/8/128/256/512/1024/2048`共同里程碑交替训练direct/hybrid DDP5 pair，保存分项loss、独立validation、rank stage/profile和完整日志；满足设计§15.7时才成对延长到最多4096。
 - [ ] 按预登记规则比较microdetail、RGB/chroma、peak、energy和成本；输出 `research/single-material-selection.md`。
 - [ ] 仅在direct/hybrid共同失败且完成failure classification后，允许启动≤4×主profile neural MAC的teacher diagnostic；不自动追加step/seed。
 

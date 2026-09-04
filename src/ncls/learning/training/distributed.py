@@ -330,6 +330,46 @@ class DistributedContext:
                 reduced[name] = float(reduced_scalars[name].item())
         return packed[0].to(dtype=loss.dtype), reduced
 
+    def reduce_report_rows(
+        self,
+        losses: torch.Tensor,
+        metrics: Mapping[str, torch.Tensor],
+        *,
+        scope: str,
+    ) -> tuple[tuple[float, ...], dict[str, tuple[float, ...]]]:
+        """Aggregate an ordered reporting window with one packed collective."""
+        if losses.ndim != 1 or losses.numel() < 1:
+            raise ValueError("distributed report rows require a nonempty loss vector")
+        names = tuple(sorted(metrics))
+        descriptor: list[tuple[str, tuple[int, ...], str]] = []
+        columns = [losses.detach().to(device=self.device, dtype=torch.float64)]
+        for name in names:
+            value = metrics[name]
+            if value.ndim != 1 or value.shape != losses.shape:
+                raise ValueError(
+                    "distributed report metric rows must match the loss vector"
+                )
+            descriptor.append((name, tuple(value.shape), str(value.dtype)))
+            columns.append(
+                value.detach().to(device=self.device, dtype=torch.float64)
+            )
+        self.validate_descriptor(
+            scope,
+            (tuple(losses.shape), str(losses.dtype), tuple(descriptor)),
+        )
+        packed = torch.stack(columns)
+        if self.is_distributed:
+            dist.all_reduce(packed, op=dist.ReduceOp.SUM)
+            packed.div_(float(self.world_size))
+        host_rows = packed.cpu().tolist()
+        return (
+            tuple(float(value) for value in host_rows[0]),
+            {
+                name: tuple(float(value) for value in host_rows[index + 1])
+                for index, name in enumerate(names)
+            },
+        )
+
     def rank_statistics(
         self,
         values: Mapping[str, float],

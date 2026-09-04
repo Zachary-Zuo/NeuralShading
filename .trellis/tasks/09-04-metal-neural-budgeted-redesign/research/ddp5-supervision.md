@@ -30,3 +30,11 @@
 - 两侧0→8均完成，所有metric有限，六个required parameter group均已有finite/nonzero gradient与update，rank0-only checkpoint/review及teardown通过。
 - peak allocated memory均为739,713,536 B/rank。hybrid/direct review median分别约2.928/2.903 step/s；首步含compile约3.6–3.9秒，后续tqdm显示约2–3 step/s。
 - step 1→8 appearance：hybrid `3.6547→2.6996`，direct `4.7860→3.8209`；spatial gradient分别`0.3325→0.2541`与`0.3324→0.2534`。这是极短早期诊断，不形成结构选择。
+
+## Milestone 128 与 before-profile：implementation `6b9f81c`
+
+- 有效artifact根为`artifacts/metal-budgeted-pilot/ddp5-20260905-6b9f81c/`。hybrid/direct均从exact step-8 checkpoint恢复到128，写出rank0-only checkpoint、256条validation row、review和完整日志；五卡随后全部释放。
+- hybrid/direct稳定训练step wall mean分别约`0.327/0.336 s`。其中batch prepare约`0.169/0.175 s`，forward+backward约`0.156/0.157 s`，两者几乎串行；`prefetch_depth=1`没有隐藏reference生产。
+- hybrid/direct validation wall分别约`50.99/54.26 s`，validation reference session produce仅约`22.22/22.92 s`。剩余时间与当前每batch一次DDP report、descriptor control collective和逐scalar host读取相符，属于公共reporting/调度热点，不是模型显存不足或reference evaluate kernel本身占满全程。
+- step128的256-batch validation appearance mean为hybrid `1.5644`、direct `3.8383`；peak分别`1.5740/5.2536`，spatial gradient几乎相同（`0.2856/0.2855`）。这是同一早期里程碑的明显差异，但在架构吞吐修复和fresh matched pair前不形成最终选择。
+- 触发：用户要求先提高通用实验效率并在早期结果不足时继续。旧`@1` pair在step128停止，作为before-profile；engine等价优化可对其作性能回归，但任何cadence/prefetch/训练计划变化使用新identity并fresh运行。

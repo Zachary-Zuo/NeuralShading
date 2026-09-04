@@ -164,6 +164,7 @@ class _RouteProducer:
     def __init__(self) -> None:
         self.generators: dict[str, torch.Generator] = {}
         self.counts: dict[str, int] = {}
+        self.dispatches: list[tuple[int, ...]] = []
         self.profile = {
             "session_hits": 0.0,
             "session_misses": 0.0,
@@ -225,6 +226,7 @@ class _RouteProducer:
     def produce_steps(
         self, requests: tuple[OnlineStepRequest, ...]
     ) -> tuple[Mapping[str, OnlineTrainingBatch], ...]:
+        self.dispatches.append(tuple(request.logical_id for request in requests))
         return tuple(
             {
                 slot: self._produce_route(route)
@@ -431,3 +433,22 @@ def test_runner_accounts_training_and_validation_backend_profiles_separately() -
         row["profile/validation_reference_group_build_seconds_max"] == 0.25
         for row in validation_rows
     )
+
+
+def test_validation_uses_bounded_step_packing_and_preserves_rows() -> None:
+    producer = _RouteProducer()
+    config = TrainingConfig.from_dict({
+        **_config().to_dict(),
+        "validation": {"interval": 2, "batches": 3},
+    })
+
+    result = TrainingEngine(
+        _plugin(_PhaseMethod()), _data_session(producer), config
+    ).run(stop_at_step=2)
+
+    validation_rows = [
+        row for row in result.metrics if "validation/loss" in row
+    ]
+    assert len(validation_rows) == 3
+    assert any(len(dispatch) == 2 for dispatch in producer.dispatches)
+    assert result.checkpoint.query_stream_state["consumed_steps"] == 5
