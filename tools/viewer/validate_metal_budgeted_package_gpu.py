@@ -9,7 +9,10 @@ from typing import Any, Mapping
 import numpy as np
 
 from ncls.bundle import ScatteringPackage
-from ncls.references.backend import create_reference_backend
+from ncls.references.backend import (
+    close_reference_backend_devices,
+    create_reference_backend,
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -280,4 +283,7 @@ def validate(package_path: Path) -> None:
 
 
 if __name__ == "__main__":
-    validate(_parse_args().package)
+    try:
+        validate(_parse_args().package)
+    finally:
+        close_reference_backend_devices()
