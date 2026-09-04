@@ -164,7 +164,10 @@ def pack_metal_budgeted_compiled_material(
 
 
 def model_profile_mode(profile_id: str) -> str:
-    if profile_id == "metal_budgeted_hybrid_v3":
+    if profile_id in {
+        "metal_budgeted_hybrid_v3",
+        "metal_budgeted_hybrid_role_detail_v4",
+    }:
         return "hybrid"
     if profile_id == "metal_budgeted_direct_control_v3":
         return "direct"

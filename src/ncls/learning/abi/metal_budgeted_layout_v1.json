@@ -4,10 +4,16 @@
   "correspondence": "metal-budgeted-detail-frame-skip-hybrid@3",
   "profiles": {
     "metal_budgeted_hybrid_v3": {
-      "evaluator_mode": "hybrid"
+      "evaluator_mode": "hybrid",
+      "asset_detail_aggregation": "shared-slot-softmax@1"
     },
     "metal_budgeted_direct_control_v3": {
-      "evaluator_mode": "direct"
+      "evaluator_mode": "direct",
+      "asset_detail_aggregation": "shared-slot-softmax@1"
+    },
+    "metal_budgeted_hybrid_role_detail_v4": {
+      "evaluator_mode": "hybrid",
+      "asset_detail_aggregation": "role-separated-slot-softmax@1"
     }
   },
   "shape": {
@@ -119,5 +125,5 @@
     "asset_planes": "rgba8-snorm-per-plane-scale-bias",
     "sensitive_accumulation": "float32"
   },
-  "identity": "7d8c898916ae0da0e16ee48bf82f575d61d0007009d38967aef4ac41900c5a13"
+  "identity": "e5bf2377972301b5595d1c340dfc96408e3dc0b84b07622ca401ad5b1186d6e2"
 }

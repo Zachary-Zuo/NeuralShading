@@ -14,6 +14,7 @@ from ncls.learning.models.metal_budgeted import (
 from ncls.learning.models.metal_budgeted_profile import (
     METAL_BUDGETED_DIRECT_PROFILE,
     METAL_BUDGETED_HYBRID_PROFILE,
+    METAL_BUDGETED_ROLE_DETAIL_PROFILE,
 )
 from ncls.learning.models.metal_budgeted_compiler import (
     MetalBudgetedOptimizedProgramStateControl,
@@ -187,6 +188,22 @@ def test_budgeted_detail_plane_has_a_direct_frame_semantic_path() -> None:
         prepared = model.prepare_from_components(program, asset, values["wo"])
     torch.testing.assert_close(prepared.semantic_state[:, :4], asset.detail)
     assert torch.count_nonzero(prepared.semantic_state[:, 4:]) == 0
+
+
+def test_budgeted_role_detail_keeps_role_changes_in_their_channel() -> None:
+    torch.manual_seed(20260905)
+    model = MetalBudgetedModel(METAL_BUDGETED_ROLE_DETAIL_PROFILE).eval()
+    values = _conditioning(1)
+    changed = dict(values)
+    changed["metal_texture_patches"] = values["metal_texture_patches"].clone()
+    changed["metal_texture_patches"][:, 0, :, :, 3:5, 3:5] += 2.0
+    with torch.no_grad():
+        program = model.compile_program_state(values)
+        baseline = model.sample_asset(values, program, qat=False).detail
+        modified = model.sample_asset(changed, program, qat=False).detail
+
+    assert not torch.equal(baseline[:, :1], modified[:, :1])
+    torch.testing.assert_close(baseline[:, 1:], modified[:, 1:])
 
 
 def test_optimized_program_state_control_cannot_change_deterministic_contract() -> None:

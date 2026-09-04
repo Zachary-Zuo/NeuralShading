@@ -15,6 +15,7 @@ METAL_BUDGETED_LAYOUT_PATH = (
 )
 METAL_BUDGETED_HYBRID_PROFILE_ID = "metal_budgeted_hybrid_v3"
 METAL_BUDGETED_DIRECT_PROFILE_ID = "metal_budgeted_direct_control_v3"
+METAL_BUDGETED_ROLE_DETAIL_PROFILE_ID = "metal_budgeted_hybrid_role_detail_v4"
 
 _DTYPE_BYTES = {"float16": 2, "float32": 4, "uint32": 4}
 
@@ -56,6 +57,7 @@ def _validate_packed_state(name: str, state: Mapping[str, Any]) -> int:
 class MetalBudgetedProfile:
     profile_id: str
     evaluator_mode: str
+    asset_detail_aggregation: str
     maximum_texture_slots: int
     maximum_typed_tokens: int
     typed_token_width: int
@@ -85,15 +87,25 @@ class MetalBudgetedProfile:
         if self.profile_id not in {
             METAL_BUDGETED_HYBRID_PROFILE_ID,
             METAL_BUDGETED_DIRECT_PROFILE_ID,
+            METAL_BUDGETED_ROLE_DETAIL_PROFILE_ID,
         }:
             raise ValueError("unsupported Metal budgeted profile identity")
         expected_mode = (
-            "hybrid"
-            if self.profile_id == METAL_BUDGETED_HYBRID_PROFILE_ID
-            else "direct"
+            "direct"
+            if self.profile_id == METAL_BUDGETED_DIRECT_PROFILE_ID
+            else "hybrid"
         )
         if self.evaluator_mode != expected_mode:
             raise ValueError("Metal budgeted profile mode disagrees with its identity")
+        expected_aggregation = (
+            "role-separated-slot-softmax@1"
+            if self.profile_id == METAL_BUDGETED_ROLE_DETAIL_PROFILE_ID
+            else "shared-slot-softmax@1"
+        )
+        if self.asset_detail_aggregation != expected_aggregation:
+            raise ValueError(
+                "Metal budgeted profile Detail aggregation disagrees with its identity"
+            )
         if (
             self.maximum_texture_slots != 9
             or self.maximum_typed_tokens != 32
@@ -166,6 +178,7 @@ def metal_budgeted_profile(
     result = MetalBudgetedProfile(
         profile_id=profile_id,
         evaluator_mode=str(selected["evaluator_mode"]),
+        asset_detail_aggregation=str(selected["asset_detail_aggregation"]),
         maximum_texture_slots=int(shape["maximum_texture_slots"]),
         maximum_typed_tokens=int(shape["maximum_typed_tokens"]),
         typed_token_width=int(shape["typed_token_width"]),
@@ -198,6 +211,9 @@ METAL_BUDGETED_HYBRID_PROFILE = metal_budgeted_profile()
 METAL_BUDGETED_DIRECT_PROFILE = metal_budgeted_profile(
     METAL_BUDGETED_DIRECT_PROFILE_ID
 )
+METAL_BUDGETED_ROLE_DETAIL_PROFILE = metal_budgeted_profile(
+    METAL_BUDGETED_ROLE_DETAIL_PROFILE_ID
+)
 
 
 __all__ = [
@@ -206,6 +222,8 @@ __all__ = [
     "METAL_BUDGETED_HYBRID_PROFILE",
     "METAL_BUDGETED_HYBRID_PROFILE_ID",
     "METAL_BUDGETED_LAYOUT_PATH",
+    "METAL_BUDGETED_ROLE_DETAIL_PROFILE",
+    "METAL_BUDGETED_ROLE_DETAIL_PROFILE_ID",
     "MetalBudgetedProfile",
     "load_metal_budgeted_layout",
     "metal_budgeted_profile",

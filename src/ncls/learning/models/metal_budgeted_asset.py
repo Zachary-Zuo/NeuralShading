@@ -235,7 +235,29 @@ class MetalBudgetedTwoReadAsset(nn.Module):
         weights = torch.softmax(logits.float(), dim=1).to(features.dtype)
         any_slot = torch.any(mask, dim=1)
         weights = torch.where(any_slot[:, None], weights, 0.0)
-        detail = torch.sum(weights[..., None] * self.detail_encoder(features), dim=1)
+        encoded_detail = self.detail_encoder(features)
+        if self.profile.asset_detail_aggregation == "shared-slot-softmax@1":
+            detail = torch.sum(weights[..., None] * encoded_detail, dim=1)
+        else:
+            role_mask = torch.nn.functional.one_hot(
+                torch.clamp(roles, 0, 3), num_classes=4
+            ).to(torch.bool)
+            role_mask = role_mask & mask[..., None]
+            role_logits = torch.where(
+                role_mask,
+                logits[..., None],
+                torch.full_like(logits[..., None], -1e4),
+            )
+            role_weights = torch.softmax(role_logits.float(), dim=1).to(
+                features.dtype
+            )
+            role_weights = torch.where(
+                torch.any(role_mask, dim=1)[:, None, :], role_weights, 0.0
+            )
+            detail = torch.sum(
+                role_weights * role_mask.to(features.dtype) * encoded_detail,
+                dim=1,
+            )
         context_value = torch.sum(
             weights[..., None] * self.context_encoder(features), dim=1
         )

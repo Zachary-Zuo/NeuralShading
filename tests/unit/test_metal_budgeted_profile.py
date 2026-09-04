@@ -7,6 +7,7 @@ import pytest
 from ncls.learning.models.metal_budgeted_profile import (
     METAL_BUDGETED_DIRECT_PROFILE,
     METAL_BUDGETED_HYBRID_PROFILE,
+    METAL_BUDGETED_ROLE_DETAIL_PROFILE,
     load_metal_budgeted_layout,
 )
 from tools.learning.generate_metal_budgeted_layout import render
@@ -26,6 +27,12 @@ def test_metal_budgeted_profiles_close_the_nvidia_class_hard_budget() -> None:
     assert hybrid.prepared_state_bytes <= 192
     assert hybrid.maximum_texture_reads == 2
     assert hybrid.evaluator_layers == direct.evaluator_layers
+    assert METAL_BUDGETED_ROLE_DETAIL_PROFILE.asset_detail_aggregation == (
+        "role-separated-slot-softmax@1"
+    )
+    assert METAL_BUDGETED_ROLE_DETAIL_PROFILE.evaluate_dense_macs == 11_392
+    assert METAL_BUDGETED_ROLE_DETAIL_PROFILE.prepared_state_bytes == 160
+    assert METAL_BUDGETED_ROLE_DETAIL_PROFILE.maximum_texture_reads == 2
     assert layout["identity"] in render()
 
 

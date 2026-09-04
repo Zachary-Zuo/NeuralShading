@@ -55,6 +55,7 @@ from ncls.learning.models.metal_budgeted_profile import (
     METAL_BUDGETED_DIRECT_PROFILE_ID,
     METAL_BUDGETED_HYBRID_PROFILE,
     METAL_BUDGETED_HYBRID_PROFILE_ID,
+    METAL_BUDGETED_ROLE_DETAIL_PROFILE_ID,
     METAL_BUDGETED_LAYOUT_PATH,
     load_metal_budgeted_layout,
 )
@@ -1038,11 +1039,17 @@ class MetalBudgetedMethodDefinition(MethodDefinition):
         if not isinstance(context, Mapping):
             raise ValueError("Metal budgeted model_context is required")
         MetalBudgetedModel.from_context(context)
-        expected_correspondence = (
-            "metal-budgeted-detail-frame-skip-hybrid@3"
-            if context["profile_id"] == METAL_BUDGETED_HYBRID_PROFILE_ID
-            else "metal-budgeted-detail-frame-skip-direct-control@3"
-        )
+        expected_correspondence = {
+            METAL_BUDGETED_HYBRID_PROFILE_ID: (
+                "metal-budgeted-detail-frame-skip-hybrid@3"
+            ),
+            METAL_BUDGETED_DIRECT_PROFILE_ID: (
+                "metal-budgeted-detail-frame-skip-direct-control@3"
+            ),
+            METAL_BUDGETED_ROLE_DETAIL_PROFILE_ID: (
+                "metal-budgeted-role-separated-detail-hybrid@4"
+            ),
+        }[str(context["profile_id"])]
         if config.get("correspondence_id") != expected_correspondence:
             raise ValueError("Metal budgeted correspondence/profile identity drifted")
         source = config.get("source")

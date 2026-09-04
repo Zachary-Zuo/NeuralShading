@@ -101,6 +101,7 @@ def test_budgeted_runtime_pack_has_exact_offsets_flags_and_profile_mode() -> Non
     for profile_id, expected_mode in (
         ("metal_budgeted_hybrid_v3", 0),
         ("metal_budgeted_direct_control_v3", 1),
+        ("metal_budgeted_hybrid_role_detail_v4", 0),
     ):
         model = quantize_metal_budgeted_runtime_model(
             MetalBudgetedModel.from_context(
