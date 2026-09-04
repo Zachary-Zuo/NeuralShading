@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import math
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 import torch
@@ -12,6 +12,7 @@ import torch
 from ncls.core.identity import sha256_file, sha256_json
 from ncls.core.material import LayerStackIR, MaterialProgram, canonicalize_layer_stack
 from ncls.core.source import SourceSnapshot
+from ncls.data import DataExecutionPlan, PipelineTrace
 from ncls.learning.source_adaptation import (
     DenseNativeAssetCollection,
     MaterialXNativeAssetCollection,
@@ -23,6 +24,7 @@ from ncls.learning.source_adaptation import (
     materialx_native_feature_layout,
     mdl_fixed_native_feature_layout,
 )
+from ncls.learning.batches import TrainingRouteRequest
 from ncls.learning.mdl_metal_assets import MdlMetalNativeAssetCollection
 from ncls.source_materials.mdl import MdlMaterialSource
 from ncls.source_materials.mdl_metal import (
@@ -75,8 +77,29 @@ class MethodSourceAdapter(ABC):
         source_index: torch.Tensor,
         generator: torch.Generator,
         options: Mapping[str, Any],
+        *,
+        execution_source_indices: Sequence[int] | None = None,
     ) -> tuple[Mapping[str, torch.Tensor], Mapping[str, str]]:
         raise NotImplementedError
+
+    def configure_data_execution(
+        self, plan: DataExecutionPlan, trace: PipelineTrace
+    ) -> None:
+        del plan, trace
+
+    def execution_source_indices(
+        self,
+        candidates: Sequence[int],
+        request: TrainingRouteRequest,
+    ) -> tuple[int, ...]:
+        del request
+        values = tuple(int(value) for value in candidates)
+        if not values:
+            raise ValueError("source execution cohort cannot be empty")
+        return values
+
+    def close(self) -> None:
+        pass
 
     @abstractmethod
     def native_assets(self) -> NativeAssetCollection:
@@ -136,8 +159,10 @@ class NvidiaLayerStackSourceAdapter(MethodSourceAdapter):
         source_index: torch.Tensor,
         generator: torch.Generator,
         options: Mapping[str, Any],
+        *,
+        execution_source_indices: Sequence[int] | None = None,
     ) -> tuple[Mapping[str, torch.Tensor], Mapping[str, str]]:
-        del generator, options
+        del generator, options, execution_source_indices
         count = int(source_index.shape[0])
         return (
             {
@@ -188,8 +213,10 @@ class NvidiaMaterialXSourceAdapter(MethodSourceAdapter):
         source_index: torch.Tensor,
         generator: torch.Generator,
         options: Mapping[str, Any],
+        *,
+        execution_source_indices: Sequence[int] | None = None,
     ) -> tuple[Mapping[str, torch.Tensor], Mapping[str, str]]:
-        del options
+        del options, execution_source_indices
         count = int(source_index.shape[0])
         uv = torch.rand((count, 2), generator=generator, device=self.device)
         level_shapes = self._assets.descriptors[0].domain("surface-uv").level_shapes
@@ -266,8 +293,10 @@ class NvidiaMdlFixedSourceAdapter(MethodSourceAdapter):
         source_index: torch.Tensor,
         generator: torch.Generator,
         options: Mapping[str, Any],
+        *,
+        execution_source_indices: Sequence[int] | None = None,
     ) -> tuple[Mapping[str, torch.Tensor], Mapping[str, str]]:
-        del generator, options
+        del generator, options, execution_source_indices
         if bool((source_index != 0).any()):
             raise ValueError("MDL fixed-uniform adapter accepts only source index zero")
         count = int(source_index.shape[0])
@@ -447,6 +476,49 @@ class MetalFusedMdlSourceAdapter(MethodSourceAdapter):
         self._maximum_extents = torch.tensor(
             maximum_extents, dtype=torch.float32, device=device
         )
+        self._source_asset_indices = tuple(int(value) for value in tables["asset"])
+
+    def configure_data_execution(
+        self, plan: DataExecutionPlan, trace: PipelineTrace
+    ) -> None:
+        self._assets.enable_gpu_sampling(
+            self.device,
+            budget_bytes=plan.residency_budget_bytes,
+            trace=trace,
+            num_workers=plan.num_workers,
+            host_prefetch=plan.host_prefetch,
+        )
+
+    def close(self) -> None:
+        self._assets.close()
+
+    def execution_source_indices(
+        self,
+        candidates: Sequence[int],
+        request: TrainingRouteRequest,
+    ) -> tuple[int, ...]:
+        cohorts: dict[int, list[int]] = {}
+        for value in candidates:
+            source_index = int(value)
+            try:
+                asset_index = self._source_asset_indices[source_index]
+            except IndexError as error:
+                raise ValueError("Metal execution group source index is out of range") from error
+            cohorts.setdefault(asset_index, []).append(source_index)
+        if not cohorts:
+            raise ValueError("Metal source execution cohort cannot be empty")
+        asset_indices = tuple(sorted(cohorts))
+        selector = int(
+            sha256_json(
+                {
+                    "schema": "ncls.metal-resource-cohort@1",
+                    "global_step": request.global_step,
+                    "candidate_sources": [int(value) for value in candidates],
+                }
+            )[:16],
+            16,
+        )
+        return tuple(cohorts[asset_indices[selector % len(asset_indices)]])
 
     @staticmethod
     def _encode_parameters(
@@ -612,6 +684,8 @@ class MetalFusedMdlSourceAdapter(MethodSourceAdapter):
         source_index: torch.Tensor,
         generator: torch.Generator,
         options: Mapping[str, Any],
+        *,
+        execution_source_indices: Sequence[int] | None = None,
     ) -> tuple[Mapping[str, torch.Tensor], Mapping[str, str]]:
         count = int(source_index.shape[0])
         extent = float(options.get("spatial_tile_extent", 1.0))
@@ -665,8 +739,26 @@ class MetalFusedMdlSourceAdapter(MethodSourceAdapter):
             (access[:, 6:7] > 0.5), torch.frac(access_uv), access_uv
         )
         asset_index = self._tables["asset"].index_select(0, source_index)
+        if execution_source_indices is None:
+            active_asset_indices = None
+        else:
+            try:
+                active_asset_indices = tuple(
+                    sorted(
+                        {
+                            self._source_asset_indices[int(index)]
+                            for index in execution_source_indices
+                        }
+                    )
+                )
+            except IndexError as error:
+                raise ValueError("Metal execution group source index is out of range") from error
         patches, slot_mask, role_class = self._assets.sample_local_patches(
-            asset_index, access_uv, mip_level, patch_size=patch_size
+            asset_index,
+            access_uv,
+            mip_level,
+            patch_size=patch_size,
+            active_asset_indices=active_asset_indices,
         )
         tensors = {
             "uv": uv,
@@ -713,57 +805,10 @@ def _path(value: object) -> Path | None:
     return None if value is None else Path(str(value)).resolve()
 
 
-_ADAPTERS: dict[
-    tuple[str, str, int],
-    Callable[[Sequence[SourceSnapshot], torch.device], MethodSourceAdapter],
-] = {
-    (
-        NvidiaLayerStackSourceAdapter.method_key,
-        NvidiaLayerStackSourceAdapter.family_id,
-        NvidiaLayerStackSourceAdapter.source_contract_version,
-    ): NvidiaLayerStackSourceAdapter,
-    (
-        NvidiaMaterialXSourceAdapter.method_key,
-        NvidiaMaterialXSourceAdapter.family_id,
-        NvidiaMaterialXSourceAdapter.source_contract_version,
-    ): NvidiaMaterialXSourceAdapter,
-    (
-        NvidiaMdlFixedSourceAdapter.method_key,
-        NvidiaMdlFixedSourceAdapter.family_id,
-        NvidiaMdlFixedSourceAdapter.source_contract_version,
-    ): NvidiaMdlFixedSourceAdapter,
-    (
-        MetalFusedMdlSourceAdapter.method_key,
-        MetalFusedMdlSourceAdapter.family_id,
-        MetalFusedMdlSourceAdapter.source_contract_version,
-    ): MetalFusedMdlSourceAdapter,
-}
-
-
-def create_method_source_adapter(
-    method_key: str,
-    snapshots: Sequence[SourceSnapshot],
-    device: torch.device,
-) -> MethodSourceAdapter:
-    values = tuple(snapshots)
-    if not values:
-        raise ValueError("method source adapter requires snapshots")
-    source_keys = {
-        (snapshot.family_id, snapshot.source_contract_version) for snapshot in values
-    }
-    if len(source_keys) != 1:
-        raise ValueError("one online producer cannot mix source contracts")
-    family_id, version = next(iter(source_keys))
-    try:
-        factory = _ADAPTERS[(method_key, family_id, version)]
-    except KeyError as error:
-        raise ValueError(
-            f"method {method_key!r} has no source adaptation for {family_id}@{version}"
-        ) from error
-    return factory(values, device)
-
-
 __all__ = [
+    "MetalFusedMdlSourceAdapter",
     "MethodSourceAdapter",
-    "create_method_source_adapter",
+    "NvidiaLayerStackSourceAdapter",
+    "NvidiaMaterialXSourceAdapter",
+    "NvidiaMdlFixedSourceAdapter",
 ]

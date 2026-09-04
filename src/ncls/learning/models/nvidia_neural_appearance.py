@@ -24,7 +24,7 @@ def _parameter(rows: int, columns: int | None = None) -> nn.Parameter:
     return nn.Parameter(value)
 
 
-class NvidiaNeuralAppearanceModel(nn.Module):
+class NvidiaModel(nn.Module):
     """论文 encoder、hierarchical z8 与两个 decoder 的 FP32 master。"""
 
     def __init__(

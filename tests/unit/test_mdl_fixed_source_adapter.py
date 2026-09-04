@@ -7,14 +7,14 @@ import torch
 
 from ncls.core.identity import sha256_file
 from ncls.core.source import SourceSnapshot
+from ncls.learning.methods import get_method_plugin
 from ncls.learning.methods.nvidia import METHOD_DEFINITION
 from ncls.learning.source_adaptation import (
     MDL_FIXED_PARAMETER_SLOTS,
     encode_mdl_fixed_native_features,
     mdl_fixed_native_feature_layout,
 )
-from ncls.learning.source_adapters import create_method_source_adapter
-from ncls.learning.training.config import TrainingConfig
+from ncls.learning.training import TrainingPlanResolver
 from ncls.source_materials.mdl import (
     MDL_FAMILY_ID,
     MDL_NATIVE_SCHEMA,
@@ -90,8 +90,8 @@ def _arguments():
 
 def test_mdl_fixed_uniform_adapter_is_bounded_finite_and_one_by_one() -> None:
     snapshot = _snapshot(_arguments())
-    adapter = create_method_source_adapter(
-        "nvidia-neural-appearance", (snapshot,), torch.device("cpu")
+    adapter = get_method_plugin("nvidia").data.create_source_adapter(
+        (snapshot,), torch.device("cpu")
     )
     tensors, provenance = adapter.sample_tensors(
         torch.zeros(3, dtype=torch.int64), torch.Generator().manual_seed(7), {}
@@ -136,18 +136,16 @@ def test_mdl_fixed_uniform_adapter_rejects_spatial_or_unbounded_inputs() -> None
 def test_mdl_fixed_uniform_adapter_rejects_multiple_snapshots() -> None:
     snapshot = _snapshot(_arguments())
     with pytest.raises(RuntimeError, match="one snapshot"):
-        create_method_source_adapter(
-            "nvidia-neural-appearance",
+        get_method_plugin("nvidia").data.create_source_adapter(
             (snapshot, snapshot),
             torch.device("cpu"),
         )
 
 
 def test_mdl_effect_pigment_smoke_config_matches_adapter_contract() -> None:
-    config = TrainingConfig.load(
-        PROJECT_ROOT
-        / "configs/learning/nvidia-rta2024-mdl-effect-pigment-smoke.json"
-    )
+    config = TrainingPlanResolver(PROJECT_ROOT).resolve(
+        "configs/training/runs/nvidia-mdl-effect-pigment-smoke.yaml"
+    ).to_runtime_config()
     assert config.source_adaptation_id == "nvidia.mdl-fixed-uniform@1"
     assert config.model_context["native_feature_count"] == (
         mdl_fixed_native_feature_layout().channel_count

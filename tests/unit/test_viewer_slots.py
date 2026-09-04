@@ -160,14 +160,18 @@ def test_capture_uses_single_panel_difference_extent_and_headless_target_spp() -
 
     assert "constexpr uint32_t kDefaultCapturePathTracingSpp = 1024;" in viewer
     assert '"reference_spp", kDefaultCapturePathTracingSpp' in viewer
-    assert "1u + (options.captureTargetSpp - 1u) / options.captureSamplesPerDispatch" in viewer
-    assert '{"reference_spp", capturedPathTracingSpp}' in viewer
+    assert "1u + (maximumTargetSpp - 1u) / options.captureSamplesPerDispatch" in viewer
+    assert '{"reference_spp", capturedReferenceSpp}' in viewer
     assert "uint32_t frameCount = 1024;" in header
+    assert "std::array<uint32_t, 2> captureTargetSpp{1024, 1024};" in header
     assert "uint32_t captureTargetSpp = 1024;" in header
     assert "uint32_t captureSamplesPerDispatch = 1;" in header
     assert "slot.spp += samplesThisFrame;" in viewer
-    assert "slot.spp != mOptions.captureTargetSpp" in viewer
-    assert '" must reach exactly " + std::to_string(mOptions.captureTargetSpp)' in viewer
+    assert "slot.spp != slot.captureTargetSpp" in viewer
+    assert '" must reach exactly " + std::to_string(slot.captureTargetSpp)' in viewer
+    assert 'options.capturePurpose != "training-diagnostic"' in viewer
+    assert '"comparison_purpose", mOptions.capturePurpose' in viewer
+    assert '"target_spp", slot.contract.mode == ncls::SlotMode::PathTracing' in viewer
     assert "mpDifferenceLinear = viewTexture();" in viewer
     assert "mpDifferenceDisplay = viewTexture();" in viewer
     assert "mpDifferenceLinear->captureToFile(" in viewer
@@ -250,6 +254,23 @@ def test_package_source_identity_uses_canonical_mdl_snapshot() -> None:
     assert "? method.asset.sourceSnapshotId" in compatibility
     assert ": method.asset.sourceAssetSha256" in compatibility
     assert "source.sourceSha256 == expectedIdentity" in compatibility
+
+
+def test_layer_stack_upload_preserves_native_asset_identity() -> None:
+    viewer = Path("apps/viewer/NclsViewer.cpp").read_text(encoding="utf-8")
+    update = viewer[
+        viewer.index("void NclsViewer::updateMaterialBuffer") :
+        viewer.index("void NclsViewer::updateReferenceSourceBuffer")
+    ]
+    install = viewer[
+        viewer.index("void NclsViewer::installReferenceSource") :
+        viewer.index("void NclsViewer::saveMaterial")
+    ]
+
+    assert "void NclsViewer::updateMaterialBuffer(bool sourceStateChanged)" in update
+    assert "if (sourceStateChanged && mReferenceSource.sourcePath.empty())" in update
+    assert "updateMaterialBuffer(false);" in install
+    assert "updateMaterialBuffer();" not in viewer
 
 
 def test_package_program_runtime_is_shared_by_program_identity() -> None:

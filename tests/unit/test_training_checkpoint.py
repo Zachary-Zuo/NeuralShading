@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from ncls.core.identity import sha256_json
-from ncls.learning.training import TrainingConfig, TrainingPhase, TrainingRoute
+from ncls.learning.training.config import TrainingConfig, TrainingPhase, TrainingRoute
 from ncls.learning.training.checkpoint import TrainingCheckpoint, load_checkpoint, save_checkpoint
 from tests.fixtures.method_definition import METHOD_DEFINITION
 

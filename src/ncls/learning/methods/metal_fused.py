@@ -4,7 +4,7 @@ import hashlib
 import math
 from pathlib import Path
 import re
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import torch
 from torch import nn
@@ -32,9 +32,10 @@ from ncls.learning.method import (
 )
 from ncls.learning.models.metal_fused import (
     METAL_FUSED_REQUIRED_CONTEXT,
-    MetalFusedNeuralMaterialModel,
+    MetalModel,
     metal_fused_parameter_groups,
 )
+from ncls.learning.methods.contracts import MethodPlugin
 from ncls.learning.models.metal_fused_profile import (
     METAL_FUSED_FULL_PROFILE,
     METAL_FUSED_LAYOUT_PATH,
@@ -184,7 +185,7 @@ def _implementation_sha256() -> str:
 
 def _state_schema() -> tuple[TensorField, ...]:
     with torch.device("meta"):
-        model = MetalFusedNeuralMaterialModel.from_context(
+        model = MetalModel.from_context(
             METAL_FUSED_REQUIRED_CONTEXT
         )
     fields = []
@@ -384,7 +385,7 @@ class _MetalAppearanceExecution(nn.Module):
 
     def __init__(
         self,
-        model: MetalFusedNeuralMaterialModel,
+        model: MetalModel,
         definition: "MetalFusedMethodDefinition",
     ) -> None:
         super().__init__()
@@ -402,7 +403,7 @@ class _MetalProposalExecution(nn.Module):
 
     def __init__(
         self,
-        model: MetalFusedNeuralMaterialModel,
+        model: MetalModel,
         definition: "MetalFusedMethodDefinition",
     ) -> None:
         super().__init__()
@@ -653,7 +654,7 @@ class MetalFusedMethodDefinition(MethodDefinition):
         return view
 
     def create_trainable(self, context: Mapping[str, Any]) -> nn.Module:
-        return MetalFusedNeuralMaterialModel.from_context(context)
+        return MetalModel.from_context(context)
 
     def validate_training_config(self, config: Mapping[str, Any]) -> None:
         if config.get("correspondence_id") != "metal-fused-full-method@1":
@@ -795,8 +796,8 @@ class MetalFusedMethodDefinition(MethodDefinition):
                 )
 
     def configure_phase(self, model: nn.Module, phase: Mapping[str, Any]) -> None:
-        if not isinstance(model, MetalFusedNeuralMaterialModel):
-            raise TypeError("Metal fused method requires MetalFusedNeuralMaterialModel")
+        if not isinstance(model, MetalModel):
+            raise TypeError("Metal method requires MetalModel")
         super().configure_phase(model, phase)
 
     @staticmethod
@@ -826,7 +827,7 @@ class MetalFusedMethodDefinition(MethodDefinition):
 
     def _proposal_objective_impl(
         self,
-        model: MetalFusedNeuralMaterialModel,
+        model: MetalModel,
         batches: Mapping[str, OnlineTrainingBatch],
     ) -> tuple[torch.Tensor, Mapping[str, torch.Tensor | float]]:
         if set(batches) != {"evaluator", "sampler"}:
@@ -976,7 +977,7 @@ class MetalFusedMethodDefinition(MethodDefinition):
 
     def _proposal_objective(
         self,
-        model: MetalFusedNeuralMaterialModel,
+        model: MetalModel,
         batches: Mapping[str, OnlineTrainingBatch],
         *,
         quantize_runtime: bool = False,
@@ -1029,7 +1030,7 @@ class MetalFusedMethodDefinition(MethodDefinition):
 
     def _qat_refine_objective(
         self,
-        model: MetalFusedNeuralMaterialModel,
+        model: MetalModel,
         batches: Mapping[str, OnlineTrainingBatch],
         phase: Mapping[str, Any],
     ) -> tuple[torch.Tensor, Mapping[str, torch.Tensor | float]]:
@@ -1087,7 +1088,7 @@ class MetalFusedMethodDefinition(MethodDefinition):
 
     def _appearance_objective(
         self,
-        model: MetalFusedNeuralMaterialModel,
+        model: MetalModel,
         batches: Mapping[str, OnlineTrainingBatch],
     ) -> tuple[torch.Tensor, Mapping[str, torch.Tensor | float]]:
         if "asset" not in batches or not isinstance(batches["asset"], AssetTileBatch):
@@ -1213,8 +1214,8 @@ class MetalFusedMethodDefinition(MethodDefinition):
         batches: Mapping[str, OnlineTrainingBatch],
         phase: Mapping[str, Any],
     ) -> tuple[torch.Tensor, Mapping[str, torch.Tensor | float]]:
-        if not isinstance(model, MetalFusedNeuralMaterialModel):
-            raise TypeError("Metal fused method requires MetalFusedNeuralMaterialModel")
+        if not isinstance(model, MetalModel):
+            raise TypeError("Metal method requires MetalModel")
         phase_name = str(phase.get("name"))
         if phase_name == "qat-refine":
             return self._qat_refine_objective(model, batches, phase)
@@ -1241,8 +1242,8 @@ class MetalFusedMethodDefinition(MethodDefinition):
         return appearance_loss + proposal_weight * proposal_loss, metrics
 
     def export_training_state(self, model: nn.Module) -> Mapping[str, torch.Tensor]:
-        if not isinstance(model, MetalFusedNeuralMaterialModel):
-            raise TypeError("Metal fused method requires MetalFusedNeuralMaterialModel")
+        if not isinstance(model, MetalModel):
+            raise TypeError("Metal method requires MetalModel")
         result = {
             name: value.detach().cpu().contiguous()
             for name, value in model.state_dict().items()
@@ -1255,8 +1256,8 @@ class MetalFusedMethodDefinition(MethodDefinition):
     def restore_training_state(
         self, model: nn.Module, state: Mapping[str, torch.Tensor]
     ) -> None:
-        if not isinstance(model, MetalFusedNeuralMaterialModel):
-            raise TypeError("Metal fused method requires MetalFusedNeuralMaterialModel")
+        if not isinstance(model, MetalModel):
+            raise TypeError("Metal method requires MetalModel")
         expected = {field.name for field in self.descriptor.tensor_state_schema}
         if set(state) != expected:
             raise ValueError("Metal checkpoint tensor state is incomplete")
@@ -1417,4 +1418,17 @@ class MetalFusedMethodDefinition(MethodDefinition):
 METHOD_DEFINITION = MetalFusedMethodDefinition()
 
 
-__all__ = ["MetalFusedMethodDefinition", "METHOD_DEFINITION"]
+def _create_source_adapter(
+    snapshots: Sequence[SourceSnapshot], device: torch.device
+) -> MetalFusedMdlSourceAdapter:
+    return MetalFusedMdlSourceAdapter(tuple(snapshots), device)
+
+
+METHOD_PLUGIN = MethodPlugin.adapt_definition(
+    "metal",
+    METHOD_DEFINITION,
+    source_adapter_factory=_create_source_adapter,
+)
+
+
+__all__ = ["MetalFusedMethodDefinition", "METHOD_DEFINITION", "METHOD_PLUGIN"]

@@ -6,6 +6,7 @@ import torch
 
 from ncls.learning.mdl_metal_assets import (
     MdlMetalNativeAssetCollection,
+    _ResidentMipPyramid,
     _canonicalize_decoded_channels,
     _mip_shapes,
 )
@@ -126,3 +127,52 @@ def test_mip_patch_sampling_uses_canonical_channels_for_scalar_payload() -> None
     assert patches.shape == (1, 2, 2, 3)
     assert np.array_equal(patches[..., 0], patches[..., 1])
     assert np.array_equal(patches[..., 1], patches[..., 2])
+
+
+def test_resident_mip_atlas_matches_random_access_patch_sampling() -> None:
+    values = np.arange(64, dtype=np.uint8).reshape(8, 8, 1)
+    slot = {
+        "channels": {"RGB": "mask"},
+        "transfer": "identity-linear",
+    }
+    domain = NativeAssetDomain(
+        "slot-1",
+        "surface-uv",
+        "clamp",
+        _mip_shapes(8, 8),
+        (NativeAssetRole("mask", "mask", 0, 3, "identity-linear", "box"),),
+    )
+    collection = _lazy_collection(values, slot, domain)
+    levels = collection._decode_mip_pyramid(0, 1, domain)
+    counts = tuple(level.shape[0] * level.shape[1] for level in levels)
+    offsets = np.cumsum((0, *counts[:-1]), dtype=np.int64)
+    pyramid = _ResidentMipPyramid(
+        torch.cat(
+            tuple(
+                torch.from_numpy(level.transpose(2, 0, 1).copy()).reshape(3, -1)
+                for level in levels
+            ),
+            dim=1,
+        ),
+        torch.tensor([level.shape[:2] for level in levels], dtype=torch.int64),
+        torch.from_numpy(offsets),
+    )
+    uv = torch.tensor([[0.5, 0.5], [0.99, 0.01]], dtype=torch.float32)
+    requested = torch.tensor([0, 2], dtype=torch.int64)
+    actual = collection._sample_gpu_pyramid(
+        pyramid, uv, requested, 2, domain.address_mode
+    )
+    expected = np.concatenate(
+        tuple(
+            collection._sample_mip_patches(
+                0,
+                1,
+                int(level),
+                uv[row : row + 1].numpy().astype(np.float64),
+                2,
+            ).transpose(0, 3, 1, 2)
+            for row, level in enumerate(requested)
+        ),
+        axis=0,
+    )
+    torch.testing.assert_close(actual, torch.from_numpy(expected))

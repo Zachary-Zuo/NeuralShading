@@ -1,27 +1,85 @@
-# 学习与部署
+# 训练、验证与部署
 
-产品registry当前包含`nvidia-neural-appearance`与`metal-fused-neural-material`。公共训练接口使用`TrainingConfig@4`：config由有序phase组成，每个phase声明typed routes、parameter groups、loss terms、recipe、optimizer、cosine schedule区间、precision、checkpoint boundary、transition、metrics/gradient cadence与prefetch depth。phase名称和数量不是runner硬编码；NVIDIA reproduction通过`bootstrap → materialize-assets → finetune`实例化该合同，Metal完整方法通过`joint-coarse-to-fine → qat-refine`实例化同一合同。
+## 配置方式
 
-三种batch各自只携带有语义的数据：`AssetTileBatch@1`携带多asset tile+halo；`EvaluatorBatch@3`携带conditioning、`wi`和online reference `target_f`；`MethodSamplerBatch@3`携带conditioning与`sample_u`。NVIDIA evaluator拟合线性`f`，matched sampler从当前learned GGX9 proposal采样并计算自身PDF，用detached learned evaluator构造forward-KL score；source sampler不是teacher。
+正式入口只接受 `configs/training/runs/*.yaml`。一个 run 组合四部分：默认执行策略、方法、数据定义和训练 recipe；resolver 会展开 source set、严格合并字段并生成不可变的 `ResolvedTrainingPlan@1`。公开方法名为 `nvidia` 或 `metal`，内部版本和实现 hash 自动进入 manifest。
 
-Metal从第1步同时消费三种batch：codec reconstruction只是辅助项，online reference appearance loss贯穿codec、typed compiler、prepare和evaluator；proposal sampler也从第1步以非零冻结schedule训练，其target对evaluator与shared representation显式detach。末期QAT继续同一appearance/proposal目标，只模拟将部署的FP16 weight与INT8 grid精度，不再把独立codec或proposal阶段当成首次训练。
+方法通过统一 `MethodPlugin` 提供 model、data、objective、lifecycle、checkpoint 和 deployment 六个 facet。新增方法不应复制 CLI 或训练循环，只需实现自己的数据需求/source adapter、模型/目标及部署编译器，然后注册一个短 key。
 
-runner按descriptor parameter registry启停梯度，phase-local Adam状态以parameter name保存；`carry-overlap`只迁移重叠状态。autocast/scaler由phase显式配置。每步在GPU聚合finite检查，cadence点才同步nonzero gradient和实际参数更新；metrics只按`log_interval`回读。每个log window保存完整step wall与prepare wall的count/mean/p90/max、phase-local/rolling rate、group ID前缀与访问数、candidate/rejection，以及reference session hit/miss/create/evict、runtime/pass/resource/slot build、operation dispatch、resident group和allocated/reserved显存；中间冷构建尖峰不会再被“只记录窗口最后一步”掩盖。training与validation的reference profile独立reset并分别写入`profile/reference_*`和`profile/validation_reference_*`，验证冷启动不会污染下一段训练窗口。prefetch queue有界预派发已脱离provider slot的batch，live lease则持有到forward/backward结束；它不跨validation、checkpoint或phase边界，因此checkpoint中的query stream游标始终与已消费batch一致。当前Falcor Python dispatch显式等待完成，尚不宣称与optimizer计算发生后台重叠。
+## 命令
 
-Metal online query使用`group-block-balanced@1`：同一global step的evaluator与sampler绑定同一execution group，每个group连续服务冻结的64步，完整cycle按group record数加权；validation使用冻结的104729-block offset，使其RNG与group都独立于training但仍可确定恢复。reference session只materialize训练实际请求的`evaluate` pass；public session默认仍保留`evaluate/sample/pdf`。这保持GPU online target、确定性resume与有界residency，同时消除“小LRU配逐步轮转”造成的稳态重建。
-
-`TrainingCheckpoint@4`保存plan、asset、query、component与phase身份，可在Windows和Linux单GPU上恢复同一online训练。统一命令为：
+Windows 单卡：
 
 ```powershell
-.\scripts\run_falcor_python.ps1 -m ncls learn train <config-v4.json> <checkpoint.pt>
-.\scripts\run_falcor_python.ps1 -m ncls learn train <config-v4.json> <checkpoint.pt> --stop-at-step <global-step>
-.\scripts\run_falcor_python.ps1 -m ncls learn train <config-v4.json> <checkpoint.pt> --resume <periodic.pt>
-.\scripts\run_falcor_python.ps1 -m ncls learn evaluate <config-v4.json> <checkpoint.pt> --batches 1
-.\scripts\run_falcor_python.ps1 -m ncls learn export <checkpoint.pt> <package-dir> --material-index 0
+.\scripts\run_falcor_python.ps1 -m ncls train `
+  configs/training/runs/nvidia-layer-stack-smoke.yaml `
+  --devices 0 `
+  --output artifacts/training/nvidia-smoke/checkpoint.pt
 ```
 
-每次训练同时生成`.metrics.jsonl`、`.summary.json`与`.review.json`；review的初尾window/bootstrap、耗时和内存只作观察，不自动触发后续实验。smoke/profile只证明真实full method shape下的数值、梯度、phase transition、短程学习与部署链路，不作为formal质量结论。
+Linux 单卡：
 
-正式`learn export`与默认viewer catalog同时要求：checkpoint与当前method exact identity、`run_class=formal`、phase为`complete`，且全部required parameter group已有finite/nonzero-gradient/actual-update coverage。Metal中间结果只能通过显式`--diagnostic-preview`生成evaluate-only预览；它保持exact identity，但移除`sample/pdf` capability并在catalog、package与capture中标记`exact-diagnostic-evaluator-preview`。仅tensor shape兼容、执行finite或slot显示`ready`都不代表训练完成或材质已学会。
+```bash
+bash scripts/run_falcor_python.sh -m ncls train \
+  configs/training/runs/metal-linux-smoke.yaml \
+  --devices 0 \
+  --output artifacts/training/metal-smoke/checkpoint.pt
+```
 
-部署由同一checkpoint编译`program/asset/instance`三段`ScatteringPackage@2`，并通过generic artifact conformance和packed-FP16 D3D12 parity。Metal的Windows验证、692-export Linux smoke/long配置与恢复命令见[Metal Linux训练交接](metal_linux_training.md)。
+当 `--devices` 只有一个序号时直接单卡执行；Linux 传多个序号时自动启动一个 torchrun/NCCL 作业，Windows 多卡明确拒绝：
+
+```bash
+bash scripts/run_falcor_python.sh -m ncls train \
+  configs/training/runs/metal-linux-smoke.yaml \
+  --devices 2,3,4 \
+  --output artifacts/training/metal-ddp/checkpoint.pt
+```
+
+停止、恢复、数值验证和正式导出：
+
+```bash
+bash scripts/run_falcor_python.sh -m ncls train <run.yaml> \
+  --devices 0 --output <checkpoint.pt> --stop-at-step <N>
+bash scripts/run_falcor_python.sh -m ncls train <run.yaml> \
+  --devices 0 --output <checkpoint.pt> --resume <checkpoint.stepXXXXXXXX.pt>
+bash scripts/run_falcor_python.sh -m ncls validate <checkpoint.pt> --batches 8 --device 0
+bash scripts/run_falcor_python.sh -m ncls export <checkpoint.pt> <package-dir> --material-index 0
+```
+
+新 checkpoint 内嵌 resolved plan，因此 `validate` 不再要求再次传 config。新训练 resume 只接受 `TrainingCheckpoint@1`；旧 v4 checkpoint 可只读地用于 `validate`、满足原 readiness 时的 export，以及 visual eval，不能继续训练。
+
+## 数据调度与 GPU 利用率
+
+`execution` 段统一配置：
+
+- `num_workers`：只并行 CPU/host decode、读取和预处理；worker 不持有 CUDA/Falcor。
+- `host_prefetch`、`ready_batches`：限制队列深度并提供 backpressure，避免无限占用内存。
+- `reference_batch_steps`、`reference_inflight`：在 backend capability 允许时控制 reference packed dispatch/在途数。
+- `transfer_streams`：控制 cache miss 的异步 H2D 通道；常驻或已命中的 tensor 不重复交换。
+- `residency.budget_mib`：GPU 资源缓存的字节上限；lease 中对象不能被 LRU 驱逐。
+
+同步基线始终是 `num_workers=0`、`reference_batch_steps=1`。调大这些值不是无条件更快：只有可复制 host 阶段才交给 worker；GPU/reference 并发必须由真实 capability、stream fence 和 lease 保证。Linux 的最终数值应通过 stage trace 分开报告 host、transfer、reference、model、barrier、cache 与峰值显存，不能仅用平均 GPU utilization 判断。
+
+## 输出与 hooks
+
+rank 0 写出：
+
+- `checkpoint.pt` 与 `.sha256`：新 checkpoint；
+- `checkpoint.stepXXXXXXXX.pt`：周期/phase boundary checkpoint；
+- `checkpoint.metrics.jsonl`：逐 cadence 指标和 data/reference profile；
+- `checkpoint.summary.json`、`checkpoint.review.json`：运行与首轮审阅；
+- `checkpoint.tensorboard/`：TensorBoard event；
+- `checkpoint.visual-eval/`：异步 request/status spool（启用时）。
+
+TensorBoard hook 使用稳定 tag/global step，队列有界且只由 rank 0 写。visual eval 不属于验证集指标：它按固定 step 选择可恢复的随机 probe，比较 reference 和 neural 渲染。默认 reference 为 1024 spp path tracing，neural 为 deterministic deferred（`neural_mode: deferred`、`neural_spp: 0`）；一次当前 Windows 实测约 12.429 秒。把 neural 改成 path tracing 是显式手工诊断，不应加入常规 cadence。
+
+Windows worker 与迟到结果收集：
+
+```powershell
+.\scripts\run_falcor_python.ps1 -m ncls eval worker `
+  <spool-dir> <artifact-root> --max-jobs 1
+.\scripts\run_falcor_python.ps1 -m ncls eval collect `
+  <spool-dir> <artifact-root> <tensorboard-dir>
+```
+
+visual eval 失败只记录 hook/status，不改变训练 checkpoint。正式 export 仍要求 exact method identity、formal run、complete phase 与所需 parameter group 的 finite/nonzero-gradient/actual-update coverage；短 smoke 只能作为诊断证据。

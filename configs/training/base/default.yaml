@@ -1,0 +1,33 @@
+format_name: ncls.training-fragment
+format_version: 1
+kind: base
+key: default
+extends: null
+compatible_methods: []
+payload:
+  training:
+    device: cuda:0
+    checkpoint_selection: tail_guard
+  execution:
+    devices: [0]
+    num_workers: 0
+    host_prefetch: 2
+    ready_batches: 2
+    reference_batch_steps: 1
+    reference_inflight: 1
+    transfer_streams: 0
+    residency:
+      budget_mib: 4096
+  hooks:
+    tensorboard:
+      enabled: true
+      flush_seconds: 10
+      queue_capacity: 4096
+    visual_eval:
+      enabled: false
+      interval_steps: 5000
+      reference_spp: 1024
+      neural_mode: deferred
+      neural_spp: 0
+      seed: 20260904
+      queue_capacity: 8

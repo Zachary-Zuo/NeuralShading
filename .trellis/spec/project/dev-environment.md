@@ -41,9 +41,9 @@ compgen -G 'external/Falcor/build/linux-gcc/bin/Release/python/falcor/falcor_ext
 
 | 状态 | 条件 | 允许 | 禁止 |
 |---|---|---|---|
-| **完整 Windows** | G ∧ E ∧ FW ∧ W | `TESTING.md` 中的全部命令：`tests/unit`、`tests/gpu`、`tests/integration`、`ncls learn / bundle` 全链路、`scripts/build_viewer.ps1`、`scripts/benchmark_viewer.ps1` 与正式online训练 | — |
+| **完整 Windows** | G ∧ E ∧ FW ∧ W | `TESTING.md` 中的全部命令：`tests/unit`、`tests/gpu`、`tests/integration`、`ncls train / validate / export` 全链路、`scripts/build_viewer.ps1`、`scripts/benchmark_viewer.ps1` 与正式online训练 | — |
 | **Linux reference** | G ∧ E ∧ FL ∧ L | `tests/unit`、`slangpy`、CUDA online训练/评测，以及经统一backend的headless LayerStack/MERL/OpenPBR/MaterialX/MDL reference query | Windows viewer、尚未迁移的pbrt Windows probe |
-| **仅 GPU** | G ∧ E，缺少当前平台对应的 FW/FL | `tests/unit`、`slangpy` marker 的测试、`ncls learn train / evaluate / compare / benchmark`、SlangPy spike | 任何 `falcor` marker 的测试与 Falcor launcher、viewer、正式 LayerStack reference 采集 |
+| **仅 GPU** | G ∧ E，缺少当前平台对应的 FW/FL | `tests/unit`、`slangpy` marker 的测试、无 Falcor 依赖的模型/GPU 测试与 SlangPy spike | 任何 `falcor` marker 的测试与 Falcor launcher、viewer、正式 online reference 训练 |
 | **静态** | 其余（当前本机：WSL2 + `RTX 3060 Laptop`，无 conda、无 `external/`） | 读代码、字节码编译检查、`git diff --check`、写代码与文档 | 运行任何项目代码；宣称"已验证 / 已通过 / 已复现" |
 
 `environment.yml` 声明的 `neural-shading` 是唯一运行时真相；`base`、系统 Python、`.venv` 都不是。
@@ -101,7 +101,7 @@ bash scripts/run_falcor_python.sh --gpus <gpu0,gpu1,...> -- <python-args>
 ### 5. Good / Base / Bad Cases
 
 - Good：`CUDA_VISIBLE_DEVICES=3`时Falcor使用物理GPU 3，Torch/SlangPy使用进程内`cuda:0`，report两字段均记录`3`。
-- Good：`bash scripts/run_falcor_python.sh --gpus 2,3,4 -- -m ncls.cli learn train <config> artifacts/run/checkpoint.pt`启动一个三卡同步DDP训练；三个worker分别将`CUDA_VISIBLE_DEVICES`收窄为`2`、`3`、`4`，进程内设备均为`cuda:0`。
+- Good：`bash scripts/run_falcor_python.sh -m ncls train <run.yaml> --devices 2,3,4 --output artifacts/run/checkpoint.pt`启动一个三卡同步DDP训练；三个worker分别将`CUDA_VISIBLE_DEVICES`收窄为`2`、`3`、`4`，进程内设备均为`cuda:0`。
 - Good：manifest同时登记`windows-vs2022`与`linux-gcc`；每台机器只生成和维护自己的ignored build output。
 - Base：未设置GPU变量时单GPU机器沿用Falcor与Torch默认GPU 0。
 - Bad：只限制Torch可见域却让Falcor始终使用物理GPU 0；在选择GPU 3时会形成跨卡interop。
@@ -122,10 +122,10 @@ bash scripts/run_falcor_python.sh --gpus <gpu0,gpu1,...> -- <python-args>
 
 ```bash
 # 错：Torch只看到物理GPU 3，但Falcor仍按默认物理GPU 0创建Vulkan device
-CUDA_VISIBLE_DEVICES=3 python -m ncls.cli learn train ...
+CUDA_VISIBLE_DEVICES=3 python -m ncls train <run.yaml> --devices 3 ...
 
 # 对：统一launcher把物理序号同时交给Falcor，并为Torch映射为cuda:0
-CUDA_VISIBLE_DEVICES=3 bash scripts/run_falcor_python.sh -m ncls.cli learn train ...
+CUDA_VISIBLE_DEVICES=3 bash scripts/run_falcor_python.sh -m ncls train <run.yaml> --devices 3 ...
 ```
 
 ```jsonc

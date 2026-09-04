@@ -3,9 +3,9 @@ from __future__ import annotations
 import pytest
 import torch
 
-from ncls.learning.models.nvidia_neural_appearance import NvidiaNeuralAppearanceModel
+from ncls.learning.models.nvidia_neural_appearance import NvidiaModel
 from ncls.learning.objectives import sampler_forward_kl_score
-from ncls.learning.training.runner import TrainingRunner
+from ncls.learning.training.engine import TrainingEngine
 
 
 pytestmark = pytest.mark.slangpy
@@ -24,7 +24,7 @@ def test_fp32_torch_training_core_matches_slang_functional_oracle() -> None:
     device = torch.device("cuda:0")
     torch.manual_seed(71)
     torch.cuda.manual_seed_all(71)
-    model = NvidiaNeuralAppearanceModel(
+    model = NvidiaModel(
         native_feature_count=5,
         latent_width=1,
         latent_height=1,
@@ -50,7 +50,7 @@ def test_fp32_torch_training_core_has_finite_joint_gradients() -> None:
     if not torch.cuda.is_available():
         pytest.skip("CUDA is required")
     device = torch.device("cuda:0")
-    model = NvidiaNeuralAppearanceModel(
+    model = NvidiaModel(
         native_feature_count=5,
         latent_width=1,
         latent_height=1,
@@ -78,7 +78,7 @@ def test_sampler_score_path_updates_only_sampler_head() -> None:
     device = torch.device("cuda:0")
     torch.manual_seed(89)
     torch.cuda.manual_seed_all(89)
-    model = NvidiaNeuralAppearanceModel(
+    model = NvidiaModel(
         native_feature_count=5,
         latent_width=1,
         latent_height=1,
@@ -117,7 +117,7 @@ def test_checkpoint_rng_restore_accepts_cuda_mapped_byte_tensors() -> None:
     pytest.importorskip("slangpy")
     if not torch.cuda.is_available():
         pytest.skip("CUDA is required")
-    state = dict(TrainingRunner._rng_state())
+    state = dict(TrainingEngine._rng_state())
     state["torch"] = state["torch"].cuda()
     state["cuda"] = [value.cuda() for value in state["cuda"]]
-    TrainingRunner._restore_rng(state)
+    TrainingEngine._restore_rng(state)

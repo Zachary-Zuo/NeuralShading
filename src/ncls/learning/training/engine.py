@@ -7,7 +7,7 @@ import hashlib
 import math
 import random
 import time
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Callable, Mapping, cast
 
 import numpy as np
 import torch
@@ -16,6 +16,7 @@ from torch import nn
 from tqdm import tqdm
 
 from ncls.core.identity import sha256_json
+from ncls.data import OnlineDataSession
 from ncls.learning.batches import (
     AssetTileBatch,
     EvaluatorBatch,
@@ -28,35 +29,17 @@ from ncls.learning.conformance import (
     validate_objective_outputs,
     validate_phase_execution,
 )
-from ncls.learning.method import MethodDefinition
-from ncls.learning.source_adaptation import NativeAssetCollection
+from ncls.learning.methods.contracts import MethodPlugin
 
 from .checkpoint import TrainingCheckpoint
 from .config import TrainingConfig, TrainingPhase, TrainingRoute
+from .events import TrainingEvent, TrainingEventBus, TrainingEventKind
 
 
 @dataclass(frozen=True)
 class TrainingRunResult:
     checkpoint: TrainingCheckpoint
     metrics: tuple[Mapping[str, float], ...]
-
-
-class OnlineTrainingProducer(Protocol):
-    reference_program_identity: str
-    reference_execution_plan_identity: str
-    native_asset_collection_identity: str
-    query_stream_identity: str
-    source_contracts: tuple[Mapping[str, Any], ...]
-    source_snapshot_ids: tuple[str, ...]
-    device: torch.device
-
-    def next_batch(self, request: TrainingRouteRequest) -> OnlineTrainingBatch: ...
-    def native_assets(self) -> NativeAssetCollection: ...
-    def state_dict(self) -> Mapping[str, Any]: ...
-    def load_state_dict(self, state: Mapping[str, Any]) -> None: ...
-    def end_iteration(self) -> None: ...
-    def profile_snapshot(self, *, reset: bool = False) -> Mapping[str, float]: ...
-    def close(self) -> None: ...
 
 
 @dataclass
@@ -183,40 +166,41 @@ def _tree_to_device(value: Any, device: torch.device) -> Any:
     return value
 
 
-class TrainingRunner:
-    """执行任意versioned phase graph的唯一online training orchestration。"""
+class TrainingEngine:
+    """执行任意 versioned phase graph 的唯一 online training lifecycle。"""
 
     def __init__(
         self,
-        definition: MethodDefinition,
-        producer: OnlineTrainingProducer,
+        plugin: MethodPlugin,
+        data_session: OnlineDataSession,
         config: TrainingConfig,
         *,
         progress_factory: Callable[..., Any] = tqdm,
         checkpoint_callback: Callable[[TrainingCheckpoint], None] | None = None,
         metric_callback: Callable[[Mapping[str, float]], None] | None = None,
+        event_bus: TrainingEventBus | None = None,
     ) -> None:
-        if definition.descriptor.method_key != config.method_key:
-            raise ValueError("training config method_key disagrees with MethodDefinition")
+        if plugin.descriptor.method_key != config.method_key:
+            raise ValueError("training plan method disagrees with MethodPlugin")
         configured_family = str(config.source["family_id"])
         producer_families = {
-            str(value.get("family_id", "")) for value in producer.source_contracts
+            str(value.get("family_id", "")) for value in data_session.source_contracts
         }
         if producer_families != {configured_family}:
             raise ValueError("configured source family disagrees with online producer")
-        definition.validate_training_config(config.to_dict())
+        plugin.lifecycle.validate_training_plan(config.to_dict())
         validate_phase_execution(
-            definition.descriptor, (phase.to_dict() for phase in config.phases)
+            plugin.descriptor, (phase.to_dict() for phase in config.phases)
         )
-        declared_groups = set(definition.descriptor.parameter_groups)
-        declared_batches = set(definition.descriptor.training_batch_requirements)
+        declared_groups = set(plugin.descriptor.parameter_groups)
+        declared_batches = set(plugin.descriptor.training_batch_requirements)
         configured_phases = {phase.name for phase in config.phases}
         for phase in config.phases:
             if not set(phase.parameter_groups).issubset(declared_groups):
                 raise ValueError(f"phase {phase.name!r} references unknown parameter groups")
             if not {route.kind for route in phase.routes}.issubset(declared_batches):
                 raise ValueError(f"phase {phase.name!r} references unsupported typed routes")
-        for component in definition.descriptor.components:
+        for component in plugin.descriptor.components:
             if not set(component.active_phases).issubset(configured_phases):
                 raise ValueError(
                     f"component {component.component_id!r} references an absent phase"
@@ -232,12 +216,36 @@ class TrainingRunner:
                         raise ValueError(
                             f"required component {component.component_id!r} is never trainable"
                         )
-        self.definition = definition
-        self.producer = producer
+        self.plugin = plugin
+        self.data_session = data_session
         self.config = config
         self.progress_factory = progress_factory
         self.checkpoint_callback = checkpoint_callback
         self.metric_callback = metric_callback
+        self.event_bus = event_bus
+
+    def _emit(
+        self,
+        kind: str,
+        global_step: int,
+        *,
+        phase_name: str | None = None,
+        scalars: Mapping[str, float] | None = None,
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
+        if self.event_bus is None:
+            return
+        self.event_bus.emit(
+            TrainingEvent(
+                cast(TrainingEventKind, kind),
+                global_step,
+                self._ddp_rank(),
+                self._ddp_world_size(),
+                phase_name,
+                {} if scalars is None else scalars,
+                details={} if details is None else details,
+            )
+        )
 
     def _seed(self) -> None:
         random.seed(self.config.seed)
@@ -413,7 +421,7 @@ class TrainingRunner:
         result: dict[str, OnlineTrainingBatch] = {}
         try:
             for route in phase.routes:
-                batch = self.producer.next_batch(
+                batch = self.data_session.next_batch(
                     self._request(phase, route, step, validation=validation)
                 )
                 self._validate_batch_type(route, batch)
@@ -442,14 +450,14 @@ class TrainingRunner:
         preparation_seconds = time.perf_counter() - started
         detached = self._is_detached(batches)
         if detached:
-            self.producer.end_iteration()
+            self.data_session.end_iteration()
         return _PreparedStep(step, batches, detached, preparation_seconds)
 
     def _release_prepared(self, prepared: _PreparedStep) -> None:
         for batch in reversed(tuple(prepared.batches.values())):
             batch.release()
         if not prepared.iteration_ended:
-            self.producer.end_iteration()
+            self.data_session.end_iteration()
 
     def _active_named_parameters(
         self, model: nn.Module, phase: TrainingPhase
@@ -458,7 +466,7 @@ class TrainingRunner:
         result = tuple(
             (name, named[name])
             for group in phase.parameter_groups
-            for name in self.definition.descriptor.parameter_groups[group]
+            for name in self.plugin.descriptor.parameter_groups[group]
         )
         if not result:
             raise ValueError("training phase has no active parameters")
@@ -478,7 +486,7 @@ class TrainingRunner:
         torch.amp.GradScaler,
         tuple[tuple[str, nn.Parameter], ...],
     ]:
-        self.definition.configure_phase(model, phase.to_dict())
+        self.plugin.lifecycle.configure_phase(model, phase.to_dict())
         active = self._active_named_parameters(model, phase)
         parameters = tuple(parameter for _, parameter in active)
         optimizer = torch.optim.Adam(
@@ -584,18 +592,18 @@ class TrainingRunner:
             torch.cuda.set_rng_state_all([value.cpu() for value in state["cuda"]])
 
     def _validate_resume(self, checkpoint: TrainingCheckpoint) -> None:
-        checkpoint.validate_method(self.definition.descriptor)
+        checkpoint.validate_method(self.plugin.descriptor)
         expected = {
             "training_config_sha256": self.config.sha256,
-            "reference_program_identity": self.producer.reference_program_identity,
-            "reference_execution_plan_identity": self.producer.reference_execution_plan_identity,
-            "native_asset_collection_identity": self.producer.native_asset_collection_identity,
-            "query_stream_identity": self.producer.query_stream_identity,
+            "reference_program_identity": self.data_session.reference_program_identity,
+            "reference_execution_plan_identity": self.data_session.reference_execution_plan_identity,
+            "native_asset_collection_identity": self.data_session.native_asset_collection_identity,
+            "query_stream_identity": self.data_session.query_stream_identity,
         }
         for name, value in expected.items():
             if getattr(checkpoint, name) != value:
                 raise ValueError(f"resume checkpoint {name} mismatch")
-        if checkpoint.source_snapshot_ids != self.producer.source_snapshot_ids:
+        if checkpoint.source_snapshot_ids != self.data_session.source_snapshot_ids:
             raise ValueError("resume checkpoint source snapshot identity mismatch")
 
     def _autocast(self, phase: TrainingPhase):
@@ -603,7 +611,7 @@ class TrainingRunner:
         if mode == "fp32":
             return nullcontext()
         dtype = torch.float16 if mode == "float16" else torch.bfloat16
-        return torch.autocast(device_type=self.producer.device.type, dtype=dtype)
+        return torch.autocast(device_type=self.data_session.device.type, dtype=dtype)
 
     def _gradient_audit(
         self,
@@ -662,7 +670,7 @@ class TrainingRunner:
             prepared = _PreparedStep(global_step, batches, False, 0.0)
             try:
                 with torch.no_grad(), self._autocast(phase):
-                    loss, metrics = self.definition.training_objective(
+                    loss, metrics = self.plugin.objective.compute(
                         model,
                         batches,
                         self._phase_context(
@@ -676,7 +684,7 @@ class TrainingRunner:
                     "validation/loss": float(report_loss.detach()),
                 }
                 validate_objective_outputs(
-                    self.definition.descriptor, phase.name, metrics
+                    self.plugin.descriptor, phase.name, metrics
                 )
                 for name, value in report_metrics.items():
                     row[f"validation/{name}"] = (
@@ -688,7 +696,7 @@ class TrainingRunner:
         return rows
 
     def _component_manifest(self) -> dict[str, Any]:
-        descriptor = self.definition.descriptor
+        descriptor = self.plugin.descriptor
         return {
             "schema": "ncls.method-components@1",
             "parameter_groups": {
@@ -705,6 +713,9 @@ class TrainingRunner:
         coverage: Mapping[str, Mapping[str, Any]],
         validation_rows: list[Mapping[str, float]],
     ) -> TrainingCheckpoint:
+        # A checkpoint is a lifecycle boundary. No prefetched host work,
+        # reference result or GPU lease may cross it.
+        self.data_session.drain()
         config_value = self.config.to_dict()
         phase_index, phase_step = self.config.locate_step(global_step)
         phase_name = (
@@ -712,32 +723,32 @@ class TrainingRunner:
             else self.config.phases[phase_index].name
         )
         checkpoint = TrainingCheckpoint(
-            self.definition.descriptor.method_key,
-            self.definition.descriptor.descriptor_sha256,
-            self.definition.descriptor.implementation_sha256,
+            self.plugin.descriptor.method_key,
+            self.plugin.descriptor.descriptor_sha256,
+            self.plugin.descriptor.implementation_sha256,
             self._component_manifest(),
             config_value,
             sha256_json(config_value),
             sha256_json([phase.to_dict() for phase in self.config.phases]),
-            self.producer.reference_program_identity,
-            self.producer.reference_execution_plan_identity,
-            self.producer.native_asset_collection_identity,
-            self.producer.query_stream_identity,
-            self.producer.source_contracts,
-            self.producer.source_snapshot_ids,
+            self.data_session.reference_program_identity,
+            self.data_session.reference_execution_plan_identity,
+            self.data_session.native_asset_collection_identity,
+            self.data_session.query_stream_identity,
+            self.data_session.source_contracts,
+            self.data_session.source_snapshot_ids,
             global_step,
             phase_index,
             phase_name,
             phase_step,
             {"policy": self.config.checkpoint_selection, "tail": validation_rows[-1:]},
-            self.definition.export_training_state(model),
+            self.plugin.checkpoint.encode(model),
             optimization_state,
             self._ddp_state_envelope(self._rng_state()),
-            self._ddp_state_envelope(self.producer.state_dict()),
+            self._ddp_state_envelope(self.data_session.state_dict()),
             coverage,
             {"rows": validation_rows},
         )
-        checkpoint.validate_method(self.definition.descriptor)
+        checkpoint.validate_method(self.plugin.descriptor)
         return checkpoint
 
     def run(
@@ -747,10 +758,14 @@ class TrainingRunner:
         stop_at_step: int | None = None,
     ) -> TrainingRunResult:
         self._seed()
-        model = self.definition.create_trainable(self.config.model_context).to(
-            self.producer.device
+        model = self.plugin.model_factory.create(self.config.model_context).to(
+            self.data_session.device
         )
-        if dist.is_available() and dist.is_initialized() and self.producer.device.type != "cuda":
+        if (
+            dist.is_available()
+            and dist.is_initialized()
+            and self.data_session.device.type != "cuda"
+        ):
             raise RuntimeError("DDP training requires a CUDA producer device")
         global_step = 0
         validation_rows: list[Mapping[str, float]] = []
@@ -761,13 +776,15 @@ class TrainingRunner:
                 "parameter_update_observed": False,
                 "last_audit_step": -1,
             }
-            for group in self.definition.descriptor.parameter_groups
+            for group in self.plugin.descriptor.parameter_groups
         }
         resume_optimization: Mapping[str, Any] | None = None
         if resume is not None:
             self._validate_resume(resume)
-            self.definition.restore_training_state(model, resume.model_state)
-            self.producer.load_state_dict(self._ddp_select_state(resume.query_stream_state))
+            self.plugin.checkpoint.restore(model, resume.model_state)
+            self.data_session.load_state_dict(
+                self._ddp_select_state(resume.query_stream_state)
+            )
             self._restore_rng(self._ddp_select_state(resume.rng_state))
             global_step = resume.global_step
             validation_rows = [dict(row) for row in resume.validation_state.get("rows", ())]
@@ -781,6 +798,12 @@ class TrainingRunner:
             raise ValueError("stop_at_step must lie between resume step and total steps")
         if global_step == self.config.total_steps:
             checkpoint = self._checkpoint(model, global_step, {}, coverage, validation_rows)
+            self._emit(
+                "run-completed",
+                global_step,
+                phase_name="complete",
+                details={"already_complete": True},
+            )
             return TrainingRunResult(checkpoint, tuple(validation_rows))
 
         phase_index, phase_step = self.config.locate_step(global_step)
@@ -791,7 +814,7 @@ class TrainingRunner:
             phase_step=phase_step,
             state=resume_optimization,
         )
-        registry = self.definition.parameter_registry(model)
+        registry = self.plugin.lifecycle.parameter_registry(model)
         metric_rows: list[Mapping[str, float]] = []
         global_batch_multiplier = self._ddp_world_size()
         work_units = sum(
@@ -815,7 +838,7 @@ class TrainingRunner:
         reference_rejected_count = 0
         reference_rejection_rounds = 0
         reference_rejection_rounds_max = 0
-        profile_snapshot = getattr(self.producer, "profile_snapshot", None)
+        profile_snapshot = getattr(self.data_session, "profile_snapshot", None)
         pending_training_profile: dict[str, float] = {}
         if callable(profile_snapshot):
             profile_snapshot(reset=True)
@@ -823,6 +846,17 @@ class TrainingRunner:
         bar = self.progress_factory(
             total=target_step - global_step, desc="train", unit="step"
         )
+        self._emit(
+            "run-started",
+            global_step,
+            phase_name=phase.name,
+            details={
+                "target_step": target_step,
+                "resumed": resume is not None,
+                "training_config_sha256": self.config.sha256,
+            },
+        )
+        self._emit("phase-started", global_step, phase_name=phase.name)
         try:
             while global_step < target_step:
                 phase_index, phase_step = self.config.locate_step(global_step)
@@ -892,7 +926,7 @@ class TrainingRunner:
                     "profile/explicit_syncs": 0.0,
                 }
                 cuda_events: tuple[torch.cuda.Event, ...] | None = None
-                if self.producer.device.type == "cuda" and (audit or will_log):
+                if self.data_session.device.type == "cuda" and (audit or will_log):
                     cuda_events = tuple(
                         torch.cuda.Event(enable_timing=True) for _ in range(4)
                     )
@@ -902,14 +936,14 @@ class TrainingRunner:
                     optimizer.zero_grad(set_to_none=True)
                     with self._autocast(phase):
                         context = self._phase_context(phase_index, phase_step, global_step)
-                        loss, metrics = self.definition.training_objective(
+                        loss, metrics = self.plugin.objective.compute(
                             model, prepared.batches, context
                         )
                     if cuda_events is not None:
                         cuda_events[1].record()
                     forward_finished = time.perf_counter()
                     validate_objective_outputs(
-                        self.definition.descriptor, phase.name, metrics
+                        self.plugin.descriptor, phase.name, metrics
                     )
                     if loss.ndim != 0:
                         raise RuntimeError("training objective must return one scalar loss")
@@ -1021,12 +1055,12 @@ class TrainingRunner:
                             target_step - global_step
                         ) / max(rolling_speed, 1e-12),
                     }
-                    if self.producer.device.type == "cuda":
+                    if self.data_session.device.type == "cuda":
                         row["peak_memory_bytes"] = float(
-                            torch.cuda.max_memory_allocated(self.producer.device)
+                            torch.cuda.max_memory_allocated(self.data_session.device)
                         )
                         row["reserved_memory_bytes"] = float(
-                            torch.cuda.memory_reserved(self.producer.device)
+                            torch.cuda.memory_reserved(self.data_session.device)
                         )
                     report_loss, report_metrics = self._ddp_report(loss, metrics)
                     row["loss"] = float(report_loss)
@@ -1117,6 +1151,16 @@ class TrainingRunner:
                     metric_rows.append(row)
                     if self.metric_callback is not None:
                         self.metric_callback(row)
+                    self._emit(
+                        "step-completed",
+                        global_step,
+                        phase_name=phase.name,
+                        scalars={
+                            name: value
+                            for name, value in row.items()
+                            if name not in {"step", "phase_index", "phase_step"}
+                        },
+                    )
                     bar.set_postfix(
                         {
                             "phase": phase.name,
@@ -1134,8 +1178,8 @@ class TrainingRunner:
                         phase, optimizer, scheduler, scaler, active
                     )
                     if phase.transition is not None:
-                        self.definition.apply_phase_transition(
-                            model, phase.transition, self.producer.native_assets()
+                        self.plugin.lifecycle.apply_transition(
+                            model, phase.transition, self.data_session.native_assets()
                         )
                     if global_step < self.config.total_steps:
                         next_index, next_step = self.config.locate_step(global_step)
@@ -1146,7 +1190,12 @@ class TrainingRunner:
                             phase_step=next_step,
                             overlap_state=previous_state,
                         )
-                        registry = self.definition.parameter_registry(model)
+                        registry = self.plugin.lifecycle.parameter_registry(model)
+                        self._emit(
+                            "phase-started",
+                            global_step,
+                            phase_name=next_phase.name,
+                        )
 
                 needs_validation = (
                     global_step % int(self.config.validation["interval"]) == 0
@@ -1199,11 +1248,22 @@ class TrainingRunner:
                     if self.metric_callback is not None:
                         for row in new_rows:
                             self.metric_callback(row)
+                    validation_scalars: dict[str, float] = {}
+                    for row in new_rows:
+                        for name, value in row.items():
+                            if name != "step":
+                                validation_scalars[name] = float(value)
+                    self._emit(
+                        "validation-completed",
+                        global_step,
+                        phase_name=phase.name,
+                        scalars=validation_scalars,
+                    )
 
                 checkpoint_boundary = boundary and phase.checkpoint_boundary
                 if global_step == self.config.total_steps:
                     validate_gradient_coverage(
-                        self.definition.descriptor, coverage
+                        self.plugin.descriptor, coverage
                     )
                 if needs_validation or checkpoint_boundary:
                     if global_step == self.config.total_steps:
@@ -1231,6 +1291,28 @@ class TrainingRunner:
                         self._ddp_checkpoint_sync(checkpoint_error is None)
                         if checkpoint_error is not None:
                             raise checkpoint_error
+                    self._emit(
+                        "checkpoint-committed",
+                        global_step,
+                        phase_name=(
+                            "complete"
+                            if global_step == self.config.total_steps
+                            else self.config.phases[
+                                self.config.locate_step(global_step)[0]
+                            ].name
+                        ),
+                        details={
+                            "periodic_callback": self.checkpoint_callback is not None
+                        },
+                    )
+        except BaseException as error:
+            self._emit(
+                "run-failed",
+                global_step,
+                phase_name=phase.name,
+                details={"error_type": type(error).__name__, "message": str(error)},
+            )
+            raise
         finally:
             while queue:
                 self._release_prepared(queue.popleft())
@@ -1245,5 +1327,15 @@ class TrainingRunner:
             )
         checkpoint = self._checkpoint(
             model, global_step, final_optimization, coverage, validation_rows
+        )
+        self._emit(
+            "run-completed",
+            global_step,
+            phase_name=(
+                "complete"
+                if global_step == self.config.total_steps
+                else self.config.phases[self.config.locate_step(global_step)[0]].name
+            ),
+            details={"complete": global_step == self.config.total_steps},
         )
         return TrainingRunResult(checkpoint, tuple(metric_rows + validation_rows))

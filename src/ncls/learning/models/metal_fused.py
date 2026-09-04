@@ -371,7 +371,7 @@ class MetalPreparedModel(nn.Module):
         )
 
 
-class MetalFusedNeuralMaterialModel(nn.Module):
+class MetalModel(nn.Module):
     def __init__(
         self,
         profile: MetalFusedProfile = METAL_FUSED_FULL_PROFILE,
@@ -398,7 +398,7 @@ class MetalFusedNeuralMaterialModel(nn.Module):
         self.hybrid = MetalHybridEvaluator(profile, directional_width)
 
     @classmethod
-    def from_context(cls, context: Mapping[str, Any]) -> "MetalFusedNeuralMaterialModel":
+    def from_context(cls, context: Mapping[str, Any]) -> "MetalModel":
         if dict(context) != dict(METAL_FUSED_REQUIRED_CONTEXT):
             raise ValueError(
                 "Metal fused trainable requires the exact quality-first full profile context"
@@ -699,7 +699,7 @@ class MetalFusedNeuralMaterialModel(nn.Module):
 
     @staticmethod
     def parameter_groups_for_model(
-        model: "MetalFusedNeuralMaterialModel",
+        model: "MetalModel",
     ) -> Mapping[str, tuple[str, ...]]:
         classified: dict[str, list[str]] = {
             "codec_role_stems": [],
@@ -764,15 +764,15 @@ class MetalFusedNeuralMaterialModel(nn.Module):
 
 def metal_fused_parameter_groups() -> Mapping[str, tuple[str, ...]]:
     with torch.device("meta"):
-        model = MetalFusedNeuralMaterialModel.from_context(
+        model = MetalModel.from_context(
             METAL_FUSED_REQUIRED_CONTEXT
         )
-    return MetalFusedNeuralMaterialModel.parameter_groups_for_model(model)
+    return MetalModel.parameter_groups_for_model(model)
 
 
 __all__ = [
     "METAL_FUSED_REQUIRED_CONTEXT",
-    "MetalFusedNeuralMaterialModel",
+    "MetalModel",
     "MetalPreparedState",
     "MetalScatteringSample",
     "MetalSpatialState",

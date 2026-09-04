@@ -6,7 +6,7 @@ import torch
 from ncls.learning.metal_asset_cook import MetalAssetCooker
 from ncls.learning.models.metal_fused import (
     METAL_FUSED_REQUIRED_CONTEXT,
-    MetalFusedNeuralMaterialModel,
+    MetalModel,
 )
 from ncls.learning.source_adaptation import DenseNativeAssetCollection, NativeAssetRole
 
@@ -47,7 +47,7 @@ def test_three_asset_cook_paths_share_decoder_profile_and_keep_distinct_identity
     pytest.importorskip("slangpy")
     if not torch.cuda.is_available():
         pytest.skip("CUDA is required")
-    model = MetalFusedNeuralMaterialModel.from_context(
+    model = MetalModel.from_context(
         METAL_FUSED_REQUIRED_CONTEXT
     ).to("cuda:0")
     cooker = MetalAssetCooker(

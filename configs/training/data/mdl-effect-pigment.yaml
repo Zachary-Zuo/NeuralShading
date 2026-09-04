@@ -1,0 +1,28 @@
+format_name: ncls.training-fragment
+format_version: 1
+kind: data
+key: mdl-effect-pigment
+extends: null
+compatible_methods: [nvidia]
+payload:
+  training:
+    source_adaptation_id: nvidia.mdl-fixed-uniform@1
+    source:
+      family_id: mdl.program@1
+      materials:
+        - locator:
+            kind: mdl-export
+            module_root: assets/source-materials/mdl-vmaterials2/2.4.0/Materials
+            module: ::vMaterials_2::Paint::Carpaint::Effect_Pigment_Metallic
+            export: Effect_Pigment_Metallic
+            pack_id: nvidia.vmaterials
+            pack_version: 2.4.0
+    online_query:
+      recipe_id: generic-reference-query@1
+      evaluation_samples: 1
+    model_context:
+      native_feature_count: 896
+      latent_width: 1
+      latent_height: 1
+      latent_mip_count: 1
+    seed: 20260829

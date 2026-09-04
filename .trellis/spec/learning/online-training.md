@@ -2,18 +2,22 @@
 
 ## 1. Scope / Trigger
 
-修改training config、phase、route、batch、asset collection、producer、runner、checkpoint或method objective时适用。
+修改 YAML training plan、phase、route、batch、asset collection、online data session、engine、checkpoint、hook 或 method facet 时适用。
 
 ## 2. Signatures
 
 ```text
-TrainingConfig.from_dict(...) -> TrainingConfig@4
+TrainingPlanResolver.resolve(run_yaml, devices=None) -> ResolvedTrainingPlan@1
+ResolvedTrainingPlan.to_runtime_config() -> internal TrainingConfig
+DataExecutionPlan.build(...) -> DataExecutionPlan@1
 OnlineTrainingProducer.next_batch(request) -> AssetTileBatch@1 | EvaluatorBatch@3 | MethodSamplerBatch@3
+OnlineDataSession.next_batch/state_dict/load_state_dict/drain/close
 MethodSourceAdapter.sample_tensors(source_index, generator, options) -> Mapping[str, Tensor]
 expand_source_states(family, base_snapshots, typed_state_recipe) -> ExpandedSourceStates
-MethodDefinition.training_objective(model, batches, phase) -> (loss, metrics)
-TrainingRunner.run(resume=None, stop_at_step=None) -> TrainingRunResult
-TrainingCheckpoint.load(path) -> TrainingCheckpoint@4
+MethodPlugin.objective.compute(model, batches, phase) -> (loss, metrics)
+TrainingEngine.run(resume=None, stop_at_step=None) -> TrainingRunResult
+save/load_training_checkpoint_v1(path) -> TrainingCheckpoint@1
+load_evaluation_snapshot(path) -> EvaluationSnapshot
 assess_checkpoint_readiness(checkpoint, descriptor, mode="formal" | "diagnostic-evaluator")
   -> CheckpointReadiness@1
 MetalAssetCooker.cook_asset(asset_index, mode, refinement_steps, refinement_bound) -> MetalCompiledAssetState
@@ -21,7 +25,8 @@ MetalAssetCooker.cook_asset(asset_index, mode, refinement_steps, refinement_boun
 
 ## 3. Contracts
 
-- config是有序phase graph；每phase显式声明routes、parameter groups、loss terms、recipes、optimizer、schedule、precision、transition、checkpoint/metrics/audit/prefetch cadence。runner不硬编码phase名称、数量或双route。
+- 正式配置是 `base/method/data/recipe` 组合 YAML；resolver 严格展开并冻结 `ResolvedTrainingPlan@1`。公开 method key 不含 `@`。内部 runtime config 是 engine 的 phase graph 投影，不是用户输入格式。
+- config是有序phase graph；每phase显式声明routes、parameter groups、loss terms、recipes、optimizer、schedule、precision、transition、checkpoint/metrics/audit/prefetch cadence。engine不硬编码phase名称、数量或双route。
 - `NativeAssetCollection@1`统一多asset/domain/mip tile+halo traversal；1×1 source不是另一套adapter。
 - producer在编plan前通过schema registry执行`expand_source_states()`；无recipe时也生成`ncls.identity-source-states@1` identity。Metal recipe只通过公共source editor产生Sobol/boundary/default typed states，责任组、bool/enum与hard/soft range均显式；无界continuous/int保持authored default。train/validation以recipe identity参与scramble，允许共享authored default但非默认采样state必须隔离。
 - `MethodSourceAdapter.sample_tensors()`只有`(source_index, generator, options)`这一条正式签名；route options负责传递Metal的tile extent、patch size和direction proposal，不保留旧的二参数兼容入口。Metal adapter必须消费registry中exact locator、graph/schema/recipe/metal/finish/asset identity，并产生32个typed token、16维canonical optical、access/frame state以及9-slot相邻mip patch；缺失token由presence mask隔离，全部缺失时仍以global token得到有限pure compiler state。
@@ -31,12 +36,13 @@ MetalAssetCooker.cook_asset(asset_index, mode, refinement_steps, refinement_boun
 - Metal新资产cook固定三条不同identity：`encoder-only`、`encoder-bounded-refinement`、`direct-optimized-control`。三者必须使用同一full-profile shared decoder和packing；bounded refinement从encoder state出发并投影到显式bound，direct control从自由state出发。优化两条路径冻结shared decoder，不能把decoder漂移混入asset state。
 - `metal_fused_full_v1`训练形态固定为9 slots、32×64 typed set、64/128/192/256 shared U-Net、high/low各8通道、rank-8 adapter、6+4 evaluator lobes、11-component matched proposal和四级angular bank。smoke只能缩step、batch、tile/cohort，不能缩这些shape或关闭required branch。BF16 phase中，frame lerp与一维/二维random-access插值显式在FP32执行，其余网络继续autocast。
 - 三种batch不共享dummy字段。method descriptor必须严格登记batch dependencies与parameter ownership。
-- runner只启用phase groups；optimizer状态以parameter name保存，`carry-overlap`仅传递同名交集。autocast/scaler由phase配置。
+- engine只启用phase groups；optimizer状态以parameter name保存，`carry-overlap`仅传递同名交集。autocast/scaler由phase配置。方法只能通过 plugin lifecycle/objective facet 提供行为，不能拥有专用 runner。
 - 每步GPU聚合finite检查；audit cadence验证每个required group存在nonzero gradient和实际参数更新。metrics只在log cadence同步。
 - optional producer profile在training与validation之间严格分账。validation开始前先把尚未落盘的training counter暂存，validation结束后以`profile/validation_reference_*`写入首条validation row并reset；下一条training row只合并`profile/reference_*`训练计数。counter求和、`*_max`取最大、`resident_groups`取最后状态。
 - prefetch有界且不跨validation、checkpoint、phase或stop边界；checkpoint query cursor不得领先已消费batch。
 - objective每次返回active required component的全部Python outputs；完成checkpoint前required groups的gradient/update coverage必须齐全。
-- checkpoint严格冻结method/components/config/phase graph/reference plan/asset collection/query/source identity与当前phase optimization状态。
+- checkpoint v1 严格冻结 resolved plan、method/facet、data execution/reference/asset/query/source identity、逐 rank RNG/data cursor、hook cursor 与当前 phase optimization 状态。发布前必须调用 data session `drain()`。
+- 旧 checkpoint v4 只经 `LegacyCheckpointV4Importer` 产生 evaluation snapshot；不得 resume，也不得恢复旧 JSON config reader或 method alias。
 - producer state必须额外保存`typed_state_pool_identity`；resume同时校验pool与`query_stream_identity`，generator/group/tile cursor只能在identity一致后恢复。不能只保存seed后在新registry上重生另一批states。
 
 ## 4. Validation & Error Matrix
@@ -44,14 +50,15 @@ MetalAssetCooker.cook_asset(asset_index, mode, refinement_steps, refinement_boun
 | 条件 | 行为 |
 |---|---|
 | phase引用未知group/route或required component永不active | 构造拒绝 |
-| asset/evaluator/sampler batch类型、shape、device错 | batch/runner拒绝 |
-| loss/gradient非有限、required group零梯度或未更新 | runner失败 |
+| asset/evaluator/sampler batch类型、shape、device错 | batch/engine拒绝 |
+| loss/gradient非有限、required group零梯度或未更新 | engine失败 |
 | objective漏required component output | generic conformance失败 |
 | resume identity或phase cursor漂移 | checkpoint恢复拒绝 |
 | tile越界、role/domain不匹配或mip chain不canonical | collection在materialize前拒绝 |
 | formal export不是`run_class=formal`、phase不是`complete`，或缺required group finite/nonzero/update coverage | readiness拒绝；不生成正式package/catalog |
 | diagnostic evaluator preview没有exact descriptor、step-1端到端evaluator组覆盖或合法phase | readiness拒绝；不得用旧tensor shape兼容冒充可部署状态 |
-| validation backend counter出现在下一条training profile | runner profile隔离测试失败；不得据此归因冷启动或长期吞吐 |
+| validation backend counter出现在下一条training profile | engine profile隔离测试失败；不得据此归因冷启动或长期吞吐 |
+| v4 checkpoint 传给新 train resume | v1 loader明确拒绝；只读 evaluation importer 仍可加载 |
 | typed-state recipe schema/字段、registry locator或range未知 | plan/session创建前拒绝 |
 | resume的typed-state pool identity漂移 | producer恢复拒绝，不恢复任何cursor |
 | Metal profile count、layout identity、slot/token上限或required route不精确匹配full profile | model/method config构造拒绝，不创建缩小版identity |
@@ -71,7 +78,7 @@ MetalAssetCooker.cook_asset(asset_index, mode, refinement_steps, refinement_boun
 
 ## 6. Tests Required
 
-- unit：三种batch、multi-asset tile+halo、phase graph、carry-overlap resume、component正负例、checkpoint v4；
+- unit：YAML resolve/plugin、三种batch、multi-asset tile+halo、phase graph、carry-overlap resume、component正负例、checkpoint v1 与 legacy v4只读；
 - integration：generic recipe registry扩展Metal train/validation states并验证非默认snapshot IDs不重叠、pool identity可恢复；
 - GPU：NVIDIA Python/Slang evaluator与sampler梯度；Metal full-shape finite/nonnegative、typed missing/discrete与bundle分离、三路径asset cook、BF16/QAT敏感路径、Python/Slang matched proposal parity，以及真实online两phase smoke/resume/evaluate；
 - static：无固定lifecycle、旧schema reader、offline batch或family-specific producer。
@@ -79,14 +86,14 @@ MetalAssetCooker.cook_asset(asset_index, mode, refinement_steps, refinement_boun
 ## 7. Wrong vs Correct
 
 ```python
-# 错：构造batch中途失败时遗留tile lease，并用固定phase名称驱动runner。
+# 错：构造batch中途失败时遗留tile lease，并用固定phase名称驱动engine。
 tile = collection.acquire(request)
 return EvaluatorBatch(tile=tile, target=bad_target)
 
-# 对：typed batch拥有并最终释放lease；runner只解释配置中的phase graph。
+# 对：typed batch拥有并最终释放lease；engine只解释resolved plan中的phase graph。
 with collection.acquire(request) as tile:
     batch = EvaluatorBatch.from_tile(tile, target)
-runner.run_phase(config.phases[phase_cursor], batch)
+engine.run(resume=checkpoint, stop_at_step=target)
 ```
 
 ```python
@@ -199,11 +206,11 @@ pdf = local_pdf(to_local(wi)) + local_pdf(to_local(mirror_z(wi)))
 
 ```text
 fake_quantize_fp16_ste(master: Tensor) -> deployed_value_with_master_gradient
-MetalFusedMethodDefinition.training_objective(..., phase.name="qat-refine")
+MethodPlugin.objective.compute(..., phase.name="qat-refine")
   batches == {asset: AssetTileBatch, evaluator: EvaluatorBatch, sampler: MethodSamplerBatch}
-TrainingRunner.run(resume=None, stop_at_step=N) -> checkpoint at exact global step N
+TrainingEngine.run(resume=None, stop_at_step=N) -> checkpoint at exact global step N
+TrainingPlanResolver.resolve("configs/training/runs/metal-linux-long.yaml")
 build_training_review(config, descriptor, checkpoint, metric_rows, ...) -> ncls.training-review@1
-python tools/learning/build_metal_training_configs.py [--write]
 python -m tools.learning.build_metal_linux_handoff --output <handoff.json>
 ```
 
@@ -247,11 +254,11 @@ python -m tools.learning.build_metal_linux_handoff --output <handoff.json>
 
 ### 6. Tests Required
 
-- unit：FP16 STE前向等于round-trip FP16且gradient为1；proposal objective只给proposal group梯度；QAT groups覆盖全部runtime parameter groups但排除optimized teacher；两phase config精确验证；formal/diagnostic readiness正负例；training/validation backend profile隔离；Linux generated config为692-source同semantic fingerprint；handoff无自动后续。
+- unit：FP16 STE前向等于round-trip FP16且gradient为1；proposal objective只给proposal group梯度；QAT groups覆盖全部runtime parameter groups但排除optimized teacher；两phase YAML resolve精确验证；formal/diagnostic readiness正负例；training/validation backend profile隔离；Linux smoke/long plan source与batch合同一致；handoff无自动后续。
 - GPU：full model BF16/QAT finite、13组gradient/update、fixed proposal下降；真实Windows两phase在首个QAT step停点并恢复至complete。
 - online：fixed query cursor下两phase分别重复authoritative reference，初尾window记录真实下降且无response持久化；完整formal checkpoint evaluate与package export通过。
 - viewer：package、catalog与scene material的source snapshot一致；PT/deferred两个slot ready且linear EXR finite。
-- static：config generator `--check`、full-cohort preflight、Linux launcher shell syntax、DDP rank0/checkpoint语义、Falcor clean、`git diff --check`。
+- static：YAML plan resolve、full-cohort preflight、Linux launcher shell syntax、DDP rank0/checkpoint语义、Falcor clean、`git diff --check`。
 
 ### 7. Wrong vs Correct
 

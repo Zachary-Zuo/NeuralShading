@@ -9,7 +9,9 @@ from .checkpoint import TrainingCheckpoint
 from .config import TrainingConfig
 
 
-CheckpointReadinessMode = Literal["formal", "diagnostic-evaluator"]
+CheckpointReadinessMode = Literal[
+    "formal", "diagnostic-evaluator", "visual-diagnostic"
+]
 
 _METAL_DIAGNOSTIC_GROUPS = frozenset(
     {
@@ -92,7 +94,7 @@ def assess_checkpoint_readiness(
     *,
     mode: CheckpointReadinessMode = "formal",
 ) -> CheckpointReadiness:
-    if mode not in {"formal", "diagnostic-evaluator"}:
+    if mode not in {"formal", "diagnostic-evaluator", "visual-diagnostic"}:
         raise ValueError("checkpoint readiness mode is unsupported")
     reasons: list[str] = []
     exact = True
@@ -118,7 +120,7 @@ def assess_checkpoint_readiness(
             reasons.append(
                 f"formal export requires complete training, got {checkpoint.phase_name}@{checkpoint.global_step}"
             )
-    else:
+    elif mode == "diagnostic-evaluator":
         if descriptor.method_key != "metal-fused-neural-material":
             required_groups = _required_component_groups(descriptor)
             reasons.append("diagnostic evaluator preview is only defined for the Metal method")
@@ -130,6 +132,11 @@ def assess_checkpoint_readiness(
             "complete",
         }:
             reasons.append("diagnostic evaluator preview requires end-to-end training evidence")
+    else:
+        # Visual eval is a diagnostic, never deployment or selection evidence.
+        required_groups = frozenset()
+        if checkpoint.global_step < 1:
+            reasons.append("visual diagnostic requires at least one completed training step")
 
     unknown = required_groups - set(descriptor.parameter_groups)
     if unknown:

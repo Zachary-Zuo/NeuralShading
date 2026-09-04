@@ -281,6 +281,7 @@ class _ReferenceExecutionGroupSession:
             raise RuntimeError("ReferenceBackendSession requires a CUDA device")
         self.backend_descriptor = backend_descriptor
         self.backend_identity = backend_descriptor.identity
+        self.concurrency = backend_descriptor.concurrency
         self.definition = definition
         self.group = group
         self.snapshots = values

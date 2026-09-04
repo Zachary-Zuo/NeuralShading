@@ -9,6 +9,14 @@ import numpy as np
 import torch
 
 from ncls.core.identity import sha256_json
+from ncls.data import (
+    GpuResidencyManager,
+    HostPipeline,
+    HostRequest,
+    PipelineTrace,
+    ResidentAllocation,
+    ResidencyKey,
+)
 from ncls.learning.source_adaptation import (
     NativeAssetDescriptor,
     NativeAssetDomain,
@@ -113,6 +121,45 @@ class _AssetSource:
     slots: Mapping[int, Mapping[str, Any]]
 
 
+@dataclass(frozen=True)
+class _ResidentMipPyramid:
+    texels: torch.Tensor
+    shapes: torch.Tensor
+    offsets: torch.Tensor
+
+
+@dataclass(frozen=True)
+class _HostMipDecodeRequest:
+    path: str
+    dtype: str
+    shape: tuple[int, int, int]
+    manifest_slot: Mapping[str, Any]
+    slot: Mapping[str, Any]
+    domain: NativeAssetDomain
+
+
+def _decode_host_mip_pyramid(
+    request: _HostMipDecodeRequest,
+) -> tuple[torch.Tensor, ...]:
+    values = np.memmap(
+        request.path,
+        mode="r",
+        dtype=np.dtype(request.dtype),
+        shape=request.shape,
+    )
+    collection = MdlMetalNativeAssetCollection.__new__(MdlMetalNativeAssetCollection)
+    collection._base_array = lambda _asset_index, _slot_index: (
+        values,
+        request.manifest_slot,
+        request.slot,
+    )
+    levels = collection._decode_mip_pyramid(0, 0, request.domain)
+    return tuple(
+        torch.from_numpy(np.ascontiguousarray(level.transpose(2, 0, 1)))
+        for level in levels
+    )
+
+
 class MdlMetalNativeAssetCollection:
     """52 个 Metal texture-set 的 memmap/tile+halo canonical collection。"""
 
@@ -182,6 +229,14 @@ class MdlMetalNativeAssetCollection:
         self._mip_pyramid_key: tuple[int, int] | None = None
         self._mip_pyramid: tuple[np.ndarray, ...] = ()
         self._cook_asset_index: int | None = None
+        self._gpu_residency: GpuResidencyManager[_ResidentMipPyramid] | None = None
+        self._gpu_device: torch.device | None = None
+        self._gpu_trace: PipelineTrace | None = None
+        self._gpu_slot_mask: torch.Tensor | None = None
+        self._gpu_role_class: torch.Tensor | None = None
+        self._host_pipeline: HostPipeline | None = None
+        self._host_prefetch = 0
+        self._host_request_id = 0
 
     @property
     def collection_id(self) -> str:
@@ -200,6 +255,54 @@ class MdlMetalNativeAssetCollection:
                 "working_set_capacity": self._cache.capacity,
             }
         )
+
+    def enable_gpu_sampling(
+        self,
+        device: torch.device,
+        *,
+        budget_bytes: int,
+        trace: PipelineTrace,
+        num_workers: int = 0,
+        host_prefetch: int = 1,
+    ) -> None:
+        if device.type != "cuda":
+            raise ValueError("Metal resident patch sampling requires a CUDA device")
+        if self._gpu_residency is not None:
+            if self._gpu_device != device:
+                raise RuntimeError("Metal GPU residency cannot change device")
+            return
+        slot_masks = np.zeros((len(self.descriptors), 9), dtype=np.bool_)
+        role_classes = np.zeros((len(self.descriptors), 9), dtype=np.int64)
+        for asset_index, descriptor in enumerate(self.descriptors):
+            for slot_position, domain in enumerate(descriptor.domains):
+                if slot_position >= 9:
+                    raise ValueError("Metal source asset exceeds the nine-slot profile")
+                slot_masks[asset_index, slot_position] = True
+                role_classes[asset_index, slot_position] = (
+                    3
+                    if len(domain.roles) > 1
+                    else semantic_role_class(
+                        domain.roles[0].semantic, domain.roles[0].channel_count
+                    )
+                )
+        self._gpu_device = device
+        self._gpu_trace = trace
+        self._gpu_residency = GpuResidencyManager(budget_bytes, trace=trace)
+        self._gpu_slot_mask = torch.as_tensor(
+            slot_masks, dtype=torch.bool, device=device
+        )
+        self._gpu_role_class = torch.as_tensor(
+            role_classes, dtype=torch.int64, device=device
+        )
+        if num_workers:
+            self._host_pipeline = HostPipeline(
+                _decode_host_mip_pyramid,
+                num_workers=num_workers,
+                capacity=host_prefetch,
+                stage="metal-mip-decode",
+                trace=trace,
+            )
+            self._host_prefetch = host_prefetch
 
     @contextmanager
     def cook_session(self, asset_index: int) -> Iterator[None]:
@@ -404,6 +507,7 @@ class MdlMetalNativeAssetCollection:
         mip_level: torch.Tensor,
         *,
         patch_size: int,
+        active_asset_indices: tuple[int, ...] | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """返回相邻两级source patches，供shared encoder端到端训练。"""
 
@@ -415,6 +519,18 @@ class MdlMetalNativeAssetCollection:
             or patch_size > 32
         ):
             raise ValueError("Metal source patch request shape/budget is invalid")
+        if self._gpu_residency is not None:
+            if active_asset_indices is None:
+                raise ValueError(
+                    "resident Metal sampling requires execution-group asset identities"
+                )
+            return self._sample_resident_patches(
+                asset_index,
+                uv,
+                mip_level,
+                patch_size=patch_size,
+                active_asset_indices=active_asset_indices,
+            )
         device = uv.device
         asset_values = asset_index.detach().to("cpu").numpy().astype(np.int64)
         uv_values = uv.detach().to("cpu").numpy().astype(np.float64)
@@ -466,30 +582,83 @@ class MdlMetalNativeAssetCollection:
             torch.as_tensor(role_class, dtype=torch.int64, device=device),
         )
 
-    def _raw_mip_pyramid(
+    @staticmethod
+    def _sample_gpu_pyramid(
+        pyramid: _ResidentMipPyramid,
+        uv: torch.Tensor,
+        requested_level: torch.Tensor,
+        patch_size: int,
+        address_mode: str,
+    ) -> torch.Tensor:
+        if pyramid.texels.ndim != 2:
+            raise ValueError("resident Metal mip atlas must have C,N layout")
+        channels = pyramid.texels.shape[0]
+        shapes = pyramid.shapes.index_select(0, requested_level)
+        height = shapes[:, 0]
+        width = shapes[:, 1]
+        base_offset = pyramid.offsets.index_select(0, requested_level)
+        offsets = torch.arange(
+            patch_size, dtype=torch.int64, device=uv.device
+        ) - patch_size // 2
+        center_x = torch.floor(uv[:, 0] * width).to(torch.int64)
+        center_y = torch.floor(uv[:, 1] * height).to(torch.int64)
+        x = center_x[:, None] + offsets[None, :]
+        y = center_y[:, None] + offsets[None, :]
+        if address_mode == "wrap":
+            x = torch.remainder(x, width[:, None])
+            y = torch.remainder(y, height[:, None])
+        elif address_mode == "clamp":
+            x = torch.minimum(torch.clamp(x, min=0), width[:, None] - 1)
+            y = torch.minimum(torch.clamp(y, min=0), height[:, None] - 1)
+        else:
+            raise ValueError("resident Metal mip address mode is unsupported")
+        flat = (
+            base_offset[:, None, None]
+            + y[:, :, None] * width[:, None, None]
+            + x[:, None, :]
+        )
+        return (
+            pyramid.texels.index_select(1, flat.reshape(-1))
+            .reshape(channels, uv.shape[0], patch_size, patch_size)
+            .permute(1, 0, 2, 3)
+            .contiguous()
+        )
+
+    @staticmethod
+    def _normalize_gpu_roles(
+        values: torch.Tensor, domain: NativeAssetDomain
+    ) -> torch.Tensor:
+        cursor = 0
+        result = values
+        for role in domain.roles:
+            following = cursor + role.channel_count
+            if role.semantic == "normal-tangent":
+                result = result.clone()
+                normal = result[:, cursor:following] * 2.0 - 1.0
+                if role.channel_count >= 3:
+                    normal = normal / torch.clamp(
+                        torch.linalg.vector_norm(normal, dim=1, keepdim=True),
+                        min=1e-8,
+                    )
+                result[:, cursor:following] = normal * 0.5 + 0.5
+            cursor = following
+        return result
+
+    def _decode_mip_pyramid(
         self,
         asset_index: int,
         slot_index: int,
         domain: NativeAssetDomain,
     ) -> tuple[np.ndarray, ...]:
-        if self._cook_asset_index != asset_index:
-            raise RuntimeError("full Metal mip pyramid is only valid inside a cook session")
-        key = (asset_index, slot_index)
-        if self._mip_pyramid_key == key:
-            return self._mip_pyramid
         values, manifest_slot, slot = self._base_array(asset_index, slot_index)
         height, width = domain.level_shapes[0]
         channels = domain.channel_count
         base = np.empty((height, width, channels), dtype=np.float32)
         x = np.arange(width, dtype=np.int64)
-        # Decode in bounded row bands so an 8K source does not create another
-        # full-resolution advanced-indexing temporary.
         for begin in range(0, height, 256):
             end = min(height, begin + 256)
             y = np.arange(begin, end, dtype=np.int64)
-            base[begin:end] = self._read_block(
-                values, manifest_slot, slot, y, x
-            )
+            base[begin:end] = self._read_block(values, manifest_slot, slot, y, x)
         levels = [base]
         while len(levels) < len(domain.level_shapes):
             previous = levels[-1]
@@ -516,9 +685,269 @@ class MdlMetalNativeAssetCollection:
             else:
                 value = previous.copy()
             levels.append(np.ascontiguousarray(value, dtype=np.float32))
+        return tuple(levels)
+
+    def _acquire_resident_slot(
+        self,
+        asset_index: int,
+        slot_index: int,
+        domain: NativeAssetDomain,
+        decoded_levels: tuple[torch.Tensor, ...] | None = None,
+    ):
+        if self._gpu_residency is None or self._gpu_device is None:
+            raise RuntimeError("Metal GPU residency is not enabled")
+        estimate = self._resident_estimate(domain)
+        key = self._resident_key(asset_index, domain)
+
+        def materialize() -> ResidentAllocation[_ResidentMipPyramid]:
+            trace = self._gpu_trace
+            if trace is None:
+                raise RuntimeError("Metal GPU trace is not configured")
+            if decoded_levels is None:
+                with trace.measure("metal.host-decode-mip-pyramid"):
+                    numpy_levels = self._decode_mip_pyramid(
+                        asset_index, slot_index, domain
+                    )
+                cpu_levels = tuple(
+                    torch.from_numpy(
+                        np.ascontiguousarray(level.transpose(2, 0, 1))
+                    )
+                    for level in numpy_levels
+                )
+            else:
+                cpu_levels = decoded_levels
+            with trace.measure("metal.host-to-device-mip-pyramid"):
+                level_texels = tuple(
+                    int(level.shape[1] * level.shape[2]) for level in cpu_levels
+                )
+                offsets = np.cumsum((0, *level_texels[:-1]), dtype=np.int64)
+                texels = torch.empty(
+                    (domain.channel_count, sum(level_texels)),
+                    dtype=torch.float32,
+                    device=self._gpu_device,
+                )
+                for offset, count, level in zip(
+                    offsets, level_texels, cpu_levels, strict=True
+                ):
+                    texels[:, int(offset) : int(offset) + count].copy_(
+                        level.reshape(domain.channel_count, count)
+                    )
+                shapes = torch.tensor(
+                    [level.shape[1:] for level in cpu_levels],
+                    dtype=torch.int64,
+                    device=self._gpu_device,
+                )
+                gpu_offsets = torch.as_tensor(
+                    offsets, dtype=torch.int64, device=self._gpu_device
+                )
+                pyramid = _ResidentMipPyramid(texels, shapes, gpu_offsets)
+            allocated = sum(
+                value.nelement() * value.element_size()
+                for value in (texels, shapes, gpu_offsets)
+            )
+            return ResidentAllocation(pyramid, allocated)
+
+        return self._gpu_residency.acquire(
+            key, estimated_bytes=estimate, materialize=materialize
+        )
+
+    def _resident_estimate(self, domain: NativeAssetDomain) -> int:
+        return sum(
+            height * width * domain.channel_count * np.dtype(np.float32).itemsize
+            for height, width in domain.level_shapes
+        )
+
+    def _resident_key(
+        self, asset_index: int, domain: NativeAssetDomain
+    ) -> ResidencyKey:
+        if self._gpu_device is None:
+            raise RuntimeError("Metal GPU residency is not enabled")
+        return ResidencyKey(
+            sha256_json(
+                {
+                    "collection_id": self.collection_id,
+                    "asset_id": self.descriptors[asset_index].asset_id,
+                    "domain_id": domain.domain_id,
+                }
+            ),
+            "canonical-float32-mip-pyramid@1",
+            str(self._gpu_device),
+        )
+
+    def _host_decode_request(
+        self,
+        asset_index: int,
+        slot_index: int,
+        domain: NativeAssetDomain,
+    ) -> _HostMipDecodeRequest:
+        values, manifest_slot, slot = self._base_array(asset_index, slot_index)
+        filename = getattr(values, "filename", None)
+        if filename is None:
+            raise ValueError("Metal host decode requires a file-backed source payload")
+        return _HostMipDecodeRequest(
+            str(Path(filename).resolve()),
+            values.dtype.str,
+            tuple(int(value) for value in values.shape),
+            dict(manifest_slot),
+            dict(slot),
+            domain,
+        )
+
+    def _sample_resident_patches(
+        self,
+        asset_index: torch.Tensor,
+        uv: torch.Tensor,
+        mip_level: torch.Tensor,
+        *,
+        patch_size: int,
+        active_asset_indices: tuple[int, ...],
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if (
+            self._gpu_slot_mask is None
+            or self._gpu_role_class is None
+            or self._gpu_trace is None
+        ):
+            raise RuntimeError("Metal resident metadata is not initialized")
+        if any(
+            value < 0 or value >= len(self.descriptors)
+            for value in active_asset_indices
+        ):
+            raise ValueError("Metal active asset index is out of range")
+        batch = asset_index.shape[0]
+        patches = torch.zeros(
+            (batch, 9, 2, 4, patch_size, patch_size),
+            dtype=torch.float32,
+            device=uv.device,
+        )
+        integer_mip = torch.floor(mip_level).to(torch.int64)
+        resources = tuple(
+            (current_asset, slot_position, domain)
+            for current_asset in active_asset_indices
+            for slot_position, domain in enumerate(
+                self.descriptors[current_asset].domains
+            )
+        )
+        scheduled: list[tuple[int, int, NativeAssetDomain]] = []
+        missing = []
+        if self._host_pipeline is not None:
+            assert self._gpu_residency is not None
+            for resource in resources:
+                current_asset, _, domain = resource
+                if not self._gpu_residency.is_resident(
+                    self._resident_key(current_asset, domain)
+                ):
+                    if self._resident_estimate(domain) > self._gpu_residency.budget_bytes:
+                        raise ValueError(
+                            "Metal resident mip exceeds the configured residency budget"
+                        )
+                    missing.append(resource)
+            missing_cursor = 0
+
+            def submit_next() -> None:
+                nonlocal missing_cursor
+                if missing_cursor >= len(missing):
+                    return
+                current_asset, _, domain = missing[missing_cursor]
+                slot_index = int(domain.domain_id.removeprefix("slot-"))
+                self._host_pipeline.submit(
+                    HostRequest(
+                        self._host_request_id,
+                        self._host_decode_request(
+                            current_asset, slot_index, domain
+                        ),
+                        {
+                            "asset_index": current_asset,
+                            "domain_id": domain.domain_id,
+                        },
+                    )
+                )
+                self._host_request_id += 1
+                scheduled.append(missing[missing_cursor])
+                missing_cursor += 1
+
+            for _ in range(min(self._host_prefetch, len(missing))):
+                submit_next()
+        with self._gpu_trace.measure("metal.gpu-sample-resident-patches"):
+            for current_asset, slot_position, domain in resources:
+                asset_mask = asset_index == current_asset
+                slot_index = int(domain.domain_id.removeprefix("slot-"))
+                decoded_levels = None
+                if scheduled and scheduled[0] == (
+                    current_asset,
+                    slot_position,
+                    domain,
+                ):
+                    assert self._host_pipeline is not None
+                    result = self._host_pipeline.next_result()
+                    scheduled.pop(0)
+                    decoded_levels = tuple(result.payload)
+                    submit_next()
+                lease = self._acquire_resident_slot(
+                    current_asset, slot_index, domain, decoded_levels
+                )
+                try:
+                    pyramid = lease.value
+                    level_count = int(pyramid.shapes.shape[0])
+                    for adjacent in range(2):
+                        requested = torch.clamp(
+                            integer_mip + adjacent, max=level_count - 1
+                        )
+                        selected_level = self._sample_gpu_pyramid(
+                            pyramid,
+                            uv,
+                            requested,
+                            patch_size,
+                            domain.address_mode,
+                        )
+                        selected_level = self._normalize_gpu_roles(
+                            selected_level, domain
+                        )
+                        channels = min(4, domain.channel_count)
+                        target = patches[:, slot_position, adjacent, :channels]
+                        patches[:, slot_position, adjacent, :channels] = torch.where(
+                            asset_mask[:, None, None, None],
+                            selected_level[:, :channels],
+                            target,
+                        )
+                finally:
+                    lease.release()
+        return (
+            patches,
+            self._gpu_slot_mask.index_select(0, asset_index),
+            self._gpu_role_class.index_select(0, asset_index),
+        )
+
+    def _raw_mip_pyramid(
+        self,
+        asset_index: int,
+        slot_index: int,
+        domain: NativeAssetDomain,
+    ) -> tuple[np.ndarray, ...]:
+        if self._cook_asset_index != asset_index:
+            raise RuntimeError("full Metal mip pyramid is only valid inside a cook session")
+        key = (asset_index, slot_index)
+        if self._mip_pyramid_key == key:
+            return self._mip_pyramid
+        levels = list(self._decode_mip_pyramid(asset_index, slot_index, domain))
         self._mip_pyramid_key = key
         self._mip_pyramid = tuple(levels)
         return self._mip_pyramid
+
+    def gpu_residency_snapshot(self, *, reset_trace: bool = False) -> Mapping[str, Any]:
+        if self._gpu_residency is None:
+            return {}
+        return self._gpu_residency.snapshot(reset_trace=reset_trace)
+
+    def close(self) -> None:
+        if self._host_pipeline is not None:
+            self._host_pipeline.close()
+            self._host_pipeline = None
+        if self._gpu_residency is None:
+            return
+        self._gpu_residency.close()
+        self._gpu_residency = None
+        self._gpu_slot_mask = None
+        self._gpu_role_class = None
 
     def _load_cook_tile(
         self,

@@ -2,7 +2,7 @@
 
 ## 它是什么
 
-`metal-fused-neural-material`把vMaterials 2 Metal的原生MDL参数、52组texture asset与online reference query编译成统一的`prepare/evaluate/sample/pdf` neural material。训练默认单进程单卡；Linux可通过`--gpus`启用torchrun/NCCL DDP，多rank共享梯度，只有rank0写出统一checkpoint/metrics，不保存response batch。
+公开方法 `metal` 把 vMaterials 2 Metal 的原生 MDL 参数、52 组 texture asset 与 online reference query 编译成统一的 `prepare/evaluate/sample/pdf` neural material。单个 `--devices` 序号直接单卡训练；Linux 指定多个序号时由统一入口自动启用 torchrun/NCCL DDP，多 rank 共享梯度，只有 rank 0 写出 checkpoint/metrics，不保存 response batch。
 
 完整训练固定两个端到端phase，总预算仍为120000步：
 
@@ -15,18 +15,17 @@ proposal从第1步使用非零、按phase step决定且可恢复的冻结线性r
 
 | 配置 | source范围 | batch geometry | 用途 |
 |---|---:|---:|---|
-| `metal-fused-full-windows-smoke.json` | registry机械选择的3个stratified export / 3个texture set | 小batch、16步 | RTX 4090上的两phase lifecycle、gradient/update、resume与部署链路验证 |
-| `metal-fused-full-linux-smoke.json` | 全部692个opaque export / 52个texture set | 与long相同 | Linux目标机资源、两phase与完整source plan gate |
-| `metal-fused-full-linux-long.json` | 全部692个opaque export / 52个texture set | asset 12、evaluator 64、sampler 64 | 120000步首轮质量训练 |
+| `metal-windows-smoke.yaml` | registry机械选择的3个stratified export / 3个texture set | 小batch、16步 | RTX 4090上的两phase lifecycle、gradient/update、resume与部署链路验证 |
+| `metal-linux-smoke.yaml` | 全部692个opaque export / 52个texture set | 与long相同 | Linux目标机资源、两phase与完整source plan gate |
+| `metal-linux-long.yaml` | 全部692个opaque export / 52个texture set | asset 12、evaluator 64、sampler 64 | 120000步首轮质量训练 |
 
-三份配置由`tools/learning/build_metal_training_configs.py`机械归一和生成。Linux smoke与long的source、online state recipe、model profile、phase顺序、route options、parameter groups、loss、precision、optimizer和batch geometry逐字段相同，只允许run class、预算及log/audit/validation cadence不同；生成器输出共同的semantic fingerprint。Windows只缩小正确性验证的source与batch，不改变full model shape、route/loss拓扑、proposal schedule类型或required component；训练、checkpoint、readiness、compiler和viewer上层代码不按操作系统分支。
+三份 run 位于 `configs/training/runs/`，共同组合 `methods/metal.yaml`、独立 data fragment 和 recipe；resolver 严格合并并输出 plan identity。Linux smoke 与 long 的 source、online state recipe、model profile、phase 顺序、route options、parameter groups、loss、precision、optimizer 和 batch geometry 对齐，只允许 run class、预算及 log/audit/validation cadence不同。Windows只缩小正确性验证的 source 与 batch，不改变 full model shape、route/loss 拓扑、proposal schedule 类型或 required component；训练、checkpoint、readiness、compiler 和 viewer 上层代码不按操作系统分支。
 
 旧四phase GPU5结果与20k checkpoint只保留为根因证据，不能用于当前实现的速度、质量或readiness结论。旧20k只完成codec warmup，evaluator与proposal没有任何gradient/update coverage；viewer白模不是“训练较差”，而是部署了尚未开始训练的evaluator。当前Windows RTX 4090共享路径证据见任务artifact：同一当前descriptor下的16-step与544-step run都覆盖全部13组参数并完成joint/QAT；固定shaderball球面区域的reference-neural线性MAE从`0.4226`降至`0.1336`（约68.4%），neural平均亮度从`0.4314`降至`0.1250`，reference为`0.0478`。这证明最终evaluator不再保持初始化白模、训练信号能穿过checkpoint/package/viewer链路，但544步输出仍偏中性且不够接近reference，只是学习与部署正确性diagnostic，不是formal质量结论。此前不同implementation identity的544-step观察值`0.0621`只保留为历史证据，不与当前结果混用。
 
 Linux目标机尚需在同一commit上重跑full-cohort smoke与120k；旧约52小时ETA随旧phase、逐step group thrash和旧metrics一并作废。新的绝对吞吐、显存与ETA只使用目标机修复后metrics报告，不设事后hard gate。
 
 ```bash
-PYTHONPATH=src conda run --no-capture-output -n neural-shading python tools/learning/build_metal_training_configs.py
 PYTHONPATH=src conda run --no-capture-output -n neural-shading python tools/learning/preflight_metal_fused.py \
   --output artifacts/metal-linux-training/full-cohort-preflight.json
 ```
@@ -50,18 +49,18 @@ metrics每个log window记录完整step wall与prepare wall的count/mean/median/
 先按[统一Reference Backend部署](reference_backend_deployment.md)部署锁定的Falcor/MDL toolchain，并由用户把`assets/source-materials/mdl-vmaterials2/2.4.0/Materials`复制到目标机。单卡 launcher 接受一个十进制`CUDA_VISIBLE_DEVICES`，并把Falcor映射到同一物理GPU、Torch映射到进程内`cuda:0`。若要在 GPU2、3、4 上运行一个同步 DDP 作业，使用：
 
 ```bash
-bash scripts/run_falcor_python.sh --gpus 2,3,4 -- \
-  -m ncls.cli learn train configs/learning/metal-fused-full-linux-smoke.json \
-  artifacts/metal-linux-training/ddp/checkpoint.pt
+bash scripts/run_falcor_python.sh -m ncls train \
+  configs/training/runs/metal-linux-smoke.yaml --devices 2,3,4 \
+  --output artifacts/metal-linux-training/ddp/checkpoint.pt
 ```
 
 ```bash
 CUDA_VISIBLE_DEVICES=5 bash scripts/deploy_reference_linux.sh
 CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls.cli reference doctor
 
-CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls.cli learn train \
-  configs/learning/metal-fused-full-linux-smoke.json \
-  artifacts/metal-linux-training/smoke/checkpoint.pt
+CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls train \
+  configs/training/runs/metal-linux-smoke.yaml --devices 5 \
+  --output artifacts/metal-linux-training/smoke/checkpoint.pt
 ```
 
 只有目标Linux主机自己的smoke checkpoint、metrics、summary和review可以作为Linux gate；Windows证据不能替代它。检查：
@@ -77,27 +76,27 @@ CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls.cli learn train
 先用long config自身运行16步并正常写出可恢复checkpoint；这是同一config identity内的启动点，不拿smoke config checkpoint跨config恢复：
 
 ```bash
-CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls.cli learn train \
-  configs/learning/metal-fused-full-linux-long.json \
-  artifacts/metal-linux-training/long/checkpoint.pt \
+CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls train \
+  configs/training/runs/metal-linux-long.yaml --devices 5 \
+  --output artifacts/metal-linux-training/long/checkpoint.pt \
   --stop-at-step 16
 
-CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls.cli learn train \
-  configs/learning/metal-fused-full-linux-long.json \
-  artifacts/metal-linux-training/long/checkpoint.pt \
+CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls train \
+  configs/training/runs/metal-linux-long.yaml --devices 5 \
+  --output artifacts/metal-linux-training/long/checkpoint.pt \
   --resume artifacts/metal-linux-training/long/checkpoint.pt
 ```
 
-`--stop-at-step N`会在global step `N`写出包含optimizer、scheduler、precision、RNG、typed-state pool和query cursor的`TrainingCheckpoint@4`后正常退出。已经运行的进程可用一次`Ctrl+C`停止；这会放弃正在执行的step，随后从最近的`checkpoint.stepXXXXXXXX.pt`恢复，不修改config：
+`--stop-at-step N` 会在 global step `N` 写出包含 resolved plan、optimizer、scheduler、precision、逐 rank RNG/data cursor 与 hook cursor 的 `TrainingCheckpoint@1` 后正常退出。已经运行的进程可用一次 `Ctrl+C` 停止；这会放弃正在执行的 step，随后从最近的 `checkpoint.stepXXXXXXXX.pt` 恢复，不修改 YAML：
 
 ```bash
 latest=$(ls -1 artifacts/metal-linux-training/long/checkpoint.step*.pt | sort | tail -n 1)
-CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls.cli learn train \
-  configs/learning/metal-fused-full-linux-long.json \
-  artifacts/metal-linux-training/long/checkpoint.pt --resume "$latest"
+CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls train \
+  configs/training/runs/metal-linux-long.yaml --devices 5 \
+  --output artifacts/metal-linux-training/long/checkpoint.pt --resume "$latest"
 ```
 
-监控只读取runner已有输出，不增加watcher或第二训练进程：
+监控只读取 engine 已有输出，不增加 watcher 或第二训练进程：
 
 ```bash
 tail -f artifacts/metal-linux-training/long/checkpoint.metrics.jsonl
@@ -117,23 +116,22 @@ checkpoint_disk ≈ 25 × smoke_checkpoint_bytes
 
 ## 训练完成后的首轮审阅
 
-每次`learn train`都会生成`checkpoint.review.json`。它记录各phase初尾window、固定2000次bootstrap的mean-loss delta区间、finite/gradient/update健康状态、peak VRAM、step rate、checkpoint/metrics bytes、reference提交wall time及forward/backward/optimizer GPU时间。loss delta只作report-only观察，不被事后改成质量hard gate。
+每次 `ncls train` 都会生成 `checkpoint.review.json`。它记录各 phase 初尾 window、固定 2000 次 bootstrap 的 mean-loss delta 区间、finite/gradient/update 健康状态、peak VRAM、step rate、checkpoint/metrics bytes、reference 提交 wall time及 forward/backward/optimizer GPU 时间。loss delta 只作 report-only 观察，不被事后改成质量 hard gate。
 
 训练完成后可以执行一次基础checkpoint evaluation与一个代表性package export：
 
 ```bash
-CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls.cli learn evaluate \
-  configs/learning/metal-fused-full-linux-long.json \
-  artifacts/metal-linux-training/long/checkpoint.pt --batches 8
+CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls validate \
+  artifacts/metal-linux-training/long/checkpoint.pt --batches 8 --device 5
 
-CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls.cli learn export \
+CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls export \
   artifacts/metal-linux-training/long/checkpoint.pt \
   artifacts/metal-linux-training/long/package --material-index 0
 ```
 
 review明确写入`automatic_followups=[]`与`next_action=user-review-required`。它不会启动formal matrix、更多seed、消融、compact、distillation或Pareto；这些都等待用户先看首轮效果后另行决定。
 
-`learn export`只接受exact identity、`run_class=formal`、phase complete且required gradient/update coverage完整的checkpoint。Windows短训即使跑完所有phase也只能显式生成evaluate-only诊断预览：
+`ncls export` 只接受 exact identity、`run_class=formal`、phase complete 且 required gradient/update coverage 完整的 checkpoint。Windows 短训即使跑完所有 phase 也只能显式生成 evaluate-only 诊断预览：
 
 ```powershell
 .\scripts\prepare_metal_viewer.ps1 `

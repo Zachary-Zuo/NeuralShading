@@ -5,7 +5,7 @@ import math
 from pathlib import Path
 import re
 import struct
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 import torch
@@ -26,7 +26,14 @@ from ncls.learning.method import (
     SourceAdaptationContract,
     TensorField,
 )
-from ncls.learning.models.nvidia_neural_appearance import NvidiaNeuralAppearanceModel
+from ncls.learning.models.nvidia_neural_appearance import NvidiaModel
+from ncls.learning.methods.contracts import MethodPlugin
+from ncls.learning.source_adapters import (
+    MethodSourceAdapter,
+    NvidiaLayerStackSourceAdapter,
+    NvidiaMaterialXSourceAdapter,
+    NvidiaMdlFixedSourceAdapter,
+)
 from ncls.learning.objectives import sampler_forward_kl_score
 from ncls.learning.slang.nvidia_layout import NVIDIA_NEURAL_APPEARANCE_LAYOUT
 from ncls.paths import PROJECT_ROOT
@@ -445,7 +452,7 @@ class NvidiaMethodDefinition(MethodDefinition):
         }
         if set(context) != required:
             raise ValueError(f"NVIDIA trainable context fields must be exactly {sorted(required)}")
-        return NvidiaNeuralAppearanceModel(
+        return NvidiaModel(
             native_feature_count=int(context["native_feature_count"]),
             latent_width=int(context["latent_width"]),
             latent_height=int(context["latent_height"]),
@@ -583,8 +590,8 @@ class NvidiaMethodDefinition(MethodDefinition):
                 raise ValueError("formal NVIDIA reproduction requires frozen route estimators")
 
     def configure_phase(self, model: nn.Module, phase: Mapping[str, Any]) -> None:
-        if not isinstance(model, NvidiaNeuralAppearanceModel):
-            raise TypeError("NVIDIA method requires NvidiaNeuralAppearanceModel")
+        if not isinstance(model, NvidiaModel):
+            raise TypeError("NVIDIA method requires NvidiaModel")
         super().configure_phase(model, phase)
         name = str(phase["name"])
         if name not in {"bootstrap", "finetune"}:
@@ -596,8 +603,8 @@ class NvidiaMethodDefinition(MethodDefinition):
         model: nn.Module,
         native_assets: NativeAssetCollection,
     ) -> None:
-        if not isinstance(model, NvidiaNeuralAppearanceModel):
-            raise TypeError("NVIDIA method requires NvidiaNeuralAppearanceModel")
+        if not isinstance(model, NvidiaModel):
+            raise TypeError("NVIDIA method requires NvidiaModel")
         model.materialize(native_assets)
 
     def apply_phase_transition(
@@ -616,8 +623,8 @@ class NvidiaMethodDefinition(MethodDefinition):
         batches: Mapping[str, OnlineTrainingBatch],
         phase: Mapping[str, Any],
     ) -> tuple[torch.Tensor, Mapping[str, torch.Tensor | float]]:
-        if not isinstance(model, NvidiaNeuralAppearanceModel):
-            raise TypeError("NVIDIA method requires NvidiaNeuralAppearanceModel")
+        if not isinstance(model, NvidiaModel):
+            raise TypeError("NVIDIA method requires NvidiaModel")
         if phase.get("loss_terms") != ["evaluator_log1p_l1", "sampler_forward_kl"]:
             raise ValueError("NVIDIA objective received an incompatible phase loss contract")
         if set(batches) != {"evaluator", "sampler"}:
@@ -662,8 +669,8 @@ class NvidiaMethodDefinition(MethodDefinition):
         }
 
     def export_training_state(self, model: nn.Module) -> Mapping[str, torch.Tensor]:
-        if not isinstance(model, NvidiaNeuralAppearanceModel):
-            raise TypeError("NVIDIA method requires NvidiaNeuralAppearanceModel")
+        if not isinstance(model, NvidiaModel):
+            raise TypeError("NVIDIA method requires NvidiaModel")
         named_parameters = dict(model.named_parameters())
         result = {
             name: named_parameters[name].detach().cpu().contiguous()
@@ -692,8 +699,8 @@ class NvidiaMethodDefinition(MethodDefinition):
         return result
 
     def restore_training_state(self, model: nn.Module, state: Mapping[str, torch.Tensor]) -> None:
-        if not isinstance(model, NvidiaNeuralAppearanceModel):
-            raise TypeError("NVIDIA method requires NvidiaNeuralAppearanceModel")
+        if not isinstance(model, NvidiaModel):
+            raise TypeError("NVIDIA method requires NvidiaModel")
         expected = {field.name for field in self.descriptor.tensor_state_schema}
         if set(state) != expected:
             raise ValueError("NVIDIA checkpoint tensor mapping disagrees with descriptor")
@@ -866,3 +873,46 @@ class NvidiaMethodDefinition(MethodDefinition):
 
 
 METHOD_DEFINITION = NvidiaMethodDefinition()
+
+
+def _create_source_adapter(
+    snapshots: Sequence[SourceSnapshot], device: torch.device
+) -> MethodSourceAdapter:
+    values = tuple(snapshots)
+    if not values:
+        raise ValueError("NVIDIA data facet requires source snapshots")
+    contracts = {
+        (snapshot.family_id, snapshot.source_contract_version)
+        for snapshot in values
+    }
+    if len(contracts) != 1:
+        raise ValueError("one NVIDIA data session cannot mix source contracts")
+    family_id, version = next(iter(contracts))
+    factories = {
+        (
+            NvidiaLayerStackSourceAdapter.family_id,
+            NvidiaLayerStackSourceAdapter.source_contract_version,
+        ): NvidiaLayerStackSourceAdapter,
+        (
+            NvidiaMaterialXSourceAdapter.family_id,
+            NvidiaMaterialXSourceAdapter.source_contract_version,
+        ): NvidiaMaterialXSourceAdapter,
+        (
+            NvidiaMdlFixedSourceAdapter.family_id,
+            NvidiaMdlFixedSourceAdapter.source_contract_version,
+        ): NvidiaMdlFixedSourceAdapter,
+    }
+    try:
+        factory = factories[(family_id, version)]
+    except KeyError as error:
+        raise ValueError(
+            f"NVIDIA data facet has no source adapter for {family_id}@{version}"
+        ) from error
+    return factory(values, device)
+
+
+METHOD_PLUGIN = MethodPlugin.adapt_definition(
+    "nvidia",
+    METHOD_DEFINITION,
+    source_adapter_factory=_create_source_adapter,
+)

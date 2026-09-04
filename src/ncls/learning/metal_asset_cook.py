@@ -8,7 +8,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from ncls.core.identity import sha256_bytes, sha256_json
-from ncls.learning.models.metal_fused import MetalFusedNeuralMaterialModel
+from ncls.learning.models.metal_fused import MetalModel
 from ncls.learning.models.metal_texture_codec import semantic_role_class
 from ncls.learning.source_adaptation import (
     NativeAssetCollection,
@@ -138,7 +138,7 @@ class MetalAssetCooker:
 
     def __init__(
         self,
-        model: MetalFusedNeuralMaterialModel,
+        model: MetalModel,
         assets: NativeAssetCollection,
         *,
         max_core_texels: int = 16_384,

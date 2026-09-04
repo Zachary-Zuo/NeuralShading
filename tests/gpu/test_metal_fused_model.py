@@ -12,7 +12,7 @@ from ncls.learning.batches import (
 from ncls.learning.methods.metal_fused import METHOD_DEFINITION
 from ncls.learning.models.metal_fused import (
     METAL_FUSED_REQUIRED_CONTEXT,
-    MetalFusedNeuralMaterialModel,
+    MetalModel,
 )
 from ncls.learning.source_adaptation import DenseNativeAssetCollection, NativeAssetRole
 
@@ -100,7 +100,7 @@ def test_full_metal_evaluator_has_finite_nonnegative_f_and_all_group_gradients()
         pytest.skip("CUDA is required")
     device = torch.device("cuda:0")
     torch.manual_seed(20260830)
-    model = MetalFusedNeuralMaterialModel.from_context(
+    model = MetalModel.from_context(
         METAL_FUSED_REQUIRED_CONTEXT
     ).to(device)
     values = _conditioning(device)
@@ -147,7 +147,7 @@ def test_typed_edit_and_bundle_replacement_are_separate_model_inputs() -> None:
     if not torch.cuda.is_available():
         pytest.skip("CUDA is required")
     device = torch.device("cuda:0")
-    model = MetalFusedNeuralMaterialModel.from_context(
+    model = MetalModel.from_context(
         METAL_FUSED_REQUIRED_CONTEXT
     ).to(device).eval()
     values = _conditioning(device)
@@ -224,7 +224,7 @@ def test_full_model_bfloat16_forward_keeps_sensitive_outputs_finite() -> None:
     if not torch.cuda.is_available():
         pytest.skip("CUDA is required")
     device = torch.device("cuda:0")
-    model = MetalFusedNeuralMaterialModel.from_context(
+    model = MetalModel.from_context(
         METAL_FUSED_REQUIRED_CONTEXT
     ).to(device)
     values = _conditioning(device)
@@ -248,7 +248,7 @@ def test_full_metal_sample_pdf_and_throughput_weight_share_one_prepared_state() 
         pytest.skip("CUDA is required")
     device = torch.device("cuda:0")
     torch.manual_seed(20260831)
-    model = MetalFusedNeuralMaterialModel.from_context(
+    model = MetalModel.from_context(
         METAL_FUSED_REQUIRED_CONTEXT
     ).to(device)
     values = _conditioning(device)
@@ -282,7 +282,7 @@ def test_proposal_group_has_finite_gradients_and_descends_on_fixed_density_targe
         pytest.skip("CUDA is required")
     device = torch.device("cuda:0")
     torch.manual_seed(20260831)
-    model = MetalFusedNeuralMaterialModel.from_context(
+    model = MetalModel.from_context(
         METAL_FUSED_REQUIRED_CONTEXT
     ).to(device)
     proposal_parameters = tuple(
@@ -327,7 +327,7 @@ def test_joint_proposal_objective_detaches_every_nonproposal_parameter() -> None
         pytest.skip("CUDA is required")
     device = torch.device("cuda:0")
     torch.manual_seed(20260903)
-    model = MetalFusedNeuralMaterialModel.from_context(
+    model = MetalModel.from_context(
         METAL_FUSED_REQUIRED_CONTEXT
     ).to(device)
     values = _conditioning(device)
@@ -367,7 +367,7 @@ def test_end_to_end_step_zero_updates_evaluator_codec_teacher_and_proposal() -> 
         pytest.skip("CUDA is required")
     device = torch.device("cuda:0")
     torch.manual_seed(20260903)
-    model = MetalFusedNeuralMaterialModel.from_context(
+    model = MetalModel.from_context(
         METAL_FUSED_REQUIRED_CONTEXT
     ).to(device)
     values = _conditioning(device)

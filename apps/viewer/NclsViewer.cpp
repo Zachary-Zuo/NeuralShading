@@ -443,6 +443,12 @@ ViewerOptions parseOptions(int argc, char** argv)
             throw std::runtime_error("unsupported replay manifest");
         if (replay.value("reference_integrator", "") != "ncls.scene-path-tracer@1")
             throw std::runtime_error("capture v3 requires reference_integrator ncls.scene-path-tracer@1");
+        const uint32_t referenceTargetSpp = replay.value(
+            "reference_spp", kDefaultCapturePathTracingSpp);
+        options.captureTargetSpp.fill(referenceTargetSpp);
+        options.capturePurpose = replay.value("comparison_purpose", "formal");
+        if (options.capturePurpose != "formal" && options.capturePurpose != "training-diagnostic")
+            throw std::runtime_error("capture comparison_purpose must be formal or training-diagnostic");
         const auto base = std::filesystem::absolute(options.replayPath).parent_path();
         const auto resolve = [&](const std::string& value) {
             if (value.empty()) return std::filesystem::path();
@@ -467,6 +473,21 @@ ViewerOptions parseOptions(int argc, char** argv)
                 options.requestedSlotPackages[slotIndex] = slots[slotIndex].value("package_id", std::string());
                 const std::string mode = slots[slotIndex].value("mode", "path-tracing");
                 options.requestedSlotModes[slotIndex] = parseSlotMode(mode, "capture v4 slot mode");
+                if (options.requestedSlotModes[slotIndex] == ncls::SlotMode::PathTracing)
+                {
+                    const uint32_t targetSpp = slots[slotIndex].value("target_spp", referenceTargetSpp);
+                    if (targetSpp == 0u)
+                        throw std::runtime_error("capture v4 path-tracing slot target_spp must be positive");
+                    if (options.requestedSlotPackages[slotIndex] == "source-reference"
+                        && targetSpp != referenceTargetSpp)
+                        throw std::runtime_error("capture source-reference target_spp must equal reference_spp");
+                    if (options.capturePurpose != "training-diagnostic" && targetSpp != referenceTargetSpp)
+                        throw std::runtime_error("asymmetric path-tracing spp is restricted to training-diagnostic capture");
+                    if (targetSpp > referenceTargetSpp)
+                        throw std::runtime_error("capture slot target_spp cannot exceed reference_spp");
+                    options.captureTargetSpp[slotIndex] = targetSpp;
+                }
+                else options.captureTargetSpp[slotIndex] = 0u;
             }
             options.hasRequestedSlots = true;
         }
@@ -476,15 +497,14 @@ ViewerOptions parseOptions(int argc, char** argv)
         const bool hasPathTracingSlot = replayVersion != 4u || std::any_of(
             options.requestedSlotModes.begin(), options.requestedSlotModes.end(),
             [](ncls::SlotMode mode) { return mode == ncls::SlotMode::PathTracing; });
-        options.captureTargetSpp = hasPathTracingSlot
-            ? replay.value("reference_spp", kDefaultCapturePathTracingSpp)
-            : 0u;
-        if (hasPathTracingSlot && options.captureTargetSpp == 0u)
+        if (hasPathTracingSlot && referenceTargetSpp == 0u)
             throw std::runtime_error("capture reference_spp must be positive");
         options.captureSamplesPerDispatch = std::clamp(
             replay.value("reference_samples_per_frame", 1u), 1u, 16u);
+        const uint32_t maximumTargetSpp = *std::max_element(
+            options.captureTargetSpp.begin(), options.captureTargetSpp.end());
         options.frameCount = hasPathTracingSlot
-            ? 1u + (options.captureTargetSpp - 1u) / options.captureSamplesPerDispatch
+            ? 1u + (maximumTargetSpp - 1u) / options.captureSamplesPerDispatch
             : 1u;
         break;
     }
@@ -534,9 +554,12 @@ ViewerOptions parseOptions(int argc, char** argv)
         else if (argument == "--frames") options.frameCount = static_cast<uint32_t>(std::stoul(value(index, "--frames")));
         else if (argument == "--reference-spp")
         {
-            options.captureTargetSpp = static_cast<uint32_t>(std::stoul(value(index, "--reference-spp")));
-            if (options.captureTargetSpp == 0u)
+            const uint32_t targetSpp = static_cast<uint32_t>(std::stoul(value(index, "--reference-spp")));
+            if (targetSpp == 0u)
                 throw std::runtime_error("--reference-spp must be positive");
+            for (uint32_t slotIndex = 0u; slotIndex < options.captureTargetSpp.size(); ++slotIndex)
+                if (options.requestedSlotModes[slotIndex] == ncls::SlotMode::PathTracing)
+                    options.captureTargetSpp[slotIndex] = targetSpp;
         }
         else if (argument == "--reference-samples-per-frame")
             options.captureSamplesPerDispatch = std::clamp(
@@ -575,6 +598,8 @@ NclsViewer::NclsViewer(const SampleAppConfig& config, ViewerOptions options)
     mComparisonSlots[0].contract.mode = ncls::SlotMode::PathTracing;
     mComparisonSlots[0].contract.status = ncls::SlotStatus::Ready;
     mComparisonSlots[1].contract.mode = ncls::SlotMode::PathTracing;
+    for (uint32_t slotIndex = 0u; slotIndex < mComparisonSlots.size(); ++slotIndex)
+        mComparisonSlots[slotIndex].captureTargetSpp = mOptions.captureTargetSpp[slotIndex];
 }
 
 void NclsViewer::onLoad(RenderContext* pRenderContext)
@@ -1254,12 +1279,17 @@ void NclsViewer::activateSceneMaterial(uint32_t materialId)
     }
 }
 
-void NclsViewer::updateMaterialBuffer()
+void NclsViewer::updateMaterialBuffer(bool sourceStateChanged)
 {
     if (mReferenceSource.family != ncls::ReferenceFamily::LayerStack)
         throw std::runtime_error("current source material is not a LayerStack material");
     ncls::validateLayerStack(mMaterial);
-    mReferenceSource.sourceSha256 = ncls::layerStackHash(mMaterial);
+    // sourceSha256 identifies the native asset loaded by the source family.  A
+    // GPU upload must not replace that identity with the packed runtime IR hash:
+    // deployment packages are compiled against the native file identity.  The
+    // editable state already has its own referenceSourceStateHash().
+    if (sourceStateChanged && mReferenceSource.sourcePath.empty())
+        mReferenceSource.sourceSha256 = ncls::layerStackHash(mMaterial);
     mSourceGpu.pMaterial->setBlob(&mMaterial, 0, sizeof(mMaterial));
     resetReference(false);
 }
@@ -1269,7 +1299,7 @@ void NclsViewer::updateReferenceSourceBuffer()
     switch (mReferenceSource.family)
     {
     case ncls::ReferenceFamily::LayerStack:
-        updateMaterialBuffer();
+        updateMaterialBuffer(true);
         return;
     case ncls::ReferenceFamily::OpenPbr:
         mSourceGpu.pOpenPbrInputs->setBlob(
@@ -1961,6 +1991,7 @@ void NclsViewer::activateComparisonSlot(uint32_t slotIndex, uint32_t selection)
     if (slotIndex >= mComparisonSlots.size()) throw std::runtime_error("comparison slot index is invalid");
     ComparisonSlotRuntime candidate;
     candidate.contract.mode = mComparisonSlots[slotIndex].contract.mode;
+    candidate.captureTargetSpp = mOptions.captureTargetSpp[slotIndex];
     candidate.uiValue = selection;
     auto initializeTiming = [&](PassTiming& timing) {
         for (auto& timer : timing.timers) timer = GpuTimer::create(getDevice());
@@ -2142,8 +2173,8 @@ void NclsViewer::renderVisibility(RenderContext* pRenderContext)
 uint32_t NclsViewer::pathSamplesThisDispatch(const ComparisonSlotRuntime& slot) const
 {
     if (!mOptions.headless) return 1u;
-    const uint32_t remaining = mOptions.captureTargetSpp
-        - std::min(slot.spp, mOptions.captureTargetSpp);
+    const uint32_t remaining = slot.captureTargetSpp
+        - std::min(slot.spp, slot.captureTargetSpp);
     return std::min(mOptions.captureSamplesPerDispatch, remaining);
 }
 
@@ -2460,7 +2491,7 @@ void NclsViewer::onFrameRender(RenderContext* pRenderContext, const ref<Fbo>& pT
     const bool captureSppReady = std::all_of(
         mComparisonSlots.begin(), mComparisonSlots.end(), [&](const ComparisonSlotRuntime& slot) {
             return !slot.ready() || slot.contract.mode != ncls::SlotMode::PathTracing
-                || slot.spp == mOptions.captureTargetSpp;
+                || slot.spp == slot.captureTargetSpp;
         });
     if (mOptions.headless && ++mRenderedFrames >= mOptions.frameCount && captureSppReady)
     {
@@ -2772,7 +2803,7 @@ void NclsViewer::renderMaterialUi(Gui::Widgets& widgets)
     if (changed)
     {
         mFreezeReference = false;
-        try { updateMaterialBuffer(); mStatus = "Material applied; reference resumed and accumulation reset."; }
+        try { updateMaterialBuffer(true); mStatus = "Material applied; reference resumed and accumulation reset."; }
         catch (const std::exception& error) { mStatus = error.what(); }
     }
     widgets.text("IR SHA-256: " + shortId(ncls::layerStackHash(mMaterial)));
@@ -3412,7 +3443,7 @@ void NclsViewer::installReferenceSource(ncls::ReferenceSource source, const std:
         mpReferencePathPass = previousPass;
         throw;
     }
-    if (mReferenceSource.family == ncls::ReferenceFamily::LayerStack) updateMaterialBuffer();
+    if (mReferenceSource.family == ncls::ReferenceFamily::LayerStack) updateMaterialBuffer(false);
     else resetReference(mReferenceSource.family == ncls::ReferenceFamily::MaterialX);
     mLinkedMdlMode = linkedMdl;
     for (uint32_t slotIndex = 0u; slotIndex < mComparisonSlots.size(); ++slotIndex)
@@ -3717,14 +3748,15 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
 {
     namespace fs = std::filesystem;
     uint32_t capturedPathTracingSpp = 0u;
+    uint32_t capturedReferenceSpp = 0u;
     for (uint32_t slotIndex = 0u; slotIndex < mComparisonSlots.size(); ++slotIndex)
     {
         const auto& slot = mComparisonSlots[slotIndex];
         if (!slot.ready() || slot.contract.mode != ncls::SlotMode::PathTracing) continue;
-        if (mOptions.headless && slot.spp != mOptions.captureTargetSpp)
+        if (mOptions.headless && slot.spp != slot.captureTargetSpp)
         {
             mStatus = "Capture blocked: path-tracing slot " + std::to_string(slotIndex)
-                + " must reach exactly " + std::to_string(mOptions.captureTargetSpp) + " spp.";
+                + " must reach exactly " + std::to_string(slot.captureTargetSpp) + " spp.";
             logWarning("{}", mStatus);
             return;
         }
@@ -3734,14 +3766,16 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
             logWarning("{}", mStatus);
             return;
         }
-        if (capturedPathTracingSpp != 0u && slot.spp != capturedPathTracingSpp)
+        if (!mOptions.headless && capturedPathTracingSpp != 0u && slot.spp != capturedPathTracingSpp)
         {
             mStatus = "Capture blocked: ready path-tracing slots must have matched spp.";
             logWarning("{}", mStatus);
             return;
         }
-        capturedPathTracingSpp = slot.spp;
+        if (capturedPathTracingSpp == 0u) capturedPathTracingSpp = slot.spp;
+        if (slot.sourceReference) capturedReferenceSpp = slot.spp;
     }
+    if (capturedReferenceSpp == 0u) capturedReferenceSpp = capturedPathTracingSpp;
     fs::path manifestPath = requestedManifestPath;
     if (manifestPath.extension() != ".json") manifestPath /= "capture.json";
     if (!manifestPath.parent_path().empty()) fs::create_directories(manifestPath.parent_path());
@@ -3858,6 +3892,8 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
             {"status", slotStatusName(slot.contract.status)},
             {"diagnostic", slot.contract.diagnostic},
             {"spp", slot.spp},
+            {"target_spp", slot.contract.mode == ncls::SlotMode::PathTracing
+                ? slot.captureTargetSpp : 0u},
             {"gpu_ms", slot.timing.milliseconds},
             {"linear_output", slot.ready() ? slotPaths[slotIndex].filename().string() : std::string()},
         });
@@ -3894,6 +3930,7 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
     nlohmann::json manifest = {
         {"format_name", "ncls.viewer-capture"},
         {"format_version", 4},
+        {"comparison_purpose", mOptions.capturePurpose},
         {"slots", slots},
         {"method_id", packageId},
         {"method_bundle", methodRoot},
@@ -3931,7 +3968,7 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         {"resolution", {mOutputWidth, mOutputHeight}},
         {"view_resolution", {mViewWidth, mOutputHeight}},
         {"difference_resolution", {mViewWidth, mOutputHeight}},
-        {"reference_spp", capturedPathTracingSpp},
+        {"reference_spp", capturedReferenceSpp},
         {"reference_samples_per_frame", mOptions.captureSamplesPerDispatch},
         {"reference_scene_max_bounces", mMaxSceneBounces},
         {"reference_layer_walk_max_depth", mMaxLayerWalkDepth},
@@ -3946,7 +3983,16 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         }},
         {"estimated_mean_relative_standard_error", mEstimatedRelativeStandardError},
         {"comparison_semantics", mComparisonSlots[0].ready() && mComparisonSlots[1].ready()
-            ? "symmetric_slot_linear_output_difference" : "partial_slot_capture"},
+            ? (mOptions.capturePurpose == "training-diagnostic"
+                    && mComparisonSlots[0].contract.mode == ncls::SlotMode::PathTracing
+                    && mComparisonSlots[1].contract.mode == ncls::SlotMode::Deferred
+                ? "training_diagnostic_reference_path_tracing_neural_deferred_difference"
+                : mComparisonSlots[0].contract.mode == ncls::SlotMode::PathTracing
+                    && mComparisonSlots[1].contract.mode == ncls::SlotMode::PathTracing
+                    && mComparisonSlots[0].spp != mComparisonSlots[1].spp
+                ? "training_diagnostic_asymmetric_spp_linear_output_difference"
+                : "symmetric_slot_linear_output_difference")
+            : "partial_slot_capture"},
         {"method_runtime_class", rightProgram ? rightProgram->program->runtimeClass : "none"},
         {"camera", {
             {"target", {mCamera.target.x, mCamera.target.y, mCamera.target.z}},

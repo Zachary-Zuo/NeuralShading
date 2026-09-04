@@ -1,5 +1,5 @@
 from ncls.core.source import SourceEditResult, SourceSnapshot
-from ncls.learning.methods.registry import method_definitions
+from ncls.learning.methods import method_plugins, public_method_keys
 from tests.fixtures.method_definition import METHOD_DEFINITION
 
 
@@ -8,7 +8,8 @@ def _snapshot(family):
 
 
 def test_product_registry_contains_canonical_product_methods_and_fixture_is_injected():
-    assert [item.descriptor.method_key for item in method_definitions()] == [
+    assert public_method_keys() == ("metal", "nvidia")
+    assert [item.descriptor.method_key for item in method_plugins()] == [
         "metal-fused-neural-material",
         "nvidia-neural-appearance",
     ]

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from pathlib import Path
 
 import torch
@@ -12,20 +11,19 @@ from ncls.learning.metal_runtime import (
 from ncls.learning.methods.metal_fused import METHOD_DEFINITION
 from ncls.learning.models.metal_fused import (
     METAL_FUSED_REQUIRED_CONTEXT,
-    MetalFusedNeuralMaterialModel,
+    MetalModel,
 )
-from ncls.learning.training import TrainingConfig
-from ncls.source_materials.mdl_metal import MdlMetalRegistry
-from tools.learning.build_metal_training_configs import (
-    LINUX_LONG_PATH,
-    LINUX_SMOKE_PATH,
-    REGISTRY_PATH,
-    WINDOWS_SMOKE_PATH,
-    build_linux_configs,
-    semantic_training_fingerprint,
-    validate_linux_config_pair,
-)
+from ncls.learning.training import TrainingPlanResolver
 from tools.learning.build_metal_linux_handoff import build_handoff_manifest
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _runtime(run: str):
+    return TrainingPlanResolver(PROJECT_ROOT).resolve(
+        f"configs/training/runs/{run}.yaml"
+    ).to_runtime_config()
 
 
 def test_fp16_runtime_fake_quantization_uses_deployed_values_and_master_gradient() -> None:
@@ -40,7 +38,7 @@ def test_fp16_runtime_fake_quantization_uses_deployed_values_and_master_gradient
 
 def test_qat_refine_phase_covers_every_exported_runtime_parameter_group() -> None:
     with torch.device("meta"):
-        model = MetalFusedNeuralMaterialModel.from_context(
+        model = MetalModel.from_context(
             METAL_FUSED_REQUIRED_CONTEXT
         )
     registry = METHOD_DEFINITION.parameter_registry(model)
@@ -51,7 +49,7 @@ def test_qat_refine_phase_covers_every_exported_runtime_parameter_group() -> Non
         for group, parameters in registry.items()
         if runtime_names.intersection(parameter_names[id(parameter)] for parameter in parameters)
     }
-    config = TrainingConfig.load(WINDOWS_SMOKE_PATH)
+    config = _runtime("metal-windows-smoke")
     qat = config.phases[-1]
     assert qat.name == "qat-refine"
     assert runtime_groups.issubset(qat.parameter_groups)
@@ -60,41 +58,29 @@ def test_qat_refine_phase_covers_every_exported_runtime_parameter_group() -> Non
     assert set(route.name for route in qat.routes) == {"asset", "evaluator", "sampler"}
 
 
-def test_checked_in_linux_configs_are_full_cohort_canonical_pair() -> None:
-    windows = TrainingConfig.load(WINDOWS_SMOKE_PATH).to_dict()
-    registry = MdlMetalRegistry.load(REGISTRY_PATH)
-    expected_smoke, expected_long = build_linux_configs(windows, registry)
-    actual_smoke = TrainingConfig.load(LINUX_SMOKE_PATH).to_dict()
-    actual_long = TrainingConfig.load(LINUX_LONG_PATH).to_dict()
-    assert actual_smoke == expected_smoke
-    assert actual_long == expected_long
-    report = validate_linux_config_pair(actual_smoke, actual_long)
-    assert report["source_count"] == 692
-    assert report["smoke_steps"] == 16
-    assert report["long_steps"] == 120_000
-    assert report["phase_names"] == [
+def test_composed_linux_plans_are_full_cohort_canonical_pair() -> None:
+    smoke = _runtime("metal-linux-smoke")
+    long_run = _runtime("metal-linux-long")
+    assert smoke.source == long_run.source
+    assert smoke.model_context == long_run.model_context
+    assert smoke.online_query == long_run.online_query
+    assert len(smoke.source["materials"]) == 692
+    assert smoke.total_steps == 16
+    assert long_run.total_steps == 120_000
+    assert [phase.name for phase in smoke.phases] == [
         "joint-coarse-to-fine",
         "qat-refine",
     ]
-    assert report["distributed"] is False
-    assert report["visible_gpu_count"] == 1
-
-
-def test_linux_semantic_fingerprint_rejects_method_data_or_precision_drift() -> None:
-    smoke = TrainingConfig.load(LINUX_SMOKE_PATH).to_dict()
-    baseline = semantic_training_fingerprint(smoke)
-    for mutation in (
-        lambda value: value["phases"][0]["loss_terms"].append("unregistered-loss"),
-        lambda value: value["phases"][1]["precision"].update(autocast="bfloat16"),
-        lambda value: value["source"]["materials"].pop(),
-    ):
-        changed = deepcopy(smoke)
-        mutation(changed)
-        assert semantic_training_fingerprint(changed) != baseline
+    assert [phase.name for phase in long_run.phases] == [
+        "joint-coarse-to-fine",
+        "qat-refine",
+    ]
+    assert smoke.run_class == "smoke"
+    assert long_run.run_class == "formal"
 
 
 def test_windows_smoke_uses_the_registry_generated_stratified_activation_set() -> None:
-    config = TrainingConfig.load(WINDOWS_SMOKE_PATH)
+    config = _runtime("metal-windows-smoke")
     assert len(config.source["materials"]) == 3
     assert [phase.name for phase in config.phases] == [
         "joint-coarse-to-fine",
@@ -133,4 +119,6 @@ def test_linux_handoff_is_single_gpu_recoverable_and_has_no_automatic_followup()
     assert manifest["automatic_followups"] == []
     assert "--stop-at-step 16" in manifest["commands"]["long_start_recoverable"]
     assert "--resume" in manifest["commands"]["long_resume"]
+    assert "configs/learning" not in " ".join(manifest["commands"].values())
+    assert "learn " not in " ".join(manifest["commands"].values())
     assert "formal" not in " ".join(manifest["commands"].values())

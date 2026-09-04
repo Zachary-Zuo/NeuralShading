@@ -1,0 +1,23 @@
+format_name: ncls.training-run
+format_version: 1
+compose:
+  method: metal
+  data: mdl-metal-full
+  recipe: metal-linux-long
+execution:
+  devices: [0]
+  num_workers: 2
+  host_prefetch: 2
+  ready_batches: 2
+  reference_batch_steps: 1
+  reference_inflight: 1
+  transfer_streams: 0
+  residency:
+    budget_mib: 8192
+hooks:
+  visual_eval:
+    enabled: true
+    interval_steps: 5000
+    reference_spp: 1024
+    seed: 20260904
+    queue_capacity: 8

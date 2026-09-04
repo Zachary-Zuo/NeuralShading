@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import math
-import os
 from typing import Any, Mapping
 
 import torch
 
 from ncls.core.identity import sha256_json
 from ncls.core.source import create_source_family
+from ncls.data import DataExecutionPlan, PipelineTrace
 from ncls.learning.batches import (
     AssetTileBatch,
     EvaluatorBatch,
@@ -17,9 +17,8 @@ from ncls.learning.batches import (
     TrainingConditioning,
     TrainingRouteRequest,
 )
-from ncls.learning.method import MethodDefinition
+from ncls.learning.methods.contracts import MethodPlugin
 from ncls.learning.source_adaptation import NativeAssetCollection
-from ncls.learning.source_adapters import create_method_source_adapter
 from ncls.learning.source_states import expand_source_states
 from ncls.learning.training.config import TrainingConfig
 from ncls.references.programs import get_reference_program_for_source
@@ -103,35 +102,29 @@ class OnlineTrainingProducer:
 
     def __init__(
         self,
-        definition: MethodDefinition,
+        plugin: MethodPlugin,
         config: TrainingConfig,
         *,
         backend: ReferenceBackendCapability | None = None,
+        execution_context: Any,
+        data_execution_plan: DataExecutionPlan,
     ) -> None:
-        # DDP keeps a shared CUDA visibility list; each rank consumes its
-        # remapped local device while the config identity remains identical.
-        local_rank = os.environ.get("NCLS_DDP_LOCAL_RANK")
-        self.ddp_rank = int(os.environ.get("RANK", "0"))
-        self.ddp_world_size = int(os.environ.get("WORLD_SIZE", "1"))
-        raw_gpu_list = os.environ.get("NCLS_DDP_GPU_LIST", "")
-        self.ddp_gpu_indices = tuple(
-            int(value) for value in raw_gpu_list.split(",") if value != ""
-        )
-        if self.ddp_world_size > 1 and len(self.ddp_gpu_indices) != self.ddp_world_size:
-            raise RuntimeError("DDP GPU list length must match WORLD_SIZE")
-        if local_rank is not None:
-            try:
-                rank = int(local_rank)
-            except ValueError as error:
-                raise RuntimeError("NCLS_DDP_LOCAL_RANK must be an integer") from error
-            if rank < 0:
-                raise RuntimeError("NCLS_DDP_LOCAL_RANK must be nonnegative")
-            device_index = int(os.environ.get("NCLS_DDP_DEVICE_INDEX", str(rank)))
-            self.device = torch.device(f"cuda:{device_index}")
-        else:
-            self.device = torch.device(config.device)
+        # Platform/GPU mapping belongs to the launcher. The data source only
+        # consumes the already validated rank-local execution context.
+        self.ddp_rank = int(execution_context.rank)
+        self.ddp_world_size = int(execution_context.world_size)
+        self.ddp_gpu_indices = tuple(execution_context.topology.devices)
+        self.device = torch.device(execution_context.torch_device)
         if self.device.type != "cuda" or not torch.cuda.is_available():
             raise RuntimeError("online training producer requires a CUDA device")
+        partition = data_execution_plan.partition
+        if (
+            partition.rank != self.ddp_rank
+            or partition.world_size != self.ddp_world_size
+        ):
+            raise ValueError(
+                "data execution plan partition disagrees with execution context"
+            )
         family = create_source_family(str(config.source["family_id"]))
         base_snapshots = tuple(
             family.load_snapshot(material["locator"])
@@ -145,7 +138,7 @@ class OnlineTrainingProducer:
         snapshots = expanded_states.snapshots
         for snapshot in snapshots:
             family.validate_snapshot(snapshot)
-            definition.descriptor.adaptation_contract(snapshot)
+            plugin.descriptor.adaptation_contract(snapshot)
         reference = get_reference_program_for_source(
             family.descriptor.family_id,
             family.descriptor.source_contract_version,
@@ -170,6 +163,14 @@ class OnlineTrainingProducer:
             default=1,
         )
         self.backend = backend or create_reference_backend()
+        reference_inflight = data_execution_plan.reference_inflight
+        reference_slots = reference_inflight + 1
+        maximum_slots = self.backend.descriptor.concurrency.maximum_safe_slots
+        if reference_slots > maximum_slots:
+            raise ValueError(
+                "data execution reference_inflight plus the current session slot "
+                f"exceeds backend capability: {reference_inflight}+1 > {maximum_slots}"
+            )
         schedule = config.online_query.get("group_schedule")
         self._group_schedule_recipe = (
             str(schedule.get("recipe")) if isinstance(schedule, Mapping) else None
@@ -200,6 +201,7 @@ class OnlineTrainingProducer:
             query_capacity=capacity,
             device=self.device,
             requested_operations=("evaluate",),
+            slot_count=reference_slots,
         )
         if self.session.snapshots != snapshots:
             raise ValueError("online producer backend session disagrees with source locators")
@@ -217,12 +219,14 @@ class OnlineTrainingProducer:
         self.reference_program_identity = self.session.reference_program_identity
         self.reference_execution_plan_identity = self.plan.identity
         self.reference_backend_identity = self.session.backend_identity
-        self.adapter = create_method_source_adapter(
-            definition.descriptor.method_key, snapshots, self.device
+        self.pipeline_trace = PipelineTrace()
+        self.adapter = plugin.data.create_source_adapter(snapshots, self.device)
+        self.adapter.configure_data_execution(
+            data_execution_plan, self.pipeline_trace
         )
         self.config = config
-        self.query_stream_identity = sha256_json(
-            {
+        self.data_execution_plan_identity = data_execution_plan.identity
+        query_stream_manifest = {
                 "schema": "ncls.online-query-stream@1",
                 "source": dict(config.source),
                 "source_snapshot_ids": list(self.source_snapshot_ids),
@@ -239,7 +243,10 @@ class OnlineTrainingProducer:
                     "recipe": "rank-strided-route-seed@1",
                 },
             }
+        query_stream_manifest["data_execution_plan_identity"] = (
+            self.data_execution_plan_identity
         )
+        self.query_stream_identity = sha256_json(query_stream_manifest)
         self._generators: dict[str, torch.Generator] = {}
         self._request_count: dict[str, int] = {}
         self._group_cursor: dict[str, int] = {}
@@ -269,16 +276,19 @@ class OnlineTrainingProducer:
         self, request: TrainingRouteRequest, group: ReferenceExecutionGroup
     ) -> tuple[TrainingConditioning, torch.Generator, torch.Tensor | None]:
         generator = self._generator(request)
+        execution_source_indices = self.adapter.execution_source_indices(
+            group.global_source_indices, request
+        )
         local_source_index = torch.randint(
             0,
-            len(group.records),
+            len(execution_source_indices),
             (request.batch_size,),
             generator=generator,
             device=self.device,
             dtype=torch.int64,
         )
         group_indices = torch.tensor(
-            group.global_source_indices,
+            execution_source_indices,
             dtype=torch.int64,
             device=self.device,
         )
@@ -301,7 +311,10 @@ class OnlineTrainingProducer:
             wo = _uniform_hemisphere(request.batch_size, generator, self.device)
             evaluator_wi = None
         adapted, provenance = self.adapter.sample_tensors(
-            source_index, generator, request.options
+            source_index,
+            generator,
+            request.options,
+            execution_source_indices=execution_source_indices,
         )
         request_index = self._request_count.get(request.name, 0)
         self._request_count[request.name] = request_index + 1
@@ -321,6 +334,7 @@ class OnlineTrainingProducer:
                 "reference_backend_identity": self.reference_backend_identity,
                 "reference_execution_plan_identity": self.reference_execution_plan_identity,
                 "reference_execution_group_id": group.group_id,
+                "execution_source_cohort": list(execution_source_indices),
                 "group_schedule_recipe": self._group_schedule_recipe or "route-round-robin@1",
                 "group_schedule_block_steps": self._group_block_steps,
                 "group_schedule_validation_offset_blocks": (
@@ -637,13 +651,21 @@ class OnlineTrainingProducer:
         self.session.end_iteration()
 
     def profile_snapshot(self, *, reset: bool = False) -> Mapping[str, float]:
-        return self.session.profile_snapshot(reset=reset)
+        result = dict(self.session.profile_snapshot(reset=reset))
+        data = self.pipeline_trace.snapshot(reset=reset).to_dict()
+        for category, values in data.items():
+            for name, value in values.items():
+                result[f"data/{category}/{name}"] = float(value)
+        return result
 
     def close(self) -> None:
         if self._closed:
             return
-        self.session.close()
-        self._closed = True
+        try:
+            self.adapter.close()
+        finally:
+            self.session.close()
+            self._closed = True
 
 
 __all__ = ["OnlineTrainingProducer"]

@@ -21,12 +21,12 @@ from ncls.core.source import SourceSnapshot, create_source_family
 from ncls.learning.conformance import MethodArtifactInventory, validate_artifact_coverage
 from ncls.learning.metal_asset_cook import MetalAssetCooker
 from ncls.learning.metal_runtime import pack_metal_asset, quantize_runtime_model
-from ncls.learning.methods import get_method
+from ncls.learning.methods import get_method_plugin
+from ncls.learning.methods.metal_fused import METHOD_DEFINITION
 from ncls.learning.source_adapters import MetalFusedMdlSourceAdapter
 from ncls.learning.training import (
-    TrainingConfig,
-    assess_checkpoint_readiness,
-    load_checkpoint,
+    EvaluationSnapshot,
+    load_evaluation_snapshot,
 )
 from ncls.paths import PROJECT_ROOT
 from ncls.references.mdl import (
@@ -71,16 +71,13 @@ def _validate_slang_path_budget(output_root: Path) -> None:
 
 
 def validate_preview_checkpoint(
-    checkpoint: object, descriptor: object, *, diagnostic: bool = False
+    snapshot: EvaluationSnapshot, *, diagnostic: bool = False
 ) -> str:
-    """Require exact method identity plus explicit readiness for every preview."""
+    """Require an evaluation-only snapshot with explicit preview readiness."""
 
-    readiness = assess_checkpoint_readiness(
-        checkpoint,
-        descriptor,
-        mode="diagnostic-evaluator" if diagnostic else "formal",
+    snapshot.require_ready(
+        "diagnostic-evaluator" if diagnostic else "formal"
     )
-    readiness.require_ready()
     return "exact-diagnostic-evaluator-preview" if diagnostic else "exact"
 
 
@@ -293,19 +290,25 @@ def prepare_metal_catalog(
             "ViewerMaterialCatalog output root must be absent or contain a valid catalog"
         )
 
-    checkpoint = load_checkpoint(checkpoint_path)
-    definition = get_method(checkpoint.method_key)
+    evaluation = load_evaluation_snapshot(checkpoint_path)
+    plugin = get_method_plugin(evaluation.public_method_key)
+    if plugin.key != "metal":
+        raise ValueError("Metal viewer catalog requires method=metal")
+    if plugin.descriptor is not METHOD_DEFINITION.descriptor:
+        raise ValueError("Metal viewer catalog plugin definition identity drifted")
     compatibility = validate_preview_checkpoint(
-        checkpoint, definition.descriptor, diagnostic=diagnostic_preview
+        evaluation, diagnostic=diagnostic_preview
     )
-    readiness = assess_checkpoint_readiness(
-        checkpoint,
-        definition.descriptor,
-        mode="diagnostic-evaluator" if diagnostic_preview else "formal",
+    readiness_mode = (
+        "diagnostic-evaluator" if diagnostic_preview else "formal"
     )
-    config = TrainingConfig.from_dict(checkpoint.training_config)
-    if str(config.source.get("family_id")) != "mdl.program@1":
+    readiness = dict(evaluation.require_ready(readiness_mode))
+    source = dict(evaluation.source)
+    if str(source.get("family_id")) != "mdl.program@1":
         raise ValueError("Metal viewer catalog checkpoint has another source family")
+    materials = source.get("materials")
+    if not isinstance(materials, (list, tuple)) or not materials:
+        raise ValueError("Metal viewer catalog checkpoint has no source materials")
     registry = MdlMetalRegistry.load(registry_path)
     raw_registry = json.loads(registry_path.read_text(encoding="utf-8"))
     raw_by_export = {
@@ -315,9 +318,9 @@ def prepare_metal_catalog(
         (str(item["locator"]["module"]), str(item["locator"]["export"])): dict(
             item["locator"]
         )
-        for item in config.source["materials"]
+        for item in materials
     }
-    if len(locators) != len(config.source["materials"]):
+    if len(locators) != len(materials):
         raise ValueError("checkpoint source list contains duplicate Metal locators")
     selected_records = _select_registry_records(
         registry,
@@ -353,7 +356,7 @@ def prepare_metal_catalog(
         locator["module_root"] = str(module_root)
         snapshot = _load_snapshot_with_provider(locator, bridge)
         family.validate_snapshot(snapshot)
-        if snapshot.snapshot_id not in checkpoint.source_snapshot_ids:
+        if snapshot.snapshot_id not in evaluation.source_snapshot_ids:
             raise ValueError("authored Metal snapshot is absent from the checkpoint")
         inspection_root = Path(str(snapshot.editor_metadata["inspection_artifact"]))
         expected_manifest = str(raw_by_export[record.export_id]["artifact_manifest_sha256"])
@@ -361,8 +364,8 @@ def prepare_metal_catalog(
             raise ValueError("Metal registry inspection artifact identity drifted")
         snapshots.append(snapshot)
 
-    payload = checkpoint.to_payload()
-    program_payload = definition.compile_program(payload)
+    payload = dict(evaluation.deployment_payload)
+    program_payload = plugin.deployment.compile_program(payload)
     if diagnostic_preview:
         evaluator_capabilities = int(
             BackendCapability.PREPARE
@@ -376,10 +379,12 @@ def prepare_metal_catalog(
     context = payload["training_config"].get("model_context")
     if not isinstance(context, Mapping):
         raise ValueError("Metal viewer deployment checkpoint has no model_context")
-    model = definition.create_trainable(context).to(device)
-    definition.restore_training_state(model, payload["model_state"])
+    model = plugin.model_factory.create(context).to(device)
+    plugin.checkpoint.restore(model, payload["model_state"])
     quantize_runtime_model(model)
-    adapter = MetalFusedMdlSourceAdapter(tuple(snapshots), device)
+    adapter = plugin.data.create_source_adapter(tuple(snapshots), device)
+    if not isinstance(adapter, MetalFusedMdlSourceAdapter):
+        raise TypeError("Metal method data facet returned another source adapter")
     native_assets = adapter.native_assets()
     cooker = MetalAssetCooker(
         model,
@@ -427,8 +432,8 @@ def prepare_metal_catalog(
         )
     for artifact in runtime_artifacts:
         artifact.require_runtime_supported()
-    phase = checkpoint.phase_name
-    checkpoint_sha256 = sha256_file(checkpoint_path)
+    phase = evaluation.phase_name
+    checkpoint_sha256 = evaluation.checkpoint_sha256
     target_types = (
         PROJECT_ROOT
         / "external/MDL-SDK-2025.0.0-387700.1252-nt-x86-64"
@@ -515,8 +520,8 @@ def prepare_metal_catalog(
                     "address_modes": address_modes,
                 },
             )
-            asset_payload = definition.compile_asset(snapshot, payload)
-            instance = definition.compile_instance(snapshot, payload)
+            asset_payload = plugin.deployment.compile_asset(snapshot, payload)
+            instance = plugin.deployment.compile_instance(snapshot, payload)
             editor = dict(instance.editor)
             editor["parameter_view"] = deepcopy(editor_view)
             instance_payload = InstancePayload(
@@ -527,24 +532,24 @@ def prepare_metal_catalog(
                 instance.compiler,
             )
             validate_artifact_coverage(
-                definition.descriptor,
+                plugin.descriptor,
                 MethodArtifactInventory.from_payloads(
                     program_payload,
                     asset_payload,
-                    checkpoint_model_state=bool(checkpoint.model_state),
+                    checkpoint_model_state=bool(payload["model_state"]),
                 ),
             )
-            validation = dict(definition.package_validation(snapshot, payload))
-            validation["checkpoint_step"] = checkpoint.global_step
-            validation["checkpoint_readiness"] = readiness.to_dict()
+            validation = dict(plugin.deployment.package_validation(snapshot, payload))
+            validation["checkpoint_step"] = evaluation.global_step
+            validation["checkpoint_readiness"] = readiness
             package_root = staging / "packages" / record.export_id
             manifest = write_scattering_package(
                 package_root,
                 program_kind="method",
-                program_key=definition.descriptor.method_key,
-                program_version=definition.descriptor.version,
-                program_descriptor_sha256=definition.descriptor.descriptor_sha256,
-                runtime_abi=definition.descriptor.runtime_abi,
+                program_key=plugin.descriptor.method_key,
+                program_version=plugin.descriptor.version,
+                program_descriptor_sha256=plugin.descriptor.descriptor_sha256,
+                runtime_abi=plugin.descriptor.runtime_abi,
                 source=snapshot,
                 program_payload=program_payload,
                 asset_payload=asset_payload,
@@ -552,10 +557,10 @@ def prepare_metal_catalog(
                 validation=validation,
                 provenance={
                     "checkpoint_sha256": checkpoint_sha256,
-                    "checkpoint_descriptor_sha256": checkpoint.method_descriptor_sha256,
-                    "runtime_descriptor_sha256": definition.descriptor.descriptor_sha256,
+                    "checkpoint_descriptor_sha256": plugin.descriptor.descriptor_sha256,
+                    "runtime_descriptor_sha256": plugin.descriptor.descriptor_sha256,
                     "checkpoint_compatibility": compatibility,
-                    "checkpoint_readiness_mode": readiness.mode,
+                    "checkpoint_readiness_mode": readiness_mode,
                     "viewer_catalog_export_id": record.export_id,
                 },
                 linked_content_store=objects,
@@ -601,11 +606,11 @@ def prepare_metal_catalog(
                 },
                 "checkpoint": {
                     "sha256": checkpoint_sha256,
-                    "checkpoint_descriptor_sha256": checkpoint.method_descriptor_sha256,
-                    "runtime_descriptor_sha256": definition.descriptor.descriptor_sha256,
+                    "checkpoint_descriptor_sha256": plugin.descriptor.descriptor_sha256,
+                    "runtime_descriptor_sha256": plugin.descriptor.descriptor_sha256,
                     "compatibility": compatibility,
-                    "method_key": checkpoint.method_key,
-                    "step": checkpoint.global_step,
+                    "method_key": evaluation.public_method_key,
+                    "step": evaluation.global_step,
                     "phase": phase,
                 },
                 "reference_runtime": {

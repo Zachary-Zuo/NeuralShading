@@ -23,7 +23,7 @@ from ncls.learning.metal_asset_cook import (
 )
 from ncls.learning.models.metal_fused import (
     METAL_FUSED_REQUIRED_CONTEXT,
-    MetalFusedNeuralMaterialModel,
+    MetalModel,
 )
 from ncls.references.backend import create_reference_backend
 
@@ -141,7 +141,7 @@ def _asset() -> MetalCompiledAssetState:
 def test_full_metal_runtime_and_material_compiler_compile(tmp_path: Path) -> None:
     torch.manual_seed(91)
     model = quantize_runtime_model(
-        MetalFusedNeuralMaterialModel.from_context(METAL_FUSED_REQUIRED_CONTEXT)
+        MetalModel.from_context(METAL_FUSED_REQUIRED_CONTEXT)
     )
     packed = pack_metal_program(model)
     tensors = _typed_tensors()
@@ -198,7 +198,7 @@ def test_full_metal_runtime_and_material_compiler_compile(tmp_path: Path) -> Non
 def test_quantized_decoder_prepare_and_evaluator_match_python(tmp_path: Path) -> None:
     torch.manual_seed(109)
     model = quantize_runtime_model(
-        MetalFusedNeuralMaterialModel.from_context(METAL_FUSED_REQUIRED_CONTEXT)
+        MetalModel.from_context(METAL_FUSED_REQUIRED_CONTEXT)
     )
     tensors = _typed_tensors()
     cooked = _asset()

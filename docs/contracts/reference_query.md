@@ -6,6 +6,6 @@
 
 `evaluate`返回线性RGB `f`、双向PDF、event和valid；`sample`返回direction、weight、双向PDF、eta、event和valid；`pdf`是独立方向查询。公共`f`相对于query输入的`NclsShadingFrame`定义，source-owned normal或geometry normal必须把measure转换编码进`f`，使renderer的`f × |N_input·wi|`恢复原生transport response。
 
-Falcor shared output由lease保护；active lease存在时不能复用slot、结束frame或close。online producer在GPU上压实局部domain有效行并继续补采，不能把invalid行写成零target，也不能读回host后筛选。训练不持久化batch；plan、backend、query stream与asset collection identity进入`TrainingCheckpoint@4`。
+Falcor shared output 由 lease 保护；active lease 存在时不能复用 slot、结束 frame 或 close。online producer 在 GPU 上压实局部 domain 有效行并继续补采，不能把 invalid 行写成零 target，也不能读回 host 后筛选。训练不持久化 batch；data execution plan、reference、query stream、asset collection 与 source identity 进入 `TrainingCheckpoint@1`。
 
 typed texture使用spatial-first shape：2D为`[height,width,(channels)]`，3D为`[depth,height,width,(channels)]`。binder在创建资源前验证rank、extent、dtype和payload元素数。

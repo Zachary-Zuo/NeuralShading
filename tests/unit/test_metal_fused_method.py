@@ -13,7 +13,7 @@ from ncls.learning.methods.metal_fused import METHOD_DEFINITION
 from ncls.learning.source_adapters import _normalized_components
 from ncls.learning.models.metal_fused import (
     METAL_FUSED_REQUIRED_CONTEXT,
-    MetalFusedNeuralMaterialModel,
+    MetalModel,
     MetalPreparedModel,
 )
 from ncls.learning.models.metal_fused_profile import (
@@ -189,7 +189,7 @@ def test_metal_model_rejects_a_tiny_or_partial_context() -> None:
     partial = dict(METAL_FUSED_REQUIRED_CONTEXT)
     partial["asset_count"] = 2
     with pytest.raises(ValueError, match="exact quality-first full profile"):
-        MetalFusedNeuralMaterialModel.from_context(partial)
+        MetalModel.from_context(partial)
 
 
 def test_metal_runtime_compiler_requires_a_validated_checkpoint() -> None:
@@ -199,7 +199,7 @@ def test_metal_runtime_compiler_requires_a_validated_checkpoint() -> None:
 
 def test_metal_tensor_schema_and_parameter_registry_are_exact() -> None:
     with torch.device("meta"):
-        model = MetalFusedNeuralMaterialModel.from_context(
+        model = MetalModel.from_context(
             METAL_FUSED_REQUIRED_CONTEXT
         )
     registry = METHOD_DEFINITION.parameter_registry(model)

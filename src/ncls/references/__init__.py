@@ -34,6 +34,7 @@ from .plan import (
 )
 from .backend import (
     ReferenceBackendCapability,
+    ReferenceConcurrencyCapability,
     ReferenceBackendDescriptor,
     ReferenceBackendReport,
     ReferenceCapabilityStatus,
@@ -58,6 +59,7 @@ __all__ = [
     "linear_hdr_image_metrics",
     "load_reference_acceptance",
     "ReferenceBackendCapability",
+    "ReferenceConcurrencyCapability",
     "ReferenceBackendDescriptor",
     "ReferenceBackendReport",
     "ReferenceBackendSession",

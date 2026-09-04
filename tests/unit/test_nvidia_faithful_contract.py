@@ -8,15 +8,15 @@ import torch
 
 from ncls.learning.methods.nvidia import METHOD_DEFINITION
 from ncls.learning.source_adaptation import DenseNativeAssetCollection, NativeAssetRole
-from ncls.learning.training import TrainingConfig
+from ncls.learning.training import TrainingPlanResolver
 from ncls.bundle.typed_texture import inspect_rgba16f_dds
 from ncls.core.source import SourceSnapshot
 
 
 def _formal_config() -> dict:
-    return TrainingConfig.load(
-        "configs/learning/nvidia-rta2024-materialx-formal.json"
-    ).to_dict()
+    return TrainingPlanResolver(Path.cwd()).resolve(
+        "configs/training/runs/nvidia-materialx-formal.yaml"
+    ).to_runtime_config().to_dict()
 
 
 def _native_collection(features: tuple[torch.Tensor, ...]) -> DenseNativeAssetCollection:

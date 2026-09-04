@@ -6,6 +6,7 @@ dependencies:
   - numpy
   - scipy
   - pillow
+  - pyyaml>=6.0,<7
   - openimageio=3.1.15
   - pytest
   - tensorboard=2.20

@@ -1,65 +1,42 @@
 from __future__ import annotations
 
 import importlib
-import pkgutil
-from types import ModuleType
 
-from ncls.learning.method import MethodDefinition, MethodDescriptor
+from .contracts import MethodPlugin
 
 
-_DEFINITIONS: dict[str, MethodDefinition] | None = None
+_PLUGINS: dict[str, MethodPlugin] | None = None
+_PRODUCT_MODULES = ("metal_fused", "nvidia")
 
 
-def _load_module(module: ModuleType, definitions: dict[str, MethodDefinition]) -> None:
-    definition = getattr(module, "METHOD_DEFINITION", None)
-    if definition is None:
-        return
-    if not isinstance(definition, MethodDefinition):
-        raise ValueError(f"{module.__name__}.METHOD_DEFINITION must be a MethodDefinition")
-    key = definition.descriptor.method_key
-    if key in definitions:
-        raise ValueError(f"method {key!r} is already registered")
-    definitions[key] = definition
+def public_method_keys() -> tuple[str, ...]:
+    return tuple(plugin.key for plugin in method_plugins())
 
 
-def _discover() -> dict[str, MethodDefinition]:
-    package = importlib.import_module("ncls.learning.methods")
-    result: dict[str, MethodDefinition] = {}
-    for info in pkgutil.iter_modules(package.__path__):
-        if info.name.startswith("_") or info.name == "registry":
-            continue
-        _load_module(importlib.import_module(f"{package.__name__}.{info.name}"), result)
-    return result
+def method_plugins() -> tuple[MethodPlugin, ...]:
+    global _PLUGINS
+    if _PLUGINS is None:
+        discovered: dict[str, MethodPlugin] = {}
+        package = importlib.import_module("ncls.learning.methods")
+        for name in _PRODUCT_MODULES:
+            module = importlib.import_module(f"{package.__name__}.{name}")
+            plugin = getattr(module, "METHOD_PLUGIN", None)
+            if not isinstance(plugin, MethodPlugin):
+                raise ValueError(f"{module.__name__}.METHOD_PLUGIN must be a MethodPlugin")
+            if plugin.key in discovered:
+                raise ValueError(f"method plugin {plugin.key!r} is already registered")
+            discovered[plugin.key] = plugin
+        _PLUGINS = discovered
+    return tuple(_PLUGINS[key] for key in sorted(_PLUGINS))
 
 
-def method_definitions() -> tuple[MethodDefinition, ...]:
-    global _DEFINITIONS
-    if _DEFINITIONS is None:
-        _DEFINITIONS = _discover()
-    return tuple(_DEFINITIONS[name] for name in sorted(_DEFINITIONS))
-
-
-def method_descriptors() -> tuple[MethodDescriptor, ...]:
-    return tuple(definition.descriptor for definition in method_definitions())
-
-
-def get_method(method_key: str) -> MethodDefinition:
-    for definition in method_definitions():
-        if definition.descriptor.method_key == method_key:
-            return definition
-    raise ValueError(f"unsupported method {method_key!r}")
-
-
-def inject_method_for_test(definition: MethodDefinition) -> None:
-    global _DEFINITIONS
-    if _DEFINITIONS is None:
-        _DEFINITIONS = _discover()
-    key = definition.descriptor.method_key
-    if key in _DEFINITIONS:
-        raise ValueError(f"method {key!r} is already registered")
-    _DEFINITIONS[key] = definition
+def get_method_plugin(public_key: str) -> MethodPlugin:
+    for plugin in method_plugins():
+        if plugin.key == public_key:
+            return plugin
+    raise ValueError(f"unsupported method plugin {public_key!r}")
 
 
 def reset_method_registry_for_test() -> None:
-    global _DEFINITIONS
-    _DEFINITIONS = None
+    global _PLUGINS
+    _PLUGINS = None

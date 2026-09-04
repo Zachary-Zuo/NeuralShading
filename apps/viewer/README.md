@@ -42,7 +42,7 @@ external\Falcor\build\windows-vs2022\bin\Release\NclsViewer.exe `
 
 ## capture v4 与回放
 
-自动化比较使用 `ncls.viewer-capture@4`。headless capture 从 replay 的 `reference_spp` 读取目标，正式基线使用 1024 spp；未达到目标时不得导出 EXR，deferred slot 为确定性单次求值，不虚构 spp。`reference_samples_per_frame` 只控制 headless 每次 dispatch 的 batch，不进入交互状态。manifest 的 `slots[2]` 分别记录 `package_id`、`mode`、status 与 runtime/material/source identity；`*-slot-0.exr`、`*-slot-1.exr` 与 `*-difference.exr` 都固定为单 panel 的 `view_resolution`，difference 不复用双 panel composite 纹理。`source-reference` 是内建的权威 source transport请求，其余值必须对应 `bundle_root` 下通过验证的 package。验证 neural mode 对称性时，可让两个 slot绑定同一 neural package并分别选择 PT/deferred。
+自动化比较使用 `ncls.viewer-capture@4`。headless capture 从 replay 的 `reference_spp` 读取 reference 目标，正式基线使用 1024 spp；未达到目标时不得导出 EXR，deferred slot 为确定性单次求值，不虚构 spp。`comparison_purpose=formal` 要求所有 path-tracing slot 使用 matched spp；`training-diagnostic` 允许 1024 spp source reference 配合同条件的 neural deferred，或显式有界的低 spp neural path tracing，并在每个 slot 分别记录 `mode/target_spp/spp`。`reference_samples_per_frame` 只控制 headless 每次 dispatch 的 batch，不进入交互状态。manifest 的 `slots[2]` 分别记录 `package_id`、`mode`、status 与 runtime/material/source identity；`*-slot-0.exr`、`*-slot-1.exr` 与 `*-difference.exr` 都固定为单 panel 的 `view_resolution`，difference 不复用双 panel composite 纹理。`source-reference` 是内建的权威 source transport 请求，其余值必须对应 `bundle_root` 下通过验证的 package。验证 neural mode 对称性时，可让两个 slot 绑定同一 neural package并分别选择 PT/deferred。
 
 最小 slot 片段如下：
 

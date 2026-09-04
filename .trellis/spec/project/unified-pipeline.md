@@ -2,80 +2,100 @@
 
 ## 1. Scope / Trigger
 
-修改source family、reference execution、online producer、method、checkpoint、package或viewer时适用。新增方法/source不得修改其他层通用实现，不得增加磁盘batch、family-specific producer或CLI分支。
+修改 YAML training plan、source/reference、online data、method plugin、engine/checkpoint、package 或 viewer 时适用。新增 method/source 不得复制 CLI、训练循环、checkpoint、平台分支或磁盘 batch 路径。
 
 ## 2. Signatures
 
 ```text
-SourceFamilyDefinition.load_snapshot(locator) -> SourceSnapshot
-ReferenceProgramDefinition.compile_runtime/material(...) -> typed reference payload
-compile_reference_execution_plan(...) -> ReferenceExecutionPlan@1
-ReferenceBackendCapability.open(plan, ...) -> ReferenceBackendSession
-OnlineTrainingProducer.next_batch(...) -> AssetTileBatch@1 | EvaluatorBatch@3 | MethodSamplerBatch@3
-MethodDefinition.compile_program/asset/instance(...) -> deployment payloads
-TrainingRunner.run(...) -> TrainingCheckpoint@4
+TrainingPlanResolver(project_root).resolve(run_yaml, devices=None)
+  -> ResolvedTrainingPlan@1
+get_method_plugin("nvidia" | "metal") -> MethodPlugin
+DataExecutionPlan.build(...) -> DataExecutionPlan@1
+OnlineTrainingProducer(plugin, runtime_config, execution_context, data_execution_plan)
+OnlineDataSession.next_batch(request) -> typed OnlineBatch
+TrainingEngine(plugin, data_session, runtime_config, ...).run(resume, stop_at_step)
+  -> TrainingRunResult
+save/load_training_checkpoint_v1(...) -> TrainingCheckpoint@1
+load_evaluation_snapshot(v1_or_legacy_v4) -> EvaluationSnapshot
+MethodPlugin.deployment.compile_program/asset/instance(...)
+  -> deployment payloads
 write_scattering_package(...) -> ScatteringPackageManifest@2
-ScatteringPackage.open(path).create_binding() -> ScatteringBinding(program, asset, instance)
-InstancePayload(parameters, blobs, blob_descriptors, editor, compiler)
-Viewer.programGpuRuntime(program_id) -> shared passes/weights/compiler
-Viewer.applyMaterialEditor(slot, method, candidate_parameter_view) -> atomic slot update
+```
+
+公开命令：
+
+```text
+ncls train <run.yaml> [--devices 0|0,1,...] [--output checkpoint.pt]
+           [--resume checkpoint.pt] [--stop-at-step N]
+ncls validate <checkpoint.pt> [--batches N] [--device N]
+ncls export <checkpoint.pt> <package-dir> [--material-index N]
+ncls eval worker|collect ...
 ```
 
 ## 3. Contracts
 
-- `SourceSnapshot`是source唯一真相；每个source contract恰有一个完整`prepare/evaluate/sample/pdf` reference。
-- `ReferenceExecutionPlan@1`拥有grouping与global/local index映射；backend只执行plan，不识别family。platform/Falcor只由capability拥有。
-- `NativeAssetCollection@1`拥有multi-asset/mip/tile+halo输入；training batch只在GPU在线产生，不存在HDF5、corpus或recorded batch。
-- `TrainingConfig@4`是任意phase graph；`MethodDescriptor@2`严格拥有parameter/component contracts；generic conformance覆盖execution、gradient/update和artifacts。
-- live target保持同CUDA device；invalid reference行GPU压实补采；lease与prefetch不越过资源生命周期和checkpoint边界。
-- `TrainingCheckpoint@4`保存method/components、phase-local optimization、plan/asset/query/source identity与coverage，严格恢复。
-- `ScatteringPackage@2`独立计算program、asset、instance与package identity；viewer先验证全部section与typed resources，再原子绑定slot。
-- `write_scattering_package(..., linked_content_store=...)`只允许复用已经按canonical payload SHA-256登记的不可变文件；writer仍从输入bytes计算content hash与program/asset/instance/package identity。hardlink失败可回退为同bytes写出，不能因存储优化改变manifest或跳过entry实际绑定时的严格loader验证。
-- editable instance的`editor`与`compiler`必须同时存在或同时为空。editor递归验证native path/type/value/operation、normalization default、raw word地址与derived writes；raw和compiled usages必须指向instance section中的mutable structured buffers。host不能只验证当前value而让损坏的default或unsupported operation延迟到UI阶段失败。
-- viewer以`programId`缓存shader、shared weights和material compiler；asset/instance是slot-local binding。typed edit与package替换都先构造candidate buffers、上传raw state并编译compiled state，全部成功后才替换active slot。MDL package compatibility比较包含export/default/transitive resources的`sourceSnapshotId`，其他family比较各自native asset identity。
-- quality-first neural shader允许把大矩阵从完全展开改为有静态`MaxIters`的runtime loop，并由通用package renderer分块调度以适应平台watchdog；这种调度不得减层、减宽、跳权重或按source family新增renderer分支。交互viewer还必须把tile调度跨frame time-slice，并可用明确标注的coarse-to-fine空间预览先反馈全屏；headless/capture仍排空`stride=1`精确tile。具体tile尺寸与交互stride是平台调度状态，不是方法身份或质量门。
+- run YAML 只组合 `base/method/data/recipe` 四类 fragment；严格 loader 拒绝重复/未知字段、循环依赖和 value category 漂移。resolved plan、展开文件 hash、method descriptor/facet identity 全部进入 plan identity。
+- 公开 key 使用 lower-kebab 且不含 `@`；当前 method 为 `nvidia`、`metal`。版本只进入 descriptor/implementation/plan hash，不进入用户入口名称。
+- `MethodPlugin` 必须同时提供 model/data/objective/lifecycle/checkpoint/deployment 六个 facet。公共 engine/data/CLI 只依赖 facet，不通过 implementation key 找 `MethodDefinition`，不按 method/source family 建专用分支。
+- `SourceSnapshot` 是 source 唯一真相；各 family 保持原生 locator、资源、编辑与 reference 语义。`ReferenceExecutionPlan@1` 拥有 grouping/global-local index；backend 只执行 plan，platform/Falcor 只由 capability/launcher 拥有。
+- 正式训练 batch 只在 GPU online 产生，不保存/读取 corpus。`DataExecutionPlan/OnlineDataSession` 拥有 worker、queue、residency、reference scheduling、rank partition、cursor、drain 和 lease 边界；详见 `../data/online-pipeline.md`。
+- `TrainingEngine` 只解释通用 phase graph，固定 phase/step/validation/checkpoint/cleanup 生命周期；method 只能通过 facet 提供 objective 和 transition，不能注册另一条 runner。
+- checkpoint hook 在 data session drain 后把内部 engine 状态封装为 `TrainingCheckpoint@1`。新 resume 只接受 v1 且严格匹配 resolved plan/data/method facet identity。
+- legacy v4 parser 隔离在只读 importer，只输出 `EvaluationSnapshot`。它可用于 validate、满足原 readiness 的 export/visual eval，但不能 resume；没有旧 JSON reader、converter、alias 或 fallback。
+- TensorBoard 与 visual eval 通过 typed event/hook 接入且只由 rank 0 写。visual eval 独立 probe RNG/spool 可迟到，不阻断 optimizer；默认 reference 1024 spp path tracing、neural deterministic deferred。
+- 单 device 在 Windows/Linux 直接执行；多个 device 只在 Linux/NCCL 自动 launch，Windows 在创建 Torch/Falcor 前拒绝。engine、producer、method 不读 OS 或物理 GPU 环境。
+- `ScatteringPackage@2` 独立计算 program/asset/instance/package identity；viewer 验证 section、typed resource、source snapshot 和 parity 后原子绑定 slot。
 
 ## 4. Validation & Error Matrix
 
 | 条件 | 行为 |
 |---|---|
-| source/reference/plan identity不一致 | 构造拒绝 |
-| unknown platform/provider或typed payload错误 | capability/session拒绝 |
-| config phase/component/parameter ownership不完整 | config/conformance拒绝 |
-| loss、gradient、update或checkpoint identity失败 | training/resume拒绝 |
-| package URI/hash/section identity/instance binding错误 | loader/viewer拒绝 |
-| linked content store把digest映射到未验证或不同内容 | writer/exporter拒绝，不发布package/catalog |
-| editable view的default类型、operation、word offset或mutable usage非法 | Python writer/loader与C++ viewer均在创建GPU binding前拒绝 |
-| typed edit compiler或candidate resource创建失败 | 丢弃candidate，保留旧slot buffers、editor value与accumulation identity |
-| MDL package用root `.mdl` hash替代canonical snapshot比较 | package不兼容；修正为`sourceSnapshotId`，不能放宽为任意同module source |
-| 新asset验证失败 | viewer保留旧binding |
+| YAML unknown/duplicate/cycle/incompatible component | resolver 在构造 GPU runtime 前拒绝 |
+| plugin 缺 facet、重复 key、data requirement 不闭合 | registry/plan 构造拒绝 |
+| source/reference/data/query/plan identity 漂移 | session/resume/validate 拒绝 |
+| loss/gradient/update 非有限或 required coverage 不完整 | engine/readiness 拒绝 |
+| v4 用于 `ncls train --resume` | 明确拒绝，只允许 evaluation importer |
+| Windows 请求多个 device | preflight fail closed，不回退单卡/Gloo |
+| hook queue 满、worker crash 或迟到 | 状态可见；diagnostic hook 不改变 checkpoint 成功语义 |
+| package URI/hash/section/instance binding 错 | loader/viewer 拒绝并保留旧 slot |
+| editable compiler/candidate resource 创建失败 | 丢弃 candidate，active raw/compiled state 不变 |
 
 ## 5. Good / Base / Bad Cases
 
-- Good：多个native source状态先编入grouped plan，再由同一producer产生typed online batches；method compiler独立输出program/asset/instance，viewer只解释package schema与usage。
-- Good：两个package共享`programId`但拥有不同asset/instance；viewer复用一次program runtime，每个slot独立绑定asset grids与compiled material。
-- Base：单source、无纹理、单phase方法仍使用同一plan/collection/phase/package路径，不新增简化入口。
-- Bad：runner按source family选择producer；exporter识别method名称补artifact；viewer用旧package/preset reader掩盖不完整迁移。
-- Bad：UI先覆盖active raw buffer再运行compiler；compile失败会留下raw/compiled不一致状态，且无法原子回滚。
+- Good：一个 YAML 把 `method=metal`、`data=mdl-metal-full` 与 long recipe 组合；同一 plugin/data/engine 在 Windows smoke 和 Linux DDP 运行，只由 execution capability 决定 launch。
+- Good：多个 native source state 编入 grouped plan，由同一 online session 产生 typed batch；method deployment facet独立输出三段 package，viewer 只解释公共 schema。
+- Base：单 source、无纹理、单 phase、单 GPU 仍走同一 resolver/plugin/session/engine/checkpoint，不新增简化入口。
+- Bad：runner 按 source family 选择 producer；exporter 识别 method 名补 artifact；新增 `configs/learning/*.json` 或 `ncls learn` fallback；用 `@版本` 作为公开 model 名。
 
 ## 6. Tests Required
 
-- unit：registry、plan、asset collection、typed batches、phase resume、component conformance、checkpoint v4、package v2 tamper；
-- unit：editable instance roundtrip；unsupported operation、错误normalization default、越界word与非mutable usage逐项fail closed；viewer静态断言program cache只以`programId`为键且compiler先于slot move；
-- unit：同payload写两个package时content文件`samefile`，两个package仍分别通过严格loader并保持canonical identities；
-- GPU：五source同一backend plan/session，NVIDIA training core与package parity；
-- integration：LayerStack、MaterialX、固定MDL真实online两phase训练并reload/evaluate/export；
-- viewer：Release build、program cache/asset/instance双slot和Falcor clean；
-- static：upper modules无platform path、旧schema reader、固定lifecycle或source-specific producer。
+- unit：YAML resolve/identity、plugin registry/facets、data plan/session、phase/resume/events/hooks、checkpoint v1 与 legacy v4 read-only；
+- unit：package/editor/tamper，visual spool/worker/collector，launcher 单卡/Linux 多卡/Windows 拒绝；
+- GPU：五 source 的统一 backend、NVIDIA/Metal objective、resident sampling、Slang/package parity；
+- integration：新 checkpoint stop/resume/validate/export；legacy checkpoint validate/export；Windows 1024 spp visual diagnostic；
+- Linux：NCCL 两卡 smoke、rank device mapping、rank0-only outputs 和 stage trace；
+- static：无旧 JSON config/CLI/runner reader、无 upper-layer OS 分支、无磁盘 batch；Falcor overlay 构建后工作树干净。
 
 ## 7. Wrong vs Correct
 
 ```python
-# 错：runner硬编码bootstrap/materialization/finetune
-if step == materialization_step: ...
+# 错：公开名携带实现版本，并由CLI选择具体definition。
+definition = get_method("metal-fused-neural-material@3")
+runner = MetalRunner(definition, config_json)
 
-# 对：phase定义transition，method执行它
-definition.apply_phase_transition(model, phase.transition, native_assets)
+# 对：短key解析显式plugin，公共engine只依赖facet。
+plan = TrainingPlanResolver(root).resolve("configs/training/runs/metal-linux-long.yaml")
+plugin = get_method_plugin(plan.selection.method)
+TrainingEngine(plugin, data_session, plan.to_runtime_config()).run()
+```
+
+```python
+# 错：用legacy checkpoint继续新训练。
+engine.run(resume=load_checkpoint_v4(path))
+
+# 对：v4只能变成只读evaluation snapshot；新resume严格读取v1。
+evaluation = load_evaluation_snapshot(path)  # v1 or legacy v4
+resume = load_training_checkpoint_v1(path)   # v1 only
 ```
 
 ```cpp

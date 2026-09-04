@@ -1,0 +1,10 @@
+format_name: ncls.training-fragment
+format_version: 1
+kind: method
+key: metal
+extends: null
+compatible_methods: [metal]
+payload:
+  training:
+    method_key: metal-fused-neural-material
+    correspondence_id: metal-fused-full-method@1

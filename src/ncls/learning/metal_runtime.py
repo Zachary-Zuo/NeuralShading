@@ -13,7 +13,7 @@ from torch.nn import functional as F
 from ncls.learning.artifact_packing import pack_fp16_parameters
 from ncls.learning.metal_asset_cook import MetalCompiledAssetState
 from ncls.learning.models.metal_fused import (
-    MetalFusedNeuralMaterialModel,
+    MetalModel,
     MetalSpatialState,
 )
 from ncls.learning.models.metal_typed_compiler import MetalMaterialProgramState
@@ -107,7 +107,7 @@ class MetalPackedProgram:
     defines: Mapping[str, str]
 
 
-def pack_metal_program(model: MetalFusedNeuralMaterialModel) -> MetalPackedProgram:
+def pack_metal_program(model: MetalModel) -> MetalPackedProgram:
     names = metal_runtime_parameter_names(model)
     payload, layout = pack_fp16_parameters(model, names)
     if len(payload) % 4:
@@ -122,8 +122,8 @@ def pack_metal_program(model: MetalFusedNeuralMaterialModel) -> MetalPackedProgr
 
 
 def quantize_runtime_model(
-    model: MetalFusedNeuralMaterialModel,
-) -> MetalFusedNeuralMaterialModel:
+    model: MetalModel,
+) -> MetalModel:
     """Apply the deployed FP16 master pack while retaining FP32 accumulations."""
 
     state = model.state_dict()
@@ -358,7 +358,7 @@ def _sample_grid(
 
 
 def decode_metal_cooked_asset(
-    model: MetalFusedNeuralMaterialModel,
+    model: MetalModel,
     asset: MetalCompiledAssetState,
     tensors: Mapping[str, torch.Tensor],
     uv: torch.Tensor,
@@ -409,7 +409,7 @@ def decode_metal_cooked_asset(
 
 
 def evaluate_metal_cooked_asset(
-    model: MetalFusedNeuralMaterialModel,
+    model: MetalModel,
     asset: MetalCompiledAssetState,
     tensors: Mapping[str, torch.Tensor],
     *,

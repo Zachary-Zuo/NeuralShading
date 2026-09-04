@@ -1,0 +1,54 @@
+format_name: ncls.training-fragment
+format_version: 1
+kind: data
+key: mdl-metal-full
+extends: null
+compatible_methods: [metal]
+payload:
+  training:
+    source_adaptation_id: metal-fused.mdl-vmaterials2-metal@1
+    source:
+      family_id: mdl.program@1
+      material_set:
+        resolver: mdl-metal-registry
+        path: references/mdl-vmaterials2-v1/metal-opaque-v1.json
+        module_root: assets/source-materials/mdl-vmaterials2/2.4.0/Materials
+        expected_count: 692
+    online_query:
+      recipe_id: metal-fused-online-query@1
+      evaluation_samples: 1
+      footprint_samples: 1
+      source_execution_mode: authoritative@1
+      typed_state_recipe:
+        schema: ncls.mdl-metal-typed-state-recipe@1
+        registry: references/mdl-vmaterials2-v1/metal-opaque-v1.json
+        recipe_id: metal-fused-full-cohort-states@1
+        split: train
+        seed: 20260830
+        states_per_export: 4
+        responsibilities:
+          - metal-core
+          - finish-microstructure
+          - aging-contamination
+          - coating-composite
+        default_weight: 0.25
+        boundary_weight: 0.5
+      group_schedule:
+        recipe: group-block-balanced@1
+        weight: record-count
+        block_steps: 64
+        validation_offset_blocks: 104729
+    model_context:
+      profile_id: metal_fused_full_v1
+      asset_count: 52
+      graph_count: 178
+      schema_count: 64
+      recipe_count: 36
+      metal_count: 22
+      finish_count: 36
+      source_state_capacity: 4096
+      required_route_kinds:
+        - asset-tile
+        - reference-evaluator
+        - method-sampler
+    seed: 20260830

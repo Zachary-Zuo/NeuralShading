@@ -1008,10 +1008,21 @@ ReferenceSource deserializeReferenceSourceState(
         source = makeDefaultReferenceSource(ReferenceFamily::LayerStack);
         source.layerStack = loadMaterialProgramDocument(
             document.at("material_program"), &source.displayName, "Embedded LayerStack material");
-        source.sourcePath.clear();
-        source.sourceSha256 = layerStackHash(source.layerStack);
-        if (source.sourceSha256 != expectedSourceHash)
-            throw std::runtime_error("viewer scene LayerStack source asset SHA-256 mismatch");
+        if (sourcePath.empty())
+        {
+            source.sourceSha256 = layerStackHash(source.layerStack);
+            if (source.sourceSha256 != expectedSourceHash)
+                throw std::runtime_error("viewer scene embedded LayerStack source asset SHA-256 mismatch");
+        }
+        else
+        {
+            if (!std::filesystem::is_regular_file(sourcePath))
+                throw std::runtime_error("viewer scene LayerStack native source is missing: " + sourcePath.string());
+            if (sha256FileHex(sourcePath) != expectedSourceHash)
+                throw std::runtime_error("viewer scene LayerStack source asset SHA-256 mismatch: " + sourcePath.string());
+            source.sourcePath = sourcePath;
+            source.sourceSha256 = expectedSourceHash;
+        }
     }
     else if (familyId == "openpbr.surface@1.1.1")
     {

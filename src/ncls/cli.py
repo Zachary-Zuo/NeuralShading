@@ -11,7 +11,7 @@ from typing import Any
 import torch
 import torch.distributed as dist
 
-from ncls.bundle import ScatteringPackage, write_scattering_package
+from ncls.bundle import ScatteringPackage
 from ncls.core.material import (
     BINARY_SIZE,
     MaterialProgram,
@@ -21,21 +21,35 @@ from ncls.core.material import (
     validate_material_program,
 )
 from ncls.core.source import create_source_family
+from ncls.data import DataExecutionPlan, SynchronousOnlineDataSession
 from ncls.learning.batches import TrainingRouteRequest
-from ncls.learning.conformance import MethodArtifactInventory, validate_artifact_coverage
-from ncls.learning.methods import get_method, method_descriptors
+from ncls.learning.evaluation_package import compile_evaluation_package
+from ncls.learning.methods import get_method_plugin
 from ncls.learning.producer import OnlineTrainingProducer
 from ncls.learning.training import (
-    TrainingConfig,
-    TrainingRunner,
-    assess_checkpoint_readiness,
+    TrainingCheckpointV1,
+    TrainingEngine,
+    TrainingPlanResolver,
+    ResolvedTrainingPlan,
+    HookBinding,
+    TrainingEventBus,
     build_training_review,
-    load_checkpoint,
+    load_evaluation_snapshot,
+    load_training_checkpoint_v1,
     load_metric_rows,
-    save_checkpoint,
+    save_training_checkpoint_v1,
+    launch_distributed,
+    preflight_topology,
+    prepare_process_environment,
     write_training_review,
+    worker_execution_context,
 )
+from ncls.learning.training.config import TrainingConfig
+from ncls.learning.training.hooks import TensorBoardHook, VisualEvalHook
+from ncls.paths import PROJECT_ROOT
 from ncls.references.backend import create_reference_backend
+from ncls.visual_eval import VisualEvalCollector, VisualEvalSpool
+from ncls.visual_eval import VisualEvalWorker, WindowsViewerExecutor
 
 
 def _load_program(path: Path) -> MaterialProgram:
@@ -80,29 +94,39 @@ def _material_pack(path: Path, output: Path) -> int:
     return 0
 
 
-def _learn_list() -> int:
-    for descriptor in method_descriptors():
-        print(
-            f"{descriptor.method_key}\t{descriptor.display_name}\t"
-            f"{descriptor.descriptor_sha256}"
-        )
-    return 0
-
-
-def _learn_train(
-    config_path: Path,
+def _run_training(
+    resolved_plan: Any,
+    execution_context: Any,
     output: Path,
     resume_path: Path | None,
     stop_at_step: int | None,
 ) -> int:
-    ddp_rank, ddp_world = _setup_ddp()
+    ddp_rank, ddp_world = _setup_ddp(execution_context)
     is_rank0 = ddp_rank == 0
     if ddp_world > 1 and output.is_absolute() is False:
         output = output.resolve()
-    config = TrainingConfig.load(config_path)
-    definition = get_method(config.method_key)
-    producer = OnlineTrainingProducer(definition, config)
-    gpu_indices = list(getattr(producer, "ddp_gpu_indices", ()))
+    config = resolved_plan.to_runtime_config()
+    plugin = get_method_plugin(resolved_plan.selection.method)
+    data_execution_plan = DataExecutionPlan.build(
+        data_key=resolved_plan.selection.data,
+        source_family_id=str(config.source["family_id"]),
+        routes=[route.to_dict() for route in config.all_routes],
+        requirements=plugin.data.requirements(),
+        execution=resolved_plan.execution.to_dict(),
+        rank=execution_context.rank,
+        world_size=execution_context.world_size,
+    )
+    producer = OnlineTrainingProducer(
+        plugin,
+        config,
+        execution_context=execution_context,
+        data_execution_plan=data_execution_plan,
+    )
+    data_session = SynchronousOnlineDataSession(
+        producer,
+        data_execution_plan.session_identity,
+    )
+    gpu_indices = list(resolved_plan.execution.devices)
     metrics_path = output.with_name(f"{output.stem}.metrics.jsonl")
     summary_path = output.with_name(f"{output.stem}.summary.json")
     review_path = output.with_name(f"{output.stem}.review.json")
@@ -110,16 +134,86 @@ def _learn_train(
     checkpoint_write_seconds: list[float] = []
     started = time.perf_counter()
     ddp_completed = False
+    tensorboard_hook = None
+    visual_eval_hook = None
+    visual_eval_collector = None
+    event_bus = None
+    resume_v1 = None
     try:
-        resume = (
-            load_checkpoint(
+        if resume_path is None:
+            resume = None
+        else:
+            resume_v1 = load_training_checkpoint_v1(
                 resume_path,
-                descriptor=definition.descriptor,
                 map_location="cpu" if ddp_world > 1 else config.device,
             )
-            if resume_path is not None
-            else None
-        )
+            if (
+                resume_v1.data_identity["data_execution_plan_identity"]
+                != producer.data_execution_plan_identity
+            ):
+                raise ValueError("resume checkpoint data execution plan identity mismatch")
+            resume = resume_v1.to_runner_checkpoint(
+                plan=resolved_plan, plugin=plugin
+            )
+        bindings = []
+        if (
+            is_rank0
+            and resolved_plan.hooks.tensorboard.enabled
+        ):
+            tensorboard_hook = TensorBoardHook(
+                output.with_name(f"{output.stem}.tensorboard"),
+                rank=0,
+                flush_seconds=resolved_plan.hooks.tensorboard.flush_seconds,
+                queue_capacity=resolved_plan.hooks.tensorboard.queue_capacity,
+            )
+            bindings.append(
+                HookBinding("tensorboard", tensorboard_hook, "diagnostic", True)
+            )
+        if (
+            is_rank0
+            and resolved_plan.hooks.visual_eval.enabled
+        ):
+            visual_spool = VisualEvalSpool(
+                output.with_name(f"{output.stem}.visual-eval"),
+                capacity=resolved_plan.hooks.visual_eval.queue_capacity,
+            )
+            visual_eval_hook = VisualEvalHook(
+                resolved_plan,
+                output,
+                output.parent,
+                visual_spool,
+                rank=0,
+            )
+            visual_eval_collector = VisualEvalCollector(
+                visual_spool,
+                output.parent,
+                rank=0,
+                world_size=ddp_world,
+            )
+            if resume_v1 is not None:
+                visual_state = resume_v1.hook_state.get("visual_eval")
+                if isinstance(visual_state, dict):
+                    visual_eval_hook.load_state_dict(visual_state)
+                collector_state = resume_v1.hook_state.get("visual_eval_collector")
+                if isinstance(collector_state, dict):
+                    visual_eval_collector.load_state_dict(collector_state)
+            bindings.append(
+                HookBinding("visual-eval", visual_eval_hook, "diagnostic", True)
+            )
+        event_bus = TrainingEventBus(tuple(bindings))
+
+        def current_hook_state() -> dict[str, Any]:
+            state: dict[str, Any] = {}
+            if visual_eval_hook is not None:
+                state["visual_eval"] = dict(visual_eval_hook.state_dict())
+            if visual_eval_collector is not None:
+                state["visual_eval_collector"] = dict(
+                    visual_eval_collector.state_dict()
+                )
+            return state
+
+        def current_probe_ids() -> tuple[str, ...]:
+            return () if visual_eval_hook is None else visual_eval_hook.probe_ids
         retained_metric_lines: list[str] = []
         if resume is not None and metrics_path.is_file():
             for line in metrics_path.read_text(encoding="utf-8").splitlines():
@@ -159,6 +253,8 @@ def _learn_train(
             metric_count += 1
             if metric_count % 256 == 0:
                 metric_stream.flush()
+            if visual_eval_collector is not None and event_bus is not None:
+                visual_eval_collector.collect(event_bus)
 
         def save_periodic(checkpoint) -> None:
             if not is_rank0:
@@ -169,30 +265,56 @@ def _learn_train(
                 f"{output.stem}.step{checkpoint.global_step:08d}{output.suffix}"
             )
             checkpoint_started = time.perf_counter()
-            save_checkpoint(path, checkpoint)
+            save_training_checkpoint_v1(
+                path,
+                TrainingCheckpointV1.from_runner_checkpoint(
+                    checkpoint,
+                    plan=resolved_plan,
+                    plugin=plugin,
+                    data_execution_plan_identity=data_execution_plan.identity,
+                    hook_state=current_hook_state(),
+                    visual_eval_probe_ids=current_probe_ids(),
+                ),
+            )
             checkpoint_write_seconds.append(time.perf_counter() - checkpoint_started)
 
-        result = TrainingRunner(
-            definition,
-            producer,
+        result = TrainingEngine(
+            plugin,
+            data_session,
             config,
             checkpoint_callback=save_periodic,
             metric_callback=record_metric,
+            event_bus=event_bus,
         ).run(resume=resume, stop_at_step=stop_at_step)
+        if event_bus is not None:
+            if visual_eval_collector is not None:
+                visual_eval_collector.collect(event_bus)
+            event_bus.flush()
         digest = ""
         elapsed_seconds = time.perf_counter() - started
         if is_rank0:
             assert metric_stream is not None
             checkpoint_started = time.perf_counter()
-            digest = save_checkpoint(output, result.checkpoint)
+            digest = save_training_checkpoint_v1(
+                output,
+                TrainingCheckpointV1.from_runner_checkpoint(
+                    result.checkpoint,
+                    plan=resolved_plan,
+                    plugin=plugin,
+                    data_execution_plan_identity=data_execution_plan.identity,
+                    hook_state=current_hook_state(),
+                    visual_eval_probe_ids=current_probe_ids(),
+                ),
+            )
             checkpoint_write_seconds.append(time.perf_counter() - checkpoint_started)
             metric_stream.flush()
             metric_stream.close()
             elapsed_seconds = time.perf_counter() - started
             summary = {
-                "schema_name": "ncls.training-run-summary",
-                "schema_version": 2,
+                "format_name": "ncls.training-run-summary",
+                "format_version": 1,
                 "training_config_sha256": config.sha256,
+                "resolved_plan_sha256": resolved_plan.sha256,
                 "checkpoint_sha256": digest,
                 "checkpoint": output.name,
                 "metrics": metrics_path.name,
@@ -211,6 +333,19 @@ def _learn_train(
                 },
                 "elapsed_seconds": elapsed_seconds,
                 "checkpoint_write_seconds": checkpoint_write_seconds,
+                "hook_failures": (
+                    []
+                    if event_bus is None
+                    else [
+                        {
+                            "hook": item.hook_name,
+                            "operation": item.operation,
+                            "event_kind": item.event_kind,
+                            "message": item.message,
+                        }
+                        for item in event_bus.failures
+                    ]
+                ),
             }
             summary_path.write_text(
                 json.dumps(summary, ensure_ascii=False, indent=2)
@@ -219,7 +354,7 @@ def _learn_train(
             )
             review = build_training_review(
                 config,
-                definition.descriptor,
+                plugin.descriptor,
                 result.checkpoint,
                 checkpoint_sha256=digest,
                 checkpoint_bytes=output.stat().st_size,
@@ -233,59 +368,87 @@ def _learn_train(
     finally:
         if "metric_stream" in locals() and metric_stream is not None and not metric_stream.closed:
             metric_stream.close()
-        producer.close()
+        data_session.close()
+        if event_bus is not None:
+            event_bus.close()
         if ddp_world > 1 and dist.is_initialized():
             dist.destroy_process_group()
     if is_rank0:
-        print(f"TrainingCheckpoint@4 {digest}: {output}")
+        print(
+            f"TrainingCheckpoint v1 {digest}: {output}"
+        )
     return 0
 
 
-def _setup_ddp() -> tuple[int, int]:
-    """Initialize torchrun process group and map each rank to one visible GPU."""
-    world_raw = os.environ.get("WORLD_SIZE")
-    rank_raw = os.environ.get("RANK")
-    local_raw = os.environ.get("LOCAL_RANK")
-    if world_raw is None and rank_raw is None and local_raw is None:
-        return 0, 1
-    if world_raw is None or rank_raw is None or local_raw is None:
-        raise RuntimeError("DDP requires WORLD_SIZE, RANK and LOCAL_RANK")
-    try:
-        world = int(world_raw); rank = int(rank_raw); local = int(local_raw)
-    except ValueError as error:
-        raise RuntimeError("DDP rank environment values must be integers") from error
-    if world < 2 or rank < 0 or rank >= world or local < 0 or local >= world:
-        raise RuntimeError("DDP rank environment is invalid")
-    if int(os.environ.get("NCLS_DDP_WORLD_SIZE", str(world))) != world:
-        raise RuntimeError("NCLS_DDP_WORLD_SIZE disagrees with WORLD_SIZE")
-    gpu_list = os.environ.get("NCLS_DDP_GPU_LIST", "")
-    visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
-    worker_mode = os.environ.get("NCLS_DDP_WORKER") == "1"
-    if not gpu_list:
-        raise RuntimeError("DDP requires NCLS_DDP_GPU_LIST")
-    try:
-        physical = [int(value) for value in gpu_list.split(",")]
-    except ValueError as error:
-        raise RuntimeError("NCLS_DDP_GPU_LIST must be comma-separated GPU indices") from error
-    if len(physical) != world or len(set(physical)) != world:
-        raise RuntimeError("DDP GPU list length must equal WORLD_SIZE and be unique")
-    expected_visible = str(physical[local]) if worker_mode else gpu_list
-    if visible != expected_visible:
-        raise RuntimeError(
-            "DDP CUDA_VISIBLE_DEVICES must be the full GPU list before worker "
-            "narrowing or the rank's single GPU inside a worker"
+def _parse_devices(value: str | None) -> tuple[int, ...] | None:
+    if value is None:
+        return None
+    parts = value.split(",")
+    if not parts or any(not part or not part.isdecimal() for part in parts):
+        raise ValueError("--devices must be a comma-separated list of GPU indices")
+    devices = tuple(int(part) for part in parts)
+    if len(set(devices)) != len(devices):
+        raise ValueError("--devices contains duplicate GPU indices")
+    return devices
+
+
+def _train_yaml(
+    config_path: Path,
+    output: Path | None,
+    devices_text: str | None,
+    resume_path: Path | None,
+    stop_at_step: int | None,
+) -> int:
+    resolver = TrainingPlanResolver(PROJECT_ROOT)
+    overrides = _parse_devices(devices_text)
+    plan = resolver.resolve(config_path, devices=overrides)
+    output = (
+        PROJECT_ROOT
+        / "artifacts"
+        / "training"
+        / config_path.stem
+        / "checkpoint.pt"
+        if output is None
+        else output
+    )
+    topology = preflight_topology(plan.execution.devices)
+    if topology.mode == "distributed-launch":
+        extra = ["--devices", ",".join(str(item) for item in topology.devices)]
+        if resume_path is not None:
+            extra.extend(("--resume", str(resume_path.resolve())))
+        if stop_at_step is not None:
+            extra.extend(("--stop-at-step", str(stop_at_step)))
+        return launch_distributed(
+            topology,
+            config=config_path.resolve(),
+            output=output.resolve(),
+            extra_arguments=extra,
         )
-    os.environ["NCLS_DDP_LOCAL_RANK"] = str(local)
-    os.environ["NCLS_FALCOR_GPU_INDEX"] = str(physical[local])
+    prepare_process_environment(topology)
+    execution_context = worker_execution_context(topology)
+    return _run_training(
+        plan,
+        execution_context,
+        output,
+        resume_path,
+        stop_at_step,
+    )
+
+
+def _setup_ddp(execution_context: Any) -> tuple[int, int]:
+    """Initialize NCCL from a launcher-validated execution context."""
+    rank = int(execution_context.rank)
+    world = int(execution_context.world_size)
+    if world == 1:
+        return rank, world
     if not torch.cuda.is_available():
         raise RuntimeError("DDP training requires CUDA")
-    device_index = int(os.environ.get("NCLS_DDP_DEVICE_INDEX", str(local)))
-    if device_index < 0 or device_index >= torch.cuda.device_count():
-        raise RuntimeError("DDP worker device index is outside CUDA visible devices")
-    torch.cuda.set_device(device_index)
+    if torch.cuda.device_count() != 1:
+        raise RuntimeError("DDP worker must see exactly one remapped CUDA device")
+    torch.cuda.set_device(0)
     if not dist.is_initialized():
         dist.init_process_group(
-            backend="nccl",
+            backend=execution_context.topology.distributed_backend,
             rank=rank,
             world_size=world,
             timeout=timedelta(seconds=float(os.environ.get("NCLS_DDP_TIMEOUT_SECONDS", "300"))),
@@ -293,49 +456,103 @@ def _setup_ddp() -> tuple[int, int]:
     return rank, world
 
 
-def _learn_evaluate(config_path: Path, checkpoint_path: Path, batches: int) -> int:
+def _validate_checkpoint(checkpoint_path: Path, batches: int, device: int) -> int:
     if batches < 1:
-        raise ValueError("evaluation batch count must be positive")
-    config = TrainingConfig.load(config_path)
-    definition = get_method(config.method_key)
-    checkpoint = load_checkpoint(
-        checkpoint_path,
-        descriptor=definition.descriptor,
-        map_location=config.device,
+        raise ValueError("validation batch count must be positive")
+    if device < 0:
+        raise ValueError("validation device must be nonnegative")
+    topology = preflight_topology((device,))
+    prepare_process_environment(topology)
+    execution_context = worker_execution_context(topology)
+    evaluation = load_evaluation_snapshot(checkpoint_path, map_location="cpu")
+    config = TrainingConfig.from_dict(
+        evaluation.deployment_payload["training_config"]
     )
-    if checkpoint.training_config_sha256 != config.sha256:
-        raise ValueError("evaluation config disagrees with the checkpoint")
-    producer = OnlineTrainingProducer(definition, config)
-    if (
-        checkpoint.reference_program_identity != producer.reference_program_identity
-        or checkpoint.reference_execution_plan_identity
-        != producer.reference_execution_plan_identity
-        or checkpoint.native_asset_collection_identity
-        != producer.native_asset_collection_identity
-        or checkpoint.query_stream_identity != producer.query_stream_identity
-        or checkpoint.source_snapshot_ids != producer.source_snapshot_ids
-    ):
-        producer.close()
-        raise ValueError("evaluation producer identity disagrees with the checkpoint")
-    losses: list[float] = []
+    plugin = get_method_plugin(evaluation.public_method_key)
+    if evaluation.legacy_v4:
+        # Legacy v4 did not persist the new data-plane policy. Evaluation is
+        # read-only, so reconstruct the explicit synchronous baseline; its
+        # identity is deliberately excluded from legacy compatibility checks.
+        data_execution_plan = DataExecutionPlan.build(
+            data_key="legacy",
+            source_family_id=str(config.source["family_id"]),
+            routes=[route.to_dict() for route in config.all_routes],
+            requirements=plugin.data.requirements(),
+            execution={
+                "num_workers": 0,
+                "host_prefetch": 1,
+                "ready_batches": 1,
+                "reference_batch_steps": 1,
+                "reference_inflight": 1,
+                "transfer_streams": 0,
+                "residency": {"budget_mib": 4096},
+            },
+            rank=execution_context.rank,
+            world_size=execution_context.world_size,
+        )
+    else:
+        resolved_value = evaluation.deployment_payload.get("resolved_plan")
+        if not isinstance(resolved_value, dict):
+            raise ValueError("new evaluation checkpoint has no resolved training plan")
+        resolved_plan = ResolvedTrainingPlan.from_dict(resolved_value)
+        plugin = get_method_plugin(evaluation.public_method_key)
+        data_execution_plan = DataExecutionPlan.build(
+            data_key=resolved_plan.selection.data,
+            source_family_id=str(config.source["family_id"]),
+            routes=[route.to_dict() for route in config.all_routes],
+            requirements=plugin.data.requirements(),
+            execution=resolved_plan.execution.to_dict(),
+            rank=execution_context.rank,
+            world_size=execution_context.world_size,
+        )
+    producer = OnlineTrainingProducer(
+        plugin,
+        config,
+        execution_context=execution_context,
+        data_execution_plan=data_execution_plan,
+    )
     try:
-        model = definition.create_trainable(config.model_context).to(producer.device)
-        definition.restore_training_state(model, checkpoint.model_state)
-        phase_index = min(checkpoint.phase_index, len(config.phases) - 1)
+        expected = evaluation.data_identity
+        actual = {
+            "reference_program_identity": producer.reference_program_identity,
+            "reference_execution_plan_identity": producer.reference_execution_plan_identity,
+            "native_asset_collection_identity": producer.native_asset_collection_identity,
+            "query_stream_identity": producer.query_stream_identity,
+        }
+        if not evaluation.legacy_v4:
+            actual["data_execution_plan_identity"] = str(
+                producer.data_execution_plan_identity
+            )
+        else:
+            expected = {
+                name: value
+                for name, value in expected.items()
+                if name != "data_execution_plan_identity"
+            }
+        if actual != expected or producer.source_snapshot_ids != evaluation.source_snapshot_ids:
+            raise ValueError("validation producer identity disagrees with the checkpoint")
+        model = plugin.model_factory.create(config.model_context).to(producer.device)
+        plugin.checkpoint.restore(
+            model, evaluation.deployment_payload["model_state"]
+        )
+        phase_index = min(
+            config.locate_step(evaluation.global_step)[0], len(config.phases) - 1
+        )
         phase = config.phases[phase_index]
-        definition.configure_phase(model, phase.to_dict())
+        plugin.lifecycle.configure_phase(model, phase.to_dict())
         model.eval()
+        losses: list[float] = []
         with torch.no_grad():
             for index in range(batches):
                 route_batches = {}
                 try:
                     for route in phase.routes:
                         request = TrainingRouteRequest(
-                            f"evaluation:{route.name}",
+                            f"validation:{route.name}",
                             route.kind,
                             route.batch_size,
                             route.direction_count,
-                            checkpoint.global_step,
+                            evaluation.global_step,
                             config.seed + route.seed_offset + index,
                             {
                                 **dict(route.options),
@@ -344,15 +561,16 @@ def _learn_evaluate(config_path: Path, checkpoint_path: Path, batches: int) -> i
                             },
                         )
                         route_batches[route.name] = producer.next_batch(request)
-                    loss, _ = definition.training_objective(
+                    loss, _ = plugin.objective.compute(
                         model,
                         route_batches,
                         {
                             "name": phase.name,
                             "phase_index": phase_index,
-                            "phase_step": checkpoint.phase_step,
+                            "phase_step": evaluation.global_step
+                            - config.phase_start_step(phase_index),
                             "phase_steps": phase.steps,
-                            "global_step": checkpoint.global_step,
+                            "global_step": evaluation.global_step,
                             "total_steps": config.total_steps,
                             "parameter_groups": list(phase.parameter_groups),
                             "loss_terms": list(phase.loss_terms),
@@ -367,61 +585,76 @@ def _learn_evaluate(config_path: Path, checkpoint_path: Path, batches: int) -> i
                     producer.end_iteration()
     finally:
         producer.close()
-    print(f"Evaluation batches={batches} mean_loss={sum(losses) / len(losses):.9g}")
+    print(
+        f"Validation method={evaluation.public_method_key} step={evaluation.global_step} "
+        f"batches={batches} mean_loss={sum(losses) / len(losses):.9g}"
+    )
     return 0
 
 
-def _learn_export(
-    checkpoint_path: Path, output: Path, material_index: int
+def _export_checkpoint(
+    checkpoint_path: Path,
+    output: Path,
+    material_index: int,
 ) -> int:
-    checkpoint = load_checkpoint(checkpoint_path)
-    definition = get_method(checkpoint.method_key)
-    readiness = assess_checkpoint_readiness(
-        checkpoint, definition.descriptor, mode="formal"
-    )
-    readiness.require_ready()
-    config = TrainingConfig.from_dict(checkpoint.training_config)
-    family = create_source_family(str(config.source["family_id"]))
-    materials = config.source["materials"]
-    if not 0 <= material_index < len(materials):
-        raise ValueError("export material index is outside the checkpoint source list")
-    snapshot = family.load_snapshot(materials[material_index]["locator"])
-    family.validate_snapshot(snapshot)
-    if snapshot.snapshot_id not in checkpoint.source_snapshot_ids:
-        raise ValueError("export source snapshot does not occur in the checkpoint")
-    payload = checkpoint.to_payload()
-    runtime = definition.compile_program(payload)
-    material = definition.compile_asset(snapshot, payload)
-    instance = definition.compile_instance(snapshot, payload)
-    validate_artifact_coverage(
-        definition.descriptor,
-        MethodArtifactInventory.from_payloads(
-            runtime, material, checkpoint_model_state=bool(checkpoint.model_state)
-        ),
-    )
-    validation = dict(definition.package_validation(snapshot, payload))
-    validation["checkpoint_step"] = checkpoint.global_step
-    validation["checkpoint_readiness"] = readiness.to_dict()
-    manifest = write_scattering_package(
+    evaluation = load_evaluation_snapshot(checkpoint_path, map_location="cpu")
+    compiled = compile_evaluation_package(
+        evaluation,
         output,
-        program_kind="method",
-        program_key=definition.descriptor.method_key,
-        program_version=definition.descriptor.version,
-        program_descriptor_sha256=definition.descriptor.descriptor_sha256,
-        runtime_abi=definition.descriptor.runtime_abi,
-        source=snapshot,
-        program_payload=runtime,
-        asset_payload=material,
-        validation=validation,
-        instance_payload=instance,
-        provenance={
-            "checkpoint_sha256": checkpoint_path.with_suffix(
-                checkpoint_path.suffix + ".sha256"
-            ).read_text(encoding="ascii").strip(),
-            "checkpoint_readiness_mode": "formal",
-        },
+        material_index=material_index,
+        readiness_mode="formal",
     )
-    print(f"ScatteringPackage@2 {manifest.package_id}: {output}")
+    print(f"ScatteringPackage@2 {compiled.manifest.package_id}: {compiled.root}")
+    return 0
+
+
+def _visual_eval_worker(
+    spool_path: Path,
+    artifact_root: Path,
+    viewer: Path | None,
+    worker_identity: str,
+    capacity: int,
+    max_jobs: int,
+) -> int:
+    if max_jobs < 1:
+        raise ValueError("visual eval max jobs must be positive")
+    worker = VisualEvalWorker(
+        VisualEvalSpool(spool_path, capacity=capacity),
+        artifact_root,
+        WindowsViewerExecutor(viewer),
+        worker_identity=worker_identity,
+    )
+    completed = 0
+    failed = 0
+    for _ in range(max_jobs):
+        status = worker.run_once()
+        if status is None:
+            break
+        if status.state == "completed":
+            completed += 1
+        else:
+            failed += 1
+        print(f"{status.request_id}\t{status.state}\t{status.message or ''}")
+    print(f"Visual eval worker completed={completed} failed={failed}")
+    return 1 if failed else 0
+
+
+def _visual_eval_collect(
+    spool_path: Path,
+    artifact_root: Path,
+    tensorboard_path: Path,
+    capacity: int,
+) -> int:
+    spool = VisualEvalSpool(spool_path, capacity=capacity)
+    collector = VisualEvalCollector(spool, artifact_root, rank=0, world_size=1)
+    hook = TensorBoardHook(tensorboard_path, rank=0)
+    bus = TrainingEventBus((HookBinding("tensorboard", hook, "fatal", True),))
+    try:
+        count = collector.collect(bus)
+        bus.flush()
+    finally:
+        bus.close()
+    print(f"Collected {count} visual eval result(s) into {tensorboard_path}")
     return 0
 
 
@@ -591,30 +824,59 @@ def build_parser() -> argparse.ArgumentParser:
     pack.add_argument("path", type=Path)
     pack.add_argument("output", type=Path)
 
-    learn = commands.add_parser("learn", help="统一 online 方法训练、评测和导出")
-    learn_commands = learn.add_subparsers(dest="learn_command", required=True)
-    learn_commands.add_parser("list", help="列出产品 MethodDefinition")
-    train = learn_commands.add_parser("train", help="运行 online TrainingRunner")
-    train.add_argument("config", type=Path)
-    train.add_argument("output", type=Path)
-    train.add_argument("--resume", type=Path)
-    train.add_argument(
-        "--stop-at-step",
-        type=int,
-        help="在给定global step写出可恢复checkpoint后正常退出",
+    train_yaml = commands.add_parser(
+        "train", help="从组合式 YAML 运行统一 online TrainingEngine"
     )
-    evaluate = learn_commands.add_parser(
-        "evaluate", help="评测 TrainingCheckpoint@4"
+    train_yaml.add_argument("config", type=Path)
+    train_yaml.add_argument(
+        "--output",
+        type=Path,
+        help="checkpoint 路径；默认写入 artifacts/training/<run>/checkpoint.pt",
     )
-    evaluate.add_argument("config", type=Path)
-    evaluate.add_argument("checkpoint", type=Path)
-    evaluate.add_argument("--batches", type=int, default=8)
-    export = learn_commands.add_parser(
-        "export", help="从 checkpoint 的 source locator 编译 ScatteringPackage@2"
+    train_yaml.add_argument(
+        "--devices",
+        help="白名单执行覆盖，例如 0 或 0,1；多 GPU 仅支持 Linux/NCCL",
     )
-    export.add_argument("checkpoint", type=Path)
-    export.add_argument("output", type=Path)
-    export.add_argument("--material-index", type=int, default=0)
+    train_yaml.add_argument("--resume", type=Path)
+    train_yaml.add_argument("--stop-at-step", type=int)
+
+    validate_checkpoint = commands.add_parser(
+        "validate", help="用 checkpoint 内嵌计划运行数值 batch 验证"
+    )
+    validate_checkpoint.add_argument("checkpoint", type=Path)
+    validate_checkpoint.add_argument("--batches", type=int, default=8)
+    validate_checkpoint.add_argument("--device", type=int, default=0)
+
+    export_checkpoint = commands.add_parser(
+        "export", help="从新 checkpoint 或只读 legacy v4 导出正式 ScatteringPackage"
+    )
+    export_checkpoint.add_argument("checkpoint", type=Path)
+    export_checkpoint.add_argument("output", type=Path)
+    export_checkpoint.add_argument("--material-index", type=int, default=0)
+
+    visual_eval = commands.add_parser(
+        "eval", help="Windows 1024 spp 可视化诊断 worker 与迟到结果收集"
+    )
+    visual_commands = visual_eval.add_subparsers(dest="eval_command", required=True)
+    visual_worker = visual_commands.add_parser("worker", help="领取并执行可视化任务")
+    visual_worker.add_argument("spool", type=Path)
+    visual_worker.add_argument("artifact_root", type=Path)
+    visual_worker.add_argument(
+        "--viewer",
+        type=Path,
+        default=None,
+        help="NclsViewer 路径；缺省由 Windows visual-eval capability 解析",
+    )
+    visual_worker.add_argument("--worker-id", default="windows-d3d12-worker")
+    visual_worker.add_argument("--capacity", type=int, default=8)
+    visual_worker.add_argument("--max-jobs", type=int, default=1)
+    visual_collect = visual_commands.add_parser(
+        "collect", help="把已完成或迟到的可视化结果写入 TensorBoard"
+    )
+    visual_collect.add_argument("spool", type=Path)
+    visual_collect.add_argument("artifact_root", type=Path)
+    visual_collect.add_argument("tensorboard", type=Path)
+    visual_collect.add_argument("--capacity", type=int, default=8)
 
     package = commands.add_parser("package", help="ScatteringPackage@2 工具")
     package_commands = package.add_subparsers(
@@ -641,22 +903,42 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "train":
+        return _train_yaml(
+            args.config,
+            args.output,
+            args.devices,
+            args.resume,
+            args.stop_at_step,
+        )
+    if args.command == "validate":
+        return _validate_checkpoint(args.checkpoint, args.batches, args.device)
+    if args.command == "export":
+        return _export_checkpoint(
+            args.checkpoint, args.output, args.material_index
+        )
+    if args.command == "eval":
+        if args.eval_command == "worker":
+            return _visual_eval_worker(
+                args.spool,
+                args.artifact_root,
+                args.viewer,
+                args.worker_id,
+                args.capacity,
+                args.max_jobs,
+            )
+        return _visual_eval_collect(
+            args.spool,
+            args.artifact_root,
+            args.tensorboard,
+            args.capacity,
+        )
     dispatch: dict[tuple[str, str], Any] = {
         ("material", "validate"): lambda: _material_validate(args.path),
         ("material", "normalize"): lambda: _material_normalize(
             args.path, args.output
         ),
         ("material", "pack"): lambda: _material_pack(args.path, args.output),
-        ("learn", "list"): _learn_list,
-        ("learn", "train"): lambda: _learn_train(
-            args.config, args.output, args.resume, args.stop_at_step
-        ),
-        ("learn", "evaluate"): lambda: _learn_evaluate(
-            args.config, args.checkpoint, args.batches
-        ),
-        ("learn", "export"): lambda: _learn_export(
-            args.checkpoint, args.output, args.material_index
-        ),
         ("package", "validate"): lambda: _package_validate(args.path),
         ("reference", "doctor"): lambda: _reference_doctor(args.json),
         ("reference", "probe"): _reference_probe,

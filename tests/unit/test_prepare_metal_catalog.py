@@ -103,14 +103,26 @@ def test_checkpoint_readiness_separates_formal_and_explicit_diagnostic_preview()
     assert not formal.ready
     assert formal.training_run_class == "smoke"
     assert diagnostic.ready
+    diagnostic_snapshot = SimpleNamespace(
+        require_ready=lambda mode: (
+            diagnostic.require_ready(),
+            diagnostic.to_dict(),
+        )[1]
+    )
     assert (
         exporter.validate_preview_checkpoint(
-            checkpoint, METHOD_DEFINITION.descriptor, diagnostic=True
+            diagnostic_snapshot, diagnostic=True
         )
         == "exact-diagnostic-evaluator-preview"
     )
+    formal_snapshot = SimpleNamespace(
+        require_ready=lambda mode: (
+            formal.require_ready(),
+            formal.to_dict(),
+        )[1]
+    )
     with pytest.raises(ValueError, match="complete training"):
-        exporter.validate_preview_checkpoint(checkpoint, METHOD_DEFINITION.descriptor)
+        exporter.validate_preview_checkpoint(formal_snapshot)
 
 
 def test_checkpoint_readiness_rejects_shape_only_or_incomplete_evaluator_coverage() -> None:

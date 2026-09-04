@@ -20,12 +20,14 @@ from ncls.learning.method import (
     SourceAdaptationContract,
     TensorField,
 )
+from ncls.learning.methods import MethodPlugin
 from ncls.learning.source_adaptation import (
     DenseNativeAssetCollection,
     NativeAssetCollection,
     NativeAssetRole,
 )
-from ncls.learning.training import TrainingConfig, TrainingPhase, TrainingRoute, TrainingRunner
+from ncls.learning.training import TrainingEngine
+from ncls.learning.training.config import TrainingConfig, TrainingPhase, TrainingRoute
 
 
 class _PhaseModel(torch.nn.Module):
@@ -242,6 +244,9 @@ class _RouteProducer:
     def end_iteration(self) -> None:
         pass
 
+    def drain(self) -> None:
+        pass
+
     def profile_snapshot(self, *, reset: bool = False) -> Mapping[str, float]:
         result = {**self.profile, "resident_groups": 1.0}
         if reset:
@@ -251,6 +256,14 @@ class _RouteProducer:
 
     def close(self) -> None:
         pass
+
+
+def _plugin(definition: MethodDefinition) -> MethodPlugin:
+    return MethodPlugin.adapt_definition(
+        "fixture",
+        definition,
+        source_adapter_factory=lambda snapshots, device: None,
+    )
 
 
 def _phase(
@@ -312,12 +325,12 @@ def _config() -> TrainingConfig:
 
 def test_runner_resume_matches_uninterrupted_phase_graph() -> None:
     definition = _PhaseMethod()
-    full = TrainingRunner(definition, _RouteProducer(), _config()).run().checkpoint
-    partial = TrainingRunner(definition, _RouteProducer(), _config()).run(
+    full = TrainingEngine(_plugin(definition), _RouteProducer(), _config()).run().checkpoint
+    partial = TrainingEngine(_plugin(definition), _RouteProducer(), _config()).run(
         stop_at_step=2
     ).checkpoint
     assert partial.phase_name == "finetune" and partial.phase_step == 0
-    resumed = TrainingRunner(definition, _RouteProducer(), _config()).run(
+    resumed = TrainingEngine(_plugin(definition), _RouteProducer(), _config()).run(
         resume=partial
     ).checkpoint
     assert resumed.phase_name == "complete"
@@ -337,7 +350,9 @@ def test_runner_resume_matches_uninterrupted_phase_graph() -> None:
 
 
 def test_runner_accounts_training_and_validation_backend_profiles_separately() -> None:
-    result = TrainingRunner(_PhaseMethod(), _RouteProducer(), _config()).run()
+    result = TrainingEngine(
+        _plugin(_PhaseMethod()), _RouteProducer(), _config()
+    ).run()
     training_rows = [row for row in result.metrics if "loss" in row]
     validation_rows = [row for row in result.metrics if "validation/loss" in row]
 

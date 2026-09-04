@@ -5,7 +5,7 @@ import importlib
 import os
 from pathlib import Path
 import sys
-from typing import Mapping, Sequence
+from typing import Literal, Mapping, Sequence
 
 from ncls.core.identity import sha256_file, sha256_json
 from ncls.core.scattering import ReferenceProgramDefinition
@@ -26,6 +26,44 @@ _SOFTWARE_ADAPTER_NAMES = ("llvmpipe", "lavapipe", "microsoft basic render", "wa
 
 
 @dataclass(frozen=True)
+class ReferenceConcurrencyCapability:
+    synchronization: Literal["global", "stream-fence"]
+    supports_async_submit: bool
+    maximum_safe_slots: int
+    supports_shared_asset_view: bool
+
+    def __post_init__(self) -> None:
+        if self.synchronization not in {"global", "stream-fence"}:
+            raise ValueError("unknown reference synchronization capability")
+        if self.maximum_safe_slots < 1:
+            raise ValueError("reference maximum_safe_slots must be positive")
+        if self.synchronization == "global" and self.supports_async_submit:
+            raise ValueError("globally synchronized reference cannot submit asynchronously")
+
+    @classmethod
+    def for_device_api(cls, device_api: str) -> "ReferenceConcurrencyCapability":
+        if device_api == "vulkan":
+            return cls("global", False, 2, False)
+        if device_api == "d3d12":
+            return cls("stream-fence", True, 3, False)
+        raise ValueError(f"unsupported reference device API {device_api!r}")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "synchronization": self.synchronization,
+            "supports_async_submit": self.supports_async_submit,
+            "maximum_safe_slots": self.maximum_safe_slots,
+            "supports_shared_asset_view": self.supports_shared_asset_view,
+        }
+
+    @property
+    def maximum_inflight(self) -> int:
+        """Logical dispatches allowed after reserving the session's current slot."""
+
+        return max(1, self.maximum_safe_slots - 1)
+
+
+@dataclass(frozen=True)
 class ReferenceBackendDescriptor:
     backend_key: str
     version: int
@@ -38,6 +76,10 @@ class ReferenceBackendDescriptor:
     runtime_library_root: Path
     semantic_identity: str
     build_identity: str
+
+    @property
+    def concurrency(self) -> ReferenceConcurrencyCapability:
+        return ReferenceConcurrencyCapability.for_device_api(self.device_api)
 
     @property
     def identity(self) -> str:
@@ -327,6 +369,12 @@ class ReferenceBackendCapability:
 
         if not isinstance(plan, ReferenceExecutionPlan):
             raise TypeError("reference backend open() requires ReferenceExecutionPlan@1")
+        concurrency = self.descriptor.concurrency
+        if not 2 <= slot_count <= concurrency.maximum_safe_slots:
+            raise ValueError(
+                f"reference slot_count must lie in [2,{concurrency.maximum_safe_slots}] "
+                f"for {concurrency.synchronization} synchronization"
+            )
         definitions = tuple(
             {group.definition.descriptor.program_key: group.definition for group in plan.groups}.values()
         )
@@ -369,6 +417,7 @@ def create_reference_backend(
 
 __all__ = [
     "ReferenceBackendCapability",
+    "ReferenceConcurrencyCapability",
     "ReferenceBackendDescriptor",
     "ReferenceBackendReport",
     "ReferenceCapabilityStatus",

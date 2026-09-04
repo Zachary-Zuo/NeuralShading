@@ -1,11 +1,11 @@
 from .metal_fused import (
     METAL_FUSED_REQUIRED_CONTEXT,
-    MetalFusedNeuralMaterialModel,
+    MetalModel,
 )
-from .nvidia_neural_appearance import NvidiaNeuralAppearanceModel
+from .nvidia_neural_appearance import NvidiaModel
 
 __all__ = [
     "METAL_FUSED_REQUIRED_CONTEXT",
-    "MetalFusedNeuralMaterialModel",
-    "NvidiaNeuralAppearanceModel",
+    "MetalModel",
+    "NvidiaModel",
 ]

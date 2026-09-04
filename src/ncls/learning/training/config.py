@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
-from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Literal, Mapping, cast
 
 from ncls.core.identity import sha256_json
 
@@ -53,7 +51,7 @@ class TrainingRoute:
             raise ValueError(f"training route fields must be exactly {sorted(required)}")
         return cls(
             str(value["name"]),
-            str(value["kind"]),  # type: ignore[arg-type]
+            cast(TrainingRouteKind, str(value["kind"])),
             int(value["batch_size"]),
             int(value["direction_count"]),
             int(value["seed_offset"]),
@@ -189,7 +187,10 @@ class TrainingPhase:
             tuple(str(item) for item in value["loss_terms"]),
             value["recipes"],
             value["optimizer"],
-            str(value["optimizer_state_policy"]),  # type: ignore[arg-type]
+            cast(
+                Literal["reset", "carry-overlap"],
+                str(value["optimizer_state_policy"]),
+            ),
             value["schedule"],
             value["precision"],
             bool(value["checkpoint_boundary"]),
@@ -371,10 +372,3 @@ class TrainingConfig:
             str(value["format_name"]),
             int(value["format_version"]),
         )
-
-    @classmethod
-    def load(cls, path: Path | str) -> "TrainingConfig":
-        value = json.loads(Path(path).read_text(encoding="utf-8"))
-        if not isinstance(value, Mapping):
-            raise ValueError("training config root must be an object")
-        return cls.from_dict(value)

@@ -36,16 +36,16 @@ CUDA_VISIBLE_DEVICES=0 bash scripts/deploy_reference_linux.sh
 
 脚本依次执行环境preflight、Conda环境创建/更新、manifest锁定依赖获取与校验、Falcor setup/build、MDL provider build、backend doctor/device/compile probe，并把逐步状态与`assets: not-managed`写入ignored deployment report。再次运行必须复用已经通过hash/commit校验的输出；dirty external、错误commit、partial SDK或hash漂移会fail closed，不会清理用户目录。
 
-部署完成后，上层命令始终通过launcher进入同一环境。单卡入口接受`CUDA_VISIBLE_DEVICES=<单个物理序号>`；launcher将该序号同时交给Falcor Vulkan，Torch与SlangPy使用可见域内的`cuda:0`。需要同步多卡训练时，使用`--gpus <gpu0,gpu1,...>`入口启动一个torchrun/NCCL DDP job，各rank共享梯度且仅rank0写checkpoint；该模式不支持`{gpu}`输出替换。
+部署完成后，上层命令始终通过 launcher 进入同一环境。单卡入口接受 `CUDA_VISIBLE_DEVICES=<单个物理序号>`，训练命令同时使用 `--devices <同一序号>`；Falcor 使用该物理卡，Torch/SlangPy 使用进程内 `cuda:0`。训练配置指定多个 device 时，CLI 自动启动 torchrun/NCCL DDP job，各 rank 共享梯度且仅 rank 0 写 checkpoint。
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls.cli reference doctor
-CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls.cli reference probe
+CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls reference doctor
+CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls reference probe
 
 # GPU2、3、4 作为一个同步 DDP 作业；仅 rank0 写统一输出
-bash scripts/run_falcor_python.sh --gpus 2,3,4 -- \
-  -m ncls.cli learn train configs/learning/metal-fused-full-linux-smoke.json \
-  artifacts/metal-linux-training/ddp-234/checkpoint.pt
+bash scripts/run_falcor_python.sh -m ncls train \
+  configs/training/runs/metal-linux-smoke.yaml --devices 2,3,4 \
+  --output artifacts/metal-linux-training/ddp-234/checkpoint.pt
 ```
 
 ## 用户复制资产后的验收
@@ -66,12 +66,11 @@ CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m pytest \
   tests/gpu/test_openpbr_reference_gpu.py \
   tests/gpu/test_layer_stack_ir_gpu.py -q
 
-CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls.cli learn train \
-  configs/learning/nvidia-rta2024-mdl-effect-pigment-smoke.json \
-  artifacts/training/mdl-linux-smoke/checkpoint.pt
-CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls.cli learn evaluate \
-  configs/learning/nvidia-rta2024-mdl-effect-pigment-smoke.json \
-  artifacts/training/mdl-linux-smoke/checkpoint.pt --batches 1
+CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls train \
+  configs/training/runs/nvidia-mdl-effect-pigment-smoke.yaml --devices 0 \
+  --output artifacts/training/mdl-linux-smoke/checkpoint.pt
+CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls validate \
+  artifacts/training/mdl-linux-smoke/checkpoint.pt --batches 1 --device 0
 ```
 
 2026-08-29的已验证环境为Ubuntu 22.04.5、10张RTX A6000、driver 550.78、glibc 2.35、GCC 11.4.0、Conda 24.1.2、Falcor `9dc819c162b2070335c65060436041690b7937f8`与MDL SDK `2025.0.0-387700.1252`。GPU 0上的七文件集合为`20 passed`，固定MDL两步训练与checkpoint evaluate通过；最终重复部署报告为`artifacts/deployment/reference-linux/20260829T125648Z/report.json`，其中`cuda_visible_devices`与`falcor_gpu_index`均为`0`。这个结论只覆盖该实机环境，Windows结果仍不能替代Linux证据。

@@ -40,7 +40,8 @@ struct ViewerOptions
     bool headless = false;
     bool verboseConsole = false;
     bool evaluatorPreviewLighting = false;
-    uint32_t captureTargetSpp = 1024;
+    std::string capturePurpose = "formal";
+    std::array<uint32_t, 2> captureTargetSpp{1024, 1024};
     uint32_t captureSamplesPerDispatch = 1;
     uint32_t frameCount = 1024;
     uint32_t width = 1280;
@@ -151,6 +152,7 @@ private:
         PassTiming timing;
         uint32_t ping = 0;
         uint32_t spp = 0;
+        uint32_t captureTargetSpp = 1024;
         bool resetAccumulation = true;
         uint32_t deferredPreviewStride = 1u;
         uint32_t deferredTileIndex = 0u;
@@ -169,7 +171,7 @@ private:
     void rebuildReferenceMaterialMetadata();
     void syncSceneCamera();
     bool pickSceneObject(const Falcor::float2& screenPosition);
-    void updateMaterialBuffer();
+    void updateMaterialBuffer(bool sourceStateChanged);
     void updateReferenceSourceBuffer();
     SourceGpuResources createFallbackSourceGpuResources();
     SourceGpuResources createSourceGpuResources(const ncls::ReferenceSource& source);
