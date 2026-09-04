@@ -203,3 +203,11 @@ authored 参数 state 固定为 registry default：`texture_scale=[1,1]`、`text
 - `controls`：划痕青铜与开裂钢各fresh运行v3 2×2-center control与v5 center-texel candidate；GPU 5–9、per-rank batch2048、global batch10240、step256 cap和validation recipe matched。新ABI identity下旧control不能代替fresh control。
 - `interpretation`：共同step256按256条同序validation row做20,000次paired bootstrap。若两项材质spatial都改善且aggregate/peak没有一致退化，登记为下一轮优先结构；否则保留分材质trade-off。该pilot不改变当前v3 Windows交付，也不自动生成v6或延长step。
 - `outcome`：实现`55640e0`下四组fresh DDP5均完成。青铜v5的appearance改善`-0.000756`，但peak/spatial分别退化`+0.004659/+0.000136`；钢的appearance/peak/spatial分别退化`+0.000172/+0.001209/+0.0000620`，所列95% CI均不跨零。单点输入幅度增加没有带来正确空间方向，v5按规则停止于step256，不替换v3、不延长。
+
+## 16. 2026-09-05 dual-local signed-derivative pilot
+
+- `trigger`：v4角色分离与v5取消中心平滑都没有恢复正确spatial方向；source patch审计显示当前encoder只消费center/high-pass/context三个无方向均值。划痕青铜活跃变化以normal/packed为主，开裂钢同时有color/normal/packed，现有单张高分辨率RGBA Detail不足以显式保留这些二维局部机制。
+- `scope`：新增独立`metal_budgeted_hybrid_dual_local_v6` pilot profile。两张RGBA plane都使用请求texel、signed x/y中心差分和patch均值组成的24维per-slot输入，保留v3 shared-slot softmax；第二张plane由1/4线性分辨率提升到全分辨率。离线asset encoder首层随输入从20增至24，不进入runtime program；semantic/evaluator、参数化PreparedState和两次读取均不变。
+- `runtime class`：固定两次RGBA8读取、PreparedState 160 B、evaluate 11,392 dense MAC。两张全分辨率mip plane的asset bytes相对当前“一张全分辨率+一张1/4线性分辨率”预计约为`2/(1+1/16)=1.882×`；若晋级部署再按真实mip尺寸登记精确bytes。
+- `controls`：划痕青铜与开裂钢各fresh运行v3 isotropic-summary control与v6 dual-local candidate；GPU 5–9、per-rank batch2048、global batch10240、step256 cap与validation matched。共同step256做20,000次paired bootstrap。
+- `interpretation`：重点看两项spatial的方向与peak/aggregate trade-off。只有两项spatial都改善且没有一致的aggregate/peak退化，才把dual-local列为下一轮优先结构；否则登记为asset带宽/局部导数不足或无效的有限观察。无论结果如何，本轮不自动创建v7、不延长step，也不替换已交付v3 package。
