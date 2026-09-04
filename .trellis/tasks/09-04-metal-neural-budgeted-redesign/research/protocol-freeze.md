@@ -178,4 +178,12 @@ authored 参数 state 固定为 registry default：`texture_scale=[1,1]`、`text
 - `scope impact`：只把部署侧CPU/Python mip采样改为显式bilinear，并按descriptor对四个邻居分别wrap或clamp；训练online reference、模型、loss、source/query、optimizer、batch512、schedule、precision和2048 cap均不变。GPU fixture固定改用边界UV，最终package继续使用同一边界witness与原冻结`atol/rtol`。
 - `rerun required`：`metal_budgeted_runtime.py`属于方法implementation identity，所以hybrid/direct必须在新hash下从fresh step0交替重跑；旧checkpoint不能resume或重新标记。新pair仍以共同2048为上限，质量结论若复现明确分离则不延长到4096；只有新package自身通过真实Falcor parity后才发布Windows handoff。
 
+## 13. 2026-09-05 role-separated Detail pilot
+
+- `trigger`：四个特征材质的256-step结果把空间失败定位到划痕/裂纹材质；随后不更新权重的high-pass/Detail×8机制probe虽然放大预测梯度，却在划痕青铜和开裂钢上同时增大spatial error，排除“现有共享聚合只缺增益”的解释。用户已授权在主pair完成且仍有时间时继续小型结构探索。
+- `scope`：新增独立`metal_budgeted_hybrid_role_detail_v4` pilot profile。唯一模型差异是Detail聚合：四个RGBA通道分别只聚合`color/normal/scalar/packed`对应slot，各角色内部独立softmax；Context继续使用原共享slot softmax。网络层形状、参数数、两次纹理读取、RGBA8、PreparedState 160 B、evaluate 11,392 MAC、hybrid输出、source/query/loss/optimizer/seed保持不变。
+- `controls`：在划痕青铜与开裂涂漆钢上各fresh运行v3 shared聚合control与v4 role-separated candidate；物理GPU 5–9、per-rank batch2048、global batch10240、step256 cap与validation recipe matched。已有旧identity v3结果只作假设来源，不代替新implementation identity下的fresh control。
+- `interpretation`：用共同step256的256条同序validation row做candidate-minus-control paired bootstrap，报告appearance/log/linear/chroma/peak/spatial及内部信号。observed quality不设hard gate，不自动生成v5；若空间改善伴随主要appearance/peak退化，则登记trade-off并回到多通道角色分配设计，而不是继续调gain。
+- `deployment class`：pilot仍满足两次固定读取、160 B PreparedState和11,392 evaluate dense MAC硬合同；它不是新的Windows交付前置，当前可交付v3 pair保持不变。
+
 这属于“跨层合同 + 测试覆盖缺口”：纹理内部随机值无法区分zero padding与wrap，合成测试还绕过了最终DDS只读buffer。防复发由三层共同承担：CPU边界unit、真实GPU边界fixture、最终package自加载parity。

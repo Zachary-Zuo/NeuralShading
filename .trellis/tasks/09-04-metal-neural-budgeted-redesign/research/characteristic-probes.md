@@ -50,6 +50,12 @@
 
 下一小实验只诊断结构敏感度：在已训练的划痕青铜与开裂钢checkpoint上分别放大asset encoder的high-pass输入和semantic decoder的Detail输入，不更新权重，测量raw patch→Detail→semantic→final response的信号传递。它是机制probe，不作为新候选或质量对照；若单纯增益不能实质降低spatial error，下一正式候选应采用role-separated slot聚合和显式局部高频通道，而不是继续调gain。
 
+## high-pass/Detail增益机制probe
+
+在step256 checkpoint上固定四个online validation batch，不更新权重，分别执行baseline、asset high-pass输入×8、Detail→semantic权重×8和两者同时×8。划痕青铜baseline的target/predicted log-gradient绝对值为`0.50373/0.00354`，spatial error为`0.50414`；high-pass×8把预测幅度升到`0.02246`，但error反而升到`0.50735`，组合×8时为`0.02487/0.50810`。开裂钢baseline为`0.25800/0.00122/0.25804`；high-pass×8为`0.00585/0.25866`，组合×8为`0.00604/0.25874`。单独Detail→semantic×8在两项上几乎不增加final gradient。
+
+因此瓶颈不是单纯的数值增益。现有共享slot softmax先让所有语义角色竞争同一权重，再把每个slot的四维输出混入同一个Detail RGBA；放大后虽然有更多局部变化，方向却未与target对齐。后续pilot必须改变信息路由，使Detail四通道各自对应`color/normal/scalar/packed`角色；Context仍保留共享低频聚合。这个变化不增加纹理读取、PreparedState或evaluator MAC，也不改变source/query/loss。
+
 ## 预先解释规则
 
 - high-frequency与composite的spatial仍接近target自身梯度尺度、而其他appearance下降：支持“Detail高频通路是跨材质瓶颈”，下一轮优先显式role-separated Detail/Context，而不是增加主干宽度或仅加spatial loss权重。
