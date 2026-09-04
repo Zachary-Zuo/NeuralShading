@@ -26,7 +26,9 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--candidate", type=Path, required=True)
-    parser.add_argument("--step", type=int, required=True)
+    parser.add_argument("--step", type=int)
+    parser.add_argument("--baseline-step", type=int)
+    parser.add_argument("--candidate-step", type=int)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=2026090403)
     parser.add_argument("--replicates", type=int, default=20_000)
@@ -75,12 +77,13 @@ def compare(
     baseline_path: Path,
     candidate_path: Path,
     *,
-    step: int,
+    baseline_step: int,
+    candidate_step: int,
     seed: int,
     replicates: int,
 ) -> Mapping[str, Any]:
-    baseline = _rows(baseline_path, step)
-    candidate = _rows(candidate_path, step)
+    baseline = _rows(baseline_path, baseline_step)
+    candidate = _rows(candidate_path, candidate_step)
     if len(baseline) != len(candidate):
         raise ValueError("paired validation 两侧 row 数量不同")
     metrics = {}
@@ -98,7 +101,8 @@ def compare(
     return {
         "schema": "ncls.paired-validation-comparison@1",
         "delta": "candidate-minus-baseline",
-        "step": step,
+        "baseline_step": baseline_step,
+        "candidate_step": candidate_step,
         "seed": seed,
         "replicates": replicates,
         "baseline": {
@@ -117,10 +121,20 @@ def compare(
 
 def main() -> None:
     args = _parse_args()
+    if args.step is not None:
+        if args.baseline_step is not None or args.candidate_step is not None:
+            raise ValueError("--step 不能与 --baseline-step/--candidate-step 混用")
+        baseline_step = candidate_step = args.step
+    else:
+        if args.baseline_step is None or args.candidate_step is None:
+            raise ValueError("必须提供 --step，或同时提供两个里程碑 step")
+        baseline_step = args.baseline_step
+        candidate_step = args.candidate_step
     result = compare(
         args.baseline.resolve(),
         args.candidate.resolve(),
-        step=args.step,
+        baseline_step=baseline_step,
+        candidate_step=candidate_step,
         seed=args.seed,
         replicates=args.replicates,
     )

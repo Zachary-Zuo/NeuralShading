@@ -33,6 +33,23 @@
 
 按预登记规则选择per-rank batch `2048`、global batch `10,240`，四个特征材质run统一写入`batch_size_multiplier: 4`。每项256 optimizer step对应`256×10,240×2=5,242,880`个evaluator/sampler route work units；该几何选择只表示执行效率，不是质量排序。
 
+## 四项 observed result
+
+四项均以五卡完成step256并写出`complete=true` checkpoint/review，没有OOM、DDP错误、非有限metric或required parameter group失效。steady median global work units/s为黄铜`37.4k`、划痕青铜`37.0k`、阳极氧化铝`30.3k`、开裂涂漆钢`30.7k`；Torch peak分别约`1.74/1.74/1.82/3.30 GiB/rank`。较重材质的时间主要消耗在GPU-resident source reference生产与固定256-batch validation，不是模型显存。
+
+同一固定validation recipe下，step256减step128的256条同序row paired bootstrap结果如下；区间为20,000次bootstrap的95% CI，负值表示改善：
+
+| 材质 | appearance Δ | peak Δ | spatial Δ | 解释 |
+|---|---:|---:|---:|---|
+| 黄铜板 | `-0.13639 [-0.13699,-0.13578]` | `-0.12940 [-0.13046,-0.12832]` | `-0.001943 [-0.002053,-0.001835]` | 平滑金属的均值、色度与peak快速改善；spatial只有小幅下降 |
+| 划痕青铜 | `-0.01865 [-0.02235,-0.01506]` | `+0.01408 [+0.00762,+0.02062]` | `-0.001116 [-0.002202,-0.000013]` | 总分几乎平台且peak显著退化；强纹理细节未被恢复 |
+| 阳极氧化铝 | `-0.12996 [-0.13261,-0.12745]` | `-0.09630 [-0.10021,-0.09234]` | `-0.000148 [-0.000227,-0.000067]` | 平滑材质均值响应明显改善，原始spatial量级很小 |
+| 开裂涂漆钢 | `-0.09274 [-0.09552,-0.08990]` | `-0.03340 [-0.03937,-0.02746]` | `-0.000166 [-0.000961,+0.000626]` | 均值/色度/peak改善，但spatial CI跨零，裂纹响应没有可确认进展 |
+
+内部路径也呈一致模式：step256的positive RGB trace在黄铜/铝仅约`7.0e-6/5.8e-6`，主要依赖analytic gate；开裂钢虽升到`3.83e-3`，spatial仍无显著改善；划痕青铜positive trace仅`1.66e-4`且peak退化。因此本轮可以把Tungsten观察扩展为两条有范围的结论：当前hybrid适合快速拟合平滑金属的平均响应；对划痕、裂纹等高频纹理，Detail/Context经过slot聚合和4通道瓶颈后仍不能保留足够局部信号，增加step或仅调spatial loss不是优先方向。
+
+下一小实验只诊断结构敏感度：在已训练的划痕青铜与开裂钢checkpoint上分别放大asset encoder的high-pass输入和semantic decoder的Detail输入，不更新权重，测量raw patch→Detail→semantic→final response的信号传递。它是机制probe，不作为新候选或质量对照；若单纯增益不能实质降低spatial error，下一正式候选应采用role-separated slot聚合和显式局部高频通道，而不是继续调gain。
+
 ## 预先解释规则
 
 - high-frequency与composite的spatial仍接近target自身梯度尺度、而其他appearance下降：支持“Detail高频通路是跨材质瓶颈”，下一轮优先显式role-separated Detail/Context，而不是增加主干宽度或仅加spatial loss权重。
