@@ -1,15 +1,12 @@
 param(
+    [Parameter(Mandatory = $true)]
+    [string]$Handoff,
+    [ValidateSet("ReferenceVsHybrid", "ReferenceVsDirect", "HybridVsDirect")]
+    [string]$Comparison = "ReferenceVsHybrid",
     [ValidateSet("Release", "Debug")]
     [string]$Configuration = "Release",
     [uint32]$Width = 1600,
     [uint32]$Height = 900,
-    [string]$CatalogRoot = "artifacts\viewer\metal-budgeted",
-    [Parameter(Mandatory = $true)]
-    [string]$Checkpoint,
-    [switch]$AcceptNvidiaOmniverseTerms,
-    [switch]$DiagnosticPreview,
-    [uint32]$DiagnosticLimit = 0,
-    [switch]$SkipPrepare,
     [switch]$SkipBuild
 )
 
@@ -17,33 +14,67 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $projectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
-$catalog = Join-Path (Join-Path $projectRoot $CatalogRoot) "catalog.json"
-
-if (-not $SkipPrepare -and -not (Test-Path -LiteralPath $catalog -PathType Leaf)) {
-    & (Join-Path $PSScriptRoot "prepare_metal_viewer.ps1") `
-        -OutputRoot $CatalogRoot `
-        -Checkpoint $Checkpoint `
-        -DiagnosticPreview:$DiagnosticPreview `
-        -DiagnosticLimit $DiagnosticLimit `
-        -AcceptNvidiaOmniverseTerms:$AcceptNvidiaOmniverseTerms
-    if (-not $?) { throw "Failed to prepare the linked Metal viewer catalog" }
+if ([System.IO.Path]::IsPathRooted($Handoff)) {
+    $handoffPath = [System.IO.Path]::GetFullPath($Handoff)
 }
+else {
+    $handoffPath = [System.IO.Path]::GetFullPath((Join-Path $projectRoot $Handoff))
+}
+if (-not (Test-Path -LiteralPath $handoffPath -PathType Leaf)) {
+    throw "Metal budgeted handoff is missing: $handoffPath"
+}
+$document = Get-Content -LiteralPath $handoffPath -Encoding UTF8 -Raw | ConvertFrom-Json
+if ($document.format_name -ne "ncls.metal-budgeted-viewer-handoff" -or `
+    $document.format_version -ne 1 -or `
+    $document.checkpoint_compatibility -ne "exact-diagnostic-evaluator-preview") {
+    throw "Unsupported or non-diagnostic Metal budgeted handoff"
+}
+$handoffRoot = Split-Path -Parent $handoffPath
+$catalog = Join-Path $handoffRoot ([string]$document.reference_catalog)
+$bundleRoot = Join-Path $handoffRoot ([string]$document.bundle_root)
+if (-not (Test-Path -LiteralPath $catalog -PathType Leaf)) {
+    throw "Handoff reference catalog is missing: $catalog"
+}
+if (-not (Test-Path -LiteralPath $bundleRoot -PathType Container)) {
+    throw "Handoff package root is missing: $bundleRoot"
+}
+$packages = @{}
+foreach ($package in $document.packages) {
+    $packages[[string]$package.role] = $package
+}
+if (-not $packages.ContainsKey("hybrid") -or -not $packages.ContainsKey("direct")) {
+    throw "Handoff must contain exact hybrid and direct packages"
+}
+
 if (-not $SkipBuild) {
     & (Join-Path $PSScriptRoot "build_viewer.ps1") -Configuration $Configuration
     if (-not $?) { throw "Failed to build NclsViewer" }
 }
-
 $viewer = Join-Path $projectRoot "external\Falcor\build\windows-vs2022\bin\$Configuration\NclsViewer.exe"
 if (-not (Test-Path -LiteralPath $viewer -PathType Leaf)) {
     throw "NclsViewer executable is missing: $viewer"
 }
-if (-not (Test-Path -LiteralPath $catalog -PathType Leaf)) {
-    throw "Linked Metal viewer catalog is missing: $catalog"
+
+$slot0Package = "source-reference"
+$slot0Mode = "path-tracing"
+$slot1Package = [string]$packages["hybrid"].package_id
+$slot1Mode = "deferred"
+if ($Comparison -eq "ReferenceVsDirect") {
+    $slot1Package = [string]$packages["direct"].package_id
+}
+elseif ($Comparison -eq "HybridVsDirect") {
+    $slot0Package = [string]$packages["hybrid"].package_id
+    $slot0Mode = "deferred"
+    $slot1Package = [string]$packages["direct"].package_id
 }
 
 $arguments = @(
     "--material", $catalog,
-    "--bundle-root", (Join-Path (Join-Path $projectRoot $CatalogRoot) "packages"),
+    "--bundle-root", $bundleRoot,
+    "--slot0-package", $slot0Package,
+    "--slot0-mode", $slot0Mode,
+    "--slot1-package", $slot1Package,
+    "--slot1-mode", $slot1Mode,
     "--evaluator-preview-lighting",
     "--width", $Width.ToString(),
     "--height", $Height.ToString()
@@ -51,4 +82,7 @@ $arguments = @(
 $process = Start-Process -FilePath $viewer -ArgumentList $arguments `
     -WorkingDirectory $projectRoot -PassThru
 Write-Output "NclsViewer started: PID=$($process.Id)"
-Write-Output "Linked catalog: $catalog"
+Write-Output "Comparison: $Comparison"
+Write-Output "Hybrid: $($packages['hybrid'].profile_id) / $($packages['hybrid'].package_id)"
+Write-Output "Direct: $($packages['direct'].profile_id) / $($packages['direct'].package_id)"
+Write-Output "Compatibility: $($document.checkpoint_compatibility)"

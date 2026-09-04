@@ -104,6 +104,8 @@ struct ViewerProgram
     std::filesystem::path root;
     std::string packageId;
     std::string displayName;
+    std::string checkpointProfileId;
+    std::string checkpointCompatibility;
     std::shared_ptr<const ProgramRuntimeCache> program;
     AssetBinding asset;
     InstanceBinding instance;

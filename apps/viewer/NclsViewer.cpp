@@ -3887,6 +3887,8 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
             {"slot_index", slotIndex},
             {"package_id", program ? program->packageId : slot.sourceReference ? "source-reference" : ""},
             {"program_id", program ? program->program->programId : slot.sourceReference ? "ncls.scene-path-tracer@1" : ""},
+            {"checkpoint_profile_id", program ? program->checkpointProfileId : ""},
+            {"checkpoint_compatibility", program ? program->checkpointCompatibility : ""},
             {"asset_id", program ? program->asset.assetId : ""},
             {"instance_id", program ? program->instance.instanceId : ""},
             {"source_snapshot_id", program ? program->asset.sourceSnapshotId : ncls::referenceSourceStateHash(mReferenceSource)},

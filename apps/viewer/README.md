@@ -30,6 +30,20 @@ deferred renderer从 G-buffer传入相同的 UV/gradient 与 frame，再调用�
 .\scripts\launch_mdl_viewer.ps1 -Configuration Release
 ```
 
+查看同一固定MDL source上的budgeted hybrid/direct诊断模型时，先在具备训练checkpoint与reference backend的机器生成一次可搬运handoff；Linux生成的整个输出目录复制到Windows仓库后可直接加载：
+
+```powershell
+.\scripts\prepare_metal_viewer.ps1 `
+  -HybridCheckpoint artifacts\runs\hybrid\checkpoint.pt `
+  -DirectCheckpoint artifacts\runs\direct\checkpoint.pt
+
+.\scripts\launch_metal_viewer.ps1 `
+  -Handoff artifacts\viewer\metal-budgeted-pair\handoff.json `
+  -Comparison ReferenceVsHybrid
+```
+
+`ReferenceVsDirect`查看direct对照，`HybridVsDirect`并排查看两个deferred evaluator。handoff与UI/capture会显示具体profile和`exact-diagnostic-evaluator-preview`；这些package不声明`sample/pdf`或typed edit，launcher不会把neural slot伪装成path tracing。
+
 默认显示 shifting-flakes car paint；`Material` 面板的 `vMaterials preset` 可切换 patinated copper、scratched aluminum、glazed ceramic、velvet 与 pine mosaic。MDL V1 固定 `ExplicitLod(0)`；runtime reference descriptor 完整提供 canonical `prepare/evaluate/sample/pdf`，并落到同一 target code，避免 flakes/coat 与固定 GGX 错配。训练/provider 的方向响应 query 仍只输出 evaluate 数据；这是独立的 capability plane，不代表 runtime 通过私有旁路获得 sampler。
 
 构建产物位于锁定 Falcor Release bin。交互式启动可直接指定 package root；`--method` 是 package ID：

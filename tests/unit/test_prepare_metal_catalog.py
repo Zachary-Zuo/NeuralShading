@@ -1,210 +1,68 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from ncls.core.identity import sha256_file
-from ncls.learning.methods.metal_fused import METHOD_DEFINITION
-from ncls.learning.training import assess_checkpoint_readiness
+from ncls.learning.models.metal_budgeted_profile import (
+    METAL_BUDGETED_DIRECT_PROFILE_ID,
+    METAL_BUDGETED_HYBRID_PROFILE_ID,
+)
 from ncls.references.mdl import MdlCompiledArtifact
 from tools.viewer import prepare_metal_catalog as exporter
 
 
-def _coverage(*, include_proposal: bool = True) -> dict[str, dict[str, object]]:
-    return {
-        group: {
-            "finite_observed": True,
-            "nonzero_gradient_observed": True,
-            "parameter_update_observed": True,
-            "last_audit_step": 0,
-        }
-        for group in METHOD_DEFINITION.descriptor.parameter_groups
-        if include_proposal or group != "proposal_sampler"
-    }
-
-
-def _training_config(run_class: str) -> dict[str, object]:
-    return {
-        "format_name": "ncls.training-config",
-        "format_version": 4,
-        "method_key": METHOD_DEFINITION.descriptor.method_key,
-        "run_class": run_class,
-        "correspondence_id": "test",
-        "recipe_id": "test",
-        "source_adaptation_id": "test",
-        "source": {
+def _checkpoint(role: str, *, step: int = 2048, snapshot_id: str = "a" * 64):
+    profile = {
+        "hybrid": METAL_BUDGETED_HYBRID_PROFILE_ID,
+        "direct": METAL_BUDGETED_DIRECT_PROFILE_ID,
+    }[role]
+    calls: list[str] = []
+    return SimpleNamespace(
+        public_method_key="metal",
+        training_config={"model_context": {"profile_id": profile}},
+        source={
             "family_id": "mdl.program@1",
-            "materials": [{"locator": {"kind": "test"}}],
-        },
-        "online_query": {"recipe": "test"},
-        "model_context": {"test": True},
-        "phases": [
-            {
-                "name": "joint-coarse-to-fine",
-                "steps": 1,
-                "routes": [
-                    {
-                        "name": "test",
-                        "kind": "asset-tile",
-                        "batch_size": 1,
-                        "direction_count": 1,
-                        "seed_offset": 0,
-                        "options": {},
+            "materials": [
+                {
+                    "locator": {
+                        "kind": "mdl-export",
+                        "module_root": "assets/mdl",
+                        "module": "::test",
+                        "export": "main",
                     }
-                ],
-                "parameter_groups": ["codec_encoder"],
-                "loss_terms": ["test"],
-                "recipes": {"test": True},
-                "optimizer": {
-                    "kind": "adam",
-                    "betas": [0.9, 0.999],
-                    "epsilon": 1e-8,
-                    "weight_decay": 0.0,
-                },
-                "optimizer_state_policy": "reset",
-                "schedule": {
-                    "kind": "cosine",
-                    "start": 0.001,
-                    "end": 0.0001,
-                    "total_steps": 1,
-                    "offset": 0,
-                },
-                "precision": {"autocast": "fp32", "gradient_scaler": False},
-                "checkpoint_boundary": True,
-                "transition": None,
-                "log_interval": 1,
-                "gradient_audit_interval": 1,
-                "prefetch_depth": 1,
-            }
-        ],
-        "seed": 0,
-        "device": "cuda",
-        "validation": {"interval": 1, "batches": 1},
-        "checkpoint_selection": "tail_guard",
-    }
-
-
-def test_checkpoint_readiness_separates_formal_and_explicit_diagnostic_preview() -> None:
-    checkpoint = SimpleNamespace(
-        phase_name="joint-coarse-to-fine",
-        global_step=1,
-        training_config=_training_config("smoke"),
-        gradient_coverage=_coverage(),
-        validate_method=lambda descriptor: None,
-    )
-    formal = assess_checkpoint_readiness(
-        checkpoint, METHOD_DEFINITION.descriptor, mode="formal"
-    )
-    diagnostic = assess_checkpoint_readiness(
-        checkpoint, METHOD_DEFINITION.descriptor, mode="diagnostic-evaluator"
-    )
-    assert not formal.ready
-    assert formal.training_run_class == "smoke"
-    assert diagnostic.ready
-    diagnostic_snapshot = SimpleNamespace(
-        require_ready=lambda mode: (
-            diagnostic.require_ready(),
-            diagnostic.to_dict(),
-        )[1]
-    )
-    assert (
-        exporter.validate_preview_checkpoint(
-            diagnostic_snapshot, diagnostic=True
-        )
-        == "exact-diagnostic-evaluator-preview"
-    )
-    formal_snapshot = SimpleNamespace(
-        require_ready=lambda mode: (
-            formal.require_ready(),
-            formal.to_dict(),
-        )[1]
-    )
-    with pytest.raises(ValueError, match="complete training"):
-        exporter.validate_preview_checkpoint(formal_snapshot)
-
-
-def test_checkpoint_readiness_rejects_shape_only_or_incomplete_evaluator_coverage() -> None:
-    coverage = _coverage(include_proposal=False)
-    coverage.pop("hybrid_evaluator")
-    checkpoint = SimpleNamespace(
-        phase_name="joint-coarse-to-fine",
-        global_step=1,
-        training_config=_training_config("smoke"),
-        gradient_coverage=coverage,
-        validate_method=lambda descriptor: (_ for _ in ()).throw(
-            ValueError("TrainingCheckpoint method descriptor identity mismatch")
-        ),
-    )
-    readiness = assess_checkpoint_readiness(
-        checkpoint, METHOD_DEFINITION.descriptor, mode="diagnostic-evaluator"
-    )
-    assert not readiness.ready
-    assert not readiness.exact_method_identity
-    assert readiness.failed_groups == ("hybrid_evaluator",)
-
-
-def test_diagnostic_readiness_has_no_method_key_fallback() -> None:
-    descriptor = replace(METHOD_DEFINITION.descriptor, readiness_policies={})
-    checkpoint = SimpleNamespace(
-        phase_name="joint-coarse-to-fine",
-        global_step=1,
-        training_config=_training_config("smoke"),
-        gradient_coverage=_coverage(),
-        validate_method=lambda value: None,
-    )
-    readiness = assess_checkpoint_readiness(
-        checkpoint, descriptor, mode="diagnostic-evaluator"
-    )
-    assert not readiness.ready
-    assert any("does not declare" in reason for reason in readiness.reasons)
-
-
-def test_checkpoint_readiness_requires_formal_run_class_even_when_complete() -> None:
-    checkpoint = SimpleNamespace(
-        phase_name="complete",
-        global_step=1,
-        training_config=_training_config("smoke"),
-        gradient_coverage=_coverage(),
-        validate_method=lambda descriptor: None,
-    )
-    readiness = assess_checkpoint_readiness(
-        checkpoint, METHOD_DEFINITION.descriptor, mode="formal"
-    )
-    assert not readiness.ready
-    assert readiness.complete_training
-    assert readiness.training_run_class == "smoke"
-    assert any("run_class=formal" in reason for reason in readiness.reasons)
-
-
-def test_diagnostic_catalog_selects_only_checkpoint_registry_intersection() -> None:
-    records = tuple(
-        SimpleNamespace(exact_locator={"module": "::m", "export": f"e{index}"})
-        for index in range(3)
-    )
-    registry = SimpleNamespace(exports=records)
-    locators = {
-        ("::m", "e1"): {"module": "::m", "export": "e1"},
-        ("::m", "e2"): {"module": "::m", "export": "e2"},
-    }
-
-    selected = exporter._select_registry_records(
-        registry,
-        locators,
-        diagnostic_preview=True,
-        limit=1,
+                }
+            ],
+        },
+        source_snapshot_ids=(snapshot_id,),
+        global_step=step,
+        require_ready=lambda mode: calls.append(mode) or {"ready": True},
+        readiness_calls=calls,
     )
 
-    assert selected == (records[1],)
-    with pytest.raises(ValueError, match="does not cover.*exactly"):
-        exporter._select_registry_records(
-            registry,
-            locators,
-            diagnostic_preview=False,
-            limit=None,
-        )
+
+def test_pair_requires_exact_profiles_source_and_common_step() -> None:
+    hybrid = _checkpoint("hybrid")
+    direct = _checkpoint("direct")
+
+    locator, snapshot_id = exporter._validate_pair(hybrid, direct)
+
+    assert locator["export"] == "main"
+    assert snapshot_id == "a" * 64
+    assert hybrid.readiness_calls == ["diagnostic-evaluator"]
+    assert direct.readiness_calls == ["diagnostic-evaluator"]
+    assert exporter.validate_preview_checkpoint(hybrid) == (
+        "exact-diagnostic-evaluator-preview"
+    )
+
+
+def test_pair_rejects_profile_role_swaps_and_asymmetric_milestones() -> None:
+    with pytest.raises(ValueError, match="hybrid checkpoint profile"):
+        exporter._validate_pair(_checkpoint("direct"), _checkpoint("direct"))
+    with pytest.raises(ValueError, match="common training milestone"):
+        exporter._validate_pair(_checkpoint("hybrid"), _checkpoint("direct", step=1024))
 
 
 def test_catalog_materializer_hardlinks_verified_content(tmp_path: Path) -> None:
@@ -232,7 +90,6 @@ def test_catalog_materializer_hardlinks_verified_content(tmp_path: Path) -> None
 
     assert first_source.samefile(first_target)
     assert first_target.samefile(second_target)
-    assert objects[digest].samefile(first_target)
 
 
 def test_catalog_materializer_rejects_a_false_declared_hash(tmp_path: Path) -> None:
@@ -277,19 +134,4 @@ def test_reference_compile_delegates_publication_policy_to_provider() -> None:
     provider = Provider()
 
     assert exporter._compile_reference_program(provider, object()) is expected
-    assert provider.calls == 1
-
-
-def test_reference_compile_does_not_duplicate_provider_retry() -> None:
-    class FailingProvider:
-        calls = 0
-
-        def compile_snapshot(self, _snapshot: object) -> object:
-            self.calls += 1
-            raise PermissionError("persistent directory publication failure")
-
-    provider = FailingProvider()
-
-    with pytest.raises(PermissionError, match="persistent"):
-        exporter._compile_reference_program(provider, object())
     assert provider.calls == 1

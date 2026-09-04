@@ -9,10 +9,11 @@
 ```text
 tools/reference/prepare_mdl_viewer.py --output <catalog.json> [--default-asset <asset-id>]
 scripts/launch_mdl_viewer.ps1 [-Configuration Release] [-Width W] [-Height H]
-tools/viewer/prepare_metal_catalog.py [--output-root <dir>] [--checkpoint <pt>] [--registry <json>]
-    [--diagnostic-preview --diagnostic-limit <N>]
-scripts/launch_metal_viewer.ps1 [-CatalogRoot <dir>] [-DiagnosticPreview]
-    [-DiagnosticLimit <N>] [-AcceptNvidiaOmniverseTerms] [-SkipPrepare] [-SkipBuild]
+tools/viewer/prepare_metal_catalog.py [--output-root <dir>]
+    --hybrid-checkpoint <pt> --direct-checkpoint <pt>
+scripts/prepare_metal_viewer.ps1 -HybridCheckpoint <pt> -DirectCheckpoint <pt>
+scripts/launch_metal_viewer.ps1 -Handoff <handoff.json>
+    [-Comparison ReferenceVsHybrid|ReferenceVsDirect|HybridVsDirect] [-SkipBuild]
 loadMdlViewerCatalog(path) -> MdlViewerCatalog
 loadMdlCompiledArtifact(entry) -> shared_ptr<const MdlCompiledArtifact>
 selectMdlCatalogEntry(source, index) -> ReferenceSource
@@ -31,17 +32,21 @@ static project modules:
 
 ## 3. Contracts
 
-- 原有六项入口固定为 `ncls.mdl-viewer-catalog@1`；Metal authored入口使用独立的 `ncls.viewer-material-catalog@1`，两者必须由同一 loader 明确分流，不能让未知 JSON 落回 LayerStack reader。
+- 原有六项入口与当前 budgeted fixed-source诊断入口使用`ncls.mdl-viewer-catalog@1`承载精确MDL reference；已有全cohort linked入口仍使用独立的`ncls.viewer-material-catalog@1`。两者必须由同一loader明确分流，不能让未知JSON落回LayerStack reader。
+- 当前`metal_budgeted`诊断交接使用`ncls.metal-budgeted-viewer-handoff@1`把同一source、共同step的hybrid/direct checkpoint、两个独立`ScatteringPackage@2`和一个精确MDL reference catalog绑定在一起。handoff必须显式写`profile_id`、checkpoint/package四级identity、`exact-diagnostic-evaluator-preview`、已支持的`prepare/evaluate/anisotropic-frame`及不支持的`sample/pdf/typed-edit`。
+- fixed-source诊断package没有typed compiler，不能接入linked edit。Windows launcher只允许reference path tracing对neural deferred，或hybrid/direct两个deferred互比；不得把neural slot切到path tracing。UI名称与capture slot从通用package provenance读取`checkpoint_profile_id`和`checkpoint_compatibility`，不能根据目录名猜模型。
+- 双checkpoint writer只读取既有checkpoint并执行deployment compile，不得启动训练或改写checkpoint。它要求hybrid/direct为准确的v3 profile、同source locator/snapshot和共同step；输出先写staging，MDL artifact、runtime include、checkpoint和package全部完成后才原子发布。
+- 下列`ViewerMaterialCatalog@1`规则保留给具备typed compiler的全cohort linked轨道；它不是当前evaluator-only handoff已经具备的能力。
 - `ViewerMaterialCatalog@1` 的 `catalog_id` 覆盖 registry、checkpoint、reference runtime、default export和全部entries的canonical JSON。每个entry必须绑定`export_id`、taxonomy、base `source_snapshot_id`、artifact、package/program/asset/instance identity和完整typed `parameter_view`；全catalog只允许一个`program_id`。
-- Metal catalog writer从权威registry机械恢复全部692个opaque exports，保留145个cutout rejected计数但不把它们放进entries。writer只读取既有checkpoint并执行deployment compile；不得启动训练、改写checkpoint或手写preset/参数表。
+- 全cohort linked writer从权威registry机械恢复全部692个opaque exports，保留145个cutout rejected计数但不把它们放进entries；恢复该入口时仍只允许读取既有formal checkpoint并执行deployment compile。
 - Metal catalog必须在reference compile、asset cook和package写出前，对全部692个typed editor view做一次轻量预检。MDL enum的authoring值`{"name": N, "value": I}`进入UI/runtime metadata前规范化为choice字符串`N`；各分量上下界相同的vector range规范化为共享scalar range。不能等到某条大payload已经写出后才由`InstancePayload`发现类型漂移。
 - 692个entry有独立source/asset/instance identity，但重资产按52个`texture_set_id`分组：每个texture set只执行一次encoder-only cook，同哈希program/grid/reference payload通过NTFS hardlink物化，跨卷不支持hardlink时才复制。hardlink只改变存储，不改变package content hash或identity；内容映射只能接收已验证SHA-256的文件。
 - native MDL runtime compile可在准备工具内有界并发，Windows原子发布若瞬时返回`PermissionError/WinError 5`可做短退避重试；cache key、最终manifest和artifact identity仍由正式provider拥有。中断后已原子提交的provider cache可复用，catalog staging本身仍不可加载。
 - 已存在catalog的准备入口只验证catalog canonical identity、registry/checkpoint输入identity与结构，不遍历全部hardlink payload，也不为日志重新统计logical bytes；C++在实际选择entry时严格验证该entry的artifact/package并以candidate事务提交。
 - `ReferenceSource`中的`ViewerMaterialCatalog@1`是大体积不可变元数据，候选选择、typed edit和事务rollback必须共享同一catalog对象，不能为每次候选深拷贝692条parameter view。shared neural program的GPU pass按实际slot mode懒创建；默认deferred不得预编译未使用的package path tracer。初始linked transaction若reference state已安装，也不得重复创建同一MDL scene pass或重复编译同一typed instance。
 - quality-first evaluator的8×8 workgroup只是TDR上限，不是交互frame预算。交互deferred每帧最多提交一个workgroup，并以16×→8×→4×→2×→1×的coarse-to-fine stride逐级覆盖全屏；每级用代表性G-buffer sample填充对应block，UI显示当前stride/tile进度，任一相机/材质/灯光reset从16×重新开始。headless/capture固定`stride=1`并在导出前完成全部tile，不能把交互coarse preview写成正式结果。
-- formal Metal catalog只接受exact method identity、`run_class=formal`、`phase_name=complete`、全部required group梯度/更新覆盖，以及与692-entry registry完全相等的source locator集合；默认checkpoint/output指向step 120000。tensor name/dtype/rank/shape相容不代表已训练或可部署，不再接受旧的shape-only compatibility。
-- 未完成checkpoint仅能在显式`--diagnostic-preview`下用于“evaluator是否开始学习”的诊断。它仍要求exact descriptor与codec/compiler/evaluator相关组已有finite/nonzero/update覆盖，source只能取checkpoint locator与registry的交集，`--diagnostic-limit`也只在此模式合法；生成program capability必须移除`sample/pdf`并标记`exact-diagnostic-evaluator-preview`，viewer状态/UI/capture不得显示formal ready。
+- formal linked Metal catalog只接受exact method identity、`run_class=formal`、`phase_name=complete`、全部required group梯度/更新覆盖，以及与692-entry registry完全相等的source locator集合。tensor name/dtype/rank/shape相容不代表已训练或可部署，不接受旧的shape-only compatibility。
+- 当前budgeted handoff固定调用descriptor声明的`diagnostic-evaluator` readiness；生成program capability必须没有`sample/pdf`，package provenance、handoff、viewer UI与capture slot都标记`exact-diagnostic-evaluator-preview`和具体profile identity。
 - editable parameter当前允许bool/int/enum/float/float2/color。每个leaf同时含registry-derived `responsibility`、MDL argument `offset/size/type`和已有typed runtime mapping；`coordinates`、`frame`与metal/finish/aging/coating使用相同descriptor遍历，不按参数名增加viewer分支。
 - linked edit以base authored argument block和base snapshot为锚；同一完整values map先生成`ViewerMaterialState@1`，再分别patch reference argument candidate与neural raw candidate并运行现有`nclsCompileMaterial`。values map必须恰好覆盖全部editable path，type、enum、finite、int32及hard min/max任一失败都拒绝。
 - linked mode默认slot 0为reference path tracing、slot 1为匹配package的deferred evaluator。匹配只用export/snapshot/package/program/asset/instance identity；shared program GPU runtime只按`program_id`复用，display name和UI index不参与解析。
@@ -76,6 +81,8 @@ static project modules:
 | Windows并发cache目录原子发布瞬时拒绝 | 有界短退避重试；超过次数后保留既有cache/staging边界并明确失败 |
 | formal checkpoint是smoke/profile、phase未完成、coverage不全或source不是完整registry | readiness/prepare拒绝；不得因step数或tensor shape看似正确而发布 |
 | diagnostic preview请求checkpoint之外的locator、启用`sample/pdf`或UI标成formal | exporter/loader/静态测试失败 |
+| hybrid/direct profile角色互换、source不同或step不相同 | handoff writer在asset cook前拒绝 |
+| diagnostic handoff让neural slot使用path tracing，或没有在UI/capture显示profile/compatibility | launcher/静态合同失败 |
 | 交互deferred在单个frame内遍历完整tile lattice，或每tile同步`submit(true)`直到全图结束 | viewer响应性门失败；改为跨frame单workgroup推进，headless才允许同步排空 |
 | candidate复制完整catalog，或deferred启动同时创建未使用的package PT pass | 内存/启动门失败；catalog共享不可变所有权，program pass按slot mode懒创建 |
 | falcor2 import、launch 或 runtime fallback 出现在 viewer 路径 | boundary test 失败 |
@@ -102,9 +109,10 @@ static project modules:
 
 - unit/static：六项 catalog、unknown default、artifact/compiler/capability/hash检查存在、viewer/falcor2 boundary、公共 `PathSurface`、matched `sample/pdf` 路由与 LOD0。
 - unit/static：`ViewerMaterialCatalog@1` exact-field/canonical-id/path containment、duplicate/hanging binding、六类responsibility、bool/int/enum/float/float2/color、完整values map、hard range、program cache和candidate commit顺序；脚本静态断言无训练入口。
-- exporter：先预检全部692个editor contracts；正式registry/checkpoint输出692 entries、145 rejected cutout、一个program、52个texture sets及692个独立asset/instance/reference identity。相同content digest必须`samefile`或跨卷安全复制；任一中途失败后output root不存在。
+- budgeted handoff exporter：hybrid/direct角色、共同source/step/readiness检查；生成两个独立checkpoint/package identity与一个精确MDL reference artifact。相同content digest必须`samefile`或跨卷安全复制；任一中途失败后output root不存在。
+- future linked exporter：恢复全cohort入口时先预检全部692个editor contracts；正式registry/checkpoint输出692 entries、145 rejected cutout、一个program、52个texture sets及692个独立asset/instance/reference identity。
 - exporter回归：至少包含对象形态enum default、共享scalar的`float2` range、Windows cache发布瞬时`PermissionError`、已有catalog快速返回，以及原报错的`medium_pitted_steel`严格artifact/package加载。
-- exporter readiness：formal拒绝smoke/profile/未完成/缺coverage/不完整source；diagnostic只接受exact evaluator覆盖，按checkpoint source交集生成，并将capability限制为`prepare/evaluate/anisotropic-frame`。
+- exporter readiness：fixed handoff两侧只接受exact evaluator覆盖，并将capability限制为`prepare/evaluate/anisotropic-frame`；full linked formal仍拒绝smoke/profile/未完成/缺coverage/不完整source。
 - viewer静态：断言交互deferred调用单tile入口、该入口无循环和同步submit、stride按16/8/4/2/1推进；headless仍调用完整tile入口且显式`gPreviewStride=1`。Windows真实进程在默认1600×900启动后至少连续采样30秒`Responding`，首次shader编译允许短暂峰值，但不能持续无响应。
 - GPU canonical backend：固定 diffuse artifact 上验证 sampled direction/event 有效，sample PDF 等于 formal PDF，`bsdf_over_pdf == evaluate * |n_s·wi| / pdf`；容差按 float32 formal query 冻结，不能根据结果调宽。
 - Release：`scripts/build_viewer.ps1 -Configuration Release`，必须编译 C++ 和真实 string module入口，随后 Falcor clean。

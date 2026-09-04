@@ -59,6 +59,17 @@ def compile_evaluation_package(
     if snapshot.snapshot_id not in evaluation.source_snapshot_ids:
         raise ValueError("evaluation source snapshot does not occur in the checkpoint")
     payload = evaluation.deployment_payload
+    training_config = payload.get("training_config")
+    model_context = (
+        training_config.get("model_context")
+        if isinstance(training_config, Mapping)
+        else None
+    )
+    profile_id = (
+        str(model_context.get("profile_id", ""))
+        if isinstance(model_context, Mapping)
+        else ""
+    )
     runtime = plugin.deployment.compile_program(payload)
     asset = plugin.deployment.compile_asset(snapshot, payload)
     instance = plugin.deployment.compile_instance(snapshot, payload)
@@ -89,6 +100,12 @@ def compile_evaluation_package(
         provenance={
             "checkpoint_sha256": evaluation.checkpoint_sha256,
             "checkpoint_readiness_mode": readiness_mode,
+            "checkpoint_compatibility": (
+                "exact-diagnostic-evaluator-preview"
+                if readiness_mode in {"diagnostic-evaluator", "visual-diagnostic"}
+                else "exact"
+            ),
+            "checkpoint_profile_id": profile_id,
             "checkpoint_legacy_v4": evaluation.legacy_v4,
         },
     )
