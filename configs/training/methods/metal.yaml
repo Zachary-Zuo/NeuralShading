@@ -6,5 +6,11 @@ extends: null
 compatible_methods: [metal]
 payload:
   training:
-    method_key: metal-fused-neural-material
-    correspondence_id: metal-fused-full-method@1
+    method_key: metal-budgeted-neural-material
+    correspondence_id: metal-budgeted-semantic-hybrid@1
+    model_context:
+      profile_id: metal_budgeted_hybrid_v1
+      asset_variant_count: 52
+      maximum_texture_slots: 9
+      maximum_typed_tokens: 32
+      runtime_asset_reads: 2

@@ -29,6 +29,7 @@ from ncls.learning.conformance import (
     validate_phase_execution,
 )
 from ncls.learning.methods.contracts import MethodPlugin
+from ncls.learning.method import TrainingInitializationRequest
 
 from .checkpoint import TrainingCheckpoint
 from .config import TrainingConfig, TrainingPhase, TrainingRoute
@@ -166,6 +167,30 @@ def _tree_to_device(value: Any, device: torch.device) -> Any:
     return value
 
 
+def _progress_postfix(
+    row: Mapping[str, float], *, phase_name: str, work_units: int
+) -> dict[str, str | int]:
+    """只展示有明确语义的标准 loss 分项；proposal 允许为负密度 NLL。"""
+
+    result: dict[str, str | int] = {
+        "phase": phase_name,
+        "total": f"{row['loss']:.6g}",
+    }
+    optional = (
+        ("appearance", "loss/appearance"),
+        ("proposal", "loss/proposal"),
+        ("proposal_w", "loss/proposal_weight"),
+    )
+    for label, key in optional:
+        if key in row:
+            value = float(row[key])
+            if not math.isfinite(value):
+                raise RuntimeError(f"training progress metric {key!r} is non-finite")
+            result[label] = f"{value:.6g}"
+    result["work"] = work_units
+    return result
+
+
 class TrainingEngine:
     """执行任意 versioned phase graph 的唯一 online training lifecycle。"""
 
@@ -300,14 +325,22 @@ class TrainingEngine:
         # shared identity freezes the partition recipe, while rank-local state
         # is persisted in the checkpoint envelope for exact resume.
         rank_stride = self._ddp_rank() * 1_000_003
-        seed_offset = route.seed_offset + rank_stride + (1_000_000_007 if validation else 0)
+        if validation and "validation_seed" in options:
+            seed = int(options["validation_seed"]) + rank_stride
+        else:
+            seed = (
+                self.config.seed
+                + route.seed_offset
+                + rank_stride
+                + (1_000_000_007 if validation else 0)
+            )
         return TrainingRouteRequest(
             name,
             route.kind,
             route.batch_size,
             route.direction_count,
             step,
-            self.config.seed + seed_offset,
+            seed,
             options,
         )
 
@@ -393,6 +426,139 @@ class TrainingEngine:
 
     def _release_prepared(self, prepared: _PreparedStep) -> None:
         prepared.step_batch.release()
+
+    @staticmethod
+    def _initialization_query_tensor(
+        value: torch.Tensor,
+        *,
+        route: TrainingRoute,
+        sample_count: int,
+    ) -> torch.Tensor:
+        if value.shape[0] != route.batch_size:
+            raise ValueError("training initialization tensor batch size drifted")
+        if value.ndim >= 2 and value.shape[1] == route.direction_count:
+            value = value.reshape(
+                route.batch_size * route.direction_count, *value.shape[2:]
+            )
+        elif route.direction_count != 1:
+            raise ValueError(
+                "training initialization tensor does not expose its direction axis"
+            )
+        return value[:sample_count].detach().to(device="cpu").contiguous()
+
+    def _initialize_fresh_training_state(
+        self, model: nn.Module
+    ) -> Mapping[str, Any]:
+        requests = tuple(
+            self.plugin.lifecycle.initialization_requests(self.config.to_dict())
+        )
+        if not requests:
+            return {}
+        if len({request.name for request in requests}) != len(requests):
+            raise ValueError("training initialization request names must be unique")
+        phase_by_name = {phase.name: phase for phase in self.config.phases}
+        collected: dict[str, dict[str, torch.Tensor]] = {}
+        request_manifest: list[dict[str, Any]] = []
+        for initialization in requests:
+            if not isinstance(initialization, TrainingInitializationRequest):
+                raise TypeError("method initialization request has the wrong type")
+            try:
+                phase = phase_by_name[initialization.phase_name]
+            except KeyError as error:
+                raise ValueError(
+                    "training initialization references an unknown phase"
+                ) from error
+            routes = {route.name: route for route in phase.routes}
+            try:
+                route = routes[initialization.route_name]
+            except KeyError as error:
+                raise ValueError(
+                    "training initialization references an unknown route"
+                ) from error
+            query_count = route.batch_size * route.direction_count
+            chunks: dict[str, list[torch.Tensor]] = {
+                field: [] for field in initialization.tensor_fields
+            }
+            remaining = initialization.sample_count
+            batch_index = 0
+            while remaining > 0:
+                take = min(remaining, query_count)
+                route_request = TrainingRouteRequest(
+                    f"initialization:{initialization.name}:{route.name}",
+                    route.kind,
+                    route.batch_size,
+                    route.direction_count,
+                    0,
+                    initialization.seed + batch_index,
+                    {
+                        **dict(route.options),
+                        "recipes": dict(phase.recipes),
+                        "initialization": initialization.name,
+                        "validation": False,
+                    },
+                )
+                logical_id = self.data_session.submit_step(
+                    {route.name: route_request},
+                    boundary_id=f"initialization:{initialization.name}:{batch_index}",
+                )
+                step_batch = self.data_session.acquire_step(logical_id)
+                try:
+                    batch = step_batch.batches[route.name]
+                    self._validate_batch_type(route, batch)
+                    tensors = batch.tensors
+                    missing = set(initialization.tensor_fields) - set(tensors)
+                    if missing:
+                        raise ValueError(
+                            "training initialization batch is missing tensors: "
+                            f"{sorted(missing)}"
+                        )
+                    for field in initialization.tensor_fields:
+                        chunks[field].append(
+                            self._initialization_query_tensor(
+                                tensors[field], route=route, sample_count=take
+                            )
+                        )
+                finally:
+                    step_batch.release()
+                remaining -= take
+                batch_index += 1
+            collected[initialization.name] = {
+                field: torch.cat(values, dim=0)
+                for field, values in chunks.items()
+            }
+            if any(
+                value.shape[0] != initialization.sample_count
+                for value in collected[initialization.name].values()
+            ):
+                raise RuntimeError("training initialization sample count drifted")
+            request_manifest.append(
+                {
+                    "name": initialization.name,
+                    "phase_name": initialization.phase_name,
+                    "route_name": initialization.route_name,
+                    "sample_count": initialization.sample_count,
+                    "seed": initialization.seed,
+                    "tensor_fields": list(initialization.tensor_fields),
+                }
+            )
+        metadata = {
+            "schema": "ncls.train-only-initialization@1",
+            "training_config_sha256": self.config.sha256,
+            "reference_program_identity": self.data_session.reference_program_identity,
+            "reference_execution_plan_identity": (
+                self.data_session.reference_execution_plan_identity
+            ),
+            "native_asset_collection_identity": (
+                self.data_session.native_asset_collection_identity
+            ),
+            "query_stream_identity": self.data_session.query_stream_identity,
+            "requests": request_manifest,
+        }
+        result = dict(
+            self.plugin.lifecycle.initialize_training_state(model, collected, metadata)
+        )
+        self.distributed.validate_descriptor("training:initialization", result)
+        return result
 
     def _active_named_parameters(
         self, model: nn.Module, phase: TrainingPhase
@@ -874,6 +1040,14 @@ class TrainingEngine:
         target_step = self.config.total_steps if stop_at_step is None else int(stop_at_step)
         if not global_step <= target_step <= self.config.total_steps:
             raise ValueError("stop_at_step must lie between resume step and total steps")
+
+        initialization = {}
+        if resume is None:
+            initialization = self.distributed.run_all_ranks(
+                "training fresh-state initialization",
+                lambda: self._initialize_fresh_training_state(model),
+            )
+
         if global_step == self.config.total_steps:
             checkpoint = self._coordinated_checkpoint(
                 model,
@@ -954,6 +1128,7 @@ class TrainingEngine:
                 "target_step": target_step,
                 "resumed": resume is not None,
                 "training_config_sha256": self.config.sha256,
+                "initialization": dict(initialization),
             },
         )
         self._emit("phase-started", global_step, phase_name=phase.name)
@@ -1329,11 +1504,9 @@ class TrainingEngine:
                         },
                     )
                     bar.set_postfix(
-                        {
-                            "phase": phase.name,
-                            "loss": f"{row['loss']:.6g}",
-                            "queries": work_units,
-                        }
+                        _progress_postfix(
+                            row, phase_name=phase.name, work_units=work_units
+                        )
                     )
                 bar.update(1)
 

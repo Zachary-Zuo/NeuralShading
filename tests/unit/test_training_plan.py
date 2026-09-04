@@ -7,6 +7,7 @@ from ncls.learning.training import (
     ResolvedTrainingPlan,
     TrainingPlanResolver,
 )
+from ncls.source_materials.mdl_metal import MdlMetalRegistry
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -27,51 +28,44 @@ def test_resolved_training_plan_roundtrips_embedded_checkpoint_manifest() -> Non
         (
             "configs/training/runs/nvidia-layer-stack-smoke.yaml",
             "nvidia",
-            "d618406461c9914cff96e257d3b4fbb333e54428476efacab7c3da9bdceeab72",
+            "986b18b91c79083e3b4253581ae07e2f1beb69fe6534176cbb7560a0fc54f793",
             1,
             2,
         ),
         (
-            "configs/training/runs/metal-windows-smoke.yaml",
+            "configs/training/runs/metal-budgeted-hybrid-pilot.yaml",
             "metal",
-            "288226d90187c2dcdff6b0babf92c5cef5102a40c69b1e6652e5995ff5be71f9",
-            3,
-            16,
+            "eb146b5a59cb5aa646d47ea9f631e5ef76673b75391ed6b11612fd085fedce83",
+            1,
+            2048,
         ),
         (
             "configs/training/runs/nvidia-materialx-smoke.yaml",
             "nvidia",
-            "0889992e5878d154aa96dfab05eece9016fab7e8ff1ad3d54a4e4581d86cea7b",
+            "f5122a0dc73fa78503f80ab85176d938a6c592bb91a26001a631ddeca00d360a",
             1,
             2,
         ),
         (
             "configs/training/runs/nvidia-materialx-formal.yaml",
             "nvidia",
-            "c47fc0105dd06aa636224ebb19762632c5116cdffc999aee69104cda41707e77",
+            "b20eb5b9f20f703631021d3453e5f98f5e3575781dc80a8cc474a0512d111c96",
             1,
             300000,
         ),
         (
             "configs/training/runs/nvidia-mdl-effect-pigment-smoke.yaml",
             "nvidia",
-            "a4a603935349290688b12203e78a561da19b39c6c39e509d51d5d9dfcc4ee3c1",
+            "2f668ac6d25343d8412cfb9ccd43c3f4af7ea6bf1ef36856d05d4fa27bb90f7e",
             1,
             2,
         ),
         (
-            "configs/training/runs/metal-linux-smoke.yaml",
+            "configs/training/runs/metal-budgeted-direct-pilot.yaml",
             "metal",
-            "28f754f2c5c128e32a11c110168f4a541099ccb4fbc01f61189da9a8f61b99da",
-            692,
-            16,
-        ),
-        (
-            "configs/training/runs/metal-linux-long.yaml",
-            "metal",
-            "166f28c28f4ef58569ae459d0f90b694238585ce04c3b88d4b4e6ebe04a5ecd0",
-            692,
-            120000,
+            "d4eab5ad6c766b37f9880d7dc37ed7cfce66acd4a5e2e63237db09abe10c3b5b",
+            1,
+            2048,
         ),
     ),
 )
@@ -144,21 +138,17 @@ format_name: ncls.training-run
 format_version: 1
 compose:
   method: metal
-  data: mdl-metal-full
-  recipe: metal-windows-smoke
+  data: mdl-metal-budgeted-full
+  recipe: metal-budgeted-hybrid-pilot
 """,
         encoding="utf-8",
     )
 
     plan = TrainingPlanResolver(tmp_path).resolve(run_path)
-    expected = TrainingPlanResolver(PROJECT_ROOT).resolve(
-        "configs/training/runs/metal-linux-smoke.yaml"
-    )
-
-    assert (
-        plan.to_runtime_config().source["materials"]
-        == expected.to_runtime_config().source["materials"]
-    )
-    assert len(plan.to_runtime_config().source["materials"]) == 692
+    materials = plan.to_runtime_config().source["materials"]
+    registry = MdlMetalRegistry.load(registry_target)
+    assert len(materials) == len(registry.exports) == 692
+    assert materials[0]["locator"]["export"] == registry.exports[0].exact_locator["export"]
+    assert materials[-1]["locator"]["export"] == registry.exports[-1].exact_locator["export"]
     assert plan.inputs[-1].kind == "source-set"
     assert plan.inputs[-1].path == registry_relative.as_posix()

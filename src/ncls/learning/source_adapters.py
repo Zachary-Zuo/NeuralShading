@@ -435,9 +435,11 @@ class MetalFusedMdlSourceAdapter(MethodSourceAdapter):
             "optical": [],
             "access": [],
             "frame": [],
+            "distribution": [],
         }
         maximum_mips = []
         maximum_extents = []
+        maximum_extents_xy = []
         for source in sources:
             record = self.registry.resolve_exact_locator(source.module, source.export)
             tables["graph"].append(graph_indices[record.graph_id])
@@ -453,9 +455,24 @@ class MetalFusedMdlSourceAdapter(MethodSourceAdapter):
             tables["optical"].append(self._canonical_optical(source.arguments))
             tables["access"].append(self._access_state(source.arguments))
             tables["frame"].append(self._frame_state(source.arguments))
+            texture_set = self.registry.texture_sets[record.texture_set_id]
+            tables["distribution"].append(
+                int(
+                    any(
+                        "beckmann" in str(slot.get("source_path", "")).lower()
+                        for slot in texture_set["slots"]
+                    )
+                )
+            )
             descriptor = self._assets.descriptors[asset_index]
             maximum_mips.append(max(len(domain.level_shapes) for domain in descriptor.domains) - 1)
             maximum_extents.append(max(max(domain.level_shapes[0]) for domain in descriptor.domains))
+            maximum_extents_xy.append(
+                (
+                    max(domain.level_shapes[0][1] for domain in descriptor.domains),
+                    max(domain.level_shapes[0][0] for domain in descriptor.domains),
+                )
+            )
         integer_names = {
             "graph",
             "schema",
@@ -468,6 +485,7 @@ class MetalFusedMdlSourceAdapter(MethodSourceAdapter):
             "responsibility",
             "discrete",
             "presence",
+            "distribution",
         }
         self._tables = {
             name: torch.as_tensor(
@@ -482,6 +500,9 @@ class MetalFusedMdlSourceAdapter(MethodSourceAdapter):
         )
         self._maximum_extents = torch.tensor(
             maximum_extents, dtype=torch.float32, device=device
+        )
+        self._maximum_extents_xy = torch.tensor(
+            maximum_extents_xy, dtype=torch.float32, device=device
         )
         self._source_asset_indices = tuple(int(value) for value in tables["asset"])
 
@@ -692,6 +713,7 @@ class MetalFusedMdlSourceAdapter(MethodSourceAdapter):
             "metal_canonical_optical": "optical",
             "metal_access_state": "access",
             "metal_frame_state": "frame",
+            "metal_distribution_id": "distribution",
         }
         return {
             output: self._tables[source][source_index : source_index + 1]
@@ -716,21 +738,53 @@ class MetalFusedMdlSourceAdapter(MethodSourceAdapter):
         if not 0.0 < extent <= 1.0:
             raise ValueError("Metal spatial tile extent must lie in (0,1]")
         if coherent:
-            origin = torch.rand((1, 2), generator=generator, device=self.device)
+            anchor_value = options.get("spatial_anchor")
+            if anchor_value is None:
+                origin = torch.rand((1, 2), generator=generator, device=self.device)
+            else:
+                if (
+                    not isinstance(anchor_value, (list, tuple))
+                    or len(anchor_value) != 2
+                    or any(not 0.0 <= float(value) <= 1.0 for value in anchor_value)
+                ):
+                    raise ValueError("Metal spatial anchor must be a normalized float2")
+                origin = torch.tensor(
+                    anchor_value, dtype=torch.float32, device=self.device
+                )[None]
             uv = torch.frac(
                 origin
                 + extent
-                * torch.rand((count, 2), generator=generator, device=self.device)
+                * (
+                    torch.rand((count, 2), generator=generator, device=self.device)
+                    - (0.5 if anchor_value is not None else 0.0)
+                )
             )
         else:
             uv = torch.rand((count, 2), generator=generator, device=self.device)
         maximum_mip = self._maximum_mips.index_select(0, source_index)
-        exponential = -torch.log(
-            torch.clamp(
-                1.0 - torch.rand(count, generator=generator, device=self.device),
-                min=1e-7,
+        footprint_recipe = options.get("footprint_recipe")
+        if footprint_recipe == "balanced-zero-one-four-texel@1":
+            footprint_texels = torch.tensor(
+                (0.0, 1.0, 4.0), dtype=torch.float32, device=self.device
+            ).repeat((count + 2) // 3)[:count]
+            footprint_texels = footprint_texels[
+                torch.randperm(count, generator=generator, device=self.device)
+            ]
+            exponential = torch.where(
+                footprint_texels > 0.0,
+                torch.log2(torch.clamp(footprint_texels, min=1.0)),
+                torch.zeros_like(footprint_texels),
             )
-        )
+        elif footprint_recipe is None:
+            exponential = -torch.log(
+                torch.clamp(
+                    1.0 - torch.rand(count, generator=generator, device=self.device),
+                    min=1e-7,
+                )
+            )
+            footprint_texels = torch.pow(2.0, exponential)
+        else:
+            raise ValueError("Metal footprint recipe is unsupported")
         access = self._tables["access"].index_select(0, source_index)
         scale = access[:, 0:2]
         # The reference receives the renderer footprint before authored UV
@@ -745,7 +799,7 @@ class MetalFusedMdlSourceAdapter(MethodSourceAdapter):
         )
         mip_level = torch.minimum(mip_level, maximum_mip)
         extent_pixels = self._maximum_extents.index_select(0, source_index)
-        footprint = torch.pow(2.0, surface_mip) / extent_pixels
+        footprint = footprint_texels / extent_pixels
         uv_dx = torch.stack((footprint, torch.zeros_like(footprint)), dim=1)
         uv_dy = torch.stack((torch.zeros_like(footprint), footprint), dim=1)
         cosine, sine = access[:, 4:5], access[:, 5:6]
@@ -806,6 +860,7 @@ class MetalFusedMdlSourceAdapter(MethodSourceAdapter):
             "metal_canonical_optical": self._tables["optical"].index_select(0, source_index),
             "metal_access_state": access,
             "metal_frame_state": self._tables["frame"].index_select(0, source_index),
+            "metal_distribution_id": self._tables["distribution"].index_select(0, source_index),
         }
         return tensors, {
             "metal_registry_identity": self.registry.identity,
@@ -823,11 +878,127 @@ class MetalFusedMdlSourceAdapter(MethodSourceAdapter):
         return self._assets
 
 
+def _balanced_one_native_texel_offsets(
+    extent_pixels_xy: torch.Tensor, generator: torch.Generator
+) -> torch.Tensor:
+    if (
+        extent_pixels_xy.ndim != 2
+        or extent_pixels_xy.shape[1] != 2
+        or extent_pixels_xy.shape[0] % 2
+        or not bool(torch.isfinite(extent_pixels_xy).all())
+        or not bool((extent_pixels_xy >= 1.0).all())
+    ):
+        raise ValueError(
+            "balanced native-texel offsets require finite even [batch,2] extents"
+        )
+    count = int(extent_pixels_xy.shape[0])
+    axis = torch.arange(count, device=extent_pixels_xy.device) % 2
+    axis = axis[
+        torch.randperm(count, generator=generator, device=extent_pixels_xy.device)
+    ]
+    one_texel_xy = torch.reciprocal(extent_pixels_xy)
+    return torch.stack(
+        (
+            torch.where(
+                axis == 0,
+                one_texel_xy[:, 0],
+                torch.zeros_like(one_texel_xy[:, 0]),
+            ),
+            torch.where(
+                axis == 1,
+                one_texel_xy[:, 1],
+                torch.zeros_like(one_texel_xy[:, 1]),
+            ),
+        ),
+        dim=1,
+    )
+
+
+class MetalBudgetedMdlSourceAdapter(MetalFusedMdlSourceAdapter):
+    """Metal budgeted 复用同一 source audit，并增加 paired-UV 在线查询字段。"""
+
+    method_key = "metal-budgeted-neural-material"
+    adapter_id = "metal-budgeted.mdl-vmaterials2-metal@1"
+
+    def sample_tensors(
+        self,
+        source_index: torch.Tensor,
+        generator: torch.Generator,
+        options: Mapping[str, Any],
+        *,
+        execution_source_indices: Sequence[int] | None = None,
+    ) -> tuple[Mapping[str, torch.Tensor], Mapping[str, str]]:
+        tensors, provenance = super().sample_tensors(
+            source_index,
+            generator,
+            options,
+            execution_source_indices=execution_source_indices,
+        )
+        if not bool(options.get("paired_uv", False)):
+            return tensors, provenance
+        count = int(source_index.shape[0])
+        extent_pixels_xy = self._maximum_extents_xy.index_select(0, source_index)
+        paired_recipe = options.get("paired_uv_recipe")
+        if paired_recipe != "one-native-texel-axis-balanced@1":
+            raise ValueError("Metal paired UV recipe is unsupported")
+        offset = _balanced_one_native_texel_offsets(
+            extent_pixels_xy, generator
+        )
+        paired_uv = tensors["uv"] + offset
+        access = tensors["metal_access_state"]
+        scale = access[:, 0:2]
+        cosine, sine = access[:, 4:5], access[:, 5:6]
+        scaled = paired_uv * scale
+        paired_access_uv = torch.stack(
+            (
+                cosine[:, 0] * scaled[:, 0] - sine[:, 0] * scaled[:, 1],
+                sine[:, 0] * scaled[:, 0] + cosine[:, 0] * scaled[:, 1],
+            ),
+            dim=1,
+        ) + access[:, 2:4]
+        paired_access_uv = torch.where(
+            access[:, 6:7] > 0.5, torch.frac(paired_access_uv), paired_access_uv
+        )
+        if execution_source_indices is None:
+            active_asset_indices = None
+        else:
+            active_asset_indices = tuple(
+                sorted(
+                    {
+                        self._source_asset_indices[int(index)]
+                        for index in execution_source_indices
+                    }
+                )
+            )
+        paired_patches, paired_mask, paired_roles = self._assets.sample_local_patches(
+            tensors["metal_asset_index"],
+            paired_access_uv,
+            tensors["mip_level"],
+            patch_size=int(options.get("source_patch_size", 16)),
+            active_asset_indices=active_asset_indices,
+        )
+        if not torch.equal(paired_mask, tensors["metal_texture_slot_mask"]):
+            raise RuntimeError("paired Metal asset slot mask drifted")
+        if not torch.equal(paired_roles, tensors["metal_texture_role_class"]):
+            raise RuntimeError("paired Metal asset role table drifted")
+        return {
+            **tensors,
+            "paired_uv": paired_uv,
+            "paired_uv_dx": tensors["uv_dx"],
+            "paired_uv_dy": tensors["uv_dy"],
+            "metal_paired_texture_patches": paired_patches,
+        }, {
+            **provenance,
+            "paired_uv_recipe": "one-native-texel-axis-balanced@1",
+        }
+
+
 def _path(value: object) -> Path | None:
     return None if value is None else Path(str(value)).resolve()
 
 
 __all__ = [
+    "MetalBudgetedMdlSourceAdapter",
     "MetalFusedMdlSourceAdapter",
     "MethodSourceAdapter",
     "NvidiaLayerStackSourceAdapter",

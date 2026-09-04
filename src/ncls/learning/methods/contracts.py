@@ -12,7 +12,11 @@ from ncls.core.scattering import InstancePayload, MaterialPayload, RuntimePayloa
 from ncls.core.source import SourceSnapshot
 from ncls.data import DataRequirement, TrainingRouteKind
 from ncls.learning.batches import OnlineTrainingBatch
-from ncls.learning.method import MethodDefinition, MethodDescriptor
+from ncls.learning.method import (
+    MethodDefinition,
+    MethodDescriptor,
+    TrainingInitializationRequest,
+)
 from ncls.learning.source_adaptation import NativeAssetCollection
 
 
@@ -50,6 +54,17 @@ class LifecycleFacet(Protocol):
     implementation_sha256: str
 
     def validate_training_plan(self, config: Mapping[str, Any]) -> None: ...
+
+    def initialization_requests(
+        self, config: Mapping[str, Any]
+    ) -> tuple[TrainingInitializationRequest, ...]: ...
+
+    def initialize_training_state(
+        self,
+        model: nn.Module,
+        values: Mapping[str, Mapping[str, torch.Tensor]],
+        metadata: Mapping[str, Any],
+    ) -> Mapping[str, Any]: ...
 
     def configure_phase(self, model: nn.Module, phase: Mapping[str, Any]) -> None: ...
 
@@ -146,6 +161,19 @@ class _DefinitionLifecycleFacet:
 
     def validate_training_plan(self, config: Mapping[str, Any]) -> None:
         self.definition.validate_training_config(config)
+
+    def initialization_requests(
+        self, config: Mapping[str, Any]
+    ) -> tuple[TrainingInitializationRequest, ...]:
+        return self.definition.initialization_requests(config)
+
+    def initialize_training_state(
+        self,
+        model: nn.Module,
+        values: Mapping[str, Mapping[str, torch.Tensor]],
+        metadata: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        return self.definition.initialize_training_state(model, values, metadata)
 
     def configure_phase(self, model: nn.Module, phase: Mapping[str, Any]) -> None:
         self.definition.configure_phase(model, phase)

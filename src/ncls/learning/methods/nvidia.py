@@ -666,6 +666,10 @@ class NvidiaMethodDefinition(MethodDefinition):
             "evaluator_log1p_l1": evaluator_loss.detach(),
             "sampler_forward_kl": sampler_loss.detach(),
             "sampler_valid_fraction": valid_fraction.detach(),
+            "loss/optimization_total": loss.detach(),
+            "loss/appearance": evaluator_loss.detach(),
+            "loss/proposal": sampler_loss.detach(),
+            "loss/proposal_weight": 1.0,
         }
 
     def export_training_state(self, model: nn.Module) -> Mapping[str, torch.Tensor]:

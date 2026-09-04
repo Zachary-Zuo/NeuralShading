@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping
 
 import torch
@@ -15,6 +15,33 @@ from ncls.learning.batches import OnlineTrainingBatch
 
 
 AdaptationAction = Literal["unchanged", "runtime-patch", "recompile", "unsupported"]
+
+
+@dataclass(frozen=True)
+class TrainingInitializationRequest:
+    """一次发生在任何模型前向之前的 train-only online 初始化请求。"""
+
+    name: str
+    phase_name: str
+    route_name: str
+    sample_count: int
+    seed: int
+    tensor_fields: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        fields = tuple(str(value) for value in self.tensor_fields)
+        if (
+            not self.name
+            or not self.phase_name
+            or not self.route_name
+            or self.sample_count < 1
+            or self.seed < 0
+            or not fields
+            or len(set(fields)) != len(fields)
+            or any(not value for value in fields)
+        ):
+            raise ValueError("training initialization request is invalid")
+        object.__setattr__(self, "tensor_fields", fields)
 
 
 @dataclass(frozen=True)
@@ -113,6 +140,42 @@ class ComponentContract:
 
 
 @dataclass(frozen=True)
+class MethodReadinessPolicy:
+    """由方法自己声明非正式 checkpoint 可以进入哪些受限消费路径。"""
+
+    required_parameter_groups: tuple[str, ...]
+    allowed_phases: tuple[str, ...]
+    minimum_global_step: int = 1
+
+    def __post_init__(self) -> None:
+        groups = tuple(str(value) for value in self.required_parameter_groups)
+        phases = tuple(str(value) for value in self.allowed_phases)
+        if (
+            not groups
+            or len(set(groups)) != len(groups)
+            or any(not value for value in groups)
+        ):
+            raise ValueError("method readiness groups must be unique and nonempty")
+        if (
+            not phases
+            or len(set(phases)) != len(phases)
+            or any(not value for value in phases)
+        ):
+            raise ValueError("method readiness phases must be unique and nonempty")
+        if self.minimum_global_step < 1:
+            raise ValueError("method readiness minimum_global_step must be positive")
+        object.__setattr__(self, "required_parameter_groups", groups)
+        object.__setattr__(self, "allowed_phases", phases)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "required_parameter_groups": list(self.required_parameter_groups),
+            "allowed_phases": list(self.allowed_phases),
+            "minimum_global_step": self.minimum_global_step,
+        }
+
+
+@dataclass(frozen=True)
 class MethodDescriptor:
     method_key: str
     version: int
@@ -127,6 +190,7 @@ class MethodDescriptor:
     cost_claims: Mapping[str, int | float | str | bool]
     parameter_groups: Mapping[str, tuple[str, ...]]
     components: tuple[ComponentContract, ...]
+    readiness_policies: Mapping[str, MethodReadinessPolicy] = field(default_factory=dict)
     schema_name: str = "ncls.method-descriptor"
     schema_version: int = 2
 
@@ -189,6 +253,27 @@ class MethodDescriptor:
         }
         if required_groups != set(groups):
             raise ValueError("every method parameter group must belong to a required component")
+        policies = {str(name): value for name, value in self.readiness_policies.items()}
+        if not set(policies).issubset({"diagnostic-evaluator"}):
+            raise ValueError("method descriptor contains an unsupported readiness policy")
+        component_phases = {
+            phase
+            for component in components
+            for phase in component.active_phases
+        }
+        for mode, policy in policies.items():
+            if not isinstance(policy, MethodReadinessPolicy):
+                raise TypeError(f"method readiness policy {mode!r} has an invalid type")
+            unknown_groups = set(policy.required_parameter_groups) - set(groups)
+            if unknown_groups:
+                raise ValueError(
+                    f"method readiness policy references unknown groups: {sorted(unknown_groups)}"
+                )
+            unknown_phases = set(policy.allowed_phases) - (component_phases | {"complete"})
+            if unknown_phases:
+                raise ValueError(
+                    f"method readiness policy references unknown phases: {sorted(unknown_phases)}"
+                )
         object.__setattr__(self, "supported_sources", tuple(self.supported_sources))
         object.__setattr__(self, "training_batch_requirements", requirements)
         object.__setattr__(self, "tensor_state_schema", tuple(self.tensor_state_schema))
@@ -196,13 +281,14 @@ class MethodDescriptor:
         object.__setattr__(self, "cost_claims", dict(self.cost_claims))
         object.__setattr__(self, "parameter_groups", groups)
         object.__setattr__(self, "components", components)
+        object.__setattr__(self, "readiness_policies", policies)
 
     @property
     def descriptor_sha256(self) -> str:
         return sha256_json(self.to_dict())
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "schema_name": self.schema_name,
             "schema_version": self.schema_version,
             "method_key": self.method_key,
@@ -222,6 +308,12 @@ class MethodDescriptor:
             "parameter_groups": {name: list(values) for name, values in self.parameter_groups.items()},
             "components": [component.to_dict() for component in self.components],
         }
+        if self.readiness_policies:
+            result["readiness_policies"] = {
+                name: policy.to_dict()
+                for name, policy in self.readiness_policies.items()
+            }
+        return result
 
     def adaptation_contract(self, snapshot: SourceSnapshot) -> SourceAdaptationContract:
         for contract in self.supported_sources:
@@ -292,6 +384,27 @@ class MethodDefinition(ABC):
 
     def validate_training_config(self, config: Mapping[str, Any]) -> None:
         del config
+
+    def initialization_requests(
+        self, config: Mapping[str, Any]
+    ) -> tuple[TrainingInitializationRequest, ...]:
+        """声明 fresh run 的 train-only 在线初始化；默认方法不需要该阶段。"""
+
+        del config
+        return ()
+
+    def initialize_training_state(
+        self,
+        model: nn.Module,
+        values: Mapping[str, Mapping[str, torch.Tensor]],
+        metadata: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        """消费已搬到 CPU 的初始化张量并写入 checkpoint-visible model state。"""
+
+        del model, metadata
+        if values:
+            raise RuntimeError("method declared initialization values but did not consume them")
+        return {}
 
     def parameter_registry(self, model: nn.Module) -> Mapping[str, tuple[nn.Parameter, ...]]:
         named = dict(model.named_parameters())

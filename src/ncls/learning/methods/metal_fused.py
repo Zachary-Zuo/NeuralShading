@@ -27,6 +27,7 @@ from ncls.learning.method import (
     ComponentContract,
     MethodDefinition,
     MethodDescriptor,
+    MethodReadinessPolicy,
     SourceAdaptationContract,
     TensorField,
 )
@@ -485,6 +486,24 @@ class MetalFusedMethodDefinition(MethodDefinition):
         },
         metal_fused_parameter_groups(),
         _COMPONENTS,
+        readiness_policies={
+            "diagnostic-evaluator": MethodReadinessPolicy(
+                (
+                    "codec_role_stems",
+                    "codec_encoder",
+                    "codec_decoder",
+                    "codec_semantic_heads",
+                    "asset_adapter",
+                    "quantization",
+                    "typed_compiler",
+                    "prepared_model",
+                    "angular_bank",
+                    "analytic_core",
+                    "hybrid_evaluator",
+                ),
+                ("joint-coarse-to-fine", "qat-refine", "complete"),
+            )
+        },
     )
 
     def _deployment(
@@ -1078,13 +1097,18 @@ class MetalFusedMethodDefinition(MethodDefinition):
         proposal_weight = self._proposal_weight(phase)
         metrics = dict(raw_metrics)
         metrics.update(proposal_metrics)
+        total = appearance_loss + proposal_weight * proposal_loss
         metrics["qat_refine_appearance_loss"] = appearance_loss.detach()
         metrics["qat_refine_proposal_loss"] = proposal_loss.detach()
         metrics["proposal_objective_weight"] = proposal_weight
+        metrics["loss/optimization_total"] = total.detach()
+        metrics["loss/appearance"] = appearance_loss.detach()
+        metrics["loss/proposal"] = proposal_loss.detach()
+        metrics["loss/proposal_weight"] = proposal_weight
         metrics["runtime_fp16_quantization_trace"] = torch.stack(
             quantization_error
         ).mean()
-        return appearance_loss + proposal_weight * proposal_loss, metrics
+        return total, metrics
 
     def _appearance_objective(
         self,
@@ -1236,10 +1260,15 @@ class MetalFusedMethodDefinition(MethodDefinition):
         proposal_weight = self._proposal_weight(phase)
         metrics = dict(appearance_metrics)
         metrics.update(proposal_metrics)
+        total = appearance_loss + proposal_weight * proposal_loss
         metrics["joint_appearance_loss"] = appearance_loss.detach()
         metrics["joint_proposal_loss"] = proposal_loss.detach()
         metrics["proposal_objective_weight"] = proposal_weight
-        return appearance_loss + proposal_weight * proposal_loss, metrics
+        metrics["loss/optimization_total"] = total.detach()
+        metrics["loss/appearance"] = appearance_loss.detach()
+        metrics["loss/proposal"] = proposal_loss.detach()
+        metrics["loss/proposal_weight"] = proposal_weight
+        return total, metrics
 
     def export_training_state(self, model: nn.Module) -> Mapping[str, torch.Tensor]:
         if not isinstance(model, MetalModel):

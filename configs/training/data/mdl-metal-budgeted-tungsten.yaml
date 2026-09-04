@@ -1,0 +1,44 @@
+format_name: ncls.training-fragment
+format_version: 1
+kind: data
+key: mdl-metal-budgeted-tungsten
+extends: null
+compatible_methods: [metal]
+payload:
+  training:
+    source_adaptation_id: metal-budgeted.mdl-vmaterials2-metal@1
+    source:
+      family_id: mdl.program@1
+      materials:
+        - locator:
+            kind: mdl-export
+            module_root: assets/source-materials/mdl-vmaterials2/2.4.0/Materials
+            module: ::vMaterials_2::Metal::Tungsten_Brushed
+            export: ::vMaterials_2::Metal::Tungsten_Brushed::Tungsten_Brushed_Medium_Light_Brushing(float,float,float,float,float,bool,float,bool,float2,float,float2,int)
+            pack_id: nvidia.vmaterials2
+            pack_version: 2.4.0
+    online_query:
+      recipe_id: metal-budgeted-tungsten-paired-uv-pilot@1
+      evaluation_samples: 1
+      footprint_samples: 1
+      source_execution_mode: authoritative@1
+      typed_state_recipe:
+        schema: ncls.mdl-metal-typed-state-recipe@1
+        registry: references/mdl-vmaterials2-v1/metal-opaque-v1.json
+        recipe_id: metal-budgeted-tungsten-default-state@1
+        split: train
+        seed: 2026090401
+        states_per_export: 1
+        responsibilities:
+          - metal-core
+          - finish-microstructure
+          - aging-contamination
+          - coating-composite
+        default_weight: 1.0
+        boundary_weight: 0.0
+      group_schedule:
+        recipe: group-block-balanced@1
+        weight: record-count
+        block_steps: 64
+        validation_offset_blocks: 104729
+    seed: 2026090401

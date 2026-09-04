@@ -1,6 +1,7 @@
 param(
-    [string]$OutputRoot = "artifacts\viewer\metal-step00120000",
-    [string]$Checkpoint = "artifacts\metal-linux-training\long\checkpoint.step00120000.pt",
+    [string]$OutputRoot = "artifacts\viewer\metal-budgeted",
+    [Parameter(Mandatory = $true)]
+    [string]$Checkpoint,
     [string]$Registry = "references\mdl-vmaterials2-v1\metal-opaque-v1.json",
     [switch]$DiagnosticPreview,
     [uint32]$DiagnosticLimit = 0,

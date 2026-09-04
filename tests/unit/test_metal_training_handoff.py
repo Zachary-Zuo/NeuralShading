@@ -6,12 +6,14 @@ import torch
 
 from ncls.learning.metal_runtime import (
     fake_quantize_fp16_ste,
-    metal_runtime_parameter_names,
 )
-from ncls.learning.methods.metal_fused import METHOD_DEFINITION
-from ncls.learning.models.metal_fused import (
-    METAL_FUSED_REQUIRED_CONTEXT,
-    MetalModel,
+from ncls.learning.methods.metal_budgeted import (
+    METHOD_DEFINITION,
+    metal_budgeted_runtime_parameter_names,
+)
+from ncls.learning.models.metal_budgeted import (
+    METAL_BUDGETED_REQUIRED_CONTEXT,
+    MetalBudgetedModel,
 )
 from ncls.learning.training import TrainingPlanResolver
 from tools.learning.build_metal_linux_handoff import build_handoff_manifest
@@ -36,71 +38,79 @@ def test_fp16_runtime_fake_quantization_uses_deployed_values_and_master_gradient
     torch.testing.assert_close(value.grad, torch.ones_like(value))
 
 
-def test_qat_refine_phase_covers_every_exported_runtime_parameter_group() -> None:
+def test_qat_refine_phase_covers_every_budgeted_parameter_group() -> None:
     with torch.device("meta"):
-        model = MetalModel.from_context(
-            METAL_FUSED_REQUIRED_CONTEXT
+        model = MetalBudgetedModel.from_context(
+            METAL_BUDGETED_REQUIRED_CONTEXT
         )
     registry = METHOD_DEFINITION.parameter_registry(model)
-    runtime_names = set(metal_runtime_parameter_names(model))
-    parameter_names = {id(parameter): name for name, parameter in model.named_parameters()}
-    runtime_groups = {
-        group
-        for group, parameters in registry.items()
-        if runtime_names.intersection(parameter_names[id(parameter)] for parameter in parameters)
-    }
-    config = _runtime("metal-windows-smoke")
+    config = _runtime("metal-budgeted-hybrid-pilot")
     qat = config.phases[-1]
-    assert qat.name == "qat-refine"
-    assert runtime_groups.issubset(qat.parameter_groups)
-    assert "optimized_state_teacher" not in qat.parameter_groups
+    assert qat.name == "deployment-qat-refine"
+    assert set(registry) == set(qat.parameter_groups)
     assert qat.precision == {"autocast": "fp32", "gradient_scaler": False}
-    assert set(route.name for route in qat.routes) == {"asset", "evaluator", "sampler"}
+    assert set(route.name for route in qat.routes) == {"evaluator", "sampler"}
+    assert (
+        qat.recipes["runtime_quantization"]
+        == "fp16-weights-state-rgba8-snorm-asset@1"
+    )
+    runtime = metal_budgeted_runtime_parameter_names(model)
+    assert any(name.startswith("typed_compiler.") for name in runtime)
+    assert any(name.startswith("prepared_model.") for name in runtime)
+    assert any(name.startswith("evaluator.") for name in runtime)
+    assert "asset.variant_scale_bias.weight" in runtime
+    assert not any(name.startswith("asset.detail_encoder.") for name in runtime)
 
 
-def test_composed_linux_plans_are_full_cohort_canonical_pair() -> None:
-    smoke = _runtime("metal-linux-smoke")
-    long_run = _runtime("metal-linux-long")
-    assert smoke.source == long_run.source
-    assert smoke.model_context == long_run.model_context
-    assert smoke.online_query == long_run.online_query
-    assert len(smoke.source["materials"]) == 692
-    assert smoke.total_steps == 16
-    assert long_run.total_steps == 120_000
-    assert [phase.name for phase in smoke.phases] == [
-        "joint-coarse-to-fine",
-        "qat-refine",
+def test_composed_linux_pilots_are_matched_except_registered_profile_axis() -> None:
+    hybrid = _runtime("metal-budgeted-hybrid-pilot")
+    direct = _runtime("metal-budgeted-direct-pilot")
+    assert hybrid.source == direct.source
+    assert hybrid.online_query == direct.online_query
+    assert len(hybrid.source["materials"]) == 1
+    assert hybrid.total_steps == direct.total_steps == 2048
+    assert [phase.name for phase in hybrid.phases] == [
+        "joint-response-fit",
+        "deployment-qat-refine",
     ]
-    assert [phase.name for phase in long_run.phases] == [
-        "joint-coarse-to-fine",
-        "qat-refine",
+    assert [phase.name for phase in direct.phases] == [
+        "joint-response-fit",
+        "deployment-qat-refine",
     ]
-    assert smoke.run_class == "smoke"
-    assert long_run.run_class == "formal"
+    assert hybrid.model_context["profile_id"] == "metal_budgeted_hybrid_v1"
+    assert direct.model_context["profile_id"] == "metal_budgeted_direct_control_v1"
+    assert hybrid.run_class == direct.run_class == "profile"
+    for hybrid_phase, direct_phase in zip(hybrid.phases, direct.phases, strict=True):
+        assert hybrid_phase.routes == direct_phase.routes
+        assert hybrid_phase.parameter_groups == direct_phase.parameter_groups
+        assert hybrid_phase.loss_terms == direct_phase.loss_terms
+        assert hybrid_phase.optimizer == direct_phase.optimizer
+        assert hybrid_phase.schedule == direct_phase.schedule
+        assert hybrid_phase.precision == direct_phase.precision
+        hybrid_recipes = dict(hybrid_phase.recipes)
+        direct_recipes = dict(direct_phase.recipes)
+        assert hybrid_recipes.pop("profile_id") != direct_recipes.pop("profile_id")
+        assert hybrid_recipes == direct_recipes
+        assert hybrid_recipes["asset_cook_mode"] == "encoder-only@1"
 
 
-def test_windows_smoke_uses_the_registry_generated_stratified_activation_set() -> None:
-    config = _runtime("metal-windows-smoke")
-    assert len(config.source["materials"]) == 3
+def test_tungsten_pilot_uses_frozen_spatial_and_direction_query_recipe() -> None:
+    config = _runtime("metal-budgeted-hybrid-pilot")
+    assert len(config.source["materials"]) == 1
     assert [phase.name for phase in config.phases] == [
-        "joint-coarse-to-fine",
-        "qat-refine",
+        "joint-response-fit",
+        "deployment-qat-refine",
     ]
-    assert set(route.name for route in config.phases[0].routes) == {
-        "asset",
-        "evaluator",
-        "sampler",
-    }
+    assert set(route.name for route in config.phases[0].routes) == {"evaluator", "sampler"}
     assert "proposal_sampler" in config.phases[0].parameter_groups
     assert config.phases[0].recipes["proposal_weight"]["start"] > 0.0
-    asset_routes = [
-        route
-        for phase in config.phases
-        for route in phase.routes
-        if route.name == "asset"
-    ]
-    assert asset_routes
-    assert all(route.options["asset_indices"] == [6, 50, 22] for route in asset_routes)
+    evaluator = next(
+        route for route in config.phases[0].routes if route.name == "evaluator"
+    )
+    assert evaluator.options["direction_proposal"] == "balanced-four-mode-probe@1"
+    assert evaluator.options["footprint_recipe"] == "balanced-zero-one-four-texel@1"
+    assert evaluator.options["paired_uv_recipe"] == "one-native-texel-axis-balanced@1"
+    assert evaluator.options["validation_seed"] == 2026090402
     assert Path(config.source["materials"][0]["locator"]["module_root"]).as_posix().endswith(
         "assets/source-materials/mdl-vmaterials2/2.4.0/Materials"
     )
@@ -117,8 +127,25 @@ def test_linux_handoff_is_single_gpu_recoverable_and_has_no_automatic_followup()
     }
     assert manifest["linux_execution_status"] == "pending-on-target-host"
     assert manifest["automatic_followups"] == []
-    assert "--stop-at-step 16" in manifest["commands"]["long_start_recoverable"]
-    assert "--resume" in manifest["commands"]["long_resume"]
+    assert manifest["repository_state"] in {
+        "clean-commit",
+        "working-tree-snapshot-required",
+    }
+    assert "exact required working-tree changes" in manifest["transfer_precondition"]
+    assert bool(manifest["required_worktree_changes"]) == (
+        manifest["repository_state"] == "working-tree-snapshot-required"
+    )
+    for name in (
+        "hybrid_resolved_plan_sha256",
+        "direct_resolved_plan_sha256",
+        "hybrid_training_config_sha256",
+        "direct_training_config_sha256",
+    ):
+        assert len(manifest["config_pair"][name]) == 64
+    assert "--stop-at-step 128" in manifest["commands"]["hybrid_start_recoverable"]
+    assert "--resume" in manifest["commands"]["hybrid_resume"]
+    assert "--stop-at-step 128" in manifest["commands"]["direct_start_recoverable"]
+    assert "--batches 256" in manifest["commands"]["hybrid_step0_validation"]
     assert "configs/learning" not in " ".join(manifest["commands"].values())
     assert "learn " not in " ".join(manifest["commands"].values())
     assert "formal" not in " ".join(manifest["commands"].values())

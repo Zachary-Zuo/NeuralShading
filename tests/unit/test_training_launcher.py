@@ -39,7 +39,7 @@ def test_linux_multi_gpu_builds_one_torchrun_job_and_rank_context() -> None:
     assert topology.distributed_backend == "nccl"
     command = distributed_command(
         topology,
-        config="configs/training/runs/metal-linux-smoke.yaml",
+        config="configs/training/runs/metal-budgeted-hybrid-pilot.yaml",
         output="artifacts/run/checkpoint.pt",
         extra_arguments=("--stop-at-step", "2"),
     )

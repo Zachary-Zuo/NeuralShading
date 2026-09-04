@@ -43,14 +43,10 @@ from ncls.viewer import (
 )
 
 
-DEFAULT_CHECKPOINT = (
-    PROJECT_ROOT
-    / "artifacts/metal-linux-training/long/checkpoint.step00120000.pt"
-)
 DEFAULT_REGISTRY = (
     PROJECT_ROOT / "references/mdl-vmaterials2-v1/metal-opaque-v1.json"
 )
-DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "artifacts/viewer/metal-step00120000"
+DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "artifacts/viewer/metal-budgeted"
 MAX_MDL_COMPILE_WORKERS = 4
 
 
@@ -258,7 +254,7 @@ def _load_snapshot_with_provider(
 
 def prepare_metal_catalog(
     output_root: Path,
-    checkpoint_path: Path = DEFAULT_CHECKPOINT,
+    checkpoint_path: Path,
     registry_path: Path = DEFAULT_REGISTRY,
     *,
     limit: int | None = None,
@@ -649,7 +645,7 @@ def main() -> int:
         )
     )
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
-    parser.add_argument("--checkpoint", type=Path, default=DEFAULT_CHECKPOINT)
+    parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
     parser.add_argument(
         "--diagnostic-limit",

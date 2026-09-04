@@ -65,6 +65,101 @@ def _uniform_hemisphere(
     return torch.stack((radius * torch.cos(phi), radius * torch.sin(phi), z), dim=1)
 
 
+def _cosine_hemisphere(
+    count: int, generator: torch.Generator, device: torch.device
+) -> torch.Tensor:
+    radius = torch.sqrt(torch.rand(count, generator=generator, device=device))
+    phi = torch.rand(count, generator=generator, device=device) * (2.0 * math.pi)
+    return torch.stack(
+        (
+            radius * torch.cos(phi),
+            radius * torch.sin(phi),
+            torch.sqrt(torch.clamp(1.0 - radius.square(), min=0.0)),
+        ),
+        dim=1,
+    )
+
+
+def _near_reflection_directions(
+    views: torch.Tensor,
+    generator: torch.Generator,
+) -> torch.Tensor:
+    count = int(views.shape[0])
+    mirror = torch.stack((-views[:, 0], -views[:, 1], views[:, 2]), dim=1)
+    helper_z = torch.tensor(
+        (0.0, 0.0, 1.0), dtype=views.dtype, device=views.device
+    ).expand_as(mirror)
+    helper_x = torch.tensor(
+        (1.0, 0.0, 0.0), dtype=views.dtype, device=views.device
+    ).expand_as(mirror)
+    helper = torch.where((mirror[:, 2:3].abs() > 0.99), helper_x, helper_z)
+    tangent = torch.nn.functional.normalize(
+        torch.linalg.cross(helper, mirror, dim=1), dim=1
+    )
+    bitangent = torch.linalg.cross(mirror, tangent, dim=1)
+    cosine_limit = math.cos(math.radians(8.0))
+    cosine = 1.0 - torch.rand(
+        count, generator=generator, device=views.device
+    ) * (1.0 - cosine_limit)
+    sine = torch.sqrt(torch.clamp(1.0 - cosine.square(), min=0.0))
+    phi = torch.rand(count, generator=generator, device=views.device) * (
+        2.0 * math.pi
+    )
+    return torch.nn.functional.normalize(
+        cosine[:, None] * mirror
+        + sine[:, None]
+        * (
+            torch.cos(phi)[:, None] * tangent
+            + torch.sin(phi)[:, None] * bitangent
+        ),
+        dim=1,
+    )
+
+
+def _balanced_probe_directions(
+    count: int, generator: torch.Generator, device: torch.device
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """等量生成 uniform/cosine/near-reflection/grazing 查询。"""
+
+    if count % 4:
+        raise ValueError("balanced probe direction count must be divisible by four")
+    quota = count // 4
+    uniform_wo = _uniform_hemisphere(quota, generator, device)
+    cosine_wo = _uniform_hemisphere(quota, generator, device)
+    reflection_wo = _uniform_hemisphere(quota, generator, device)
+    reflection_wo[:, 2] = 0.15 + 0.85 * reflection_wo[:, 2]
+    reflection_wo = torch.nn.functional.normalize(reflection_wo, dim=1)
+    grazing_wo = _uniform_hemisphere(quota, generator, device)
+    grazing_z = 0.02 + 0.13 * torch.rand(
+        quota, generator=generator, device=device
+    )
+    grazing_phi = torch.rand(quota, generator=generator, device=device) * (
+        2.0 * math.pi
+    )
+    grazing_radius = torch.sqrt(torch.clamp(1.0 - grazing_z.square(), min=0.0))
+    views = torch.cat(
+        (uniform_wo, cosine_wo, reflection_wo, grazing_wo), dim=0
+    )
+    lights = torch.cat(
+        (
+            _uniform_hemisphere(quota, generator, device),
+            _cosine_hemisphere(quota, generator, device),
+            _near_reflection_directions(reflection_wo, generator),
+            torch.stack(
+                (
+                    grazing_radius * torch.cos(grazing_phi),
+                    grazing_radius * torch.sin(grazing_phi),
+                    grazing_z,
+                ),
+                dim=1,
+            ),
+        ),
+        dim=0,
+    )
+    permutation = torch.randperm(count, generator=generator, device=device)
+    return views[permutation], lights[permutation]
+
+
 def _half_difference_directions(
     count: int, generator: torch.Generator, device: torch.device
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -331,13 +426,20 @@ class OnlineTrainingProducer:
         source_index = group_indices.index_select(0, local_source_index)
         if request.kind == "reference-evaluator":
             proposal = request.options.get("direction_proposal")
-            if proposal != "uniform-half-difference@1" or request.direction_count != 1:
+            if request.direction_count != 1:
                 raise ValueError(
-                    "reference-evaluator route requires one half/difference direction"
+                    "reference-evaluator route requires direction_count=1"
                 )
-            wo, evaluator_wi = _half_difference_directions(
-                request.batch_size, generator, self.device
-            )
+            if proposal == "uniform-half-difference@1":
+                wo, evaluator_wi = _half_difference_directions(
+                    request.batch_size, generator, self.device
+                )
+            elif proposal == "balanced-four-mode-probe@1":
+                wo, evaluator_wi = _balanced_probe_directions(
+                    request.batch_size, generator, self.device
+                )
+            else:
+                raise ValueError("reference-evaluator direction proposal is unsupported")
         else:
             proposal = request.options.get("direction_proposal")
             if proposal != "uniform-hemisphere-conditioning@1" or request.direction_count != 1:
@@ -381,15 +483,20 @@ class OnlineTrainingProducer:
         return conditioning, evaluator_wi
 
     @staticmethod
-    def _query(conditioning: TrainingConditioning) -> ScatteringQuery:
+    def _query(
+        conditioning: TrainingConditioning, *, spatial_prefix: str = ""
+    ) -> ScatteringQuery:
         tensors = conditioning.tensors
+        uv_name = f"{spatial_prefix}uv"
+        uv_dx_name = f"{spatial_prefix}uv_dx"
+        uv_dy_name = f"{spatial_prefix}uv_dy"
         return ScatteringQuery(
             tensors["source_index"],
             tensors["wo"],
             str(conditioning.provenance["reference_execution_group_id"]),
-            uv=tensors.get("uv"),
-            uv_dx=tensors.get("uv_dx"),
-            uv_dy=tensors.get("uv_dy"),
+            uv=tensors.get(uv_name),
+            uv_dx=tensors.get(uv_dx_name),
+            uv_dy=tensors.get(uv_dy_name),
         )
 
     def _produce_route(self, request: TrainingRouteRequest) -> OnlineTrainingBatch:
@@ -619,6 +726,7 @@ class OnlineTrainingProducer:
                 "accepted_conditioning": {},
                 "accepted_wi": [],
                 "accepted_f": [],
+                "accepted_paired_f": [],
                 "first_conditioning": None,
                 "candidate_count": 0,
                 "accepted_count": 0,
@@ -720,6 +828,16 @@ class OnlineTrainingProducer:
                 footprint_samples=footprint_samples,
                 source_execution_mode=source_execution_mode,
             )
+            paired_result = None
+            if "paired_uv" in combined_conditioning.tensors:
+                paired_result = self.session.evaluate(
+                    self._query(combined_conditioning, spatial_prefix="paired_"),
+                    combined_wi,
+                    combined_seeds,
+                    evaluation_samples=evaluation_samples,
+                    footprint_samples=footprint_samples,
+                    source_execution_mode=source_execution_mode,
+                )
             try:
                 offset = 0
                 following: list[int] = []
@@ -727,6 +845,10 @@ class OnlineTrainingProducer:
                     state = states[index]
                     count = conditioning.batch_size
                     local_valid = result.valid[offset : offset + count]
+                    if paired_result is not None:
+                        local_valid = local_valid & paired_result.valid[
+                            offset : offset + count
+                        ]
                     selected = torch.nonzero(
                         local_valid.all(dim=1), as_tuple=False
                     ).flatten()
@@ -740,14 +862,22 @@ class OnlineTrainingProducer:
                             )
                         accepted_wi = state["accepted_wi"]
                         accepted_f = state["accepted_f"]
+                        accepted_paired_f = state["accepted_paired_f"]
                         assert isinstance(accepted_wi, list)
                         assert isinstance(accepted_f, list)
+                        assert isinstance(accepted_paired_f, list)
                         accepted_wi.append(wi.index_select(0, selected))
                         accepted_f.append(
                             result.f[offset : offset + count].index_select(
                                 0, selected
                             )
                         )
+                        if paired_result is not None:
+                            accepted_paired_f.append(
+                                paired_result.f[offset : offset + count].index_select(
+                                    0, selected
+                                )
+                            )
                         state["accepted_count"] = int(state["accepted_count"]) + take
                     state["candidate_count"] = int(state["candidate_count"]) + count
                     state["rejection_rounds"] = int(state["rejection_rounds"]) + 1
@@ -756,6 +886,8 @@ class OnlineTrainingProducer:
                     offset += count
                 active = following
             finally:
+                if paired_result is not None:
+                    paired_result.lease.release()
                 result.lease.release()
         batches: list[EvaluatorBatch] = []
         for payload, state in zip(payloads, states, strict=True):
@@ -766,9 +898,11 @@ class OnlineTrainingProducer:
             accepted_conditioning = state["accepted_conditioning"]
             accepted_wi = state["accepted_wi"]
             accepted_f = state["accepted_f"]
+            accepted_paired_f = state["accepted_paired_f"]
             assert isinstance(accepted_conditioning, dict)
             assert isinstance(accepted_wi, list)
             assert isinstance(accepted_f, list)
+            assert isinstance(accepted_paired_f, list)
             tensors = {
                 name: torch.cat(values, dim=0)[: request.batch_size]
                 for name, values in accepted_conditioning.items()
@@ -795,6 +929,11 @@ class OnlineTrainingProducer:
                     compacted,
                     torch.cat(accepted_wi, dim=0)[: request.batch_size],
                     torch.cat(accepted_f, dim=0)[: request.batch_size],
+                    (
+                        torch.cat(accepted_paired_f, dim=0)[: request.batch_size]
+                        if accepted_paired_f
+                        else None
+                    ),
                 )
             )
         return tuple(batches)

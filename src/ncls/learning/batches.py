@@ -90,11 +90,19 @@ class TrainingConditioning:
             "uv": (batch_size, 2),
             "uv_dx": (batch_size, 2),
             "uv_dy": (batch_size, 2),
+            "paired_uv": (batch_size, 2),
+            "paired_uv_dx": (batch_size, 2),
+            "paired_uv_dy": (batch_size, 2),
             "mip_level": (batch_size,),
         }
         for name, shape in spatial_shapes.items():
             if name in tensors and tensors[name].shape != shape:
                 raise ValueError(f"{name} must have shape {shape}")
+        paired_spatial = {"paired_uv", "paired_uv_dx", "paired_uv_dy"} & set(tensors)
+        if paired_spatial and paired_spatial != {
+            "paired_uv", "paired_uv_dx", "paired_uv_dy"
+        }:
+            raise ValueError("paired UV conditioning fields must be provided together")
         if "native_features" in tensors:
             native = tensors["native_features"]
             if native.ndim != 2 or native.shape[0] != batch_size:
@@ -120,6 +128,7 @@ class EvaluatorBatch:
     conditioning: TrainingConditioning
     wi: torch.Tensor
     target_f: torch.Tensor
+    paired_target_f: torch.Tensor | None = None
     lease: BatchLease | None = field(default=None, compare=False, repr=False)
     schema_name: str = "ncls.evaluator-batch"
     schema_version: int = 3
@@ -140,10 +149,38 @@ class EvaluatorBatch:
             torch._assert_async(nonnegative)
         elif not bool(nonnegative):
             raise ValueError("EvaluatorBatch target_f must be nonnegative")
+        has_paired_conditioning = "paired_uv" in self.conditioning.tensors
+        if has_paired_conditioning != (self.paired_target_f is not None):
+            raise ValueError(
+                "EvaluatorBatch paired target and paired UV conditioning must be provided together"
+            )
+        if self.paired_target_f is not None:
+            if self.paired_target_f.shape != self.wi.shape:
+                raise ValueError("EvaluatorBatch paired_target_f must match wi shape")
+            if self.paired_target_f.device != self.conditioning.device:
+                raise ValueError(
+                    "EvaluatorBatch paired target must share the conditioning device"
+                )
+            _validate_finite(
+                (self.paired_target_f,),
+                "EvaluatorBatch paired target contains non-finite values",
+            )
+            paired_nonnegative = torch.all(self.paired_target_f >= 0.0)
+            if paired_nonnegative.device.type == "cuda":
+                torch._assert_async(paired_nonnegative)
+            elif not bool(paired_nonnegative):
+                raise ValueError("EvaluatorBatch paired_target_f must be nonnegative")
 
     @property
     def tensors(self) -> dict[str, torch.Tensor]:
-        return {**self.conditioning.tensors, "wi": self.wi, "target_f": self.target_f}
+        values = {
+            **self.conditioning.tensors,
+            "wi": self.wi,
+            "target_f": self.target_f,
+        }
+        if self.paired_target_f is not None:
+            values["paired_target_f"] = self.paired_target_f
+        return values
 
     @property
     def provenance(self) -> Mapping[str, Any]:

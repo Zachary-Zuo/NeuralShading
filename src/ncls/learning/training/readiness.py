@@ -13,23 +13,6 @@ CheckpointReadinessMode = Literal[
     "formal", "diagnostic-evaluator", "visual-diagnostic"
 ]
 
-_METAL_DIAGNOSTIC_GROUPS = frozenset(
-    {
-        "codec_role_stems",
-        "codec_encoder",
-        "codec_decoder",
-        "codec_semantic_heads",
-        "asset_adapter",
-        "quantization",
-        "typed_compiler",
-        "prepared_model",
-        "angular_bank",
-        "analytic_core",
-        "hybrid_evaluator",
-    }
-)
-
-
 @dataclass(frozen=True)
 class CheckpointReadiness:
     mode: CheckpointReadinessMode
@@ -121,16 +104,20 @@ def assess_checkpoint_readiness(
                 f"formal export requires complete training, got {checkpoint.phase_name}@{checkpoint.global_step}"
             )
     elif mode == "diagnostic-evaluator":
-        if descriptor.method_key != "metal-fused-neural-material":
+        policy = descriptor.readiness_policies.get(mode)
+        if policy is None:
             required_groups = _required_component_groups(descriptor)
-            reasons.append("diagnostic evaluator preview is only defined for the Metal method")
+            allowed_phases = set()
+            minimum_global_step = 1
+            reasons.append("method does not declare a diagnostic evaluator readiness policy")
         else:
-            required_groups = _METAL_DIAGNOSTIC_GROUPS
-        if checkpoint.global_step < 1 or checkpoint.phase_name not in {
-            "joint-coarse-to-fine",
-            "qat-refine",
-            "complete",
-        }:
+            required_groups = frozenset(policy.required_parameter_groups)
+            allowed_phases = set(policy.allowed_phases)
+            minimum_global_step = policy.minimum_global_step
+        if (
+            checkpoint.global_step < minimum_global_step
+            or checkpoint.phase_name not in allowed_phases
+        ):
             reasons.append("diagnostic evaluator preview requires end-to-end training evidence")
     else:
         # Visual eval is a diagnostic, never deployment or selection evidence.

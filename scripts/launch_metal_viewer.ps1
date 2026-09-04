@@ -3,8 +3,9 @@ param(
     [string]$Configuration = "Release",
     [uint32]$Width = 1600,
     [uint32]$Height = 900,
-    [string]$CatalogRoot = "artifacts\viewer\metal-step00120000",
-    [string]$Checkpoint = "artifacts\metal-linux-training\long\checkpoint.step00120000.pt",
+    [string]$CatalogRoot = "artifacts\viewer\metal-budgeted",
+    [Parameter(Mandatory = $true)]
+    [string]$Checkpoint,
     [switch]$AcceptNvidiaOmniverseTerms,
     [switch]$DiagnosticPreview,
     [uint32]$DiagnosticLimit = 0,

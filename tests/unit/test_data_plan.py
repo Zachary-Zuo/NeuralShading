@@ -19,9 +19,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
             ("evaluator", "sampler"),
         ),
         (
-            "configs/training/runs/metal-linux-smoke.yaml",
+            "configs/training/runs/metal-budgeted-hybrid-pilot.yaml",
             "metal",
-            ("asset", "evaluator", "sampler"),
+            ("evaluator", "sampler"),
         ),
     ),
 )

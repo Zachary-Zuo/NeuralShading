@@ -596,7 +596,11 @@ def _validate_checkpoint(checkpoint_path: Path, batches: int, device: int) -> in
                         route.batch_size,
                         route.direction_count,
                         evaluation.global_step,
-                        config.seed + route.seed_offset + index,
+                        (
+                            int(route.options["validation_seed"])
+                            if "validation_seed" in route.options
+                            else config.seed + route.seed_offset + index
+                        ),
                         {
                             **dict(route.options),
                             "recipes": dict(phase.recipes),

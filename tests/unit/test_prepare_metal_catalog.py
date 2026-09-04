@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -143,6 +144,22 @@ def test_checkpoint_readiness_rejects_shape_only_or_incomplete_evaluator_coverag
     assert not readiness.ready
     assert not readiness.exact_method_identity
     assert readiness.failed_groups == ("hybrid_evaluator",)
+
+
+def test_diagnostic_readiness_has_no_method_key_fallback() -> None:
+    descriptor = replace(METHOD_DEFINITION.descriptor, readiness_policies={})
+    checkpoint = SimpleNamespace(
+        phase_name="joint-coarse-to-fine",
+        global_step=1,
+        training_config=_training_config("smoke"),
+        gradient_coverage=_coverage(),
+        validate_method=lambda value: None,
+    )
+    readiness = assess_checkpoint_readiness(
+        checkpoint, descriptor, mode="diagnostic-evaluator"
+    )
+    assert not readiness.ready
+    assert any("does not declare" in reason for reason in readiness.reasons)
 
 
 def test_checkpoint_readiness_requires_formal_run_class_even_when_complete() -> None:

@@ -6,7 +6,7 @@ from .contracts import MethodPlugin
 
 
 _PLUGINS: dict[str, MethodPlugin] | None = None
-_PRODUCT_MODULES = ("metal_fused", "nvidia")
+_PRODUCT_MODULES = ("metal_budgeted", "nvidia")
 
 
 def public_method_keys() -> tuple[str, ...]:

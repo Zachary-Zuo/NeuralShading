@@ -49,6 +49,31 @@ def test_evaluator_batch_rejects_non_f_target_shape() -> None:
         EvaluatorBatch(conditioning, wi, torch.ones((2, 2, 3)))
 
 
+def test_evaluator_batch_carries_paired_uv_reference_target_without_dummy_fields() -> None:
+    base = _conditioning()
+    paired_conditioning = TrainingConditioning(
+        base.source_family_id,
+        base.source_snapshot_ids,
+        {
+            **base.tensors,
+            "paired_uv": torch.tensor([[0.1, 0.2], [0.3, 0.4]]),
+            "paired_uv_dx": torch.tensor([[0.01, 0.0], [0.01, 0.0]]),
+            "paired_uv_dy": torch.tensor([[0.0, 0.01], [0.0, 0.01]]),
+        },
+        base.provenance,
+    )
+    wi = torch.tensor([[[0.0, 0.0, 1.0]], [[0.0, 0.0, 1.0]]])
+    batch = EvaluatorBatch(
+        paired_conditioning,
+        wi,
+        torch.ones_like(wi),
+        torch.full_like(wi, 2.0),
+    )
+    assert batch.tensors["paired_target_f"].shape == wi.shape
+    with pytest.raises(ValueError, match="provided together"):
+        EvaluatorBatch(base, wi, torch.ones_like(wi), torch.ones_like(wi))
+
+
 def test_method_sampler_batch_rejects_dummy_target_by_construction() -> None:
     conditioning = _conditioning()
     with pytest.raises(TypeError):
