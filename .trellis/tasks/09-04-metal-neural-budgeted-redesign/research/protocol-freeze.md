@@ -170,3 +170,12 @@ authored 参数 state 固定为 registry default：`texture_scale=[1,1]`、`text
 - `invalidated evidence`：完整24维semantic进入evaluator只修复消费合同，不足以证明Detail的高频信号能穿过semantic decoder到达frame/response；v2作为信息连通消融保留，不再作为当前主候选。
 - `scope impact`：semantic decoder输出后，将Detail四通道逐项residual到前四个frame semantic分量；不硬编码source channel含义，不新增参数、state、read或evaluate MAC。prepare增加四次逐项加法；其他model/loss/data/optimization轴完全不变。
 - `rerun required`：分配hybrid/direct v3 profile、method schema`@3`与pilot recipe`@4`，两侧fresh step0重跑；v2 checkpoint不得resume。v3完成共同里程碑后无论observed quality高低都先做failure classification，不自动继续创建v4。
+
+## 12. 2026-09-05 wrap bilinear oracle 修订
+
+- `trigger`：v3 fresh pair完成并生成双package后，最终package的真实Falcor parity在冻结的`uv=(0,0)` witness显著失败；同一Slang路径在纹理内部坐标的合成fixture通过。逐层对照证明Python `_sample_level()`先对UV取模，却仍给`grid_sample`使用zero padding，导致bilinear footprint跨0/1边界时三个邻居被错误置零；GPU wrap sampler会从纹理另一侧读取这些邻居。
+- `invalidated evidence`：`artifacts/viewer/metal-budgeted-ddp5-2dc0965-step2048/`的manifest parity expected错误，该handoff不得交付。它的program/asset/blob hash和两个训练run的observed quality仍可作诊断，但不能证明当前Python oracle、Slang和Windows viewer闭合。只在内部坐标运行的旧合成GPU parity也不足以覆盖address mode。
+- `scope impact`：只把部署侧CPU/Python mip采样改为显式bilinear，并按descriptor对四个邻居分别wrap或clamp；训练online reference、模型、loss、source/query、optimizer、batch512、schedule、precision和2048 cap均不变。GPU fixture固定改用边界UV，最终package继续使用同一边界witness与原冻结`atol/rtol`。
+- `rerun required`：`metal_budgeted_runtime.py`属于方法implementation identity，所以hybrid/direct必须在新hash下从fresh step0交替重跑；旧checkpoint不能resume或重新标记。新pair仍以共同2048为上限，质量结论若复现明确分离则不延长到4096；只有新package自身通过真实Falcor parity后才发布Windows handoff。
+
+这属于“跨层合同 + 测试覆盖缺口”：纹理内部随机值无法区分zero padding与wrap，合成测试还绕过了最终DDS只读buffer。防复发由三层共同承担：CPU边界unit、真实GPU边界fixture、最终package自加载parity。

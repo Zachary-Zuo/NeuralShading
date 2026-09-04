@@ -54,7 +54,7 @@ void main(uint3 threadId : SV_DispatchThreadID)
     context.surface.shadingFrame.tangent = float3(1.0f, 0.0f, 0.0f);
     context.surface.shadingFrame.bitangent = float3(0.0f, 1.0f, 0.0f);
     context.surface.geometricNormal = context.surface.shadingFrame.normal;
-    context.surface.uv = float2(0.371f, 0.619f);
+    context.surface.uv = float2(0.0f, 0.0f);
     context.surface.uvDx = float2(0.0f);
     context.surface.uvDy = float2(0.0f);
     context.surface.frontFacing = 1u;
@@ -180,7 +180,7 @@ def test_budgeted_fp16_snorm8_prepare_and_evaluator_match_python(
         model,
         asset,
         tensors,
-        uv=(0.371, 0.619),
+        uv=(0.0, 0.0),
         mip_level=0.0,
         filter_random=0.0,
         wo=(0.17364818, -0.33682409, 0.92541658),

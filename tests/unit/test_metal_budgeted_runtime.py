@@ -11,6 +11,7 @@ from ncls.learning.metal_budgeted_asset_cook import (
 )
 from ncls.learning.metal_budgeted_runtime import (
     METAL_BUDGETED_COMPILED_WORD_COUNT,
+    _sample_level,
     evaluate_metal_budgeted_cooked_asset,
     pack_metal_budgeted_compiled_material,
     pack_metal_budgeted_program,
@@ -75,6 +76,24 @@ def _compiled_asset(profile_id: str) -> MetalBudgetedCompiledAsset:
         levels(8),
         levels(2),
     )
+
+
+def test_budgeted_runtime_texture_sampling_wraps_bilinear_neighbors() -> None:
+    level = np.asarray(
+        [
+            [[1, 1, 1, 1], [3, 3, 3, 3]],
+            [[5, 5, 5, 5], [7, 7, 7, 7]],
+        ],
+        dtype=np.int8,
+    )
+
+    wrapped = _sample_level(level, torch.tensor([0.0, 0.0]), address_mode="wrap")
+    clamped = _sample_level(level, torch.tensor([0.0, 0.0]), address_mode="clamp")
+    centered = _sample_level(level, torch.tensor([0.25, 0.25]), address_mode="wrap")
+
+    torch.testing.assert_close(wrapped, torch.full((1, 4), 4.0 / 127.0))
+    torch.testing.assert_close(clamped, torch.full((1, 4), 1.0 / 127.0))
+    torch.testing.assert_close(centered, torch.full((1, 4), 1.0 / 127.0))
 
 
 def test_budgeted_runtime_pack_has_exact_offsets_flags_and_profile_mode() -> None:

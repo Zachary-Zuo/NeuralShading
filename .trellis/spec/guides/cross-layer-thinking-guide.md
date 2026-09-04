@@ -138,6 +138,7 @@ After implementation:
 - [ ] camera basis 是归一化方向、image-plane slope，还是共同乘有 focal distance？方向上的 `normalize()` 是否掩盖了 footprint 中仍存在的尺度？
 - [ ] ray cone 是世界空间长度还是角度；triangle Jacobian 是线性尺度还是 `log2`；传给 backend 的 gradient 是否为 normalized UV？
 - [ ] texture/latent dimension 由 surface 层还是 sampler 层加入？只允许一个 owner，不能重复乘除尺寸。
+- [ ] CPU/Python texture oracle 是否复现了 sampler 的完整 reconstruction support？`wrap`不只是在采样前对UV做`frac`：bilinear footprint跨过0/1边界时，四个邻居也必须逐个wrap；`clamp`则必须逐个clamp。至少用`uv=0`或`uv=1`的非周期纹理做一次CPU↔真实GPU边界parity，不能只测纹理内部坐标。
 - [ ] reference PT、package PT 与 deferred 是否由同一 surface contract 产生字段，而不是三份“看起来相同”的公式？
 - [ ] semantic evidence 是否包含 raw UV/LOD 或明显空间结构？resource loaded、slot ready 和平均色只能证明 lifecycle。
 

@@ -6,7 +6,6 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 import torch
-from torch.nn import functional as F
 
 from ncls.learning.artifact_packing import pack_fp16_parameters
 from ncls.learning.metal_budgeted_asset_cook import MetalBudgetedCompiledAsset
@@ -179,21 +178,30 @@ def _sample_level(
     address_mode: str,
 ) -> torch.Tensor:
     device = uv.device
-    grid = torch.as_tensor(level, dtype=torch.int8, device=device)
-    grid = grid.permute(2, 0, 1).to(torch.float32) / 127.0
+    grid = torch.as_tensor(level, dtype=torch.int8, device=device).to(torch.float32)
+    grid = grid / 127.0
     coordinate = (
         torch.remainder(uv, 1.0)
         if address_mode == "wrap"
         else torch.clamp(uv, 0.0, 1.0)
     )
-    sampled = F.grid_sample(
-        grid[None],
-        (coordinate * 2.0 - 1.0)[None, None, None],
-        mode="bilinear",
-        padding_mode="zeros" if address_mode == "wrap" else "border",
-        align_corners=False,
-    )
-    return sampled[0, :, 0, 0][None]
+    height, width = grid.shape[:2]
+    pixel = coordinate * coordinate.new_tensor((width, height)) - 0.5
+    lower = torch.floor(pixel).to(torch.int64)
+    fraction = pixel - lower.to(pixel.dtype)
+
+    def resolve(index: torch.Tensor, extent: int) -> torch.Tensor:
+        if address_mode == "wrap":
+            return torch.remainder(index, extent)
+        return torch.clamp(index, 0, extent - 1)
+
+    x0 = resolve(lower[0], width)
+    x1 = resolve(lower[0] + 1, width)
+    y0 = resolve(lower[1], height)
+    y1 = resolve(lower[1] + 1, height)
+    top = torch.lerp(grid[y0, x0], grid[y0, x1], fraction[0])
+    bottom = torch.lerp(grid[y1, x0], grid[y1, x1], fraction[0])
+    return torch.lerp(top, bottom, fraction[1])[None]
 
 
 def _runtime_asset_sample(

@@ -51,7 +51,7 @@ def _dds_levels(
         level = np.frombuffer(payload[offset : offset + size], dtype=dtype).reshape(
             mip_height, mip_width, 4
         )
-        levels.append(np.ascontiguousarray(level))
+        levels.append(np.array(level, copy=True, order="C"))
         offset += size
         mip_width, mip_height = max(1, mip_width // 2), max(1, mip_height // 2)
     if offset != len(payload):
@@ -175,7 +175,7 @@ def validate(package_path: Path) -> None:
     package = ScatteringPackage.open(package_path)
     manifest = package.manifest
     if (
-        manifest.program_key != "metal"
+        manifest.program_key != "metal-budgeted-neural-material"
         or manifest.validation.get("status") != "gpu-parity-required"
     ):
         raise ValueError("输入不是需要 GPU parity 的 Metal ScatteringPackage")

@@ -22,4 +22,6 @@ def test_gpu_package_validator_decodes_rgba8_snorm_mips() -> None:
 
     assert len(decoded) == len(levels)
     for actual, expected in zip(decoded, levels):
+        assert actual.flags.c_contiguous
+        assert actual.flags.writeable
         np.testing.assert_array_equal(actual, expected)
