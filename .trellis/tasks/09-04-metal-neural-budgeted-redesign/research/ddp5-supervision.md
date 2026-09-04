@@ -96,3 +96,10 @@
 - step2048同序256条validation row的paired bootstrap中，`direct-hybrid` 的 appearance、log、linear、chroma与peak均为正，均值与95% CI分别为`+0.68615 [0.68013,0.69220]`、`+0.36807 [0.36633,0.36985]`、`+0.21976 [0.21307,0.22634]`、`+0.005928 [0.005911,0.005946]`和`+0.67777 [0.66522,0.69035]`。direct的spatial error小`0.001745 [0.001563,0.001930]`，但两者预测one-texel变化都远低于target，不能把该小差异解释成高频问题已解决。
 
 处理决定：按预登记规则选择 `metal_budgeted_hybrid_v3` 为 canonical profile，保留 `metal_budgeted_direct_control_v3` 为 exact diagnostic视觉对照；不启动2048→4096。下一阶段先实现两者共形的FP16/RGBA8 runtime与evaluator-only Slang/package parity。由于deployment实现会改变method implementation identity，最终可交付checkpoint必须在deployment commit后fresh复跑，不能把当前训练identity静默贴到新runtime上。
+
+## wrap修复后的最终pair与大batch选择：implementation `1d5f813`
+
+- hybrid/direct在wrap边界oracle修复后从fresh step0交替运行到共同step2048；最终checkpoint SHA-256分别为`8a15a5945085bddc781c1e60cd434ffa78b3a791ceed05dbbe007f8e7fb8971e`和`4848b783407eba3a0127910dca370ea97f95f904416e974ad61867a3bbff2042`。两侧均`complete=true`，phase/QAT、五rank gradient/update audit、checkpoint与teardown通过。
+- step2048 paired bootstrap的`direct-hybrid` appearance为`+0.68544 [0.67929,0.69144]`；log、linear、chroma、peak也都显著偏向hybrid。direct的spatial为`-0.001790 [-0.001967,-0.001617]`，但不改变两者均未恢复one-texel细节的判断。
+- 新Windows handoff位于`artifacts/viewer/metal-budgeted-ddp5-wrap-1d5f813-step2048/`；hybrid/direct真实ScatteringPackage的边界GPU parity最大绝对误差分别为`1.87e-5/2.23e-4`。旧`2dc0965` handoff已显式标记失效。
+- 后续batch profile在同一Tungsten/hybrid上比较per-rank `512/1024/2048`；steady median global work units/s分别约`21.1k/42.4k/87.7k`，peak显存约`0.73/0.94/1.37 GiB`。选择2048用于四项特征材质probe；它不改变已完成主pair的matched结论。

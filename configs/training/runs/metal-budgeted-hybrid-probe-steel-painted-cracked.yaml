@@ -12,6 +12,7 @@ execution:
   reference_batch_steps: 2
   reference_inflight: 1
   transfer_streams: 0
+  batch_size_multiplier: 4
   residency:
     budget_mib: 8192
 hooks:

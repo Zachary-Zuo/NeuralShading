@@ -27,6 +27,12 @@
 - 每项记录appearance、RGB、chroma、peak、spatial gradient、semantic-runtime、analytic/gate/positive分工、proposal和所有parameter group梯度/更新覆盖。
 - 只有四项都通过实现正确性与有限性检查，才汇总共同结构趋势；256-step observed quality不称为泛化结论，也不与2048-step Tungsten绝对值直接排序。
 
+## 大 batch 选择结果
+
+实现 `1d5f813` 下的五卡 fresh 96-step probe 已完成；统计排除首个16-step warm-up row，使用step 32–96的五个steady training row。per-rank batch `512/1024/2048` 的median global work units/s分别为`21,135/42,364/87,677`，median step wall分别为`0.2351/0.2389/0.1995 s`，Torch peak分别为`747.65/965.80/1,399.98 MiB/rank`。三者均无OOM、DDP错误或非有限值，均低于8 GiB门槛。
+
+按预登记规则选择per-rank batch `2048`、global batch `10,240`，四个特征材质run统一写入`batch_size_multiplier: 4`。每项256 optimizer step对应`256×10,240×2=5,242,880`个evaluator/sampler route work units；该几何选择只表示执行效率，不是质量排序。
+
 ## 预先解释规则
 
 - high-frequency与composite的spatial仍接近target自身梯度尺度、而其他appearance下降：支持“Detail高频通路是跨材质瓶颈”，下一轮优先显式role-separated Detail/Context，而不是增加主干宽度或仅加spatial loss权重。
