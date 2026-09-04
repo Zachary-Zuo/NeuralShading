@@ -152,3 +152,42 @@ compose:
     assert materials[-1]["locator"]["export"] == registry.exports[-1].exact_locator["export"]
     assert plan.inputs[-1].kind == "source-set"
     assert plan.inputs[-1].path == registry_relative.as_posix()
+
+
+@pytest.mark.parametrize(
+    ("run_name", "expected_export"),
+    (
+        (
+            "metal-budgeted-hybrid-probe-brass-sheet.yaml",
+            "Brass_Sheet_Yellow_Splotchy_Streaks",
+        ),
+        (
+            "metal-budgeted-hybrid-probe-bronze-scratched.yaml",
+            "Bronze_Scratched_Yellow_Heavy_Worn_Scratches",
+        ),
+        (
+            "metal-budgeted-hybrid-probe-aluminum-anodized.yaml",
+            "Aluminum_Anodized_Pink",
+        ),
+        (
+            "metal-budgeted-hybrid-probe-steel-painted-cracked.yaml",
+            "Steel_Painted_Light_Blue_Cracked_Matte",
+        ),
+    ),
+)
+def test_characteristic_metal_probe_freezes_one_native_source(
+    run_name: str,
+    expected_export: str,
+) -> None:
+    plan = TrainingPlanResolver(PROJECT_ROOT).resolve(
+        PROJECT_ROOT / "configs/training/runs" / run_name,
+        devices=(5, 6, 7, 8, 9),
+    )
+    config = plan.to_runtime_config()
+    materials = config.source["materials"]
+
+    assert len(materials) == 1
+    assert expected_export in materials[0]["locator"]["export"]
+    assert config.model_context["profile_id"] == "metal_budgeted_hybrid_v3"
+    assert config.total_steps == 2048
+    assert plan.execution.devices == (5, 6, 7, 8, 9)
