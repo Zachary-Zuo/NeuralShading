@@ -136,3 +136,12 @@ authored 参数 state 固定为 registry default：`texture_scale=[1,1]`、`text
 - `rerun required`：hybrid/direct 都从 fresh DDP5 step 0开始并使用独立 artifact root，不从单卡 checkpoint resume。任何改变 resolved plan、method/data/query identity或训练数值语义的修复都要求两侧从相同有效边界重跑；只改变监督器或不参与 identity 的错误报告可继续 exact checkpoint。
 
 本修订由用户直接授权，不改变 `evaluate ≤ 20,000 dense MAC/direction`、PreparedState `≤192 B`、单 seed、2048-step cap和 failure-classification 规则。DDP5 的 direct/hybrid可以互相做 matched comparison，但不能与原单卡结果按 step合并；约12小时只是一轮执行 timebox，不是 observed quality hard gate。
+
+## 8. 2026-09-05 剩余时间探索授权
+
+- `trigger`：用户明确允许在原有实验与结论提前完成时，用剩余时间做少量neural material结构探索，并要求先对有特点的材质专项分析，再考虑普适性。
+- `invalidated evidence`：无；该轨道不改写Tungsten direct/hybrid选择规则，也不把专项结果并入已冻结paired统计。
+- `scope impact`：只在主训练、比较和两个Windows diagnostic交付完成后，按机制预选最多3个exact locator；每材质单seed、最多256-step diagnostic。只有至少两个专项指向同一failure mechanism时，才允许一个单seed、最多512-step mixed cohort。
+- `rerun required`：每个材质/混合cohort使用独立source、query、config和checkpoint identity，不能resume Tungsten checkpoint或互相覆盖。实现bug改变identity时只重跑受影响的专项；主paired结果除非共享实现语义被改变，否则不重跑。
+
+探索结果只登记design direction和候选优先级，不增加本任务hard gate，也不授权第二seed、teacher、旧full、formal 692-source long或无界模型变体循环。

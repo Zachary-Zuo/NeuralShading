@@ -61,6 +61,7 @@
 - 对每个里程碑分析 appearance、proposal、chroma、逐通道 peak、spatial gradient、required-group gradient/update、rank straggler、reference/cache 与显存；有限且下降的 total loss 本身不足以判定模型有效。
 - 最终至少保留 hybrid 与 direct 两个 exact-identity checkpoint，并为两者生成 Windows viewer 可消费的 diagnostic evaluator package/catalog。未完成 formal readiness 或缺少 `sample/pdf` 的候选必须明确标注 diagnostic，不能显示为 formal ready。
 - 约 12 小时是本轮执行 timebox，不是伪造成功的验收门；到时按已完成的共同里程碑给出证据结论、失败分类、可恢复位置与下一步方向。
+- 只有 hybrid/direct训练、比较、双Windows diagnostic package与必要正确性检查已经交付且12小时时间仍有余额，才进入后置探索。探索先研究少量机制鲜明的单材质，再决定是否值得扩到小型混合cohort；它只形成设计方向与候选优先级，不阻塞主任务完成。
 
 ## Acceptance Criteria
 
@@ -74,6 +75,7 @@
 - [ ] 【理论 / 数值 / 接口正确性｜来源：项目合同与本任务涉及生命周期】通过相关单元测试、静态成本验证、单 GPU smoke、DDP 回归和最终部署 parity；容差在正式结果前由 dtype、oracle 或隔离 calibration 冻结，正式环境与运行证据按项目规则记录。
 - [ ] 【连续执行交付｜来源：用户 2026-09-05 要求】GPU 5–9 的五卡 DDP 以共同里程碑交替完成 hybrid/direct 的可恢复训练；监督日志、异常处置、commit 与比较身份可追溯。
 - [ ] 【Windows 检视交付｜来源：用户 2026-09-05 要求】至少产出 hybrid/direct 两个训练 checkpoint 与两个可由 Windows viewer 加载的 exact-identity diagnostic package/catalog，并明确 formal/diagnostic capability 边界。
+- [ ] 【条件性交付｜来源：用户 2026-09-05 补充】若主交付完成后仍有时间，对少量有代表性机制的材质完成有界专项probe；仅在证据支持时扩到小型普适性检查，并报告哪些结构机制值得下一轮正式候选。
 
 ## Notes
 

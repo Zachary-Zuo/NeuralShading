@@ -23,3 +23,10 @@
 - 失败：通用`validate_objective_outputs()`报告11个required component output缺失，包括asset/compiler/direction/evaluator trace与proposal identity。
 - 分类：budgeted method implementation defect，不是DDP reducer或模型数值失败。objective已计算对应值，但只返回带`trace/`、`proposal/`前缀的诊断metric；descriptor要求的component output alias没有进入mapping。原unit只检查标准loss和gradient，没有执行通用conformance gate。
 - 修复：保留原诊断metric，并为descriptor要求的component outputs增加detached alias；method unit直接调用`validate_objective_outputs()`。修复修改`metal_budgeted.py`并改变implementation identity，因此Attempt 1的两份step-0 checkpoint标为superseded，hybrid/direct都必须fresh重跑。
+
+## Milestone 8：implementation `6b9f81c`
+
+- hybrid/direct均从fresh DDP5 step 0开始，calibration的scale/P95/epsilon、reference execution plan与query stream一致；不同calibration hash只来自各自training config hash。
+- 两侧0→8均完成，所有metric有限，六个required parameter group均已有finite/nonzero gradient与update，rank0-only checkpoint/review及teardown通过。
+- peak allocated memory均为739,713,536 B/rank。hybrid/direct review median分别约2.928/2.903 step/s；首步含compile约3.6–3.9秒，后续tqdm显示约2–3 step/s。
+- step 1→8 appearance：hybrid `3.6547→2.6996`，direct `4.7860→3.8209`；spatial gradient分别`0.3325→0.2541`与`0.3324→0.2534`。这是极短早期诊断，不形成结构选择。

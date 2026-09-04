@@ -368,3 +368,14 @@ stall 判定必须同时参考最近 metric/checkpoint 时间、进程存活、G
 - catalog/UI/capture 必须标记 `exact-diagnostic-evaluator-preview` 与 profile identity；
 - 两个 package 不共享 checkpoint identity，不用 shape compatibility 互换；
 - Linux 完成 checkpoint、量化 Python、Slang/package validation；Windows 只需按交接命令做 Release viewer 加载与视觉检查，Linux 不宣称完成 D3D12 证据。
+
+### 15.6 主交付后的有界探索
+
+该轨道只在§15.5完成且本轮12小时时间仍有余额时启动，优先级低于任何checkpoint、parity或Windows交接缺口。探索顺序固定为“特征材质专项 → 跨材质共性判断”：
+
+1. 从registry按实现机制选择不超过3个exact locator，不按当前图像好坏挑样本：Beckmann例外、含paint/crack/patina之一的复合recipe、以及明显diffuse contamination或强结构纹理之一；Tungsten各向异性结果作为已有专项，不重复计数。
+2. 先用已入选profile做每材质单seed、最多256-step的diagnostic short fit或等价固定probe，统一记录direction strata、RGB/chroma/peak、spatial gradient、analytic-core contribution、gate/residual占比与typed-state责任。每个实验使用独立source/config/checkpoint identity，不从Tungsten checkpoint伪resume。
+3. 若多个专项显示同一failure mechanism，再运行至多一个不超过512-step、单seed的小型mixed cohort，判断该机制是否跨材质复现；若failure互不相同，则不强行汇总成“普适结构”。
+4. 本轮不自动新增第二seed、teacher、大于主budget的结构或多个网络变体。若证据指向新的表示轴，只形成带失败假设、预算增量和验证方案的下一轮候选，不在剩余时间里循环改到效果变好。
+
+专项材料和probe cap是本轮用户授权下的资源上限，不是quality gate。任何结果都必须区分implementation/protocol defect与正常empirical outcome，并以exact locator、query identity和artifact路径追溯。

@@ -128,6 +128,17 @@ Rollback point R5：代表性cohort或runtime结果低于预期但正确时如�
 - [x] 运行 pre-Linux `trellis-check`；修复本任务引入的问题，不回退用户或其他任务改动。Linux GPU/integration/package/viewer 总检查仍随 Phase 3–5 结果执行。
 - [ ] 逐项勾选PRD acceptance criteria并写最终摘要；不把未授权formal long列为任务未完成。
 
+## Phase 7：剩余时间专项探索（条件执行）
+
+依赖：hybrid/direct主训练与比较完成，两个Windows diagnostic package/catalog已生成并通过Linux侧验证，且12小时时间仍有余额。
+
+- [ ] 从registry按机制选择最多3个exact locator：Beckmann例外、一个paint/crack/patina复合recipe、一个diffuse contamination或强结构纹理；记录选择依据，不按结果挑样本。
+- [ ] 用入选profile做每材质单seed、最多256-step diagnostic probe，分方向/颜色/峰值/空间/analytic contribution报告。
+- [ ] 仅当至少两个专项指向同一failure mechanism时，运行一个单seed、最多512-step的小型mixed cohort普适性检查。
+- [ ] 输出`research/characteristic-material-probes.md`，把结构方向写成“失败假设→所需机制→预算增量→下一轮验证”，不自动实现多个新变体。
+
+Rollback point R7：主交付有任何缺口或时间不足即不启动；专项结果不一致时保留分材质结论，不扩大实验直到得到统一故事。
+
 ## 计划验证命令族
 
 精确测试文件在实现时按受影响范围确定，但只使用以下入口：
@@ -160,3 +171,4 @@ Linux DDP只在原生Linux通过统一launcher执行；Windows不请求多GPU。
 | 冻结validation与Pareto证据 | 3、5 |
 | unit/GPU/DDP/package/viewer | 2–6 |
 | 五卡交替监督与两模型Windows交接 | 3–6、设计§15 |
+| 剩余时间专项→普适性探索 | 7、设计§15.6 |
