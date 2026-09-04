@@ -548,8 +548,30 @@ class MetalBudgetedMethodDefinition(MethodDefinition):
         metrics["appearance/core"] = core.detach()
         metrics["appearance/semantic_runtime"] = semantic_runtime.detach()
         metrics["appearance/direct_core_auxiliary"] = direct_auxiliary.detach()
-        for name, value in {**prepared.trace, **evaluated.trace}.items():
+        execution_trace = {**prepared.trace, **evaluated.trace}
+        for name, value in execution_trace.items():
             metrics[f"trace/{name}"] = value.detach()
+        metrics.update(
+            {
+                "compiler_responsibility_groups_trace": execution_trace[
+                    "compiler_responsibility_groups"
+                ].detach(),
+                "asset_detail_trace": execution_trace["asset_detail"].detach(),
+                "asset_context_trace": execution_trace["asset_context"].detach(),
+                "semantic_runtime_trace": execution_trace[
+                    "semantic_runtime"
+                ].detach(),
+                "direction_half_trace": execution_trace["direction_half"].detach(),
+                "direction_two_frame_trace": execution_trace[
+                    "direction_two_frame"
+                ].detach(),
+                "positive_rgb_trace": execution_trace["positive_rgb"].detach(),
+                "rgb_gate_trace": execution_trace["rgb_gate"].detach(),
+                "analytic_lobes_trace": execution_trace[
+                    "analytic_lobes"
+                ].detach(),
+            }
+        )
         return loss, metrics
 
     def _appearance_objective(
@@ -718,6 +740,10 @@ class MetalBudgetedMethodDefinition(MethodDefinition):
         result: dict[str, torch.Tensor | float] = {
             **metrics,
             **proposal_metrics,
+            "proposal_loss": proposal.detach(),
+            "sample_pdf_identity": proposal_metrics[
+                "proposal/sample_pdf_identity"
+            ],
             "loss/optimization_total": total.detach(),
             "loss/appearance": appearance.detach(),
             "loss/proposal": proposal.detach(),

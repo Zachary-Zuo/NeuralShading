@@ -333,7 +333,7 @@ tools/learning/build_metal_linux_handoff.py --output <artifact.json>
 
 ### 6. Tests Required
 
-- unit：layout budget/identity、两read、state packing、Beckmann/重复GGX、finite/nonnegative、half退化/grazing、sample↔PDF、RGB gate、direct auxiliary、asset cook三identity、all-parameter gradient、metric与progress、fresh/resume calibration、YAML pair和handoff无自动followup；
+- unit：layout budget/identity、两read、state packing、Beckmann/重复GGX、finite/nonnegative、half退化/grazing、sample↔PDF、RGB gate、direct auxiliary、asset cook三identity、all-parameter gradient、metric与progress、fresh/resume calibration、YAML pair和handoff无自动followup；method objective测试必须把真实返回mapping交给通用`validate_objective_outputs()`，不能只抽查标准loss而漏掉component contract；
 - lightweight GPU：budgeted forward/backward、QAT值与梯度；不得隐式打开reference session；
 - Linux online：step-0 calibration、step-128 stop/resume、完整2048 cap、独立256-batch validation和required-group audit；
 - selection后：FP16/RGBA8 pack、Python quantized↔Slang exact/random parity、Package@2、typed edit/asset swap；

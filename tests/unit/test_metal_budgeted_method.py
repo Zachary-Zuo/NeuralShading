@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import torch
 
+from ncls.learning.conformance import validate_objective_outputs
 from ncls.learning.batches import (
     EvaluatorBatch,
     MethodSamplerBatch,
@@ -182,6 +183,11 @@ def test_budgeted_joint_objective_reports_standard_losses_and_gradients() -> Non
     _initialize_calibration(model)
     loss, metrics = METHOD_DEFINITION.training_objective(
         model, _batches(), _phase()
+    )
+    validate_objective_outputs(
+        METHOD_DEFINITION.descriptor,
+        "joint-response-fit",
+        metrics,
     )
     loss.backward()
     assert bool(torch.isfinite(loss))
