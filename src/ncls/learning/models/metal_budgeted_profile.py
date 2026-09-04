@@ -16,6 +16,7 @@ METAL_BUDGETED_LAYOUT_PATH = (
 METAL_BUDGETED_HYBRID_PROFILE_ID = "metal_budgeted_hybrid_v3"
 METAL_BUDGETED_DIRECT_PROFILE_ID = "metal_budgeted_direct_control_v3"
 METAL_BUDGETED_ROLE_DETAIL_PROFILE_ID = "metal_budgeted_hybrid_role_detail_v4"
+METAL_BUDGETED_CENTER_DETAIL_PROFILE_ID = "metal_budgeted_hybrid_center_detail_v5"
 
 _DTYPE_BYTES = {"float16": 2, "float32": 4, "uint32": 4}
 
@@ -58,6 +59,7 @@ class MetalBudgetedProfile:
     profile_id: str
     evaluator_mode: str
     asset_detail_aggregation: str
+    asset_detail_center: str
     maximum_texture_slots: int
     maximum_typed_tokens: int
     typed_token_width: int
@@ -88,6 +90,7 @@ class MetalBudgetedProfile:
             METAL_BUDGETED_HYBRID_PROFILE_ID,
             METAL_BUDGETED_DIRECT_PROFILE_ID,
             METAL_BUDGETED_ROLE_DETAIL_PROFILE_ID,
+            METAL_BUDGETED_CENTER_DETAIL_PROFILE_ID,
         }:
             raise ValueError("unsupported Metal budgeted profile identity")
         expected_mode = (
@@ -105,6 +108,15 @@ class MetalBudgetedProfile:
         if self.asset_detail_aggregation != expected_aggregation:
             raise ValueError(
                 "Metal budgeted profile Detail aggregation disagrees with its identity"
+            )
+        expected_center = (
+            "request-texel@1"
+            if self.profile_id == METAL_BUDGETED_CENTER_DETAIL_PROFILE_ID
+            else "two-by-two-mean@1"
+        )
+        if self.asset_detail_center != expected_center:
+            raise ValueError(
+                "Metal budgeted profile Detail center disagrees with its identity"
             )
         if (
             self.maximum_texture_slots != 9
@@ -179,6 +191,7 @@ def metal_budgeted_profile(
         profile_id=profile_id,
         evaluator_mode=str(selected["evaluator_mode"]),
         asset_detail_aggregation=str(selected["asset_detail_aggregation"]),
+        asset_detail_center=str(selected["asset_detail_center"]),
         maximum_texture_slots=int(shape["maximum_texture_slots"]),
         maximum_typed_tokens=int(shape["maximum_typed_tokens"]),
         typed_token_width=int(shape["typed_token_width"]),
@@ -214,11 +227,16 @@ METAL_BUDGETED_DIRECT_PROFILE = metal_budgeted_profile(
 METAL_BUDGETED_ROLE_DETAIL_PROFILE = metal_budgeted_profile(
     METAL_BUDGETED_ROLE_DETAIL_PROFILE_ID
 )
+METAL_BUDGETED_CENTER_DETAIL_PROFILE = metal_budgeted_profile(
+    METAL_BUDGETED_CENTER_DETAIL_PROFILE_ID
+)
 
 
 __all__ = [
     "METAL_BUDGETED_DIRECT_PROFILE",
     "METAL_BUDGETED_DIRECT_PROFILE_ID",
+    "METAL_BUDGETED_CENTER_DETAIL_PROFILE",
+    "METAL_BUDGETED_CENTER_DETAIL_PROFILE_ID",
     "METAL_BUDGETED_HYBRID_PROFILE",
     "METAL_BUDGETED_HYBRID_PROFILE_ID",
     "METAL_BUDGETED_LAYOUT_PATH",

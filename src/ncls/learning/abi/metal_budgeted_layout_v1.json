@@ -5,15 +5,23 @@
   "profiles": {
     "metal_budgeted_hybrid_v3": {
       "evaluator_mode": "hybrid",
-      "asset_detail_aggregation": "shared-slot-softmax@1"
+      "asset_detail_aggregation": "shared-slot-softmax@1",
+      "asset_detail_center": "two-by-two-mean@1"
     },
     "metal_budgeted_direct_control_v3": {
       "evaluator_mode": "direct",
-      "asset_detail_aggregation": "shared-slot-softmax@1"
+      "asset_detail_aggregation": "shared-slot-softmax@1",
+      "asset_detail_center": "two-by-two-mean@1"
     },
     "metal_budgeted_hybrid_role_detail_v4": {
       "evaluator_mode": "hybrid",
-      "asset_detail_aggregation": "role-separated-slot-softmax@1"
+      "asset_detail_aggregation": "role-separated-slot-softmax@1",
+      "asset_detail_center": "two-by-two-mean@1"
+    },
+    "metal_budgeted_hybrid_center_detail_v5": {
+      "evaluator_mode": "hybrid",
+      "asset_detail_aggregation": "shared-slot-softmax@1",
+      "asset_detail_center": "request-texel@1"
     }
   },
   "shape": {
@@ -125,5 +133,5 @@
     "asset_planes": "rgba8-snorm-per-plane-scale-bias",
     "sensitive_accumulation": "float32"
   },
-  "identity": "e5bf2377972301b5595d1c340dfc96408e3dc0b84b07622ca401ad5b1186d6e2"
+  "identity": "24fdead2327fecf8daca699729359a8ec348324c6dc63ca3e4389dbe53cae36d"
 }

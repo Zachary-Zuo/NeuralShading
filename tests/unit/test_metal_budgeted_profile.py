@@ -5,6 +5,7 @@ from dataclasses import replace
 import pytest
 
 from ncls.learning.models.metal_budgeted_profile import (
+    METAL_BUDGETED_CENTER_DETAIL_PROFILE,
     METAL_BUDGETED_DIRECT_PROFILE,
     METAL_BUDGETED_HYBRID_PROFILE,
     METAL_BUDGETED_ROLE_DETAIL_PROFILE,
@@ -33,6 +34,15 @@ def test_metal_budgeted_profiles_close_the_nvidia_class_hard_budget() -> None:
     assert METAL_BUDGETED_ROLE_DETAIL_PROFILE.evaluate_dense_macs == 11_392
     assert METAL_BUDGETED_ROLE_DETAIL_PROFILE.prepared_state_bytes == 160
     assert METAL_BUDGETED_ROLE_DETAIL_PROFILE.maximum_texture_reads == 2
+    assert METAL_BUDGETED_CENTER_DETAIL_PROFILE.asset_detail_center == (
+        "request-texel@1"
+    )
+    assert METAL_BUDGETED_CENTER_DETAIL_PROFILE.asset_detail_aggregation == (
+        "shared-slot-softmax@1"
+    )
+    assert METAL_BUDGETED_CENTER_DETAIL_PROFILE.evaluate_dense_macs == 11_392
+    assert METAL_BUDGETED_CENTER_DETAIL_PROFILE.prepared_state_bytes == 160
+    assert METAL_BUDGETED_CENTER_DETAIL_PROFILE.maximum_texture_reads == 2
     assert layout["identity"] in render()
 
 

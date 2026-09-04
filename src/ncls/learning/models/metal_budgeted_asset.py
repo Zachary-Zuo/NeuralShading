@@ -216,9 +216,12 @@ class MetalBudgetedTwoReadAsset(nn.Module):
             -1, slots, 1, 4, height, width
         )
         selected = torch.gather(patches, 2, gather).squeeze(2)
-        y0, x0 = max(0, (height - 1) // 2), max(0, (width - 1) // 2)
-        y1, x1 = min(height, y0 + 2), min(width, x0 + 2)
-        center = selected[..., y0:y1, x0:x1].mean(dim=(-2, -1))
+        if self.profile.asset_detail_center == "request-texel@1":
+            center = selected[..., height // 2, width // 2]
+        else:
+            y0, x0 = max(0, (height - 1) // 2), max(0, (width - 1) // 2)
+            y1, x1 = min(height, y0 + 2), min(width, x0 + 2)
+            center = selected[..., y0:y1, x0:x1].mean(dim=(-2, -1))
         context = selected.mean(dim=(-2, -1))
         high_pass = center - context
         features = torch.cat(

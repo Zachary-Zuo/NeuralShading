@@ -12,6 +12,7 @@ from ncls.learning.models.metal_budgeted import (
     pack_metal_budgeted_program_state,
 )
 from ncls.learning.models.metal_budgeted_profile import (
+    METAL_BUDGETED_CENTER_DETAIL_PROFILE,
     METAL_BUDGETED_DIRECT_PROFILE,
     METAL_BUDGETED_HYBRID_PROFILE,
     METAL_BUDGETED_ROLE_DETAIL_PROFILE,
@@ -204,6 +205,23 @@ def test_budgeted_role_detail_keeps_role_changes_in_their_channel() -> None:
 
     assert not torch.equal(baseline[:, :1], modified[:, :1])
     torch.testing.assert_close(baseline[:, 1:], modified[:, 1:])
+
+
+def test_budgeted_center_detail_uses_the_requested_patch_texel() -> None:
+    torch.manual_seed(20260905)
+    baseline_model = MetalBudgetedModel(METAL_BUDGETED_HYBRID_PROFILE).eval()
+    center_model = MetalBudgetedModel(METAL_BUDGETED_CENTER_DETAIL_PROFILE).eval()
+    center_model.load_state_dict(baseline_model.state_dict())
+    values = _conditioning(1)
+    values["metal_mip_fraction"].zero_()
+    values["metal_texture_patches"].zero_()
+    values["metal_texture_patches"][:, :, 0, :, 4, 4] = 1.0
+    with torch.no_grad():
+        program = baseline_model.compile_program_state(values)
+        baseline = baseline_model.sample_asset(values, program, qat=False).detail
+        centered = center_model.sample_asset(values, program, qat=False).detail
+
+    assert not torch.equal(baseline, centered)
 
 
 def test_optimized_program_state_control_cannot_change_deterministic_contract() -> None:
