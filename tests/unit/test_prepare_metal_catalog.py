@@ -137,3 +137,32 @@ def test_reference_compile_delegates_publication_policy_to_provider() -> None:
 
     assert exporter._compile_reference_program(provider, object()) is expected
     assert provider.calls == 1
+
+
+def test_runtime_paths_accept_locked_linux_sdk_and_reject_cross_platform_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    relative = Path("examples/mdl_sdk/dxr/content/mdl_target_code_types.hlsl")
+    linux = (
+        tmp_path
+        / "external/MDL-SDK-2025.0.0-387700.1252-linux-x86-64"
+        / relative
+    )
+    runtime = tmp_path / "shaders/ncls/reference_backends/mdl_runtime.slangh"
+    linux.parent.mkdir(parents=True)
+    runtime.parent.mkdir(parents=True)
+    linux.write_bytes(b"shared target types")
+    runtime.write_bytes(b"renderer runtime")
+    monkeypatch.setattr(exporter, "PROJECT_ROOT", tmp_path)
+
+    assert exporter._runtime_paths() == (linux, runtime)
+
+    windows = (
+        tmp_path
+        / "external/MDL-SDK-2025.0.0-387700.1252-nt-x86-64"
+        / relative
+    )
+    windows.parent.mkdir(parents=True)
+    windows.write_bytes(b"different target types")
+    with pytest.raises(ValueError, match="headers differ"):
+        exporter._runtime_paths()

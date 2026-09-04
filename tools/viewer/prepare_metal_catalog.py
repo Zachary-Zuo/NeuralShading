@@ -161,15 +161,21 @@ def _validate_pair(
 
 
 def _runtime_paths() -> tuple[Path, Path]:
-    target_types = (
-        PROJECT_ROOT
-        / "external/MDL-SDK-2025.0.0-387700.1252-nt-x86-64"
-        / "examples/mdl_sdk/dxr/content/mdl_target_code_types.hlsl"
+    relative = Path("examples/mdl_sdk/dxr/content/mdl_target_code_types.hlsl")
+    candidates = tuple(
+        PROJECT_ROOT / "external" / package / relative
+        for package in (
+            "MDL-SDK-2025.0.0-387700.1252-nt-x86-64",
+            "MDL-SDK-2025.0.0-387700.1252-linux-x86-64",
+        )
     )
+    existing = tuple(path for path in candidates if path.is_file())
     renderer_runtime = PROJECT_ROOT / "shaders/ncls/reference_backends/mdl_runtime.slangh"
-    if not target_types.is_file() or not renderer_runtime.is_file():
+    if not existing or not renderer_runtime.is_file():
         raise FileNotFoundError("MDL viewer runtime includes are missing")
-    return target_types, renderer_runtime
+    if len({sha256_file(path) for path in existing}) != 1:
+        raise ValueError("Windows/Linux MDL target-code headers differ")
+    return existing[0], renderer_runtime
 
 
 def _reference_catalog(
