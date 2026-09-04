@@ -112,6 +112,33 @@ def test_only_devices_are_applied_as_cli_override() -> None:
     assert overridden.to_runtime_config().sha256 == baseline.to_runtime_config().sha256
 
 
+@pytest.mark.parametrize(
+    ("run_name", "multiplier", "per_rank_batch"),
+    (
+        ("metal-budgeted-hybrid-throughput-b1024.yaml", 2, 1024),
+        ("metal-budgeted-hybrid-throughput-b2048.yaml", 4, 2048),
+    ),
+)
+def test_execution_batch_multiplier_is_explicit_and_traceable(
+    run_name: str,
+    multiplier: int,
+    per_rank_batch: int,
+) -> None:
+    plan = TrainingPlanResolver(PROJECT_ROOT).resolve(
+        PROJECT_ROOT / "configs/training/runs" / run_name,
+        devices=(5, 6, 7, 8, 9),
+    )
+    config = plan.to_runtime_config()
+
+    assert plan.execution.batch_size_multiplier == multiplier
+    assert {
+        route.batch_size
+        for phase in config.phases
+        for route in phase.routes
+    } == {per_rank_batch}
+    assert ResolvedTrainingPlan.from_dict(plan.to_dict()).sha256 == plan.sha256
+
+
 def test_execution_settings_reject_duplicate_devices() -> None:
     resolver = TrainingPlanResolver(PROJECT_ROOT)
     with pytest.raises(ValueError, match="unique nonnegative GPU indices"):

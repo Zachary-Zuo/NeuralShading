@@ -30,6 +30,7 @@ MetalBudgetedAssetCooker.cook(encoded_values, mode, objective, refinement_steps,
 ## 3. Contracts
 
 - 正式配置是 `base/method/data/recipe` 组合 YAML；resolver 严格展开并冻结 `ResolvedTrainingPlan@1`。公开 method key 不含 `@`。内部 runtime config 是 engine 的 phase graph 投影，不是用户输入格式。
+- `execution.batch_size_multiplier` 是可选的正整数执行几何轴，默认1且不进入旧 plan 的序列化，因此旧 checkpoint 身份保持稳定。显式设置时，`to_runtime_config()`等比例放大所有 phase/route 的per-rank batch，放大后的batch进入runtime config SHA；它只用于有界吞吐探针或新冻结实验，不能在同一个matched run中途改变。
 - config是有序phase graph；每phase显式声明routes、parameter groups、loss terms、recipes、optimizer、schedule、precision、transition、checkpoint/metrics/audit/prefetch cadence。engine不硬编码phase名称、数量或双route。
 - `NativeAssetCollection@1`统一多asset/domain/mip tile+halo traversal；1×1 source不是另一套adapter。
 - producer在编plan前通过schema registry执行`expand_source_states()`；无recipe时也生成`ncls.identity-source-states@1` identity。Metal recipe只通过公共source editor产生Sobol/boundary/default typed states，责任组、bool/enum与hard/soft range均显式；无界continuous/int保持authored default。train/validation以recipe identity参与scramble，允许共享authored default但非默认采样state必须隔离。

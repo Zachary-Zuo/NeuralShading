@@ -193,6 +193,7 @@ class ExecutionSettings:
     reference_inflight: int
     transfer_streams: int
     residency_budget_mib: int
+    batch_size_multiplier: int = 1
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "ExecutionSettings":
@@ -206,7 +207,12 @@ class ExecutionSettings:
             "transfer_streams",
             "residency",
         }
-        _require_exact_fields("execution", value, required=required)
+        _require_exact_fields(
+            "execution",
+            value,
+            required=required,
+            optional={"batch_size_multiplier"},
+        )
         devices_value = value["devices"]
         if not isinstance(devices_value, (list, tuple)):
             raise ValueError("execution.devices must be a list")
@@ -223,6 +229,7 @@ class ExecutionSettings:
             "reference_inflight": int(value["reference_inflight"]),
             "transfer_streams": int(value["transfer_streams"]),
             "residency_budget_mib": int(residency["budget_mib"]),
+            "batch_size_multiplier": int(value.get("batch_size_multiplier", 1)),
         }
         if numbers["num_workers"] < 0 or numbers["transfer_streams"] < 0:
             raise ValueError("execution worker/stream counts must be nonnegative")
@@ -234,13 +241,14 @@ class ExecutionSettings:
                 "reference_batch_steps",
                 "reference_inflight",
                 "residency_budget_mib",
+                "batch_size_multiplier",
             )
         ):
             raise ValueError("execution queue, reference and residency sizes must be positive")
         return cls(devices=devices, **numbers)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "devices": list(self.devices),
             "num_workers": self.num_workers,
             "host_prefetch": self.host_prefetch,
@@ -250,6 +258,9 @@ class ExecutionSettings:
             "transfer_streams": self.transfer_streams,
             "residency": {"budget_mib": self.residency_budget_mib},
         }
+        if self.batch_size_multiplier != 1:
+            result["batch_size_multiplier"] = self.batch_size_multiplier
+        return result
 
 
 @dataclass(frozen=True)
@@ -425,6 +436,13 @@ class ResolvedTrainingPlan:
         """Materialize the validated phase graph consumed by TrainingEngine."""
 
         value = _thaw(self.training)
+        if self.execution.batch_size_multiplier != 1:
+            for phase in value["phases"]:
+                for route in phase["routes"]:
+                    route["batch_size"] = (
+                        int(route["batch_size"])
+                        * self.execution.batch_size_multiplier
+                    )
         value["format_name"] = "ncls.training-config"
         value["format_version"] = 4
         return TrainingConfig.from_dict(value)
