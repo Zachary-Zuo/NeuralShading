@@ -111,7 +111,10 @@ def _compile_reference_program(
 
 
 def _checkpoint_profile(snapshot: EvaluationSnapshot) -> str:
-    context = snapshot.training_config.get("model_context")
+    training_config = snapshot.deployment_payload.get("training_config")
+    if not isinstance(training_config, Mapping):
+        raise ValueError("Metal budgeted checkpoint has no training_config")
+    context = training_config.get("model_context")
     if not isinstance(context, Mapping):
         raise ValueError("Metal budgeted checkpoint has no model_context")
     return str(context.get("profile_id", ""))

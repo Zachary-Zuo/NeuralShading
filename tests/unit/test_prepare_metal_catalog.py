@@ -22,7 +22,9 @@ def _checkpoint(role: str, *, step: int = 2048, snapshot_id: str = "a" * 64):
     calls: list[str] = []
     return SimpleNamespace(
         public_method_key="metal",
-        training_config={"model_context": {"profile_id": profile}},
+        deployment_payload={
+            "training_config": {"model_context": {"profile_id": profile}}
+        },
         source={
             "family_id": "mdl.program@1",
             "materials": [
