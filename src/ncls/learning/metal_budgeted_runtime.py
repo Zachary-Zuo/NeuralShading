@@ -168,6 +168,7 @@ def model_profile_mode(profile_id: str) -> str:
         "metal_budgeted_hybrid_v3",
         "metal_budgeted_hybrid_role_detail_v4",
         "metal_budgeted_hybrid_center_detail_v5",
+        "metal_budgeted_hybrid_dual_local_v6",
     }:
         return "hybrid"
     if profile_id == "metal_budgeted_direct_control_v3":

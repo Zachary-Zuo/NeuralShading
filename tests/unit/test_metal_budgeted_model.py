@@ -14,6 +14,7 @@ from ncls.learning.models.metal_budgeted import (
 from ncls.learning.models.metal_budgeted_profile import (
     METAL_BUDGETED_CENTER_DETAIL_PROFILE,
     METAL_BUDGETED_DIRECT_PROFILE,
+    METAL_BUDGETED_DUAL_LOCAL_PROFILE,
     METAL_BUDGETED_HYBRID_PROFILE,
     METAL_BUDGETED_ROLE_DETAIL_PROFILE,
 )
@@ -222,6 +223,32 @@ def test_budgeted_center_detail_uses_the_requested_patch_texel() -> None:
         centered = center_model.sample_asset(values, program, qat=False).detail
 
     assert not torch.equal(baseline, centered)
+
+
+def test_budgeted_dual_local_detail_observes_signed_x_derivative() -> None:
+    model = MetalBudgetedModel(METAL_BUDGETED_DUAL_LOCAL_PROFILE).eval()
+    values = _conditioning(1)
+    values["metal_texture_slot_mask"][:, 1:] = False
+    values["metal_texture_patches"].zero_()
+    with torch.no_grad():
+        for parameter in model.asset.detail_encoder.parameters():
+            parameter.zero_()
+        model.asset.detail_encoder[0].weight[0, 4] = 1.0
+        model.asset.detail_encoder[2].weight[0, 0] = 1.0
+        values["metal_texture_patches"][:, 0, 0, 0, 4, 5] = 1.0
+        positive, _, _ = model.asset._encode_source_patches(
+            values, torch.zeros(1, dtype=torch.int64)
+        )
+        values["metal_texture_patches"][:, 0, 0, 0, 4, 5] = 0.0
+        values["metal_texture_patches"][:, 0, 0, 0, 4, 3] = 1.0
+        negative, _, _ = model.asset._encode_source_patches(
+            values, torch.zeros(1, dtype=torch.int64)
+        )
+
+    assert positive[0, 0] > 0.0
+    assert negative[0, 0] < 0.0
+    torch.testing.assert_close(positive[:, 1:], torch.zeros_like(positive[:, 1:]))
+    torch.testing.assert_close(negative[:, 1:], torch.zeros_like(negative[:, 1:]))
 
 
 def test_optimized_program_state_control_cannot_change_deterministic_contract() -> None:

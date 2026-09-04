@@ -7,6 +7,7 @@ import pytest
 from ncls.learning.models.metal_budgeted_profile import (
     METAL_BUDGETED_CENTER_DETAIL_PROFILE,
     METAL_BUDGETED_DIRECT_PROFILE,
+    METAL_BUDGETED_DUAL_LOCAL_PROFILE,
     METAL_BUDGETED_HYBRID_PROFILE,
     METAL_BUDGETED_ROLE_DETAIL_PROFILE,
     load_metal_budgeted_layout,
@@ -43,6 +44,13 @@ def test_metal_budgeted_profiles_close_the_nvidia_class_hard_budget() -> None:
     assert METAL_BUDGETED_CENTER_DETAIL_PROFILE.evaluate_dense_macs == 11_392
     assert METAL_BUDGETED_CENTER_DETAIL_PROFILE.prepared_state_bytes == 160
     assert METAL_BUDGETED_CENTER_DETAIL_PROFILE.maximum_texture_reads == 2
+    assert METAL_BUDGETED_DUAL_LOCAL_PROFILE.asset_spatial_features == (
+        "signed-cross-summary@1"
+    )
+    assert METAL_BUDGETED_DUAL_LOCAL_PROFILE.asset_context_resolution_divisor == 1
+    assert METAL_BUDGETED_DUAL_LOCAL_PROFILE.evaluate_dense_macs == 11_392
+    assert METAL_BUDGETED_DUAL_LOCAL_PROFILE.prepared_state_bytes == 160
+    assert METAL_BUDGETED_DUAL_LOCAL_PROFILE.maximum_texture_reads == 2
     assert layout["identity"] in render()
 
 

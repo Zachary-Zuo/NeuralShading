@@ -161,12 +161,17 @@ class MetalBudgetedTwoReadAsset(nn.Module):
         self.profile = profile
         self.asset_variant_count = asset_variant_count
         self.role_embedding = nn.Embedding(4, 8)
-        self.slot_score = nn.Linear(20, 1)
+        feature_width = (
+            24
+            if profile.asset_spatial_features == "signed-cross-summary@1"
+            else 20
+        )
+        self.slot_score = nn.Linear(feature_width, 1)
         self.detail_encoder = nn.Sequential(
-            nn.Linear(20, 16), nn.SiLU(), nn.Linear(16, 4), nn.Tanh()
+            nn.Linear(feature_width, 16), nn.SiLU(), nn.Linear(16, 4), nn.Tanh()
         )
         self.context_encoder = nn.Sequential(
-            nn.Linear(20, 16), nn.SiLU(), nn.Linear(16, 4), nn.Tanh()
+            nn.Linear(feature_width, 16), nn.SiLU(), nn.Linear(16, 4), nn.Tanh()
         )
         self.variant_scale_bias = nn.Embedding(asset_variant_count, 16)
         nn.init.zeros_(self.variant_scale_bias.weight)
@@ -223,16 +228,37 @@ class MetalBudgetedTwoReadAsset(nn.Module):
             y1, x1 = min(height, y0 + 2), min(width, x0 + 2)
             center = selected[..., y0:y1, x0:x1].mean(dim=(-2, -1))
         context = selected.mean(dim=(-2, -1))
-        high_pass = center - context
-        features = torch.cat(
-            (
-                center,
-                high_pass,
-                context,
-                self.role_embedding(torch.clamp(roles, 0, 3)),
-            ),
-            dim=-1,
-        )
+        if self.profile.asset_spatial_features == "signed-cross-summary@1":
+            center_y, center_x = height // 2, width // 2
+            dx = 0.5 * (
+                selected[..., center_y, min(width - 1, center_x + 1)]
+                - selected[..., center_y, max(0, center_x - 1)]
+            )
+            dy = 0.5 * (
+                selected[..., min(height - 1, center_y + 1), center_x]
+                - selected[..., max(0, center_y - 1), center_x]
+            )
+            features = torch.cat(
+                (
+                    center,
+                    dx,
+                    dy,
+                    context,
+                    self.role_embedding(torch.clamp(roles, 0, 3)),
+                ),
+                dim=-1,
+            )
+        else:
+            high_pass = center - context
+            features = torch.cat(
+                (
+                    center,
+                    high_pass,
+                    context,
+                    self.role_embedding(torch.clamp(roles, 0, 3)),
+                ),
+                dim=-1,
+            )
         logits = self.slot_score(features)[..., 0]
         logits = torch.where(mask, logits, torch.full_like(logits, -1e4))
         weights = torch.softmax(logits.float(), dim=1).to(features.dtype)

@@ -19,6 +19,9 @@ from ncls.learning.metal_budgeted_runtime import (
     quantize_metal_budgeted_runtime_model,
 )
 from ncls.learning.models.metal_budgeted import MetalBudgetedModel
+from ncls.learning.models.metal_budgeted_profile import (
+    METAL_BUDGETED_DUAL_LOCAL_PROFILE,
+)
 
 
 def _conditioning(*, profile_asset_index: int = 0) -> dict[str, torch.Tensor]:
@@ -74,7 +77,7 @@ def _compiled_asset(profile_id: str) -> MetalBudgetedCompiledAsset:
         "fixture-schema",
         "wrap",
         levels(8),
-        levels(2),
+        levels(8 if profile_id == "metal_budgeted_hybrid_dual_local_v6" else 2),
     )
 
 
@@ -98,11 +101,12 @@ def test_budgeted_runtime_texture_sampling_wraps_bilinear_neighbors() -> None:
 
 def test_budgeted_runtime_pack_has_exact_offsets_flags_and_profile_mode() -> None:
     torch.manual_seed(23)
-    for profile_id, expected_mode in (
-        ("metal_budgeted_hybrid_v3", 0),
-        ("metal_budgeted_direct_control_v3", 1),
-        ("metal_budgeted_hybrid_role_detail_v4", 0),
-        ("metal_budgeted_hybrid_center_detail_v5", 0),
+    for profile_id, expected_mode, expected_context_extent in (
+        ("metal_budgeted_hybrid_v3", 0, 2),
+        ("metal_budgeted_direct_control_v3", 1, 2),
+        ("metal_budgeted_hybrid_role_detail_v4", 0, 2),
+        ("metal_budgeted_hybrid_center_detail_v5", 0, 2),
+        ("metal_budgeted_hybrid_dual_local_v6", 0, 8),
     ):
         model = quantize_metal_budgeted_runtime_model(
             MetalBudgetedModel.from_context(
@@ -125,7 +129,16 @@ def test_budgeted_runtime_pack_has_exact_offsets_flags_and_profile_mode() -> Non
         words = np.frombuffer(compiled, dtype="<u4")
         assert len(compiled) == 4 * METAL_BUDGETED_COMPILED_WORD_COUNT
         assert words[32:40].tolist() == program.resource_and_flags[0].tolist()
-        assert words[40:48].tolist() == [1, 8, 8, 4, 2, 2, 2, expected_mode]
+        assert words[40:48].tolist() == [
+            1,
+            8,
+            8,
+            4,
+            expected_context_extent,
+            expected_context_extent,
+            4 if expected_context_extent == 8 else 2,
+            expected_mode,
+        ]
         assert len(packed_program.payload) % 4 == 0
         assert set(packed_program.defines) == {
             "NCLS_METAL_BUDGETED_W_" + name.replace(".", "_").upper()
@@ -221,3 +234,18 @@ def test_budgeted_asset_compiler_emits_detail_and_quarter_context_mips() -> None
     ]
     assert all(level.dtype == np.int8 for level in result.detail_levels)
     assert len(result.identity) == 64
+
+
+def test_budgeted_dual_local_asset_compiler_emits_two_full_resolution_planes() -> None:
+    torch.manual_seed(41)
+    model = MetalBudgetedModel(METAL_BUDGETED_DUAL_LOCAL_PROFILE).eval()
+    result = MetalBudgetedAssetCompiler(
+        model, _FixtureAssets(), batch_size=17
+    ).compile(0)
+
+    assert [level.shape for level in result.context_levels] == [
+        (8, 8, 4),
+        (4, 4, 4),
+        (2, 2, 4),
+        (1, 1, 4),
+    ]

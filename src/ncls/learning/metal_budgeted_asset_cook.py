@@ -10,6 +10,7 @@ from tqdm import tqdm
 from ncls.core.identity import sha256_bytes, sha256_json
 from ncls.data import PipelineTrace
 from ncls.learning.models.metal_budgeted import MetalBudgetedModel
+from ncls.learning.models.metal_budgeted_profile import metal_budgeted_profile
 
 
 def _mip_shapes(height: int, width: int) -> tuple[tuple[int, int], ...]:
@@ -57,11 +58,16 @@ class MetalBudgetedCompiledAsset:
                     )
         detail_height, detail_width = self.detail_levels[0].shape[:2]
         context_height, context_width = self.context_levels[0].shape[:2]
+        context_divisor = metal_budgeted_profile(
+            self.profile_id
+        ).asset_context_resolution_divisor
         if (context_height, context_width) != (
-            max(1, detail_height // 4),
-            max(1, detail_width // 4),
+            max(1, detail_height // context_divisor),
+            max(1, detail_width // context_divisor),
         ):
-            raise ValueError("Metal budgeted Context base extent must be Detail/4")
+            raise ValueError(
+                "Metal budgeted Context base extent disagrees with its profile"
+            )
 
     @property
     def identity(self) -> str:
@@ -193,8 +199,10 @@ class MetalBudgetedAssetCompiler:
             )
         detail_height, detail_width = self._base_extent(descriptor)
         detail_shapes = _mip_shapes(detail_height, detail_width)
+        context_divisor = self.model.profile.asset_context_resolution_divisor
         context_shapes = _mip_shapes(
-            max(1, detail_height // 4), max(1, detail_width // 4)
+            max(1, detail_height // context_divisor),
+            max(1, detail_width // context_divisor),
         )
         device = next(self.model.parameters()).device
         if device.type == "cuda" and hasattr(self.assets, "enable_gpu_sampling"):

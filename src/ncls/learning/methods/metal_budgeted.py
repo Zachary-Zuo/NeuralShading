@@ -54,6 +54,7 @@ from ncls.learning.models.metal_budgeted import (
 from ncls.learning.models.metal_budgeted_profile import (
     METAL_BUDGETED_DIRECT_PROFILE_ID,
     METAL_BUDGETED_CENTER_DETAIL_PROFILE_ID,
+    METAL_BUDGETED_DUAL_LOCAL_PROFILE_ID,
     METAL_BUDGETED_HYBRID_PROFILE,
     METAL_BUDGETED_HYBRID_PROFILE_ID,
     METAL_BUDGETED_ROLE_DETAIL_PROFILE_ID,
@@ -1052,6 +1053,9 @@ class MetalBudgetedMethodDefinition(MethodDefinition):
             ),
             METAL_BUDGETED_CENTER_DETAIL_PROFILE_ID: (
                 "metal-budgeted-center-texel-detail-hybrid@5"
+            ),
+            METAL_BUDGETED_DUAL_LOCAL_PROFILE_ID: (
+                "metal-budgeted-dual-local-signed-derivative-hybrid@6"
             ),
         }[str(context["profile_id"])]
         if config.get("correspondence_id") != expected_correspondence:
