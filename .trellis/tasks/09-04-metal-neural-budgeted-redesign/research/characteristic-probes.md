@@ -19,9 +19,11 @@
 
 ## 冻结执行
 
-- GPU：物理GPU 5–9，DDP world size 5；每rank evaluator/sampler batch 512，全局batch 2560。
+- 用户在专项probe尚未执行前明确要求继续检查更大`batch_size`，因此原先固定的每rank 512只保留为候选基线，不再是专项probe最终几何。这不改变已经运行的Tungsten matched pair。
+- 在主pair和package交付完成后，先对同一Tungsten/hybrid结构执行每rank`1024/2048`的fresh 96-step吞吐probe，和主run最初96 step的512基线比较；三者都不经过step128 validation。候选必须五卡完成、无OOM/DDP错误、finite且低于8 GiB/rank residency预算，再按steady training row的median global work units/s选最高者。该选择只决定执行几何，不是质量结论。
+- GPU固定物理GPU 5–9、DDP world size 5；入选batch在任何特征材质启动前一次性写入全部四个run，之后不再改变。四项必须使用同一batch，并同时报告per-rank/global batch与累计work units；它们不能按step与batch512的Tungsten主实验合并比较。
 - 每项fresh初始化，单seed `2026090401`，在step 256停止；执行step 128和256两次冻结validation，不延长、不换seed。
-- 每项累计`256×2560×2=1,310,720`个evaluator/sampler route work units。该数值是执行账本，不是质量门。
+- 每项累计work units按`256×(5×入选per-rank batch)×2 routes`从resolved plan计算。该数值是执行账本，不是质量门。
 - 每项记录appearance、RGB、chroma、peak、spatial gradient、semantic-runtime、analytic/gate/positive分工、proposal和所有parameter group梯度/更新覆盖。
 - 只有四项都通过实现正确性与有限性检查，才汇总共同结构趋势；256-step observed quality不称为泛化结论，也不与2048-step Tungsten绝对值直接排序。
 
