@@ -22,6 +22,7 @@ save/load_training_checkpoint_v1(path) -> TrainingCheckpoint@1
 load_evaluation_snapshot(path) -> EvaluationSnapshot
 assess_checkpoint_readiness(checkpoint, descriptor, mode="formal" | "diagnostic-evaluator")
   -> CheckpointReadiness@1
+load_metric_rows(path, config_sha256, allow_empty=False) -> metric rows
 MetalBudgetedAssetCooker.cook(encoded_values, mode, objective, refinement_steps,
                               refinement_bound) -> MetalBudgetedCookedAsset
 ```
@@ -45,6 +46,7 @@ MetalBudgetedAssetCooker.cook(encoded_values, mode, objective, refinement_steps,
 - prefetch有界且不跨validation、checkpoint、phase或stop边界；engine只依赖平台无关的step/session合同。host预取不推进cursor，checkpoint的logical/request/group/tile cursor不得领先已消费batch。
 - objective每次返回active required component的全部Python outputs；完成checkpoint前required groups的gradient/update coverage必须齐全。
 - checkpoint v1 严格冻结 resolved plan、method/facet、data execution/reference/asset/query/source identity、逐 rank RNG/data cursor、hook cursor 与当前 phase optimization 状态。发布前必须调用 data session `drain()`。
+- `stop_at_step=0` 是合法的 train-only initialization/calibration checkpoint：rank 0仍须原子写 checkpoint、summary与review，但此时 metrics可以为空，review以0 record、0 rate和未完成coverage如实表示。`load_metric_rows(..., allow_empty=True)`只允许最终checkpoint的`global_step == 0`调用；任何正step训练仍要求至少一条metric，不能用该参数掩盖日志丢失。
 - 旧 checkpoint v4 只经 `LegacyCheckpointV4Importer` 产生 evaluation snapshot；不得 resume，也不得恢复旧 JSON config reader或 method alias。
 - producer state必须额外保存`typed_state_pool_identity`；resume同时校验pool与`query_stream_identity`，request count、reference logical ID、group/tile cursor只能在identity一致后恢复。每个request的generator由其不可变identity重建，不持久化执行计划相关generator state，也不能只保存seed后在新registry上重生另一批states。
 
@@ -57,6 +59,8 @@ MetalBudgetedAssetCooker.cook(encoded_values, mode, objective, refinement_steps,
 | loss/gradient非有限、required group零梯度或未更新 | engine失败 |
 | objective漏required component output | generic conformance失败 |
 | resume identity或phase cursor漂移 | checkpoint恢复拒绝 |
+| step 0 calibration成功但metrics为空 | 生成0-record diagnostic review；checkpoint/summary/review仍完整提交 |
+| 正step最终提交时metrics为空 | review失败；不得用`allow_empty`发布看似完整的训练产物 |
 | tile越界、role/domain不匹配或mip chain不canonical | collection在materialize前拒绝 |
 | formal export不是`run_class=formal`、phase不是`complete`，或缺required group finite/nonzero/update coverage | readiness拒绝；不生成正式package/catalog |
 | diagnostic evaluator preview没有exact descriptor、step-1端到端evaluator组覆盖或合法phase | readiness拒绝；不得用旧tensor shape兼容冒充可部署状态 |
@@ -75,13 +79,14 @@ MetalBudgetedAssetCooker.cook(encoded_values, mode, objective, refinement_steps,
 - Good：同一Metal graph的base export与多个typed states进入一个group；训练batch先选group再选group-local state，checkpoint冻结完整state pool identity。
 - Good：Metal typed edit只重编`MaterialProgramState`，替换texture bundle只改变`AssetState`；相邻mip分别经shared encoder/decoder后在structured state中连续插值。
 - Good：Linux single-material pilot从第1步同时执行asset encoder、typed compiler、semantic prepare、evaluator与proposal六组参数；第二phase再以FP32执行部署态QAT。
+- Good：fresh run以`--stop-at-step 0`完成calibration，review明确记录0 metric与未完成coverage；随后exact resume从step 1开始训练。
 - Base：常量1×1资产仍经同一个tile+halo请求与lease协议，只是其canonical mip chain长度为1。
 - Bad：每个batch新建collection使cache永远失效；在tile lease存活时驱逐payload；或仅因loss finite/shape compatible就把非formal、未完成checkpoint标成正式可部署。
 - Bad：预先离线编码52个纹理grid后只训练evaluator；把bounded refinement和direct control写入同一个asset identity；或为了mixed precision把angular lookup改成最近邻。
 
 ## 6. Tests Required
 
-- unit：YAML resolve/plugin、三种batch、multi-asset tile+halo、phase graph、carry-overlap resume、component正负例、checkpoint v1 与 legacy v4只读；
+- unit：YAML resolve/plugin、三种batch、multi-asset tile+halo、phase graph、carry-overlap resume、component正负例、checkpoint v1 与 legacy v4只读；metric loader默认拒绝空文件，只有显式step-0路径接受空rows；
 - integration：generic recipe registry扩展Metal train/validation states并验证非默认snapshot IDs不重叠、pool identity可恢复；
 - GPU：NVIDIA Python/Slang evaluator与sampler梯度；Metal budgeted finite/nonnegative、typed missing/discrete与asset分离、三路径asset cook、BF16/QAT敏感路径、Python/Slang matched proposal parity，以及Linux真实online两phase smoke/resume/evaluate；
 - static：无固定lifecycle、旧schema reader、offline batch或family-specific producer。
@@ -97,6 +102,18 @@ return EvaluatorBatch(tile=tile, target=bad_target)
 with collection.acquire(request) as tile:
     batch = EvaluatorBatch.from_tile(tile, target)
 engine.run(resume=checkpoint, stop_at_step=target)
+```
+
+```python
+# 错：所有final review都要求非空metric，导致合法step-0 calibration已写checkpoint后仍失败。
+rows = load_metric_rows(metrics_path, config_sha256=config.sha256)
+
+# 对：只有最终checkpoint仍在step 0时允许空rows；正step保持严格检查。
+rows = load_metric_rows(
+    metrics_path,
+    config_sha256=config.sha256,
+    allow_empty=result.checkpoint.global_step == 0,
+)
 ```
 
 ```python

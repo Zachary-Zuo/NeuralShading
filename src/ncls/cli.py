@@ -391,7 +391,11 @@ def _run_training(
                 result.checkpoint,
                 checkpoint_sha256=digest,
                 checkpoint_bytes=output.stat().st_size,
-                metric_rows=load_metric_rows(metrics_path, config_sha256=config.sha256),
+                metric_rows=load_metric_rows(
+                    metrics_path,
+                    config_sha256=config.sha256,
+                    allow_empty=result.checkpoint.global_step == 0,
+                ),
                 metrics_bytes=metrics_path.stat().st_size,
                 elapsed_seconds=elapsed_seconds,
                 checkpoint_write_seconds=checkpoint_write_seconds,

@@ -61,7 +61,12 @@ def _phase_loss_summary(
     }
 
 
-def load_metric_rows(path: Path, *, config_sha256: str) -> list[Mapping[str, Any]]:
+def load_metric_rows(
+    path: Path,
+    *,
+    config_sha256: str,
+    allow_empty: bool = False,
+) -> list[Mapping[str, Any]]:
     rows = []
     for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip():
@@ -78,7 +83,7 @@ def load_metric_rows(path: Path, *, config_sha256: str) -> list[Mapping[str, Any
         if not all(math.isfinite(item) for item in numeric):
             raise ValueError(f"metric row {line_number} contains NaN or Inf")
         rows.append(value)
-    if not rows:
+    if not rows and not allow_empty:
         raise ValueError("training review requires metric rows")
     return rows
 
