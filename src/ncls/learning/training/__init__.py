@@ -24,6 +24,7 @@ from .plan import (
     VisualEvalSettings,
 )
 from .engine import TrainingEngine, TrainingRunResult
+from .distributed import DistributedContext, DistributedObjective
 from .events import (
     HookBinding,
     HookFailure,
@@ -67,6 +68,8 @@ __all__ = [
     "VisualEvalSettings",
     "TrainingRunResult",
     "TrainingEngine",
+    "DistributedContext",
+    "DistributedObjective",
     "HookBinding",
     "HookFailure",
     "TrainingEvent",

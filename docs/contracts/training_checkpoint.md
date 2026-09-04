@@ -2,7 +2,7 @@
 
 新训练只写 `ncls.training-checkpoint@1`。checkpoint 包含公开 method key、内部 implementation key、descriptor/implementation hash、六个 facet identity、完整 `ResolvedTrainingPlan@1` 及其 hash。用户可见 key 不携带 `@版本`；版本变化由结构化 identity 检出。
 
-data identity 同时保存 `DataExecutionPlan`、reference program/plan、native asset collection、query stream、source contract 与 source snapshot identity。运行游标由 `global_step + phase_index/name/step` 表达；逐 rank RNG 与 data session cursor 在 DDP envelope 中保存，checkpoint 前必须 drain，不能让未消费 batch 或活跃 lease 跨越边界。
+data identity 同时保存 `DataExecutionPlan`、reference program/plan、native asset collection、query stream、source contract 与 source snapshot identity。运行游标由 `global_step + phase_index/name/step` 表达；逐 rank RNG 与 data session cursor 在 DDP envelope 中保存，checkpoint 前必须 drain，不能让未消费 batch 或活跃 lease 跨越边界。DDP只把这些小型rank-local状态收集到rank 0；完整model/optimizer CPU snapshot与durable write只在rank 0构造，其他rank等待显式commit status，不复制完整checkpoint，也不在rank-0写入时提前销毁process group。
 
 优化状态属于当前 phase，包含 named optimizer state、scheduler 与 precision/scaler；跨 phase 只按 `optimizer_state_policy=carry-overlap` 传递同名重叠参数。checkpoint 同时保存 model tensor、每个 parameter group 的 finite/nonzero-gradient/actual-update coverage、validation/selection evidence、hook cursor 与已经发布的 visual probe identity。完成态不携带失效的 optimization state。
 

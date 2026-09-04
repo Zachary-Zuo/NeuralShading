@@ -74,8 +74,9 @@ bash scripts/run_falcor_python.sh --gpus <gpu0,gpu1,...> -- <python-args>
 ### 3. Contracts
 
 - `CUDA_VISIBLE_DEVICES`若存在，必须是一个十进制非负整数，表示物理GPU序号；不接受逗号列表、UUID或空列表。
-- launcher把该值写入`NCLS_FALCOR_GPU_INDEX`。Falcor使用物理序号，Torch/SlangPy只看到一张卡并使用重映射后的`cuda:0`。
-- `--gpus`只接受不重复的十进制物理序号列表；入口启动一个torchrun/NCCL DDP作业。launcher先保留完整物理列表供rank身份校验，再由worker将本rank的可见域收窄为一个物理GPU，因此每个rank内Torch/Falcor均使用`cuda:0`；梯度通过NCCL all-reduce，统一checkpoint/metrics仅由rank0写出。
+- launcher把该值写入`NCLS_FALCOR_GPU_INDEX`。Falcor使用物理序号，Torch/SlangPy只看到一张卡并使用重映射后的`cuda:0`；NCCL process group以`device_id=cuda:0` eager初始化。
+- `--gpus`只接受不重复的十进制物理序号列表；入口启动一个torchrun/NCCL DDP作业。launcher先保留完整物理列表供rank身份校验，再由worker将本rank的可见域收窄为一个物理GPU，因此每个rank内Torch/Falcor均使用`cuda:0`；梯度由phase-local PyTorch DDP reducer同步，统一checkpoint/metrics仅由rank0写出。低频descriptor、rank state和commit status使用所有rank同序创建的Gloo control group。
+- `NCLS_DDP_TIMEOUT_SECONDS`控制NCCL训练collective，默认300秒；`NCLS_DDP_CONTROL_TIMEOUT_SECONDS`控制checkpoint/teardown控制面，默认1800秒。`NCLS_DDP_DEBUG=1`显式启用PyTorch/NCCL详细诊断，不作为正式性能run默认值。
 - 同一Python进程按`(Falcor module, device API, physical GPU index)`复用一个Falcor device；session关闭只释放session资源，不销毁进程级device。
 - backend拒绝`llvmpipe`、`lavapipe`、WARP和Microsoft Basic Render等软件adapter，不把其结果登记为GPU证据。
 - Linux deployment固定安装`defaults::cuda-compat=12.8.1`。宿主driver主版本低于570时，launcher在`LD_LIBRARY_PATH`中优先放`${CONDA_PREFIX}/cuda-compat`；570及以上使用系统driver库。

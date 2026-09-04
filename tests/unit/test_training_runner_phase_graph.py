@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+import pytest
 import torch
 
 from ncls.core.scattering import MaterialPayload, RuntimePayload
@@ -377,6 +378,16 @@ def test_runner_accounts_training_and_validation_backend_profiles_separately() -
     )
     assert all(row["rolling_steps_per_second"] > 0.0 for row in training_rows)
     assert all(row["phase_steps_per_second"] > 0.0 for row in training_rows)
+    assert all(
+        row["global_work_units_per_second"]
+        == pytest.approx(row["steps_per_second"] * 4.0)
+        for row in training_rows
+    )
+    assert all(
+        row["local_work_units_per_second"]
+        == pytest.approx(row["global_work_units_per_second"])
+        for row in training_rows
+    )
     assert len(validation_rows) == 2
     assert all(
         row["profile/validation_reference_session_hits"] == 0.0

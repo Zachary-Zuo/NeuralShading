@@ -2,7 +2,7 @@
 
 ## 它是什么
 
-公开方法 `metal` 把 vMaterials 2 Metal 的原生 MDL 参数、52 组 texture asset 与 online reference query 编译成统一的 `prepare/evaluate/sample/pdf` neural material。单个 `--devices` 序号直接单卡训练；Linux 指定多个序号时由统一入口自动启用 torchrun/NCCL DDP，多 rank 共享梯度，只有 rank 0 写出 checkpoint/metrics，不保存 response batch。
+公开方法 `metal` 把 vMaterials 2 Metal 的原生 MDL 参数、52 组 texture asset 与 online reference query 编译成统一的 `prepare/evaluate/sample/pdf` neural material。单个 `--devices` 序号直接单卡训练；Linux 指定多个序号时由统一入口自动启用 torchrun/NCCL DDP。每个phase使用真实PyTorch reducer做bucketed gradient同步，只有 rank 0 构造并写出完整 checkpoint/metrics，不保存 response batch。
 
 完整训练固定两个端到端phase，总预算仍为120000步：
 
@@ -42,13 +42,16 @@ MDL artifact 的 decoded texture payload 使用 cache 根下的 `resource-payloa
 
 训练热循环使用`group-block-balanced@1`。evaluator与method sampler在同一global step选择同一个execution group，一个group连续服务64步；完整cycle按group record数加权，DDP rank按确定性stride分区，validation再使用冻结的104729-block offset形成独立holdout group流。backend residency仍有界，但只在block或validation边界发生必要的miss/create/evict，不再让178 groups配8-resident LRU形成每step稳态thrash。训练session只请求`evaluate`，不会再为未使用的reference `sample/pdf` pass付构建成本。
 
-metrics每个log window记录完整step wall与prepare wall的count/mean/median/p90/max、phase-local/rolling rate、group ID前缀、candidate/rejection，以及session hit/miss、group create/evict、runtime/pass/resource/slot build、operation dispatch和resident数。training与validation分别使用`profile/reference_*`和`profile/validation_reference_*`，不会把validation提前materialize的group误记为下一段训练成本。第一个step或block转换的冷构建必须在window max中可见；普通step不为这些CPU counter增加GPU host sync。
+metrics每个log window记录完整step wall与prepare wall的count/mean/median/p90/max、正确的local/global work throughput、DDP bucket/parameter bytes、phase-local/rolling rate、group ID前缀、candidate/rejection，以及session hit/miss、group create/evict、runtime/pass/resource/slot build、operation dispatch和resident数。关键stage另给出逐rank原值、rank min/mean/max与straggler rank，group ID前缀也逐rank记录，`profile/backward_reducer_gpu_seconds`明确包含backward和DDP reducer。training与validation分别使用`profile/reference_*`和`profile/validation_reference_*`，不会把validation提前materialize的group误记为下一段训练成本。第一个step或block转换的冷构建必须在window max中可见；普通step不为这些CPU counter增加GPU host sync。
 
 ## Linux部署与smoke gate
 
 先按[统一Reference Backend部署](reference_backend_deployment.md)部署锁定的Falcor/MDL toolchain，并由用户把`assets/source-materials/mdl-vmaterials2/2.4.0/Materials`复制到目标机。单卡 launcher 接受一个十进制`CUDA_VISIBLE_DEVICES`，并把Falcor映射到同一物理GPU、Torch映射到进程内`cuda:0`。若要在 GPU2、3、4 上运行一个同步 DDP 作业，使用：
 
 ```bash
+NCLS_DDP_DEBUG=1 bash scripts/run_falcor_python.sh --gpus 2,3 -- \
+  -m pytest tests/integration/test_distributed_training.py -q
+
 bash scripts/run_falcor_python.sh -m ncls train \
   configs/training/runs/metal-linux-smoke.yaml --devices 2,3,4 \
   --output artifacts/metal-linux-training/ddp/checkpoint.pt
@@ -69,7 +72,8 @@ CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls train \
 - 两个phase都有真实step，`runtime_fp16_quantization_trace`存在且finite；
 - `source_count=692`，peak VRAM不超过目标卡可用容量；
 - `checkpoint.summary.json`与review的config/checkpoint hash一致；
-- 没有host response readback或磁盘batch；DDP模式使用NCCL process group同步梯度。
+- 没有host response readback或磁盘batch；DDP logging显示phase-local reducer、有限bucket与预期parameter bytes，production hot path不存在逐parameter gradient collective；
+- checkpoint的rank state/assembly、rank-0 commit wait和teardown均有对称状态；timeout能由rank stage/straggler或NCCL diagnostic定位，不能只留下无上下文watchdog消息。
 
 ## 启动、恢复与停止long run
 

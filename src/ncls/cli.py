@@ -2,14 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 import time
-from datetime import timedelta
 from typing import Any
 
 import torch
-import torch.distributed as dist
 
 from ncls.bundle import ScatteringPackage
 from ncls.core.material import (
@@ -28,6 +25,7 @@ from ncls.learning.methods import get_method_plugin
 from ncls.learning.producer import OnlineTrainingProducer
 from ncls.learning.training import (
     TrainingCheckpointV1,
+    DistributedContext,
     TrainingEngine,
     TrainingPlanResolver,
     ResolvedTrainingPlan,
@@ -101,31 +99,42 @@ def _run_training(
     resume_path: Path | None,
     stop_at_step: int | None,
 ) -> int:
-    ddp_rank, ddp_world = _setup_ddp(execution_context)
+    distributed = _setup_ddp(execution_context)
+    ddp_rank = distributed.rank
+    ddp_world = distributed.world_size
     is_rank0 = ddp_rank == 0
     if ddp_world > 1 and output.is_absolute() is False:
         output = output.resolve()
-    config = resolved_plan.to_runtime_config()
-    plugin = get_method_plugin(resolved_plan.selection.method)
-    data_execution_plan = DataExecutionPlan.build(
-        data_key=resolved_plan.selection.data,
-        source_family_id=str(config.source["family_id"]),
-        routes=[route.to_dict() for route in config.all_routes],
-        requirements=plugin.data.requirements(),
-        execution=resolved_plan.execution.to_dict(),
-        rank=execution_context.rank,
-        world_size=execution_context.world_size,
-    )
-    producer = OnlineTrainingProducer(
-        plugin,
-        config,
-        execution_context=execution_context,
-        data_execution_plan=data_execution_plan,
-    )
-    data_session = SynchronousOnlineDataSession(
-        producer,
-        data_execution_plan.session_identity,
-    )
+    setup_error: BaseException | None = None
+    try:
+        config = resolved_plan.to_runtime_config()
+        plugin = get_method_plugin(resolved_plan.selection.method)
+        data_execution_plan = DataExecutionPlan.build(
+            data_key=resolved_plan.selection.data,
+            source_family_id=str(config.source["family_id"]),
+            routes=[route.to_dict() for route in config.all_routes],
+            requirements=plugin.data.requirements(),
+            execution=resolved_plan.execution.to_dict(),
+            rank=execution_context.rank,
+            world_size=execution_context.world_size,
+        )
+        producer = OnlineTrainingProducer(
+            plugin,
+            config,
+            execution_context=execution_context,
+            data_execution_plan=data_execution_plan,
+        )
+        data_session = SynchronousOnlineDataSession(
+            producer,
+            data_execution_plan.session_identity,
+        )
+    except BaseException as error:
+        setup_error = error
+    try:
+        distributed.synchronize_rank_errors("training data setup", setup_error)
+    except BaseException:
+        distributed.close()
+        raise
     gpu_indices = list(resolved_plan.execution.devices)
     metrics_path = output.with_name(f"{output.stem}.metrics.jsonl")
     summary_path = output.with_name(f"{output.stem}.summary.json")
@@ -133,7 +142,7 @@ def _run_training(
     metric_count = 0
     checkpoint_write_seconds: list[float] = []
     started = time.perf_counter()
-    ddp_completed = False
+    run_completed = False
     tensorboard_hook = None
     visual_eval_hook = None
     visual_eval_collector = None
@@ -285,14 +294,19 @@ def _run_training(
             checkpoint_callback=save_periodic,
             metric_callback=record_metric,
             event_bus=event_bus,
+            distributed_context=distributed,
         ).run(resume=resume, stop_at_step=stop_at_step)
-        if event_bus is not None:
-            if visual_eval_collector is not None:
-                visual_eval_collector.collect(event_bus)
-            event_bus.flush()
         digest = ""
         elapsed_seconds = time.perf_counter() - started
-        if is_rank0:
+
+        def commit_final_artifacts() -> None:
+            nonlocal digest, elapsed_seconds
+            if result.checkpoint is None:
+                raise RuntimeError("rank0 training result has no checkpoint")
+            if event_bus is not None:
+                if visual_eval_collector is not None:
+                    visual_eval_collector.collect(event_bus)
+                event_bus.flush()
             assert metric_stream is not None
             checkpoint_started = time.perf_counter()
             digest = save_training_checkpoint_v1(
@@ -364,15 +378,36 @@ def _run_training(
                 checkpoint_write_seconds=checkpoint_write_seconds,
             )
             write_training_review(review_path, review)
-        ddp_completed = True
+        distributed.run_rank_zero("final training artifact commit", commit_final_artifacts)
+        run_completed = True
     finally:
-        if "metric_stream" in locals() and metric_stream is not None and not metric_stream.closed:
-            metric_stream.close()
-        data_session.close()
-        if event_bus is not None:
-            event_bus.close()
-        if ddp_world > 1 and dist.is_initialized():
-            dist.destroy_process_group()
+        cleanup_error: BaseException | None = None
+        try:
+            if "metric_stream" in locals() and metric_stream is not None and not metric_stream.closed:
+                metric_stream.close()
+        except BaseException as error:
+            cleanup_error = error
+        try:
+            data_session.close()
+        except BaseException as error:
+            if cleanup_error is None:
+                cleanup_error = error
+        try:
+            if event_bus is not None:
+                event_bus.close()
+        except BaseException as error:
+            if cleanup_error is None:
+                cleanup_error = error
+        try:
+            if run_completed:
+                distributed.synchronize_rank_errors(
+                    "teardown readiness",
+                    cleanup_error,
+                )
+            elif cleanup_error is not None:
+                raise cleanup_error
+        finally:
+            distributed.close()
     if is_rank0:
         print(
             f"TrainingCheckpoint v1 {digest}: {output}"
@@ -435,25 +470,9 @@ def _train_yaml(
     )
 
 
-def _setup_ddp(execution_context: Any) -> tuple[int, int]:
+def _setup_ddp(execution_context: Any) -> DistributedContext:
     """Initialize NCCL from a launcher-validated execution context."""
-    rank = int(execution_context.rank)
-    world = int(execution_context.world_size)
-    if world == 1:
-        return rank, world
-    if not torch.cuda.is_available():
-        raise RuntimeError("DDP training requires CUDA")
-    if torch.cuda.device_count() != 1:
-        raise RuntimeError("DDP worker must see exactly one remapped CUDA device")
-    torch.cuda.set_device(0)
-    if not dist.is_initialized():
-        dist.init_process_group(
-            backend=execution_context.topology.distributed_backend,
-            rank=rank,
-            world_size=world,
-            timeout=timedelta(seconds=float(os.environ.get("NCLS_DDP_TIMEOUT_SECONDS", "300"))),
-        )
-    return rank, world
+    return DistributedContext.initialize(execution_context)
 
 
 def _validate_checkpoint(checkpoint_path: Path, batches: int, device: int) -> int:

@@ -40,6 +40,7 @@ ncls eval worker|collect ...
 - `SourceSnapshot` 是 source 唯一真相；各 family 保持原生 locator、资源、编辑与 reference 语义。`ReferenceExecutionPlan@1` 拥有 grouping/global-local index；backend 只执行 plan，platform/Falcor 只由 capability/launcher 拥有。
 - 正式训练 batch 只在 GPU online 产生，不保存/读取 corpus。`DataExecutionPlan/OnlineDataSession` 拥有 worker、queue、residency、reference scheduling、rank partition、cursor、drain 和 lease 边界；详见 `../data/online-pipeline.md`。
 - `TrainingEngine` 只解释通用 phase graph，固定 phase/step/validation/checkpoint/cleanup 生命周期；method 只能通过 facet 提供 objective 和 transition，不能注册另一条 runner。
+- Linux多卡由phase-local `DistributedObjective`进入PyTorch DDP reducer；lifecycle先冻结active parameter，phase boundary再同序重构wrapper。禁止在backward后逐parameter手工`all_reduce`。NCCL data group与Gloo control group分责，后者只处理descriptor、小型rank state、checkpoint commit和teardown状态。
 - checkpoint hook 在 data session drain 后把内部 engine 状态封装为 `TrainingCheckpoint@1`。新 resume 只接受 v1 且严格匹配 resolved plan/data/method facet identity。
 - legacy v4 parser 隔离在只读 importer，只输出 `EvaluationSnapshot`。它可用于 validate、满足原 readiness 的 export/visual eval，但不能 resume；没有旧 JSON reader、converter、alias 或 fallback。
 - TensorBoard 与 visual eval 通过 typed event/hook 接入且只由 rank 0 写。visual eval 独立 probe RNG/spool 可迟到，不阻断 optimizer；默认 reference 1024 spp path tracing、neural deterministic deferred。
@@ -73,7 +74,7 @@ ncls eval worker|collect ...
 - unit：package/editor/tamper，visual spool/worker/collector，launcher 单卡/Linux 多卡/Windows 拒绝；
 - GPU：五 source 的统一 backend、NVIDIA/Metal objective、resident sampling、Slang/package parity；
 - integration：新 checkpoint stop/resume/validate/export；legacy checkpoint validate/export；Windows 1024 spp visual diagnostic；
-- Linux：NCCL 两卡 smoke、rank device mapping、rank0-only outputs 和 stage trace；
+- Linux：NCCL 两卡smoke、rank device mapping、DDP bucket/gradient parity、rank0-only完整checkpoint、commit failure propagation和跨rank stage trace；
 - static：无旧 JSON config/CLI/runner reader、无 upper-layer OS 分支、无磁盘 batch；Falcor overlay 构建后工作树干净。
 
 ## 7. Wrong vs Correct

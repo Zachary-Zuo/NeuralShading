@@ -48,6 +48,13 @@ if [[ "${1:-}" == "--gpus" ]]; then
     export NCLS_DDP_WORLD_SIZE="${ddp_world}"
     export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
     export MASTER_PORT="${MASTER_PORT:-29517}"
+    if [[ "${NCLS_DDP_DEBUG:-}" == "1" ]]; then
+        export TORCH_DISTRIBUTED_DEBUG="${TORCH_DISTRIBUTED_DEBUG:-DETAIL}"
+        export TORCH_NCCL_TRACE_BUFFER_SIZE="${TORCH_NCCL_TRACE_BUFFER_SIZE:-20000}"
+        export TORCH_NCCL_DUMP_ON_TIMEOUT="${TORCH_NCCL_DUMP_ON_TIMEOUT:-1}"
+        export TORCH_NCCL_DESYNC_DEBUG="${TORCH_NCCL_DESYNC_DEBUG:-1}"
+        export TORCH_NCCL_ENABLE_TIMING="${TORCH_NCCL_ENABLE_TIMING:-1}"
+    fi
     echo "[ddp] GPUs=${gpu_list} world_size=${ddp_world} backend=NCCL" >&2
 fi
 

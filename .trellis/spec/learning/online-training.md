@@ -118,6 +118,78 @@ tensors = adapter.sample_tensors(source_index, generator, route.options)
 spatial = model.spatial_state(tensors)
 ```
 
+## Linux DDP reducer、控制组与 checkpoint 提交合同
+
+### 1. Scope / Trigger
+
+修改多GPU launcher、objective forward、phase parameter ownership、metrics reduce、逐rank状态、checkpoint写入或process-group teardown时适用。它防止把“多进程+逐参数`all_reduce`”误称为DDP，也防止data/reference长尾或rank-0 I/O只表现为无来源的NCCL timeout。
+
+### 2. Signatures
+
+```text
+DistributedContext.initialize(ExecutionContext) -> DistributedContext
+DistributedContext.build_objective(objective, model, phase_name)
+  -> (DistributedObjective, DistributedDataParallel)
+DistributedContext.reduce_report(loss, metrics, scope) -> averaged scalars
+DistributedContext.gather_rank_payload(local_rng_and_query_state) -> rank0 states
+DistributedContext.run_rank_zero(label, action) -> rank0 result/status broadcast
+```
+
+### 3. Contracts
+
+- Linux多卡仍是一进程一卡；Torch/SlangPy使用rank-local`cuda:0`，Falcor使用launcher冻结的物理adapter。NCCL初始化显式传`device_id=cuda:0`。
+- lifecycle先配置phase的`requires_grad`与optimizer ownership，再按phase构造`DistributedObjective`和PyTorch`DistributedDataParallel`。wrapper拥有真实model，forward直接产生objective loss；phase内parameter graph稳定，phase boundary全rank同序重构。
+- correctness-first配置为`find_unused_parameters=True`、`gradient_as_bucket_view=True`、`static_graph=False`。只有该phase的目标机DDP logging证明graph固定后才能收紧；禁止重新引入逐parameter gradient `all_reduce`、dummy trigger或每step reducer重建。
+- NCCL data group只执行DDP reducer和GPU tensor collectives；辅助Gloo control group执行descriptor核对、小型rank state gather、rank-0 commit status与teardown readiness。model/resume/optimizer setup和phase transition等低频rank-local动作必须在进入下一次DDP collective前汇报任一rank异常；两组在所有rank同序创建和销毁，训练热循环不新增barrier。
+- run开始时先核对config、resume cursor、stop target与checkpoint callback presence；scalar loss/metrics按冻结descriptor排序并pack成一次collective，字段或dtype跨rank不一致时在进入NCCL metric collective前由control group全部失败。
+- throughput固定记录`steps_per_second`、`local_work_units_per_second`和`global_work_units_per_second`；后者为本次进程已完成的全局work units除以active elapsed，不能写成`steps/s × world_size`。
+- checkpoint前所有rank drain并只gather RNG/query cursor；完整model/optimizer CPU snapshot和durable write只在rank 0执行。写入结束后广播success/failure，final artifact commit与hook close后全rank确认teardown readiness。
+- `NCLS_DDP_TIMEOUT_SECONDS`只控制NCCL训练collective，默认300秒；`NCLS_DDP_CONTROL_TIMEOUT_SECONDS`只控制低频Gloo控制面，默认1800秒。不得通过提高前者掩盖data/reference长尾或collective desync。
+- `NCLS_DDP_DEBUG=1`才启用`TORCH_DISTRIBUTED_DEBUG=DETAIL`与PyTorch 2.11已包含的NCCL trace/dump/desync/timing开关；性能正式run不默认开启。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+|---|---|
+| phase parameter名称/shape/dtype/requires-grad跨rank不同 | DDP构造前control descriptor检查令所有rank失败 |
+| objective遗漏某rank的metric或scalar类型漂移 | packed metric reduce前失败，不进入次序不同的NCCL collectives |
+| rank-0 checkpoint encode/write抛异常 | Gloo广播原error type/message；peer不等待NCCL watchdog |
+| 非rank-0尝试构造完整model/optimizer checkpoint | unit/static gate失败 |
+| data/reference rank长尾 | stage metrics保留每个rank原值并报告min/mean/max与straggler；reference group的48-bit identity同样逐rank汇总，不能仅归因为reducer |
+| success路径有rank未完成hook/session close | teardown readiness报告失败rank，再同序销毁process group |
+
+### 5. Good / Base / Bad Cases
+
+- Good：一个phase只构造一个DDP reducer，25 MiB模型由少量gradient bucket处理；backward interval明确包含reducer，log row同时给出rank max和straggler。
+- Good：peer在rank-0写periodic checkpoint时等待Gloo commit status；写入失败后所有rank收到同一失败语义。
+- Base：单卡继续经同一个`DistributedObjective`执行，但不创建process group或DDP wrapper，checkpoint保存非envelope本地状态。
+- Bad：backward后遍历328个parameter逐个clone/`all_reduce`；或非rank-0在rank-0写summary时提前`destroy_process_group()`。
+
+### 6. Tests Required
+
+- unit/Gloo：两rank objective gradient等于拼接global batch；packed metric均值、descriptor mismatch、rank state gather、rank-0 failure propagation与straggler字段。
+- unit：单卡phase/resume与原结果一致；throughput按route work units计算；非rank-0不调用checkpoint codec。
+- static：production training hot path无逐parameter gradient `all_reduce`，launcher仍一进程一卡且debug env为显式opt-in。
+- Linux/NCCL：跨真实两phase的两卡smoke，检查DDP bucket/unused参数、rank0-only artifact、stop/resume与同序teardown；再做1/2/3/4卡matched scaling和故障注入。
+
+### 7. Wrong vs Correct
+
+```python
+# 错：backward已结束，再按parameter串行同步，通信不能与backward重叠。
+loss.backward()
+for parameter in active:
+    dist.all_reduce(parameter.grad)
+
+# 对：phase先冻结parameter ownership，再让真实objective forward进入DDP reducer。
+configure_phase(model, phase)
+owner = DistributedObjective(plugin.objective, model)
+execution = DistributedDataParallel(
+    owner, find_unused_parameters=True, gradient_as_bucket_view=True
+)
+loss = execution(batches, phase_context)
+loss.backward()
+```
+
 ## Metal matched sampler 可执行合同
 
 ### 1. Scope / Trigger

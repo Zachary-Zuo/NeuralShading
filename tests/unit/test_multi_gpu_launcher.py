@@ -20,6 +20,8 @@ def test_linux_launcher_exposes_explicit_multi_gpu_ddp() -> None:
     assert "torchrun" in launcher
     assert "NCLS_DDP_GPU_LIST" in launcher
     assert "backend=NCCL" in launcher
+    assert '"${NCLS_DDP_DEBUG:-}" == "1"' in launcher
+    assert "TORCH_NCCL_TRACE_BUFFER_SIZE" in launcher
 
 
 def test_multi_gpu_launcher_uses_shared_ddp_job() -> None:
@@ -41,3 +43,19 @@ def test_ddp_worker_narrows_cuda_visibility_before_module_execution() -> None:
     assert 'os.environ["NCLS_DDP_DEVICE_INDEX"] = "0"' in worker
     assert 'runpy.run_module(module, run_name="__main__")' in worker
     assert "-m ncls.ddp_worker" in launcher
+
+
+def test_training_engine_uses_real_ddp_reducer_instead_of_parameter_collectives() -> None:
+    engine = (PROJECT_ROOT / "src/ncls/learning/training/engine.py").read_text(
+        encoding="utf-8"
+    )
+    distributed = (
+        PROJECT_ROOT / "src/ncls/learning/training/distributed.py"
+    ).read_text(encoding="utf-8")
+    assert "_ddp_sync_gradients" not in engine
+    assert "dist.all_reduce" not in engine
+    assert "torch.distributed" not in engine
+    assert "DistributedDataParallel(" in distributed
+    assert "gradient_as_bucket_view=True" in distributed
+    assert "find_unused_parameters=True" in distributed
+    assert 'backend="gloo"' in distributed

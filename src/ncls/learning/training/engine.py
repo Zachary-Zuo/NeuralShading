@@ -11,7 +11,6 @@ from typing import Any, Callable, Mapping, cast
 
 import numpy as np
 import torch
-import torch.distributed as dist
 from torch import nn
 from tqdm import tqdm
 
@@ -33,12 +32,13 @@ from ncls.learning.methods.contracts import MethodPlugin
 
 from .checkpoint import TrainingCheckpoint
 from .config import TrainingConfig, TrainingPhase, TrainingRoute
+from .distributed import DistributedContext, DistributedObjective
 from .events import TrainingEvent, TrainingEventBus, TrainingEventKind
 
 
 @dataclass(frozen=True)
 class TrainingRunResult:
-    checkpoint: TrainingCheckpoint
+    checkpoint: TrainingCheckpoint | None
     metrics: tuple[Mapping[str, float], ...]
 
 
@@ -179,6 +179,7 @@ class TrainingEngine:
         checkpoint_callback: Callable[[TrainingCheckpoint], None] | None = None,
         metric_callback: Callable[[Mapping[str, float]], None] | None = None,
         event_bus: TrainingEventBus | None = None,
+        distributed_context: DistributedContext | None = None,
     ) -> None:
         if plugin.descriptor.method_key != config.method_key:
             raise ValueError("training plan method disagrees with MethodPlugin")
@@ -223,6 +224,14 @@ class TrainingEngine:
         self.checkpoint_callback = checkpoint_callback
         self.metric_callback = metric_callback
         self.event_bus = event_bus
+        self.distributed = (
+            DistributedContext.single(data_session.device)
+            if distributed_context is None
+            else distributed_context
+        )
+        if self.distributed.device != data_session.device:
+            raise ValueError("distributed context device disagrees with data session")
+        self._last_checkpoint_profile: dict[str, float] = {}
 
     def _emit(
         self,
@@ -302,104 +311,33 @@ class TrainingEngine:
             options,
         )
 
-    @staticmethod
-    def _ddp_rank() -> int:
-        return int(dist.get_rank()) if dist.is_available() and dist.is_initialized() else 0
+    def _ddp_rank(self) -> int:
+        return self.distributed.rank
 
-    @staticmethod
-    def _ddp_world_size() -> int:
-        return int(dist.get_world_size()) if dist.is_available() and dist.is_initialized() else 1
-
-    @staticmethod
-    def _ddp_checkpoint_sync(success: bool) -> None:
-        if not (dist.is_available() and dist.is_initialized()):
-            if not success:
-                raise RuntimeError("checkpoint callback failed")
-            return
-        flag = torch.tensor(1 if success else 0, device=torch.cuda.current_device())
-        dist.all_reduce(flag, op=dist.ReduceOp.MIN)
-        if int(flag.item()) != 1:
-            raise RuntimeError("rank0 checkpoint write failed on at least one rank")
-
-    @staticmethod
-    def _ddp_sync_gradients(
-        active: tuple[tuple[str, nn.Parameter], ...],
-    ) -> None:
-        """Synchronize every active parameter, including rank-local None grads."""
-        if not (dist.is_available() and dist.is_initialized()):
-            return
-        world = float(dist.get_world_size())
-        for _, parameter in active:
-            gradient = parameter.grad
-            if gradient is None:
-                gradient = torch.zeros_like(parameter)
-            else:
-                gradient = gradient.detach().clone()
-            dist.all_reduce(gradient, op=dist.ReduceOp.SUM)
-            gradient.div_(world)
-            parameter.grad = gradient
-
-    @staticmethod
-    def _ddp_barrier() -> None:
-        if dist.is_available() and dist.is_initialized():
-            dist.barrier()
-
-    def _ddp_state_envelope(self, state: Mapping[str, Any]) -> Mapping[str, Any]:
-        if not (dist.is_available() and dist.is_initialized()):
-            return state
-        local = {
-            "rank": dist.get_rank(),
-            "world_size": dist.get_world_size(),
-            "state": state,
-            "rng": self._rng_state(),
-        }
-        gathered: list[Mapping[str, Any] | None] = [None] * dist.get_world_size()
-        dist.all_gather_object(gathered, local)
-        return {
-            "schema": "ncls.ddp-rank-state@1",
-            "world_size": dist.get_world_size(),
-            "rank_states": [dict(value) for value in gathered if value is not None],
-        }
+    def _ddp_world_size(self) -> int:
+        return self.distributed.world_size
 
     def _ddp_select_state(self, value: Mapping[str, Any]) -> Mapping[str, Any]:
         if value.get("schema") != "ncls.ddp-rank-state@1":
             return value
         world = int(value.get("world_size", 0))
-        if not (dist.is_available() and dist.is_initialized()) or world != dist.get_world_size():
+        if not self.distributed.is_distributed or world != self.distributed.world_size:
             raise ValueError("DDP checkpoint world size mismatch")
-        rank = dist.get_rank()
+        rank = self.distributed.rank
         entries = [item for item in value.get("rank_states", ()) if int(item.get("rank", -1)) == rank]
         if len(entries) != 1:
             raise ValueError("DDP checkpoint does not contain this rank state")
         return entries[0]["state"]
 
-    @staticmethod
     def _ddp_report(
+        self,
         loss: torch.Tensor,
         metrics: Mapping[str, torch.Tensor | float],
+        *,
+        scope: str,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor | float]]:
-        """Average report scalars across ranks without changing the backward loss."""
-        if not (dist.is_available() and dist.is_initialized()):
-            return loss.detach(), dict(metrics)
-        world = float(dist.get_world_size())
-        reduced_loss = loss.detach().clone()
-        dist.all_reduce(reduced_loss, op=dist.ReduceOp.SUM)
-        reduced_loss.div_(world)
-        reduced: dict[str, torch.Tensor | float] = {}
-        for name, value in metrics.items():
-            if isinstance(value, torch.Tensor):
-                item = value.detach().clone()
-                if item.ndim != 0:
-                    reduced[name] = value
-                    continue
-                dist.all_reduce(item, op=dist.ReduceOp.SUM)
-                item.div_(world)
-                reduced[name] = item
-            else:
-                item = torch.tensor(float(value), device=loss.device)
-                dist.all_reduce(item, op=dist.ReduceOp.SUM)
-                reduced[name] = float(item.div_(world).item())
-        return reduced_loss, reduced
+        """一次 packed collective 聚合 loss 与全部 scalar metrics。"""
+        return self.distributed.reduce_report(loss, metrics, scope=scope)
 
     @staticmethod
     def _validate_batch_type(route: TrainingRoute, batch: OnlineTrainingBatch) -> None:
@@ -677,7 +615,11 @@ class TrainingEngine:
                             phase_index, phase_step, global_step, validation=True
                         ),
                     )
-                    report_loss, report_metrics = self._ddp_report(loss, metrics)
+                    report_loss, report_metrics = self._ddp_report(
+                        loss,
+                        metrics,
+                        scope=f"validation:{phase.name}:metrics",
+                    )
                 row = {
                     "step": float(global_step),
                     "phase_index": float(phase_index),
@@ -709,19 +651,72 @@ class TrainingEngine:
         self,
         model: nn.Module,
         global_step: int,
-        optimization_state: Mapping[str, Any],
+        optimization_state: (
+            Mapping[str, Any] | Callable[[], Mapping[str, Any]]
+        ),
         coverage: Mapping[str, Mapping[str, Any]],
         validation_rows: list[Mapping[str, float]],
-    ) -> TrainingCheckpoint:
+    ) -> TrainingCheckpoint | None:
         # A checkpoint is a lifecycle boundary. No prefetched host work,
         # reference result or GPU lease may cross it.
-        self.data_session.drain()
+        local_state: dict[str, Any] | None = None
+        local_state_error: BaseException | None = None
+        try:
+            self.data_session.drain()
+            local_state = {
+                "rng": self._rng_state(),
+                "query_stream": self.data_session.state_dict(),
+            }
+        except BaseException as error:
+            local_state_error = error
+        self.distributed.synchronize_rank_errors(
+            f"checkpoint rank state at step {global_step}",
+            local_state_error,
+        )
+        if local_state is None:
+            raise RuntimeError("checkpoint rank state was not constructed")
         config_value = self.config.to_dict()
         phase_index, phase_step = self.config.locate_step(global_step)
         phase_name = (
             "complete" if phase_index == len(self.config.phases)
             else self.config.phases[phase_index].name
         )
+        rank_states = self.distributed.gather_rank_payload(local_state)
+        if rank_states is None:
+            return None
+        resolved_optimization_state = (
+            optimization_state()
+            if callable(optimization_state)
+            else optimization_state
+        )
+        if self.distributed.is_distributed:
+            rng_state: Mapping[str, Any] = {
+                "schema": "ncls.ddp-rank-state@1",
+                "world_size": self.distributed.world_size,
+                "rank_states": [
+                    {
+                        "rank": int(value["rank"]),
+                        "world_size": int(value["world_size"]),
+                        "state": value["state"]["rng"],
+                    }
+                    for value in rank_states
+                ],
+            }
+            query_stream_state: Mapping[str, Any] = {
+                "schema": "ncls.ddp-rank-state@1",
+                "world_size": self.distributed.world_size,
+                "rank_states": [
+                    {
+                        "rank": int(value["rank"]),
+                        "world_size": int(value["world_size"]),
+                        "state": value["state"]["query_stream"],
+                    }
+                    for value in rank_states
+                ],
+            }
+        else:
+            rng_state = local_state["rng"]
+            query_stream_state = local_state["query_stream"]
         checkpoint = TrainingCheckpoint(
             self.plugin.descriptor.method_key,
             self.plugin.descriptor.descriptor_sha256,
@@ -742,14 +737,67 @@ class TrainingEngine:
             phase_step,
             {"policy": self.config.checkpoint_selection, "tail": validation_rows[-1:]},
             self.plugin.checkpoint.encode(model),
-            optimization_state,
-            self._ddp_state_envelope(self._rng_state()),
-            self._ddp_state_envelope(self.data_session.state_dict()),
+            resolved_optimization_state,
+            rng_state,
+            query_stream_state,
             coverage,
             {"rows": validation_rows},
         )
         checkpoint.validate_method(self.plugin.descriptor)
         return checkpoint
+
+    def _coordinated_checkpoint(
+        self,
+        model: nn.Module,
+        global_step: int,
+        optimization_state: (
+            Mapping[str, Any] | Callable[[], Mapping[str, Any]]
+        ),
+        coverage: Mapping[str, Mapping[str, Any]],
+        validation_rows: list[Mapping[str, float]],
+        *,
+        label: str,
+        callback: Callable[[TrainingCheckpoint], None] | None = None,
+    ) -> TrainingCheckpoint | None:
+        assembly_started = time.perf_counter()
+        checkpoint: TrainingCheckpoint | None = None
+        checkpoint_error: BaseException | None = None
+        try:
+            checkpoint = self._checkpoint(
+                model,
+                global_step,
+                optimization_state,
+                coverage,
+                validation_rows,
+            )
+        except BaseException as error:
+            checkpoint_error = error
+
+        def commit() -> TrainingCheckpoint:
+            if checkpoint_error is not None:
+                raise checkpoint_error
+            if checkpoint is None:
+                raise RuntimeError("rank0 did not construct a training checkpoint")
+            if callback is not None:
+                callback(checkpoint)
+            return checkpoint
+
+        assembly_seconds = time.perf_counter() - assembly_started
+        commit_started = time.perf_counter()
+        committed = self.distributed.run_rank_zero(label, commit)
+        commit_seconds = time.perf_counter() - commit_started
+        local_profile = {
+            "profile/checkpoint_rank_state_and_assembly_seconds": assembly_seconds,
+            "profile/checkpoint_rank0_commit_wait_seconds": commit_seconds,
+        }
+        self._last_checkpoint_profile = {
+            **local_profile,
+            **self.distributed.rank_statistics(
+                local_profile,
+                scope=f"checkpoint:{global_step}:stage-metrics",
+            ),
+        }
+        return committed if self.distributed.is_rank_zero else None
 
     def run(
         self,
@@ -757,15 +805,31 @@ class TrainingEngine:
         resume: TrainingCheckpoint | None = None,
         stop_at_step: int | None = None,
     ) -> TrainingRunResult:
-        self._seed()
-        model = self.plugin.model_factory.create(self.config.model_context).to(
-            self.data_session.device
+        self.distributed.validate_descriptor(
+            "training:lifecycle",
+            {
+                "training_config_sha256": self.config.sha256,
+                "resume": (
+                    None
+                    if resume is None
+                    else {
+                        "global_step": resume.global_step,
+                        "method_key": resume.method_key,
+                        "training_config_sha256": resume.training_config_sha256,
+                    }
+                ),
+                "stop_at_step": stop_at_step,
+                "checkpoint_callback": self.checkpoint_callback is not None,
+            },
         )
-        if (
-            dist.is_available()
-            and dist.is_initialized()
-            and self.data_session.device.type != "cuda"
-        ):
+        self._seed()
+        model = self.distributed.run_all_ranks(
+            "training model construction",
+            lambda: self.plugin.model_factory.create(self.config.model_context).to(
+                self.data_session.device
+            ),
+        )
+        if self.distributed.is_distributed and self.data_session.device.type != "cuda":
             raise RuntimeError("DDP training requires a CUDA producer device")
         global_step = 0
         validation_rows: list[Mapping[str, float]] = []
@@ -779,7 +843,10 @@ class TrainingEngine:
             for group in self.plugin.descriptor.parameter_groups
         }
         resume_optimization: Mapping[str, Any] | None = None
-        if resume is not None:
+        def restore_resume() -> None:
+            nonlocal global_step, validation_rows, coverage, resume_optimization
+            if resume is None:
+                return
             self._validate_resume(resume)
             self.plugin.checkpoint.restore(model, resume.model_state)
             self.data_session.load_state_dict(
@@ -787,32 +854,53 @@ class TrainingEngine:
             )
             self._restore_rng(self._ddp_select_state(resume.rng_state))
             global_step = resume.global_step
-            validation_rows = [dict(row) for row in resume.validation_state.get("rows", ())]
+            validation_rows = [
+                dict(row) for row in resume.validation_state.get("rows", ())
+            ]
             coverage = {
-                group: dict(value) for group, value in resume.gradient_coverage.items()
+                group: dict(value)
+                for group, value in resume.gradient_coverage.items()
             }
             resume_optimization = resume.phase_optimization_state
+
+        self.distributed.run_all_ranks("training resume restore", restore_resume)
 
         target_step = self.config.total_steps if stop_at_step is None else int(stop_at_step)
         if not global_step <= target_step <= self.config.total_steps:
             raise ValueError("stop_at_step must lie between resume step and total steps")
         if global_step == self.config.total_steps:
-            checkpoint = self._checkpoint(model, global_step, {}, coverage, validation_rows)
+            checkpoint = self._coordinated_checkpoint(
+                model,
+                global_step,
+                {},
+                coverage,
+                validation_rows,
+                label=f"final checkpoint assembly at step {global_step}",
+            )
             self._emit(
                 "run-completed",
                 global_step,
                 phase_name="complete",
+                scalars=self._last_checkpoint_profile,
                 details={"already_complete": True},
             )
             return TrainingRunResult(checkpoint, tuple(validation_rows))
 
         phase_index, phase_step = self.config.locate_step(global_step)
         phase = self.config.phases[phase_index]
-        optimizer, scheduler, scaler, active = self._create_phase_optimization(
+        optimizer, scheduler, scaler, active = self.distributed.run_all_ranks(
+            f"phase {phase.name} optimization setup",
+            lambda: self._create_phase_optimization(
+                model,
+                phase,
+                phase_step=phase_step,
+                state=resume_optimization,
+            ),
+        )
+        objective_owner, execution_objective = self.distributed.build_objective(
+            self.plugin.objective,
             model,
-            phase,
-            phase_step=phase_step,
-            state=resume_optimization,
+            phase_name=phase.name,
         )
         registry = self.plugin.lifecycle.parameter_registry(model)
         metric_rows: list[Mapping[str, float]] = []
@@ -825,6 +913,7 @@ class TrainingEngine:
         ) + phase_step * sum(
             route.batch_size * route.direction_count for route in phase.routes
         ) * global_batch_multiplier
+        run_start_work_units = work_units
         run_started = time.perf_counter()
         run_start_step = global_step
         phase_timing_index = phase_index
@@ -840,11 +929,16 @@ class TrainingEngine:
         reference_rejection_rounds_max = 0
         profile_snapshot = getattr(self.data_session, "profile_snapshot", None)
         pending_training_profile: dict[str, float] = {}
+        latest_checkpoint: TrainingCheckpoint | None = None
+        latest_checkpoint_step = -1
         if callable(profile_snapshot):
             profile_snapshot(reset=True)
         queue: deque[_PreparedStep] = deque()
         bar = self.progress_factory(
-            total=target_step - global_step, desc="train", unit="step"
+            total=target_step - global_step,
+            desc="train",
+            unit="step",
+            disable=not self.distributed.is_rank_zero,
         )
         self._emit(
             "run-started",
@@ -936,9 +1030,11 @@ class TrainingEngine:
                     optimizer.zero_grad(set_to_none=True)
                     with self._autocast(phase):
                         context = self._phase_context(phase_index, phase_step, global_step)
-                        loss, metrics = self.plugin.objective.compute(
-                            model, prepared.batches, context
+                        loss = execution_objective(
+                            prepared.batches,
+                            context,
                         )
+                        metrics = objective_owner.take_metrics()
                     if cuda_events is not None:
                         cuda_events[1].record()
                     forward_finished = time.perf_counter()
@@ -957,7 +1053,6 @@ class TrainingEngine:
                         cuda_events[2].record()
                     backward_finished = time.perf_counter()
                     scaler.unscale_(optimizer)
-                    self._ddp_sync_gradients(active)
                     gradients = [
                         parameter.grad for _, parameter in active if parameter.grad is not None
                     ]
@@ -984,6 +1079,9 @@ class TrainingEngine:
                                 "profile/backward_gpu_seconds": (
                                     cuda_events[1].elapsed_time(cuda_events[2]) / 1000.0
                                 ),
+                                "profile/backward_reducer_gpu_seconds": (
+                                    cuda_events[1].elapsed_time(cuda_events[2]) / 1000.0
+                                ),
                                 "profile/optimizer_gpu_seconds": (
                                     cuda_events[2].elapsed_time(cuda_events[3]) / 1000.0
                                 ),
@@ -997,6 +1095,9 @@ class TrainingEngine:
                                     forward_finished - forward_started
                                 ),
                                 "profile/backward_wall_seconds": (
+                                    backward_finished - forward_finished
+                                ),
+                                "profile/backward_reducer_wall_seconds": (
                                     backward_finished - forward_finished
                                 ),
                                 "profile/optimizer_wall_seconds": (
@@ -1032,6 +1133,11 @@ class TrainingEngine:
                     rolling_speed = len(step_wall_window) / max(
                         float(wall_values.sum()), 1e-12
                     )
+                    phase_work_units_per_step = sum(
+                        route.batch_size * route.direction_count
+                        for route in phase.routes
+                    )
+                    completed_global_work_units = work_units - run_start_work_units
                     row: dict[str, float] = {
                         "step": float(global_step),
                         "phase_index": float(phase_index),
@@ -1041,7 +1147,22 @@ class TrainingEngine:
                         "work_units": float(work_units),
                         "global_batch_multiplier": float(global_batch_multiplier),
                         "global_work_units_per_second": (
-                            speed * global_batch_multiplier
+                            completed_global_work_units / max(elapsed, 1e-12)
+                        ),
+                        "local_work_units_per_second": (
+                            completed_global_work_units
+                            / global_batch_multiplier
+                            / max(elapsed, 1e-12)
+                        ),
+                        "phase_global_work_units_per_second": (
+                            phase_speed
+                            * phase_work_units_per_step
+                            * global_batch_multiplier
+                        ),
+                        "rolling_global_work_units_per_second": (
+                            rolling_speed
+                            * phase_work_units_per_step
+                            * global_batch_multiplier
                         ),
                         "elapsed_seconds": elapsed,
                         "steps_per_second": speed,
@@ -1062,7 +1183,11 @@ class TrainingEngine:
                         row["reserved_memory_bytes"] = float(
                             torch.cuda.memory_reserved(self.data_session.device)
                         )
-                    report_loss, report_metrics = self._ddp_report(loss, metrics)
+                    report_loss, report_metrics = self._ddp_report(
+                        loss,
+                        metrics,
+                        scope=f"training:{phase.name}:metrics",
+                    )
                     row["loss"] = float(report_loss)
                     for name, value in report_metrics.items():
                         row[name] = (
@@ -1140,6 +1265,31 @@ class TrainingEngine:
                             )
                         )
                         pending_training_profile.clear()
+                    row.update(
+                        self.distributed.ddp_logging_metrics(execution_objective)
+                    )
+                    stage_names = tuple(
+                        name
+                        for name in (
+                            "profile/step_wall_seconds_mean",
+                            "profile/step_wall_seconds_max",
+                            "profile/batch_prepare_wall_seconds_mean",
+                            "profile/batch_prepare_wall_seconds_max",
+                            "profile/forward_gpu_seconds",
+                            "profile/backward_reducer_gpu_seconds",
+                            "profile/optimizer_gpu_seconds",
+                            "profile/reference_last_group_id_u48",
+                            "profile/reference_group_build_seconds_max",
+                            "profile/reference_rejection_rounds_max",
+                        )
+                        if name in row
+                    )
+                    row.update(
+                        self.distributed.rank_statistics(
+                            {name: row[name] for name in stage_names},
+                            scope=f"training:{phase.name}:stage-metrics",
+                        )
+                    )
                     preparation_window.clear()
                     step_wall_window.clear()
                     reference_group_codes.clear()
@@ -1174,21 +1324,47 @@ class TrainingEngine:
                 if boundary:
                     if queue:
                         raise RuntimeError("prefetch queue crossed a phase boundary")
-                    previous_state = self._optimization_state(
-                        phase, optimizer, scheduler, scaler, active
+                    previous_state = (
+                        self._optimization_state(
+                            phase,
+                            optimizer,
+                            scheduler,
+                            scaler,
+                            active,
+                        )
+                        if global_step < self.config.total_steps
+                        else None
                     )
+                    del execution_objective, objective_owner
                     if phase.transition is not None:
-                        self.plugin.lifecycle.apply_transition(
-                            model, phase.transition, self.data_session.native_assets()
+                        self.distributed.run_all_ranks(
+                            f"phase {phase.name} transition {phase.transition}",
+                            lambda: self.plugin.lifecycle.apply_transition(
+                                model,
+                                phase.transition,
+                                self.data_session.native_assets(),
+                            ),
                         )
                     if global_step < self.config.total_steps:
                         next_index, next_step = self.config.locate_step(global_step)
                         next_phase = self.config.phases[next_index]
-                        optimizer, scheduler, scaler, active = self._create_phase_optimization(
-                            model,
-                            next_phase,
-                            phase_step=next_step,
-                            overlap_state=previous_state,
+                        optimizer, scheduler, scaler, active = (
+                            self.distributed.run_all_ranks(
+                                f"phase {next_phase.name} optimization setup",
+                                lambda: self._create_phase_optimization(
+                                    model,
+                                    next_phase,
+                                    phase_step=next_step,
+                                    overlap_state=previous_state,
+                                ),
+                            )
+                        )
+                        objective_owner, execution_objective = (
+                            self.distributed.build_objective(
+                                self.plugin.objective,
+                                model,
+                                phase_name=next_phase.name,
+                            )
                         )
                         registry = self.plugin.lifecycle.parameter_registry(model)
                         self._emit(
@@ -1267,30 +1443,31 @@ class TrainingEngine:
                     )
                 if needs_validation or checkpoint_boundary:
                     if global_step == self.config.total_steps:
-                        optimization_state: Mapping[str, Any] = {}
+                        optimization_state: (
+                            Mapping[str, Any]
+                            | Callable[[], Mapping[str, Any]]
+                        ) = {}
                     else:
                         current_index, _ = self.config.locate_step(global_step)
                         current_phase = self.config.phases[current_index]
-                        optimization_state = self._optimization_state(
-                            current_phase, optimizer, scheduler, scaler, active
+                        optimization_state = lambda: self._optimization_state(
+                            current_phase,
+                            optimizer,
+                            scheduler,
+                            scaler,
+                            active,
                         )
                     if self.checkpoint_callback is not None:
-                        checkpoint_error: BaseException | None = None
-                        try:
-                            self.checkpoint_callback(
-                                self._checkpoint(
-                                    model,
-                                    global_step,
-                                    optimization_state,
-                                    coverage,
-                                    validation_rows,
-                                )
-                            )
-                        except BaseException as error:
-                            checkpoint_error = error
-                        self._ddp_checkpoint_sync(checkpoint_error is None)
-                        if checkpoint_error is not None:
-                            raise checkpoint_error
+                        latest_checkpoint = self._coordinated_checkpoint(
+                            model,
+                            global_step,
+                            optimization_state,
+                            coverage,
+                            validation_rows,
+                            label=f"periodic checkpoint commit at step {global_step}",
+                            callback=self.checkpoint_callback,
+                        )
+                        latest_checkpoint_step = global_step
                     self._emit(
                         "checkpoint-committed",
                         global_step,
@@ -1304,6 +1481,7 @@ class TrainingEngine:
                         details={
                             "periodic_callback": self.checkpoint_callback is not None
                         },
+                        scalars=self._last_checkpoint_profile,
                     )
         except BaseException as error:
             self._emit(
@@ -1319,15 +1497,25 @@ class TrainingEngine:
             bar.close()
 
         if global_step == self.config.total_steps:
-            final_optimization: Mapping[str, Any] = {}
+            final_optimization: (
+                Mapping[str, Any] | Callable[[], Mapping[str, Any]]
+            ) = {}
         else:
             current_index, _ = self.config.locate_step(global_step)
-            final_optimization = self._optimization_state(
-                self.config.phases[current_index], optimizer, scheduler, scaler, active
+            current_phase = self.config.phases[current_index]
+            final_optimization = lambda: self._optimization_state(
+                current_phase, optimizer, scheduler, scaler, active
             )
-        checkpoint = self._checkpoint(
-            model, global_step, final_optimization, coverage, validation_rows
-        )
+        checkpoint = latest_checkpoint
+        if latest_checkpoint_step != global_step:
+            checkpoint = self._coordinated_checkpoint(
+                model,
+                global_step,
+                final_optimization,
+                coverage,
+                validation_rows,
+                label=f"final checkpoint assembly at step {global_step}",
+            )
         self._emit(
             "run-completed",
             global_step,
@@ -1336,6 +1524,7 @@ class TrainingEngine:
                 if global_step == self.config.total_steps
                 else self.config.phases[self.config.locate_step(global_step)[0]].name
             ),
+            scalars=self._last_checkpoint_profile,
             details={"complete": global_step == self.config.total_steps},
         )
         return TrainingRunResult(checkpoint, tuple(metric_rows + validation_rows))

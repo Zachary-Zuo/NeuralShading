@@ -8,6 +8,8 @@ import subprocess
 import sys
 from typing import Mapping, Sequence
 
+from .distributed import configure_distributed_debug_environment
+
 
 @dataclass(frozen=True)
 class ExecutionTopology:
@@ -209,6 +211,7 @@ def launch_distributed(
             "NCLS_DDP_WORLD_SIZE": str(len(topology.devices)),
         }
     )
+    configure_distributed_debug_environment(environment)
     return int(subprocess.run(command, env=environment, check=False).returncode)
 
 
