@@ -23,6 +23,7 @@ from ncls.learning.models.metal_budgeted_evaluator import (
 )
 from ncls.learning.models.metal_budgeted_profile import (
     METAL_BUDGETED_HYBRID_PROFILE,
+    METAL_BUDGETED_HYBRID_PROFILE_ID,
     MetalBudgetedProfile,
     metal_budgeted_profile,
 )
@@ -35,7 +36,7 @@ from ncls.learning.models.metal_budgeted_sampler import (
 
 
 METAL_BUDGETED_REQUIRED_CONTEXT = {
-    "profile_id": "metal_budgeted_hybrid_v1",
+    "profile_id": METAL_BUDGETED_HYBRID_PROFILE_ID,
     "asset_variant_count": 52,
     "maximum_texture_slots": 9,
     "maximum_typed_tokens": 32,

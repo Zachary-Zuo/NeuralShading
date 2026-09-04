@@ -38,7 +38,7 @@ MetalBudgetedAssetCooker.cook(encoded_values, mode, objective, refinement_steps,
 - asset route按`asset/domain` round-robin推进，`asset_indices`只能选择已验证的子cohort；不得让第一个大纹理domain长期饿死其余role或asset。Metal source patch从canonical decoded mip chain随机访问相邻两级，保留transfer、normal renormalization和address mode，不持久化派生mip或训练batch。
 - MDL decoded payload的物理通道数可能少于registry语义通道数（例如灰度`Sint8`对应单一`RGB` role）；asset collection只允许已定义的scalar→RGB广播和RGB→RGB+A默认alpha补全，其余不完整layout必须fail closed，不能靠reshape、截断或重复通道掩盖schema错误。
 - canonical Metal资产cook固定三条不同identity：`encoder-only@1`、`bounded-refinement@1`、`direct-control@1`。三者共用相同的两个RGBA8 SNORM部署asset shape；bounded refinement从encoder结果出发并投影到显式bound，direct control从独立可优化state出发。优化路径不得改变shared runtime decoder，也不得冒充pure compiler/editability证据。
-- `metal_budgeted_hybrid_v1`和`metal_budgeted_direct_control_v1`共享同一静态layout：两次asset读取、`24→32→32→24` prepare decoder、`28→64→64→64→6` evaluator、160 B PreparedState；hybrid/direct差异只能是已登记的final response解释。旧`metal_fused_full_v1`只在历史任务与显式control中保留，不是product registry或新训练配置的兼容目标。
+- `metal_budgeted_hybrid_v2`和`metal_budgeted_direct_control_v2`共享同一静态layout：两次asset读取、`24→32→32→24` prepare decoder、完整24维semantic state输入的`44→64→64→64→6` evaluator、160 B PreparedState；hybrid/direct差异只能是已登记的final response解释。v1 budgeted profile只解释历史诊断checkpoint；旧`metal_fused_full_v1`只在历史任务与显式control中保留，不是product registry或新训练配置的兼容目标。
 - 三种batch不共享dummy字段。method descriptor必须严格登记batch dependencies与parameter ownership。
 - engine只启用phase groups；optimizer状态以parameter name保存，`carry-overlap`仅传递同名交集。autocast/scaler由phase配置。方法只能通过 plugin lifecycle/objective facet 提供行为，不能拥有专用 runner。
 - 每步GPU聚合finite检查；audit cadence验证每个required group存在nonzero gradient和实际参数更新。metrics只在log cadence同步。
@@ -281,7 +281,7 @@ loss.backward()
 
 ### 1. Scope / Trigger
 
-修改`metal_budgeted_hybrid_v1`、`metal_budgeted_direct_control_v1`、对应source adapter、asset cook、proposal、训练phase、calibration或Linux pilot配置时适用。它确保质量结论直接来自目标预算内结构，也防止再次在Windows启动online训练、完整validation或runtime baseline。
+修改当前`metal_budgeted_hybrid_v2`、`metal_budgeted_direct_control_v2`、对应source adapter、asset cook、proposal、训练phase、calibration或Linux pilot配置时适用。它确保质量结论直接来自目标预算内结构，也防止再次在Windows启动online训练、完整validation或runtime baseline。
 
 ### 2. Signatures
 
@@ -299,15 +299,15 @@ tools/learning/build_metal_linux_handoff.py --output <artifact.json>
 ### 3. Contracts
 
 - public method key固定为`metal`，implementation key为`metal-budgeted-neural-material`。hybrid与direct使用独立profile/correspondence和checkpoint identity；旧full checkpoint只能作为legacy只读evaluation/control，不能resume或经converter进入新方法。
-- 主profile hard bound固定为`evaluate ≤20,000 dense MAC/direction`、PreparedState `≤192 B`。当前layout分别为10,368 MAC和160 B；prepare decoder为2,560 MAC；runtime asset读取严格为两次。这些值由layout JSON、Python loader和generated Slang layout共同计算，不把analytic scalar/transcendental隐藏成dense MAC。
-- asset输入是detail/context两条RGBA8 SNORM response mip；prepare固定`24→32→32→24`，evaluator固定`28→64→64→64→6`。direct最终线性`f`只消费前三个positive RGB，后三个通道只承担与detached analytic core匹配的训练辅助；hybrid gate为逐RGB`sigmoid`，值域固定`[0,1]`。
+- 主profile hard bound固定为`evaluate ≤20,000 dense MAC/direction`、PreparedState `≤192 B`。当前v2 layout分别为11,392 MAC和160 B；prepare decoder为2,560 MAC；runtime asset读取严格为两次。这些值由layout JSON、Python loader和generated Slang layout共同计算，不把analytic scalar/transcendental隐藏成dense MAC。
+- asset输入是detail/context两条RGBA8 SNORM response mip；prepare固定`24→32→32→24`，evaluator固定`44→64→64→64→6`并消费全部24维semantic state。direct最终线性`f`只消费前三个positive RGB，后三个通道只承担与detached analytic core匹配的训练辅助；hybrid gate为逐RGB`sigmoid`，值域固定`[0,1]`。
 - source adapter保留exact MDL locator、typed state、access/frame/resource责任和最多9-slot native patch。确定性access/frame/resource/distribution字段绕过learned guess；`Aluminum_Anodized`所需Beckmann由registry BSDF-data slot确定，不能用材质名启发式。
 - proposal固定primary analytic、secondary analytic、uniform full-hemisphere fallback三个mixture component。component位置与distribution enum独立：primary可为GGX或Beckmann，secondary可与primary同为GGX；重复distribution ID合法。每个component折回renderer上半球，PDF累加原方向与z镜像两个preimage，sample后独立PDF必须逐值一致。
 - fresh run在第一次model forward之前，按`train-only-reference-rgb-percentiles@1`用固定seed `2026090401`取得16,384条`target_f`，冻结逐通道P50 scale、P95 peak和energy epsilon并写入checkpoint。resume只恢复这些buffer，不重新估计；validation数据不得进入calibration。
 - phase固定为`joint-response-fit → deployment-qat-refine`，六个参数组从step 1共同参与appearance/proposal目标。QAT仅在functional forward中对runtime浮点weight做FP16 STE、对asset做RGBA8 SNORM STE；master、optimizer引用、state key与checkpoint schema不变。
 - progress与metrics固定登记`loss/optimization_total`、`loss/appearance`、`loss/proposal`和`loss/proposal_weight`。连续密度NLL可为负，这是density超过1时合法的对数密度结果；进度显示不得把它误称complex loss，也不得用绝对值改变梯度。
 - DDP validation按一个validation window保留原始batch顺序和每batch的全rank平均metric row，但所有scalar先在device上堆叠，再用一次packed collective聚合并一次性回读host；不得为每个validation batch重复descriptor/metric collective，也不得把整个window压成单一均值而丢失bootstrap单元。validation提交使用phase-local bounded lookahead和同一window boundary，队列不得跨validation/checkpoint/phase边界。
-- single-material direct/hybrid是matched diagnostic pair：Tungsten exact locator、固定spatial anchor、paired one-texel UV、zero/one/four-texel footprint quota、uniform/cosine/near-reflection/grazing方向配额、validation seed`2026090402`、1792 joint + 256 QAT、per-rank batch 512、每16 step report和256-batch validation全部一致；唯一结构轴是profile/correspondence。旧`@1` recipe的per-rank batch 64只作为before-profile，不能与`@2`按step合并。
+- single-material direct/hybrid是matched diagnostic pair：Tungsten exact locator、固定spatial anchor、paired one-texel UV、zero/one/four-texel footprint quota、uniform/cosine/near-reflection/grazing方向配额、validation seed`2026090402`、1792 joint + 256 QAT、per-rank batch 512、每16 step report和256-batch validation全部一致；唯一结构轴是profile/correspondence。旧`@1` recipe的per-rank batch 64只作为before-profile，高吞吐`@2` v1只作为完整语义修订前的诊断；当前`@3` v2与前两代均不能按step合并。
 - 两个pilot在原生Linux通过统一launcher串行执行；当前授权拓扑是物理GPU 5–9上的DDP5，global batch 2560，online session每次最多合并两个logical step生产。它是固定topology的matched pair，不是scaling研究。先step-0 calibration/checkpoint，再各自跑到recoverable step 128并按共同里程碑resume至冻结cap。Windows只执行unit、静态layout和必要的小型纯模型测试；不得执行online reference、pilot、完整validation、完整runtime baseline或旧long。
 - pilot observed quality只用于预登记的hybrid/direct选择与failure classification。两者共同失败后也不得自动追加step/seed、扩大模型或启动teacher；任何扩张先回planning。完成结构选择前deployment facet必须fail closed。
 

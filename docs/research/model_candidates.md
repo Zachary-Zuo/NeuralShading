@@ -344,10 +344,11 @@ P1 v1 中 T 的 test/dense 为 `0.0775/0.3749` 与 `0.0818/0.4392`，在当前 2
 
 | 变体 | 最终response | 固定部署成本 | 当前角色 |
 |---|---|---:|---|
-| `metal_budgeted_hybrid_v1` | positive RGB + 逐通道`sigmoid` gate × 双analytic lobe | evaluate 10,368 MAC；PreparedState 160 B；asset reads 2 | 主假设：analytic core保留窄峰/颜色物理结构，神经路径补空间与语义残差 |
-| `metal_budgeted_direct_control_v1` | 相同网络前三通道直接产生positive RGB；后三通道只作core auxiliary | 与hybrid相同 | matched control：测量analytic core是否真的带来净质量收益 |
+| `metal_budgeted_hybrid_v2` | positive RGB + 逐通道`sigmoid` gate × 双analytic lobe；完整24维semantic state进入evaluator | evaluate 11,392 MAC；PreparedState 160 B；asset reads 2 | 当前主假设：analytic core保留窄峰/颜色物理结构，完整语义神经路径补空间与语义残差 |
+| `metal_budgeted_direct_control_v2` | 相同网络前三通道直接产生positive RGB；后三通道只作core auxiliary | 与hybrid相同 | 当前matched control：测量analytic core是否真的带来净质量收益 |
+| `metal_budgeted_hybrid_v1` / `metal_budgeted_direct_control_v1` | evaluator只消费semantic state前8维 | evaluate 10,368 MAC；其他静态成本相同 | 历史诊断对照；共同step512后因spatial指标停滞与未消费状态审计被v2取代 |
 
-两个变体共享 `24→32→32→24` semantic decoder、`28→64→64→64→6` evaluator、Tungsten exact source、方向/paired-UV recipe、loss、optimizer、QAT、2048-step cap和`encoder-only@1` asset输入。这样观察差异只归因于final response结构，不把asset refinement或额外参数混进hybrid收益。
+两个当前变体共享 `24→32→32→24` semantic decoder、`44→64→64→64→6` evaluator、Tungsten exact source、方向/paired-UV recipe、loss、optimizer、QAT、2048-step cap和`encoder-only@1` asset输入。这样观察差异只归因于final response结构，不把asset refinement或额外参数混进hybrid收益。v2相对v1只修复完整semantic state到neural evaluator的信息通路，增加1,024 MAC，不增加state或读取数。
 
 失败假设与对应检查为：
 
@@ -357,4 +358,4 @@ P1 v1 中 T 的 test/dense 为 `0.0775/0.3749` 与 `0.0818/0.4392`，在当前 2
 - 训练总loss难以解释：日志拆分optimization total、appearance、proposal及权重；连续PDF NLL为负本身不是复数或非有限错误；
 - 部署预算被prepare/asset隐藏：dense MAC、PreparedState、weight bytes、asset bytes、reads和Linux matched latency分别报告。
 
-当前实现与CPU/轻量GPU正确性检查已闭合，但Linux single-material direct/hybrid pilot尚未产生observed quality，不能提前声称hybrid入选。只有按冻结规则完成两者的eager/QAT failure classification后才冻结profile并进入Slang/package；若hybrid无净收益则选择direct，不扩大模型保留设计。
+v1 Linux DDP5在共同step512观察到hybrid/direct appearance分别约`1.152/2.220`，但spatial-gradient均停留在约`0.282–0.283`；这与只消费前8维semantic state的审计共同触发v2。当前v2尚未产生observed quality，不能提前声称hybrid入选。只有按冻结规则完成两者的eager/QAT failure classification后才冻结profile并进入Slang/package；若hybrid无净收益则选择direct，不扩大模型保留设计。

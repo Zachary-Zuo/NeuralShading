@@ -20,7 +20,7 @@ def test_metal_budgeted_profiles_close_the_nvidia_class_hard_budget() -> None:
     assert hybrid.evaluator_mode == "hybrid"
     assert direct.evaluator_mode == "direct"
     assert hybrid.prepare_dense_macs == 2_560
-    assert hybrid.evaluate_dense_macs == 10_368
+    assert hybrid.evaluate_dense_macs == 11_392
     assert hybrid.evaluate_dense_macs <= 20_000
     assert hybrid.prepared_state_bytes == 160
     assert hybrid.prepared_state_bytes <= 192

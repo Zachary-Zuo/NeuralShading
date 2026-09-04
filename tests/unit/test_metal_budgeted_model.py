@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import math
 
 import pytest
@@ -157,6 +158,21 @@ def test_budgeted_hybrid_and_direct_share_shape_and_produce_nonnegative_rgb() ->
     assert [tuple(parameter.shape) for parameter in hybrid.evaluator.parameters()] == [
         tuple(parameter.shape) for parameter in direct.evaluator.parameters()
     ]
+
+
+def test_budgeted_evaluator_consumes_the_full_prepared_semantic_state() -> None:
+    torch.manual_seed(20260905)
+    model = MetalBudgetedModel().eval()
+    values = _conditioning(2)
+    wi = _directions(2)
+    with torch.no_grad():
+        prepared = model.prepare(values)
+        baseline = model.evaluate_prepared(prepared, values["wo"], wi).f
+        changed = prepared.semantic_state.clone()
+        changed[:, 8:] += 0.5
+        replaced = replace(prepared, semantic_state=changed)
+        modified = model.evaluate_prepared(replaced, values["wo"], wi).f
+    assert not torch.equal(baseline, modified)
 
 
 def test_optimized_program_state_control_cannot_change_deterministic_contract() -> None:

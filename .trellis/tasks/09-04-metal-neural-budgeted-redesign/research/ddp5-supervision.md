@@ -59,3 +59,13 @@
 - hybrid在step128→256的validation appearance由`1.5644→1.2286`，gate平方均值由`0.3305→0.4587`，positive RGB平方均值约`1e-5`；当前结构主要表现为“learned gate调制analytic lobes”，神经positive residual几乎未参与。这是结构行为证据，不先判为实现错误。
 - direct step128 validation appearance为`3.8383`、peak为`5.2536`，明显弱于hybrid；它的positive RGB平方均值约`0.0091`，说明`bias=-5`后仍已开始离开零输出，并非零梯度。是否属于初始化/稀疏peak loss导致的优化问题，需要在新batch512 fresh pair的相同optimizer-update里程碑复查，不能用旧batch64早期值直接定论。
 - direct与hybrid的proposal fallback分别约`0.826/0.495`（hybrid step128），虽然proposal参数只接收proposal loss，但其输入semantic state受各自appearance训练影响；差异是模型耦合结果，不是DDP reduce错误。后续同时审查proposal有效率、density NLL和fallback轨迹。
+
+## 高吞吐 v1 pair：共同step 512
+
+- artifact根为`artifacts/metal-budgeted-pilot/ddp5-efficient-c4dd62f/`；hybrid/direct使用per-rank batch512、global batch2560，并分别保存exact step512 checkpoint、256条validation row、review与完整日志。
+- hybrid validation appearance在step`128/256/384/512`为`1.4469/1.1877/1.1570/1.1523`，peak为`1.3588/1.0719/1.0644/1.0559`；positive RGB trace约为零，gate由`0.3443`升到`0.7964`，analytic trace由`112.8`升到`1016.6`。它在约step384进入平台，主要依靠gate放大analytic core，没有形成有效neural residual。
+- direct同期appearance为`3.8924/2.9156/2.4309/2.2204`，peak为`5.4313/3.4347/2.4702/1.9340`；positive RGB trace由`0.0091`升到`6.3744`，说明direct head确实在学习，不是`bias=-5`造成的softplus死区。linear项从step256后的`1.5471`升到`1.7215`，提示峰值改善伴随过冲风险。
+- 两侧spatial-gradient始终约`0.281–0.283`，没有随appearance改善。代码审计显示semantic decoder输出24维并全部写入PreparedState，但neural evaluator只拼接`semantic_state[:8]`；后16维只能影响analytic状态，无法成为neural response输入。这是共享架构瓶颈，优先于继续把v1训练到1024。
+- proposal轨迹不作为direct evaluator选择主指标：direct的proposal head只调整mixture weight，而semantic/analytic state随direct appearance共同变化，因此density NLL可以与appearance方向不同；当前没有DDP reduce或unused-parameter证据。
+
+处理决定：保留v1 step512为对照，新增full-semantic v2身份，把方向输入从28扩到44、evaluate从10,368增至11,392 MAC，PreparedState 160 B和两次读取不变。hybrid/direct以`@3`从fresh共同边界重跑；不resume v1，也不先改loss。

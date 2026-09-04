@@ -267,7 +267,7 @@ class MetalBudgetedDirectionalRepresentation(nn.Module):
         feature_frame = prepared.frames[:, 1]
         wo_feature = torch.einsum("bfc,bc->bf", feature_frame, wo)
         wi_feature = torch.einsum("bfc,bdc->bdf", feature_frame, wi)
-        condition = prepared.semantic_state[:, :8, None].transpose(1, 2).expand(
+        condition = prepared.semantic_state[:, :, None].transpose(1, 2).expand(
             -1, directions, -1
         )
         values = torch.cat(

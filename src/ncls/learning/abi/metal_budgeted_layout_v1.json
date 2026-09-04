@@ -1,12 +1,12 @@
 {
   "schema": "ncls.metal-budgeted-layout@1",
   "method_key": "metal-budgeted-neural-material",
-  "correspondence": "metal-budgeted-semantic-hybrid@1",
+  "correspondence": "metal-budgeted-full-semantic-hybrid@2",
   "profiles": {
-    "metal_budgeted_hybrid_v1": {
+    "metal_budgeted_hybrid_v2": {
       "evaluator_mode": "hybrid"
     },
-    "metal_budgeted_direct_control_v1": {
+    "metal_budgeted_direct_control_v2": {
       "evaluator_mode": "direct"
     }
   },
@@ -19,9 +19,9 @@
     "asset_plane_count": 2,
     "semantic_decoder_layers": [24, 32, 32, 24],
     "semantic_decoder_macs": 2560,
-    "directional_width": 28,
-    "evaluator_layers": [28, 64, 64, 64, 6],
-    "evaluate_dense_macs": 10368,
+    "directional_width": 44,
+    "evaluator_layers": [44, 64, 64, 64, 6],
+    "evaluate_dense_macs": 11392,
     "analytic_lobe_count": 2,
     "proposal_component_count": 3
   },
@@ -94,7 +94,7 @@
       {"name": "wi_feature_frame", "width": 3},
       {"name": "wo_dot_wi", "width": 1},
       {"name": "half_valid", "width": 1},
-      {"name": "prepared_condition", "width": 8}
+      {"name": "prepared_condition", "width": 24}
     ]
   },
   "proposal": {
@@ -119,5 +119,5 @@
     "asset_planes": "rgba8-snorm-per-plane-scale-bias",
     "sensitive_accumulation": "float32"
   },
-  "identity": "0879e1e9e303a706d00a1474a31a09ed2f9b86991e54b1bd848b6cf8c7653d4e"
+  "identity": "86a1ace0ab01d7d9efb7297374c717008373fd55143c540f146853a470f125a7"
 }

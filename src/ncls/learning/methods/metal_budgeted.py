@@ -40,7 +40,9 @@ from ncls.learning.models.metal_budgeted import (
     MetalBudgetedModel,
 )
 from ncls.learning.models.metal_budgeted_profile import (
+    METAL_BUDGETED_DIRECT_PROFILE_ID,
     METAL_BUDGETED_HYBRID_PROFILE,
+    METAL_BUDGETED_HYBRID_PROFILE_ID,
     METAL_BUDGETED_LAYOUT_PATH,
     load_metal_budgeted_layout,
 )
@@ -310,7 +312,7 @@ class MetalBudgetedMethodDefinition(MethodDefinition):
             ),
         },
         _state_schema(),
-        "ncls.metal-budgeted-method@1",
+        "ncls.metal-budgeted-method@2",
         int(
             BackendCapability.PREPARE
             | BackendCapability.EVALUATE
@@ -336,7 +338,7 @@ class MetalBudgetedMethodDefinition(MethodDefinition):
         {
             "runtime_class": "nvidia-class-budgeted-neural-material",
             "profile_id": METAL_BUDGETED_HYBRID_PROFILE.profile_id,
-            "direct_control_profile_id": "metal_budgeted_direct_control_v1",
+            "direct_control_profile_id": METAL_BUDGETED_DIRECT_PROFILE_ID,
             "C_prepare_macs": METAL_BUDGETED_HYBRID_PROFILE.prepare_dense_macs,
             "C_eval_macs": METAL_BUDGETED_HYBRID_PROFILE.evaluate_dense_macs,
             "B_prepared": METAL_BUDGETED_HYBRID_PROFILE.prepared_state_bytes,
@@ -802,9 +804,9 @@ class MetalBudgetedMethodDefinition(MethodDefinition):
             raise ValueError("Metal budgeted model_context is required")
         MetalBudgetedModel.from_context(context)
         expected_correspondence = (
-            "metal-budgeted-semantic-hybrid@1"
-            if context["profile_id"] == "metal_budgeted_hybrid_v1"
-            else "metal-budgeted-semantic-direct-control@1"
+            "metal-budgeted-full-semantic-hybrid@2"
+            if context["profile_id"] == METAL_BUDGETED_HYBRID_PROFILE_ID
+            else "metal-budgeted-full-semantic-direct-control@2"
         )
         if config.get("correspondence_id") != expected_correspondence:
             raise ValueError("Metal budgeted correspondence/profile identity drifted")

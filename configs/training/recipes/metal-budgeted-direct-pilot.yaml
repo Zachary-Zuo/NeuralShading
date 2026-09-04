@@ -6,10 +6,10 @@ extends: metal-budgeted-hybrid-pilot
 compatible_methods: [metal]
 payload:
   training:
-    recipe_id: metal-budgeted-tungsten-direct-efficient-pilot-2048@2
-    correspondence_id: metal-budgeted-semantic-direct-control@1
+    recipe_id: metal-budgeted-tungsten-full-semantic-direct-pilot-2048@3
+    correspondence_id: metal-budgeted-full-semantic-direct-control@2
     model_context:
-      profile_id: metal_budgeted_direct_control_v1
+      profile_id: metal_budgeted_direct_control_v2
     phases:
       - name: joint-response-fit
         steps: 1792
@@ -64,7 +64,7 @@ payload:
           - proposal-density-fit
           - sample-pdf-identity
         recipes: &joint-recipes
-          profile_id: metal_budgeted_direct_control_v1
+          profile_id: metal_budgeted_direct_control_v2
           asset_cook_mode: encoder-only@1
           compiler_role: pure-typed-compiler@1
           optimized_program_state_control: report-only@1
@@ -108,7 +108,7 @@ payload:
         parameter_groups: *groups
         loss_terms: *losses
         recipes:
-          profile_id: metal_budgeted_direct_control_v1
+          profile_id: metal_budgeted_direct_control_v2
           asset_cook_mode: encoder-only@1
           compiler_role: pure-typed-compiler@1
           optimized_program_state_control: report-only@1

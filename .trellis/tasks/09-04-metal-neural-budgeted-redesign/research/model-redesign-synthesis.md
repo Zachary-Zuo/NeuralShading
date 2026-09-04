@@ -98,7 +98,7 @@ ProgramState = MLP(g ⊕ canonical_optical)
 
 bitangent 从 tangent/normal 重建，normalize、LOD、PDF normalization 与能量敏感累积使用 FP32。最终 layout 由生成器精确验证；表中只是设计分配，不作为放宽 192 B 上限的理由。
 
-### 4.5 `evaluate()`
+### 4.5 `evaluate()`（v1 初始形态，已由§10修订）
 
 方向输入只保留无随机读取的表示：两 frame 下的 `wo/wi` 投影、稳定 half/difference 坐标、cosine/valid flags 和 8D local correction code。移除四级 angular bank。
 
@@ -193,3 +193,9 @@ viewer 整帧 timing 只作为 lifecycle 补充，不替代 kernel matched resul
 - `08-29-neural-shading-appearance-literature/research/papers/zeltner-2024-real-time-neural-appearance-models.md`：z8、two-frame、small evaluator、filter 与 runtime 证据。
 - `08-29-neural-shading-appearance-literature/research/papers/2026-hybrid-neural-microfacet-brdf.md`：analytic core + correction/gate 结构与边界。
 - `08-30-metal-runtime-deployment/research/runtime-evidence.md`：旧 full 的静态与 viewer 成本。
+
+## 10. step-512 修订：完整 semantic state 进入 evaluator
+
+高吞吐v1 pair在共同step512显示：hybrid/direct总体appearance与peak均在学习，但双方spatial-gradient都停留在约`0.282–0.283`。实现审计进一步确认上述v1结构只把24维semantic state的前8维拼入28维方向输入；decoder后16维虽写入PreparedState，却没有进入neural response body。这使“全部response-ready语义都被最终求值器消费”的原候选前提失效。
+
+当前v2保持其他matched轴不变，把完整24维semantic state拼入方向输入，形成`44→64→64→64→6`，evaluate dense MAC为11,392、PreparedState仍160 B、asset reads仍2。v1两种profile及其step512 artifacts作为历史诊断；v2使用新的profile/method/recipe身份fresh重跑。这个改动首先检验信息连通性，而不是用新loss或更宽网络掩盖通路缺失。

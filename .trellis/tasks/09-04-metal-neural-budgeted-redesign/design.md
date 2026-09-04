@@ -6,9 +6,9 @@
 
 - public key：`metal`（公共入口不增加版本化名称）；
 - method key：`metal-budgeted-neural-material`；
-- correspondence：`metal-budgeted-semantic-hybrid@1`；
-- 主 profile：`metal_budgeted_hybrid_v1`；
-- matched direct control：`metal_budgeted_direct_control_v1`；
+- correspondence：`metal-budgeted-full-semantic-hybrid@2`；
+- 主 profile：`metal_budgeted_hybrid_v2`；
+- matched direct control：`metal_budgeted_direct_control_v2`；
 - layout：`ncls.metal-budgeted-layout@1`。
 
 `metal_fused_full_v1` 不改 shape、layout 或 checkpoint 语义。旧 v4 继续只读，当前旧实现只在 task-local historical benchmark 和已有 package/capture 证据中使用；新 `metal` plugin 不接受旧 checkpoint resume，也不提供 converter、shape fallback 或同名 profile 替换。
@@ -173,20 +173,20 @@ compiler 是 pure feed-forward path。训练中的 optimized state control 直�
 
 ### 6.1 Direction features
 
-固定输入 28D：
+固定输入 44D：
 
 - 两个 frame 下的 prepared `wo` 与 query `wi`：12D；
 - stable half/difference 与 cosine/validity：8D；
-- local condition：8D。
+- 完整 response-ready semantic state：24D。
 
 不读取 angular texture，不保存 64D view token。half-vector 退化、grazing 和 hemisphere 规则由 Python/Slang 共用 exact-vector tests 锁定。
 
 ### 6.2 Shared trunk 与输出
 
-主 body：`28→64→64→64`，activation 初始使用 shader-friendly HardGELU；输出 6D。总 dense MAC：
+主 body：`44→64→64→64`，activation 初始使用 shader-friendly HardGELU；输出 6D。总 dense MAC：
 
 ```text
-28×64 + 64×64 + 64×64 + 64×6 = 10,368
+44×64 + 64×64 + 64×64 + 64×6 = 11,392
 ```
 
 hybrid profile：
@@ -327,7 +327,7 @@ bash scripts/run_falcor_python.sh --gpus 5,6,7,8,9 -- \
 
 每个 rank 内 Torch/SlangPy 只见 `cuda:0`，Falcor 使用对应物理 adapter。任何单独设置 `NCLS_FALCOR_GPU_INDEX`、绕过 launcher 的 `torchrun` 或多作业共享 GPU 5–9 都不是本轮证据。
 
-旧`@1` recipe的`batch_size=64`解释为per-rank batch，DDP5 global batch为320，只保留为before-profile。新`@2` recipe经§15.7有界profile后冻结per-rank batch 512、global batch 2560。schedule仍按optimizer step计数，source/query stream按`(world_size, rank)`分区；resolved plan、checkpoint与报告必须记录五卡topology、global batch和累计work units，新pair不与旧协议按step混为一组。
+旧`@1` recipe的`batch_size=64`解释为per-rank batch，DDP5 global batch为320，只保留为before-profile。吞吐优化后的`@2` v1 recipe经§15.7有界profile后冻结per-rank batch 512、global batch 2560；它已训练到共同step 512并形成结构诊断。当前`@3` v2 recipe保持这套执行几何，只改变§15.8登记的求值器输入。schedule仍按optimizer step计数，source/query stream按`(world_size, rank)`分区；resolved plan、checkpoint与报告必须记录五卡topology、global batch和累计work units，各代不按step混为一组。
 
 ### 15.2 交替状态机
 
@@ -394,3 +394,11 @@ stall 判定必须同时参考最近 metric/checkpoint 时间、进程存活、G
 `128/256` 只回答运行正确和早期趋势；正常情况下继续到 `512/1024/2048`。在 2048 共同里程碑，只有同时满足以下条件才进入一个预登记的 `deployment-qat-extended` matched phase，最多到 4096：实现/数值检查通过；hybrid/direct 选择的 paired bootstrap CI 仍跨零；最近三个共同 validation 里至少一侧的 appearance 主指标改善趋势有 bootstrap 支持；剩余 timebox 足以让两侧到达同一下一里程碑。任一条件不满足就不延长。扩展沿用单 seed 与相同静态结构，不把更多 step 当作保证质量的手段。
 
 本节由用户2026-09-05明确改变优先级、授权早期结果不足时继续实验并同意增大batch所触发。影响范围是训练engine的等价reporting路径、pilot recipe identity、每step样本几何和本轮资源cap；不改变source GT、query recipe、20k/192 B hard bound或验收门。旧`@1` DDP5 step-128证据保留为before-profile；新recipe必须fresh重跑，旧checkpoint不resume到新identity。
+
+### 15.8 完整语义输入 v2 修订
+
+`@2` v1 pair 的共同step-512验证触发一次预算内架构修订：hybrid/direct 的`appearance/spatial_gradient`始终约为`0.282–0.283`，未随总体appearance改善；代码审计同时发现semantic decoder产生并写入PreparedState的24维状态中，方向求值器只读取前8维。后16维包含局部lobe、frame与空间响应修正，却只能间接影响analytic路径，无法进入neural response body。这使原“前8维local condition足以承载response-ready状态”的设计假设失效。
+
+v2保持asset、compiler、两次读取、`24→32→32→24` decoder、160 B PreparedState、输出head、loss、source/query、batch和optimizer不变，只把求值器condition从8维扩为完整24维：`44→64→64→64→6`，dense evaluate成本从10,368增加到11,392 MAC/direction，仍低于20,000 hard bound；state和读取成本不增加。新增单测直接扰动semantic维度8–23并要求最终`f`发生变化，防止再次出现“已生成/监督但runtime不消费”的旁路状态。
+
+该变化使用`metal_budgeted_hybrid_v2`、`metal_budgeted_direct_control_v2`、method schema`@2`和pilot recipe`@3`的新identity。v1的step-512 artifact保留为诊断对照；hybrid/direct v2都必须fresh训练，不能resume v1 checkpoint。首个共同step-128先检查spatial/peak和全部parameter-group梯度，信息不足时继续到共同512/1024/2048，不因早期结果不理想临时改变loss或扩大网络。

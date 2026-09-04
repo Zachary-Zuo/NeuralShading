@@ -154,3 +154,12 @@ authored 参数 state 固定为 registry default：`texture_scale=[1,1]`、`text
 - `rerun required`：hybrid/direct从新config identity fresh step0开始；两侧使用相同batch、topology和cadence。`@1` checkpoint只作性能/早期结构诊断，不参与`@2`最终选择。
 
 选择依据是同source/query/model的64-step DDP5 profile：batch 64/128/256/512的global work units/s中位数约为2,936/5,350/10,465/23,354，而Torch peak显存约705/707/709/748 MiB/rank。512支配本轮候选，达到预登记上限后不再因尚有显存余量事后扩大profile cap。
+
+## 10. 2026-09-05 完整语义输入修订
+
+- `trigger`：高吞吐`@2` v1 hybrid/direct到共同step512后，appearance虽分别改善到约`1.152/2.220`，但spatial-gradient仍约`0.282/0.283`；实现审计发现24维semantic state只有前8维进入neural evaluator。
+- `invalidated evidence`：原先“semantic decoder的24维response-ready输出均被最终evaluator消费”以及“8维local condition足够承载neural方向响应”的假设失效。v1的质量结果仍是有效诊断对照，但不能代表完整语义输入候选。
+- `scope impact`：只把directional condition从8维扩为24维；evaluator由`28→64→64→64→6`变为`44→64→64→64→6`，dense MAC从10,368变为11,392。asset/compiler/decoder/PreparedState 160 B/两次读取/output head/loss/source/query/batch512/optimizer/schedule/precision/seed保持不变。
+- `rerun required`：使用新的hybrid/direct v2 profile、method schema与`@3` recipe identity；两侧从fresh step0重跑，v1 checkpoint不得resume。v1 step512 artifacts保留且不覆盖；先在共同128/256/512检查spatial、peak和parameter-group梯度，再按既有规则继续。
+
+该修订直接处理runtime未消费已生成状态的实现/架构缺口，不扩展hard budget、seed、材质范围或teacher额度。

@@ -13,8 +13,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[4]
 METAL_BUDGETED_LAYOUT_PATH = (
     PROJECT_ROOT / "src/ncls/learning/abi/metal_budgeted_layout_v1.json"
 )
-METAL_BUDGETED_HYBRID_PROFILE_ID = "metal_budgeted_hybrid_v1"
-METAL_BUDGETED_DIRECT_PROFILE_ID = "metal_budgeted_direct_control_v1"
+METAL_BUDGETED_HYBRID_PROFILE_ID = "metal_budgeted_hybrid_v2"
+METAL_BUDGETED_DIRECT_PROFILE_ID = "metal_budgeted_direct_control_v2"
 
 _DTYPE_BYTES = {"float16": 2, "float32": 4, "uint32": 4}
 
@@ -102,8 +102,8 @@ class MetalBudgetedProfile:
             or self.asset_plane_channels != 4
             or self.asset_plane_count != 2
             or self.semantic_decoder_layers != (24, 32, 32, 24)
-            or self.directional_width != 28
-            or self.evaluator_layers != (28, 64, 64, 64, 6)
+            or self.directional_width != 44
+            or self.evaluator_layers != (44, 64, 64, 64, 6)
             or self.analytic_lobe_count != 2
             or self.proposal_component_count != 3
         ):
