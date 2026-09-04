@@ -78,3 +78,11 @@
 - spatial-only梯度不是断图：hybrid的asset/semantic组L2约`0.00129/0.0293`，direct约`0.00409/0.0113`，direct directional组约`0.0109`。但固定同一batch以原学习率优化256次，误差只从约`0.329`降到`0.327/0.320`；十倍学习率512次也仅降到`0.295/0.269`。因此继续主recipe不能充分弥补当前信息衰减。
 
 处理决定：v2 step512保留为信息连通消融，不继续到1024。v3把Detail四通道无参数residual到frame semantic前四维，其他matched轴和静态预算不变；两侧fresh重跑，之后不再按observed quality自动创建v4。
+
+## Detail→frame semantic v3：共同step 512
+
+- artifact根为`artifacts/metal-budgeted-pilot/ddp5-detail-frame-aac37e6/`；hybrid/direct均fresh到共同step512，DDP、checkpoint、gradient audit与teardown正常。
+- 相对v2的逐validation-row paired bootstrap：hybrid appearance/log/linear/peak分别改善`-0.01213/-0.00755/-0.00849/-0.00742`，chroma轻微退化`+0.000105`；direct log/linear/peak改善`-0.01523/-0.00495/-0.00406`，但总appearance几乎持平并轻微退化`+0.00098`，chroma退化`+0.000824`。
+- hybrid/direct spatial都退化约`+0.00033/+0.00032`，95% paired bootstrap CI均不跨零。短路径对平均响应和hybrid peak有净收益，却没有恢复one-texel细节；它不能作为空间问题已解决的证据。
+
+处理决定：不再创建v4。v3作为当前matched结构继续到1024/2048，以获得成熟hybrid/direct checkpoint并完成部署；空间方向登记为下一轮role-separated Detail/Context编码、显式可量化高频latent和对应matched消融，不在本轮继续在线改结构或单纯提高loss权重。

@@ -359,4 +359,4 @@ P1 v1 中 T 的 test/dense 为 `0.0775/0.3749` 与 `0.0818/0.4392`，在当前 2
 - 训练总loss难以解释：日志拆分optimization total、appearance、proposal及权重；连续PDF NLL为负本身不是复数或非有限错误；
 - 部署预算被prepare/asset隐藏：dense MAC、PreparedState、weight bytes、asset bytes、reads和Linux matched latency分别报告。
 
-v1 Linux DDP5在共同step512观察到hybrid/direct appearance分别约`1.152/2.220`，但spatial-gradient均停留在约`0.282–0.283`；这与只消费前8维semantic state的审计共同触发v2。v2完整输入后hybrid总体几乎不变，direct改善log/linear/chroma却退化peak/spatial；online paired probe显示目标梯度约0.285而预测仅约0.001–0.004，触发v3短路径。当前v3尚未产生observed quality，不能提前声称hybrid入选。只有按冻结规则完成两者的eager/QAT failure classification后才冻结profile并进入Slang/package；若hybrid无净收益则选择direct，不扩大模型保留设计。
+v1 Linux DDP5在共同step512观察到hybrid/direct appearance分别约`1.152/2.220`，但spatial-gradient均停留在约`0.282–0.283`；这与只消费前8维semantic state的审计共同触发v2。v2完整输入后hybrid总体几乎不变，direct改善log/linear/chroma却退化peak/spatial；online paired probe显示目标梯度约0.285而预测仅约0.001–0.004，触发v3短路径。v3共同step512相对v2改善hybrid appearance/peak约`0.0121/0.0074`，direct总appearance几乎持平，但两侧spatial都退化约`0.00032`。因此v3继续成熟训练但不宣称解决空间问题；本轮不再自动扩展v4。只有按冻结规则完成两者的eager/QAT failure classification后才冻结profile并进入Slang/package；若hybrid无净收益则选择direct，不扩大模型保留设计。
