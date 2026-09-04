@@ -77,7 +77,7 @@ bash scripts/run_falcor_python.sh --gpus <gpu0,gpu1,...> -- <python-args>
 - launcher把该值写入`NCLS_FALCOR_GPU_INDEX`。Falcor使用物理序号，Torch/SlangPy只看到一张卡并使用重映射后的`cuda:0`；NCCL process group以`device_id=cuda:0` eager初始化。
 - `--gpus`只接受不重复的十进制物理序号列表；入口启动一个torchrun/NCCL DDP作业。launcher先保留完整物理列表供rank身份校验，再由worker将本rank的可见域收窄为一个物理GPU，因此每个rank内Torch/Falcor均使用`cuda:0`；梯度由phase-local PyTorch DDP reducer同步，统一checkpoint/metrics仅由rank0写出。低频descriptor、rank state和commit status使用所有rank同序创建的Gloo control group。
 - `NCLS_DDP_TIMEOUT_SECONDS`控制NCCL训练collective，默认300秒；`NCLS_DDP_CONTROL_TIMEOUT_SECONDS`控制checkpoint/teardown控制面，默认1800秒。`NCLS_DDP_DEBUG=1`显式启用PyTorch/NCCL详细诊断，不作为正式性能run默认值。
-- 同一Python进程按`(Falcor module, device API, physical GPU index)`复用一个Falcor device；session关闭只释放session资源，不销毁进程级device。
+- 同一Python进程按`(Falcor module, device API, physical GPU index)`复用一个Falcor device；session关闭只释放session资源，不销毁进程级device。CLI进程在所有data/reference session关闭后、process group teardown前调用`close_reference_backend_devices()`清空进程缓存，使Falcor/Vulkan析构发生在Python与CUDA runtime仍完整可用时；库内多个session之间不得提前清空。
 - backend拒绝`llvmpipe`、`lavapipe`、WARP和Microsoft Basic Render等软件adapter，不把其结果登记为GPU证据。
 - Linux deployment固定安装`defaults::cuda-compat=12.8.1`。宿主driver主版本低于570时，launcher在`LD_LIBRARY_PATH`中优先放`${CONDA_PREFIX}/cuda-compat`；570及以上使用系统driver库。
 - deployment report必须记录`cuda_visible_devices`和`falcor_gpu_index`；两者在指定GPU运行时相等。
@@ -94,6 +94,7 @@ bash scripts/run_falcor_python.sh --gpus <gpu0,gpu1,...> -- <python-args>
 | 只设置`NCLS_FALCOR_GPU_INDEX` | launcher拒绝，要求改用`CUDA_VISIBLE_DEVICES` |
 | 两个变量值不一致 | launcher拒绝 |
 | Falcor选择软件adapter | backend抛出`RuntimeError`，不继续query |
+| 训练进程退出时仍由解释器循环GC析构Falcor device | 视为生命周期缺陷；公共CLI必须显式关闭session后清空进程device cache |
 | driver 550加载CUDA 12.8 PTX | 使用Conda compatibility库；SlangPy CUDA device必须实际创建成功 |
 | driver 570及以上 | 不覆盖系统`libcuda` |
 | Ubuntu移动或修复ignored目录 | 只影响当前Ubuntu；不得宣称Windows路径已迁移或已修复 |
@@ -104,15 +105,16 @@ bash scripts/run_falcor_python.sh --gpus <gpu0,gpu1,...> -- <python-args>
 - Good：`CUDA_VISIBLE_DEVICES=3`时Falcor使用物理GPU 3，Torch/SlangPy使用进程内`cuda:0`，report两字段均记录`3`。
 - Good：`bash scripts/run_falcor_python.sh -m ncls train <run.yaml> --devices 2,3,4 --output artifacts/run/checkpoint.pt`启动一个三卡同步DDP训练；三个worker分别将`CUDA_VISIBLE_DEVICES`收窄为`2`、`3`、`4`，进程内设备均为`cuda:0`。
 - Good：manifest同时登记`windows-vs2022`与`linux-gcc`；每台机器只生成和维护自己的ignored build output。
+- Good：同一CLI中的训练、validation session复用进程device；最后一个session关闭后由入口清空cache，再销毁Gloo/NCCL组并退出。
 - Base：未设置GPU变量时单GPU机器沿用Falcor与Torch默认GPU 0。
 - Bad：只限制Torch可见域却让Falcor始终使用物理GPU 0；在选择GPU 3时会形成跨卡interop。
 - Bad：绕过`--gpus`手动启动多个进程，或让非rank0写checkpoint造成竞争。
-- Bad：每个测试/session新建一个Falcor device；Falcor 8 Linux可能在多次创建后退回`llvmpipe`而继续运行。
+- Bad：每个测试/session新建一个Falcor device；或依赖解释器退出时的循环GC才析构Falcor device。前者可能让Falcor 8 Linux在多次创建后退回`llvmpipe`，后者可能在训练已保存checkpoint后于进程退出时崩溃。
 - Bad：在Ubuntu移动从Windows复制来的ignored目录，然后把该本机操作当作Windows路径迁移证据。
 
 ### 6. Tests Required
 
-- unit：平台API选择、显式物理序号、非法序号、进程级复用和软件adapter拒绝。
+- unit：平台API选择、显式物理序号、非法序号、进程级复用、显式process-boundary清理和软件adapter拒绝。
 - shell/static：launcher拒绝多值和内部变量单独设置；Conda compatibility版本固定；多GPU驱动探针不得用会触发`pipefail`的`head`提前关闭管道。
 - shell/static：DDP列表校验、torchrun参数、rank0写出与NCCL backend。
 - Linux GPU：在`CUDA_VISIBLE_DEVICES=0`下同时断言Torch只见一张卡、Falcor adapter为目标NVIDIA卡、七文件GPU集合无skip，并完成SlangPy训练/evaluate。

@@ -35,7 +35,7 @@ bash scripts/run_falcor_python.sh -m ncls train \
   --output artifacts/training/metal-ddp/checkpoint.pt
 ```
 
-Linux多卡的objective按phase包装为真实PyTorch `DistributedDataParallel`：lifecycle先冻结本phase的active parameter，再构造一个reducer；gradient bucket在backward中同步，不在backward后逐parameter执行`all_reduce`。phase切换时所有rank同序重构wrapper；model/resume/optimizer setup与phase transition的rank-local异常会先经control group汇总，不让正常rank独自进入下一次DDP collective。NCCL data group负责梯度和GPU scalar collective，辅助Gloo control group只负责descriptor核对、逐rank RNG/query cursor、checkpoint commit状态与有序退出，训练热循环不新增barrier。
+Linux多卡的objective按phase包装为真实PyTorch `DistributedDataParallel`：lifecycle先冻结本phase的active parameter，再构造一个`static_graph` reducer；phase合同保证声明为active的参数每步都参与loss，因此不启用unused-parameter兼容扫描。gradient bucket在backward中同步，不在backward后逐parameter执行`all_reduce`。phase切换时所有rank同序重构wrapper；model/resume/optimizer setup与phase transition的rank-local异常会先经control group汇总，不让正常rank独自进入下一次DDP collective。NCCL data group负责梯度和GPU scalar collective，辅助Gloo control group只负责descriptor核对、逐rank RNG/query cursor、checkpoint commit状态与有序退出，训练热循环不新增barrier。
 
 诊断运行可显式设置：
 
@@ -72,7 +72,7 @@ bash scripts/run_falcor_python.sh -m ncls export <checkpoint.pt> <package-dir> -
 - `transfer_streams`：控制 cache miss 的异步 H2D 通道；常驻或已命中的 tensor 不重复交换。
 - `residency.budget_mib`：GPU 资源缓存的字节上限；lease 中对象不能被 LRU 驱逐。
 
-当前生产入口仍使用`SynchronousOnlineDataSession`，所以`ready_batches`、`reference_batch_steps`和`transfer_streams`还没有形成完整的batch/model流水；`reference_inflight`当前也不能视为真实异步dispatch。同步基线始终是 `num_workers=0`、`reference_batch_steps=1`。后续接通scheduler时，只有可复制 host 阶段才交给 worker；GPU/reference 并发必须由真实 capability、stream fence 和 lease 保证。Linux 的最终数值应通过 stage trace 分开报告 host、transfer、reference、model、barrier、cache 与峰值显存，不能仅用平均 GPU utilization 判断。
+生产入口统一使用`PipelineOnlineDataSession`：engine按step提交named routes，session以有界pending/ready ring严格按logical ID交付；`ready_batches=1`和`reference_batch_steps=1`仍通过同一实现表达同步调试基线，不存在另一套兼容session。producer先为每个logical request冻结独立RNG，再把同group的连续evaluator请求合并成一次reference dispatch，按原ID切分target；改变pack或队列深度不会改变训练样本。只有可复制host阶段交给worker并可提前提交，CUDA residency、Falcor和lease仍由rank主进程拥有。`global-sync` Vulkan路径只获得host重叠与packed dispatch收益，`reference_inflight`不能视为同卡真实异步；只有backend明确提供stream fence时才允许增加inflight。Linux数值通过stage trace分开报告host、transfer、reference、model、barrier、cache与峰值显存，不能仅用平均GPU utilization判断。
 
 ## 输出与 hooks
 

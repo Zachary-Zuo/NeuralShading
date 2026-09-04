@@ -12,7 +12,9 @@ TrainingPlanResolver(project_root).resolve(run_yaml, devices=None)
 get_method_plugin("nvidia" | "metal") -> MethodPlugin
 DataExecutionPlan.build(...) -> DataExecutionPlan@1
 OnlineTrainingProducer(plugin, runtime_config, execution_context, data_execution_plan)
-OnlineDataSession.next_batch(request) -> typed OnlineBatch
+OnlineDataSession.submit_step(named_routes, boundary_id=...) -> logical_id
+OnlineDataSession.acquire_step(logical_id) -> OnlineStepBatch
+OnlineStepBatch.release()
 TrainingEngine(plugin, data_session, runtime_config, ...).run(resume, stop_at_step)
   -> TrainingRunResult
 save/load_training_checkpoint_v1(...) -> TrainingCheckpoint@1
@@ -38,7 +40,7 @@ ncls eval worker|collect ...
 - 公开 key 使用 lower-kebab 且不含 `@`；当前 method 为 `nvidia`、`metal`。版本只进入 descriptor/implementation/plan hash，不进入用户入口名称。
 - `MethodPlugin` 必须同时提供 model/data/objective/lifecycle/checkpoint/deployment 六个 facet。公共 engine/data/CLI 只依赖 facet，不通过 implementation key 找 `MethodDefinition`，不按 method/source family 建专用分支。
 - `SourceSnapshot` 是 source 唯一真相；各 family 保持原生 locator、资源、编辑与 reference 语义。`ReferenceExecutionPlan@1` 拥有 grouping/global-local index；backend 只执行 plan，platform/Falcor 只由 capability/launcher 拥有。
-- 正式训练 batch 只在 GPU online 产生，不保存/读取 corpus。`DataExecutionPlan/OnlineDataSession` 拥有 worker、queue、residency、reference scheduling、rank partition、cursor、drain 和 lease 边界；详见 `../data/online-pipeline.md`。
+- 正式训练 batch 只在 GPU online 产生，不保存/读取 corpus。唯一`PipelineOnlineDataSession`拥有worker、bounded queue、residency、reference scheduling、rank partition、cursor、drain和lease边界；同步调试只改变capacity/pack配置，不存在旧session或`next_batch()`兼容入口。详见`../data/online-pipeline.md`。
 - `TrainingEngine` 只解释通用 phase graph，固定 phase/step/validation/checkpoint/cleanup 生命周期；method 只能通过 facet 提供 objective 和 transition，不能注册另一条 runner。
 - Linux多卡由phase-local `DistributedObjective`进入PyTorch DDP reducer；lifecycle先冻结active parameter，phase boundary再同序重构wrapper。禁止在backward后逐parameter手工`all_reduce`。NCCL data group与Gloo control group分责，后者只处理descriptor、小型rank state、checkpoint commit和teardown状态。
 - checkpoint hook 在 data session drain 后把内部 engine 状态封装为 `TrainingCheckpoint@1`。新 resume 只接受 v1 且严格匹配 resolved plan/data/method facet identity。

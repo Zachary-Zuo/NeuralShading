@@ -10,8 +10,10 @@
 TrainingPlanResolver.resolve(run_yaml, devices=None) -> ResolvedTrainingPlan@1
 ResolvedTrainingPlan.to_runtime_config() -> internal TrainingConfig
 DataExecutionPlan.build(...) -> DataExecutionPlan@1
-OnlineTrainingProducer.next_batch(request) -> AssetTileBatch@1 | EvaluatorBatch@3 | MethodSamplerBatch@3
-OnlineDataSession.next_batch/state_dict/load_state_dict/drain/close
+OnlineTrainingProducer.prefetch_steps(tuple[OnlineStepRequest, ...]) -> None
+OnlineTrainingProducer.produce_steps(tuple[OnlineStepRequest, ...])
+  -> Sequence[Mapping[str, AssetTileBatch@1 | EvaluatorBatch@3 | MethodSamplerBatch@3]]
+PipelineOnlineDataSession.submit_step/acquire_step/state_dict/load_state_dict/drain/close
 MethodSourceAdapter.sample_tensors(source_index, generator, options) -> Mapping[str, Tensor]
 expand_source_states(family, base_snapshots, typed_state_recipe) -> ExpandedSourceStates
 MethodPlugin.objective.compute(model, batches, phase) -> (loss, metrics)
@@ -39,11 +41,11 @@ MetalAssetCooker.cook_asset(asset_index, mode, refinement_steps, refinement_boun
 - engine只启用phase groups；optimizer状态以parameter name保存，`carry-overlap`仅传递同名交集。autocast/scaler由phase配置。方法只能通过 plugin lifecycle/objective facet 提供行为，不能拥有专用 runner。
 - 每步GPU聚合finite检查；audit cadence验证每个required group存在nonzero gradient和实际参数更新。metrics只在log cadence同步。
 - optional producer profile在training与validation之间严格分账。validation开始前先把尚未落盘的training counter暂存，validation结束后以`profile/validation_reference_*`写入首条validation row并reset；下一条training row只合并`profile/reference_*`训练计数。counter求和、`*_max`取最大、`resident_groups`取最后状态。
-- prefetch有界且不跨validation、checkpoint、phase或stop边界；checkpoint query cursor不得领先已消费batch。
+- prefetch有界且不跨validation、checkpoint、phase或stop边界；engine只依赖平台无关的step/session合同。host预取不推进cursor，checkpoint的logical/request/group/tile cursor不得领先已消费batch。
 - objective每次返回active required component的全部Python outputs；完成checkpoint前required groups的gradient/update coverage必须齐全。
 - checkpoint v1 严格冻结 resolved plan、method/facet、data execution/reference/asset/query/source identity、逐 rank RNG/data cursor、hook cursor 与当前 phase optimization 状态。发布前必须调用 data session `drain()`。
 - 旧 checkpoint v4 只经 `LegacyCheckpointV4Importer` 产生 evaluation snapshot；不得 resume，也不得恢复旧 JSON config reader或 method alias。
-- producer state必须额外保存`typed_state_pool_identity`；resume同时校验pool与`query_stream_identity`，generator/group/tile cursor只能在identity一致后恢复。不能只保存seed后在新registry上重生另一批states。
+- producer state必须额外保存`typed_state_pool_identity`；resume同时校验pool与`query_stream_identity`，request count、reference logical ID、group/tile cursor只能在identity一致后恢复。每个request的generator由其不可变identity重建，不持久化执行计划相关generator state，也不能只保存seed后在新registry上重生另一批states。
 
 ## 4. Validation & Error Matrix
 
@@ -139,7 +141,7 @@ DistributedContext.run_rank_zero(label, action) -> rank0 result/status broadcast
 
 - Linux多卡仍是一进程一卡；Torch/SlangPy使用rank-local`cuda:0`，Falcor使用launcher冻结的物理adapter。NCCL初始化显式传`device_id=cuda:0`。
 - lifecycle先配置phase的`requires_grad`与optimizer ownership，再按phase构造`DistributedObjective`和PyTorch`DistributedDataParallel`。wrapper拥有真实model，forward直接产生objective loss；phase内parameter graph稳定，phase boundary全rank同序重构。
-- correctness-first配置为`find_unused_parameters=True`、`gradient_as_bucket_view=True`、`static_graph=False`。只有该phase的目标机DDP logging证明graph固定后才能收紧；禁止重新引入逐parameter gradient `all_reduce`、dummy trigger或每step reducer重建。
+- phase-local objective已由目标机DDP logging和required-group audit证明：phase声明的active参数均参与稳定反向图。因此固定使用`find_unused_parameters=False`、`gradient_as_bucket_view=True`、`static_graph=True`；若未来候选引入条件分支，必须先修正phase ownership或拆phase并新增图稳定性测试，不得静默放宽成兼容模式。禁止重新引入逐parameter gradient `all_reduce`、dummy trigger或每step reducer重建。
 - NCCL data group只执行DDP reducer和GPU tensor collectives；辅助Gloo control group执行descriptor核对、小型rank state gather、rank-0 commit status与teardown readiness。model/resume/optimizer setup和phase transition等低频rank-local动作必须在进入下一次DDP collective前汇报任一rank异常；两组在所有rank同序创建和销毁，训练热循环不新增barrier。
 - run开始时先核对config、resume cursor、stop target与checkpoint callback presence；scalar loss/metrics按冻结descriptor排序并pack成一次collective，字段或dtype跨rank不一致时在进入NCCL metric collective前由control group全部失败。
 - throughput固定记录`steps_per_second`、`local_work_units_per_second`和`global_work_units_per_second`；后者为本次进程已完成的全局work units除以active elapsed，不能写成`steps/s × world_size`。
@@ -152,6 +154,7 @@ DistributedContext.run_rank_zero(label, action) -> rank0 result/status broadcast
 | 条件 | 行为 |
 |---|---|
 | phase parameter名称/shape/dtype/requires-grad跨rank不同 | DDP构造前control descriptor检查令所有rank失败 |
+| phase声明active参数但某step不参与loss | DDP/static-graph与required-group gate失败；修正phase合同，不启用unused兼容扫描 |
 | objective遗漏某rank的metric或scalar类型漂移 | packed metric reduce前失败，不进入次序不同的NCCL collectives |
 | rank-0 checkpoint encode/write抛异常 | Gloo广播原error type/message；peer不等待NCCL watchdog |
 | 非rank-0尝试构造完整model/optimizer checkpoint | unit/static gate失败 |
@@ -184,7 +187,10 @@ for parameter in active:
 configure_phase(model, phase)
 owner = DistributedObjective(plugin.objective, model)
 execution = DistributedDataParallel(
-    owner, find_unused_parameters=True, gradient_as_bucket_view=True
+    owner,
+    find_unused_parameters=False,
+    gradient_as_bucket_view=True,
+    static_graph=True,
 )
 loss = execution(batches, phase_context)
 loss.backward()

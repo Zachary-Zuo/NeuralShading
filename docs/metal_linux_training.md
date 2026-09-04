@@ -2,7 +2,7 @@
 
 ## 它是什么
 
-公开方法 `metal` 把 vMaterials 2 Metal 的原生 MDL 参数、52 组 texture asset 与 online reference query 编译成统一的 `prepare/evaluate/sample/pdf` neural material。单个 `--devices` 序号直接单卡训练；Linux 指定多个序号时由统一入口自动启用 torchrun/NCCL DDP。每个phase使用真实PyTorch reducer做bucketed gradient同步，只有 rank 0 构造并写出完整 checkpoint/metrics，不保存 response batch。
+公开方法 `metal` 把 vMaterials 2 Metal 的原生 MDL 参数、52 组 texture asset 与 online reference query 编译成统一的 `prepare/evaluate/sample/pdf` neural material。单个 `--devices` 序号直接单卡训练；Linux 指定多个序号时由统一入口自动启用 torchrun/NCCL DDP。每个phase使用真实PyTorch static-graph reducer做bucketed gradient同步，只有 rank 0 构造并写出完整 checkpoint/metrics，不保存 response batch。
 
 完整训练固定两个端到端phase，总预算仍为120000步：
 
@@ -23,7 +23,7 @@ proposal从第1步使用非零、按phase step决定且可恢复的冻结线性r
 
 旧四phase GPU5结果与20k checkpoint只保留为根因证据，不能用于当前实现的速度、质量或readiness结论。旧20k只完成codec warmup，evaluator与proposal没有任何gradient/update coverage；viewer白模不是“训练较差”，而是部署了尚未开始训练的evaluator。当前Windows RTX 4090共享路径证据见任务artifact：同一当前descriptor下的16-step与544-step run都覆盖全部13组参数并完成joint/QAT；固定shaderball球面区域的reference-neural线性MAE从`0.4226`降至`0.1336`（约68.4%），neural平均亮度从`0.4314`降至`0.1250`，reference为`0.0478`。这证明最终evaluator不再保持初始化白模、训练信号能穿过checkpoint/package/viewer链路，但544步输出仍偏中性且不够接近reference，只是学习与部署正确性diagnostic，不是formal质量结论。此前不同implementation identity的544-step观察值`0.0621`只保留为历史证据，不与当前结果混用。
 
-Linux目标机尚需在同一commit上重跑full-cohort smoke与120k；旧约52小时ETA随旧phase、逐step group thrash和旧metrics一并作废。新的绝对吞吐、显存与ETA只使用目标机修复后metrics报告，不设事后hard gate。
+Linux RTX A6000目标机已在同一实现上完成full-cohort smoke、1/2/3/4/5卡weak scaling和5卡第65步受控停点；两卡与五卡的post-warmup global work/s都高于单卡，跨64-step group boundary无timeout。该证据验证训练控制面、pipeline与扩展趋势，不代替120000步formal质量训练；旧约52小时ETA随旧phase、逐step group thrash和旧metrics一并作废。正式训练的新绝对吞吐、显存与ETA仍只使用目标机当前metrics报告，不设事后质量门。
 
 ```bash
 PYTHONPATH=src conda run --no-capture-output -n neural-shading python tools/learning/preflight_metal_fused.py \
@@ -41,6 +41,8 @@ MDL artifact 的 decoded texture payload 使用 cache 根下的 `resource-payloa
 首次没有编译缓存时，全量typed state的SDK编译仍需执行一次；已有`build/mdl-reference/cache`时，训练入口不会为了构造全量plan预先读取约300 GB的重复hardlink payload，而是随实际reference group/tile使用按需读取。后续运行应直接复用cache。
 
 训练热循环使用`group-block-balanced@1`。evaluator与method sampler在同一global step选择同一个execution group，一个group连续服务64步；完整cycle按group record数加权，DDP rank按确定性stride分区，validation再使用冻结的104729-block offset形成独立holdout group流。backend residency仍有界，但只在block或validation边界发生必要的miss/create/evict，不再让178 groups配8-resident LRU形成每step稳态thrash。训练session只请求`evaluate`，不会再为未使用的reference `sample/pdf` pass付构建成本。
+
+训练数据面只有一个`PipelineOnlineDataSession`。engine提交完整step，session在不跨phase、validation、checkpoint、stop边界的前提下维持有界ready ring；Metal host decode可以提前提交，CUDA residency和Falcor dispatch仍由rank主进程拥有。连续两个同group evaluator step先冻结各自logical request与RNG，再合并为一次reference dispatch并按ID切回，因此`reference_batch_steps: 2`减少Vulkan全局同步/API transition而不改变样本、invalid top-up或resume cursor。`ready_batches: 1`、`reference_batch_steps: 1`使用同一实现表达同步诊断基线，不保留旧session兼容入口。
 
 metrics每个log window记录完整step wall与prepare wall的count/mean/median/p90/max、正确的local/global work throughput、DDP bucket/parameter bytes、phase-local/rolling rate、group ID前缀、candidate/rejection，以及session hit/miss、group create/evict、runtime/pass/resource/slot build、operation dispatch和resident数。关键stage另给出逐rank原值、rank min/mean/max与straggler rank，group ID前缀也逐rank记录，`profile/backward_reducer_gpu_seconds`明确包含backward和DDP reducer。training与validation分别使用`profile/reference_*`和`profile/validation_reference_*`，不会把validation提前materialize的group误记为下一段训练成本。第一个step或block转换的冷构建必须在window max中可见；普通step不为这些CPU counter增加GPU host sync。
 
