@@ -1,156 +1,110 @@
-# vMaterials 2 Metal：Windows正确性验证与Linux长训练
+# vMaterials 2 Metal：预算内模型的 Linux pilot
 
 ## 它是什么
 
-公开方法 `metal` 把 vMaterials 2 Metal 的原生 MDL 参数、52 组 texture asset 与 online reference query 编译成统一的 `prepare/evaluate/sample/pdf` neural material。单个 `--devices` 序号直接单卡训练；Linux 指定多个序号时由统一入口自动启用 torchrun/NCCL DDP。每个phase使用真实PyTorch static-graph reducer做bucketed gradient同步，只有 rank 0 构造并写出完整 checkpoint/metrics，不保存 response batch。
+公开方法 `metal` 当前指向 `metal-budgeted-neural-material`。它保留 vMaterials 2 Metal 的原生 MDL locator、typed 参数、图和纹理资源，用对应 reference 在线产生 GT，再编译为固定两次 asset 读取、固定 PreparedState 和固定方向求值成本的 neural material。
 
-完整训练固定两个端到端phase，总预算仍为120000步：
+当前阶段不是恢复旧 full long，而是在同一个 Tungsten 材质上比较两个完全 matched 的目标预算内结构：
 
-1. `joint-coarse-to-fine`运行105000步。每一步都执行asset、online reference evaluator和method sampler三条route；codec、asset adapter、typed compiler、prepare、direction/evaluator及proposal从第1步共同更新。codec reconstruction和teacher/compiler项是最终appearance目标的辅助项，不是独立预训练。
-2. `qat-refine`运行15000步，继续同一appearance与proposal目标。FP32 master不被覆盖；实际会部署的weights在forward中做FP16 straight-through fake quantization，high/low grid继续做INT8 STE，敏感插值与累积保持FP32。
+- `metal_budgeted_hybrid_v1`：解析双 lobe 与神经输出共同形成最终线性 RGB `f`；
+- `metal_budgeted_direct_control_v1`：相同 MLP、state、asset 和训练预算，最终 `f` 只消费 direct positive RGB，另外三个输出只训练为不进入结果的 core auxiliary。
 
-proposal从第1步使用非零、按phase step决定且可恢复的冻结线性ramp；`luminance(f)|cosθi|` target与shared evaluator/latent显式detach，proposal loss只拥有`proposal_sampler`梯度。`target-visible-optimized-state-control`只作为训练control，不进入runtime pack；QAT冻结该training-only teacher，但不改变最终evaluator输入语义。
+两者的 `evaluate` 都是 10,368 dense MAC/direction，prepare decoder 是 2,560 dense MAC，PreparedState 为 160 B，运行时 asset 读取数为 2。hard bound 是 `evaluate ≤20,000 MAC/direction`、PreparedState `≤192 B`；prepare、analytic 运算、weights、asset bytes 和实测 latency 另行完整报告。
 
-## 三份配置的边界
+旧 `metal_fused_full_v1`、`metal-windows-smoke.yaml`、`metal-linux-smoke.yaml` 和 `metal-linux-long.yaml` 只解释历史 checkpoint/package，不再是 canonical 训练入口，也不能 resume 到新方法。
 
-| 配置 | source范围 | batch geometry | 用途 |
-|---|---:|---:|---|
-| `metal-windows-smoke.yaml` | registry机械选择的3个stratified export / 3个texture set | 小batch、16步 | RTX 4090上的两phase lifecycle、gradient/update、resume与部署链路验证 |
-| `metal-linux-smoke.yaml` | 全部692个opaque export / 52个texture set | 与long相同 | Linux目标机资源、两phase与完整source plan gate |
-| `metal-linux-long.yaml` | 全部692个opaque export / 52个texture set | asset 12、evaluator 64、sampler 64 | 120000步首轮质量训练 |
+## 为什么只在 Linux 运行
 
-三份 run 位于 `configs/training/runs/`，共同组合 `methods/metal.yaml`、独立 data fragment 和 recipe；resolver 严格合并并输出 plan identity。Linux smoke 与 long 的 source、online state recipe、model profile、phase 顺序、route options、parameter groups、loss、precision、optimizer 和 batch geometry 对齐，只允许 run class、预算及 log/audit/validation cadence不同。Windows只缩小正确性验证的 source 与 batch，不改变 full model shape、route/loss 拓扑、proposal schedule 类型或 required component；训练、checkpoint、readiness、compiler 和 viewer 上层代码不按操作系统分支。
+本轮 Windows 只做 unit、静态 layout 和必要的纯模型小测试。不要在 Windows 启动 online reference、256-batch validation、single-material pilot、完整 runtime baseline 或旧 long；这些操作曾造成整机失去响应，而且不能提供当前结构选择所需的 Linux matched 证据。
 
-旧四phase GPU5结果与20k checkpoint只保留为根因证据，不能用于当前实现的速度、质量或readiness结论。旧20k只完成codec warmup，evaluator与proposal没有任何gradient/update coverage；viewer白模不是“训练较差”，而是部署了尚未开始训练的evaluator。当前Windows RTX 4090共享路径证据见任务artifact：同一当前descriptor下的16-step与544-step run都覆盖全部13组参数并完成joint/QAT；固定shaderball球面区域的reference-neural线性MAE从`0.4226`降至`0.1336`（约68.4%），neural平均亮度从`0.4314`降至`0.1250`，reference为`0.0478`。这证明最终evaluator不再保持初始化白模、训练信号能穿过checkpoint/package/viewer链路，但544步输出仍偏中性且不够接近reference，只是学习与部署正确性diagnostic，不是formal质量结论。此前不同implementation identity的544-step观察值`0.0621`只保留为历史证据，不与当前结果混用。
+正式运行只使用原生 Linux 单 GPU。它不是 DDP scaling 实验，不自动追加 seed、formal cohort、teacher 或旧 long。
 
-Linux RTX A6000目标机已在同一实现上完成full-cohort smoke、1/2/3/4/5卡weak scaling和5卡第65步受控停点；两卡与五卡的post-warmup global work/s都高于单卡，跨64-step group boundary无timeout。该证据验证训练控制面、pipeline与扩展趋势，不代替120000步formal质量训练；旧约52小时ETA随旧phase、逐step group thrash和旧metrics一并作废。正式训练的新绝对吞吐、显存与ETA仍只使用目标机当前metrics报告，不设事后质量门。
+## 冻结的 matched pair
+
+| 项 | hybrid | direct |
+|---|---|---|
+| run | `metal-budgeted-hybrid-pilot.yaml` | `metal-budgeted-direct-pilot.yaml` |
+| source | Tungsten Brushed Medium Light Brushing exact locator | 相同 |
+| train phase | 1792 step `joint-response-fit` | 相同 |
+| QAT phase | 256 step `deployment-qat-refine` | 相同 |
+| batch / direction | 64 / 1 | 相同 |
+| validation | 每128 step，256 batch，seed `2026090402` | 相同 |
+| asset mode | `encoder-only@1` | 相同 |
+| 唯一结构轴 | hybrid correspondence/profile | direct correspondence/profile |
+
+方向 recipe 按 batch 四等分为 uniform、cosine、距镜面反射方向 0–8° 和 grazing；空间 recipe 使用固定 anchor、zero/one/four-native-texel footprint 配额与沿 x/y 平衡的一 texel paired UV。该 paired UV 直接监督空间梯度，避免只有颜色均值而看不到微小划痕。
+
+fresh run 在第一次 model forward 前，只用 training reference 和 seed `2026090401`生成16,384个 `target_f`，冻结逐通道 P50 scale、P95 peak 与 energy epsilon并写入 checkpoint。resume 必须复用 checkpoint calibration，不能重新估计或读取 validation 数据。
+
+## 生成交接清单
+
+在代码与配置已经同步到目标 Linux 主机的同一仓库快照后生成或复核清单：
 
 ```bash
-PYTHONPATH=src conda run --no-capture-output -n neural-shading python tools/learning/preflight_metal_fused.py \
-  --output artifacts/metal-linux-training/full-cohort-preflight.json
+conda run -n neural-shading python tools/learning/build_metal_linux_handoff.py \
+  --output artifacts/09-04-metal-neural-budgeted-redesign/linux-pilot-handoff.json
 ```
 
-preflight必须得到692 exports、178 execution groups、52 texture sets、64-entry parameter schema table、4种texture role class、6种typed parameter type、全部responsibility，以及20个required component和11-component proposal闭包。它与3-export Windows optimization subset相互独立。
+清单包含 method descriptor、direct/hybrid profile、配置 hash、单 GPU命令和 `automatic_followups=[]`。目标机未执行前，`linux_execution_status`保持`pending-on-target-host`。
 
-训练样本与 MDL 编译缓存是两种不同的东西。`OnlineTrainingProducer` 每个 route 都通过 GPU-resident reference session即时生成target，不写入或读取磁盘batch；训练checkpoint、metrics、summary和review写在下面命令指定的`artifacts/metal-linux-training/...`目录。`build/mdl-reference/cache`只保存可重建的MDL SDK编译产物，用于跨step复用，不是训练数据集。content-addressed目录发布会在短暂文件句柄占用时有界重试；若另一进程先发布同identity，则加载并验证胜出artifact，绝不覆盖语义不同或损坏的目录。
+## Linux 执行顺序
 
-MDL artifact 的 decoded texture payload 使用 cache 根下的 `resource-payloads/<前两位>/<sha256>` 内容寻址存储，artifact 内的原始 `data` 路径通过 hardlink 指向共享内容，manifest 的逐文件哈希和 runtime 语义不变。这样不同 typed state 仍可有独立 argument/code artifact，但不会为同一纹理重复保存几十 MiB。首次构建仍会 eager materialize 全部 typed state，因此它会增加启动时间；这不改变 online query 或训练 step 的定义。
-
-启动时对已有 artifact 的完整性校验会复用同一进程内、按文件 inode 与时间戳失效的有界 SHA-256 结果；共享 hardlink 的 decoded payload 不会被 692 个 typed state 重复读盘。对 decoded texture 的逐文件哈希现在延迟到该 artifact 第一次实际绑定 reference/native asset 时执行，启动阶段仍检查 manifest、文件存在性、尺寸、路径、HLSL/argument/RO 文件哈希；首次绑定通过 `FileResourcePayload.read_bytes()` 或 asset collection 的 `verify_texture_payloads()` 完整复核，删除或修改 payload 会 fail closed。这样不会把在线训练变成离线 batch，也不会降低完整性标准。
-
-首次没有编译缓存时，全量typed state的SDK编译仍需执行一次；已有`build/mdl-reference/cache`时，训练入口不会为了构造全量plan预先读取约300 GB的重复hardlink payload，而是随实际reference group/tile使用按需读取。后续运行应直接复用cache。
-
-训练热循环使用`group-block-balanced@1`。evaluator与method sampler在同一global step选择同一个execution group，一个group连续服务64步；完整cycle按group record数加权，DDP rank按确定性stride分区，validation再使用冻结的104729-block offset形成独立holdout group流。backend residency仍有界，但只在block或validation边界发生必要的miss/create/evict，不再让178 groups配8-resident LRU形成每step稳态thrash。训练session只请求`evaluate`，不会再为未使用的reference `sample/pdf` pass付构建成本。
-
-训练数据面只有一个`PipelineOnlineDataSession`。engine提交完整step，session在不跨phase、validation、checkpoint、stop边界的前提下维持有界ready ring；Metal host decode可以提前提交，CUDA residency和Falcor dispatch仍由rank主进程拥有。连续两个同group evaluator step先冻结各自logical request与RNG，再合并为一次reference dispatch并按ID切回，因此`reference_batch_steps: 2`减少Vulkan全局同步/API transition而不改变样本、invalid top-up或resume cursor。`ready_batches: 1`、`reference_batch_steps: 1`使用同一实现表达同步诊断基线，不保留旧session兼容入口。
-
-metrics每个log window记录完整step wall与prepare wall的count/mean/median/p90/max、正确的local/global work throughput、DDP bucket/parameter bytes、phase-local/rolling rate、group ID前缀、candidate/rejection，以及session hit/miss、group create/evict、runtime/pass/resource/slot build、operation dispatch和resident数。关键stage另给出逐rank原值、rank min/mean/max与straggler rank，group ID前缀也逐rank记录，`profile/backward_reducer_gpu_seconds`明确包含backward和DDP reducer。training与validation分别使用`profile/reference_*`和`profile/validation_reference_*`，不会把validation提前materialize的group误记为下一段训练成本。第一个step或block转换的冷构建必须在window max中可见；普通step不为这些CPU counter增加GPU host sync。
-
-## Linux部署与smoke gate
-
-先按[统一Reference Backend部署](reference_backend_deployment.md)部署锁定的Falcor/MDL toolchain，并由用户把`assets/source-materials/mdl-vmaterials2/2.4.0/Materials`复制到目标机。单卡 launcher 接受一个十进制`CUDA_VISIBLE_DEVICES`，并把Falcor映射到同一物理GPU、Torch映射到进程内`cuda:0`。若要在 GPU2、3、4 上运行一个同步 DDP 作业，使用：
+先部署锁定的 reference backend，并确认 source assets 已由用户复制到 `assets/source-materials/mdl-vmaterials2/2.4.0/Materials`：
 
 ```bash
-NCLS_DDP_DEBUG=1 bash scripts/run_falcor_python.sh --gpus 2,3 -- \
-  -m pytest tests/integration/test_distributed_training.py -q
-
-bash scripts/run_falcor_python.sh -m ncls train \
-  configs/training/runs/metal-linux-smoke.yaml --devices 2,3,4 \
-  --output artifacts/metal-linux-training/ddp/checkpoint.pt
+CUDA_VISIBLE_DEVICES=0 bash scripts/deploy_reference_linux.sh
+CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls reference doctor
 ```
 
-```bash
-CUDA_VISIBLE_DEVICES=5 bash scripts/deploy_reference_linux.sh
-CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls.cli reference doctor
+然后严格按交接清单中的命令串行执行。每个候选先停在 step 0，产生 calibration checkpoint，并做独立 validation：
 
-CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls train \
-  configs/training/runs/metal-linux-smoke.yaml --devices 5 \
-  --output artifacts/metal-linux-training/smoke/checkpoint.pt
+```bash
+CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls train \
+  configs/training/runs/metal-budgeted-hybrid-pilot.yaml \
+  --devices 0 --stop-at-step 0 \
+  --output artifacts/metal-budgeted-pilot/hybrid/checkpoint.pt
+
+CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls validate \
+  artifacts/metal-budgeted-pilot/hybrid/checkpoint.pt --batches 256 --device 0
 ```
 
-只有目标Linux主机自己的smoke checkpoint、metrics、summary和review可以作为Linux gate；Windows证据不能替代它。检查：
-
-- `checkpoint.review.json`中`complete=true`、metric全finite、gradient/update coverage完整；
-- 两个phase都有真实step，`runtime_fp16_quantization_trace`存在且finite；
-- `source_count=692`，peak VRAM不超过目标卡可用容量；
-- `checkpoint.summary.json`与review的config/checkpoint hash一致；
-- 没有host response readback或磁盘batch；DDP logging显示phase-local reducer、有限bucket与预期parameter bytes，production hot path不存在逐parameter gradient collective；
-- checkpoint的rank state/assembly、rank-0 commit wait和teardown均有对称状态；timeout能由rank stage/straggler或NCCL diagnostic定位，不能只留下无上下文watchdog消息。
-
-## 启动、恢复与停止long run
-
-先用long config自身运行16步并正常写出可恢复checkpoint；这是同一config identity内的启动点，不拿smoke config checkpoint跨config恢复：
+先运行到可恢复的 step 128，再从同一 checkpoint 继续到冻结的 2048-step cap：
 
 ```bash
-CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls train \
-  configs/training/runs/metal-linux-long.yaml --devices 5 \
-  --output artifacts/metal-linux-training/long/checkpoint.pt \
-  --stop-at-step 16
+CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls train \
+  configs/training/runs/metal-budgeted-hybrid-pilot.yaml \
+  --devices 0 --resume artifacts/metal-budgeted-pilot/hybrid/checkpoint.pt \
+  --stop-at-step 128 \
+  --output artifacts/metal-budgeted-pilot/hybrid/checkpoint.pt
 
-CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls train \
-  configs/training/runs/metal-linux-long.yaml --devices 5 \
-  --output artifacts/metal-linux-training/long/checkpoint.pt \
-  --resume artifacts/metal-linux-training/long/checkpoint.pt
+CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls train \
+  configs/training/runs/metal-budgeted-hybrid-pilot.yaml \
+  --devices 0 --resume artifacts/metal-budgeted-pilot/hybrid/checkpoint.pt \
+  --output artifacts/metal-budgeted-pilot/hybrid/checkpoint.pt
 ```
 
-`--stop-at-step N` 会在 global step `N` 写出包含 resolved plan、optimizer、scheduler、precision、逐 rank RNG/data cursor 与 hook cursor 的 `TrainingCheckpoint@1` 后正常退出。已经运行的进程可用一次 `Ctrl+C` 停止；这会放弃正在执行的 step，随后从最近的 `checkpoint.stepXXXXXXXX.pt` 恢复，不修改 YAML：
+direct 使用 `metal-budgeted-direct-pilot.yaml` 和 `artifacts/metal-budgeted-pilot/direct/checkpoint.pt` 重复相同顺序。不要并发运行两者；这会改变 reference/显存竞争口径。
+
+## 观察与停止条件
+
+进度与 JSONL 分别显示：
+
+- `loss/optimization_total`：实际反向目标；
+- `loss/appearance`：逐通道 log/linear、chroma、peak、spatial-gradient 与 semantic runtime；
+- `loss/proposal`：连续密度目标，可因合法 density 大于1而为负；
+- `loss/proposal_weight`：实际组合权重。
+
+因此负的 proposal NLL 不是复数 loss，也不能通过绝对值“修正”。任何 NaN/Inf、required group 零梯度/未更新、sample↔PDF 不一致或 source/query identity 漂移才是实现失败。
+
+只读监控已有输出：
 
 ```bash
-latest=$(ls -1 artifacts/metal-linux-training/long/checkpoint.step*.pt | sort | tail -n 1)
-CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls train \
-  configs/training/runs/metal-linux-long.yaml --devices 5 \
-  --output artifacts/metal-linux-training/long/checkpoint.pt --resume "$latest"
-```
-
-监控只读取 engine 已有输出，不增加 watcher 或第二训练进程：
-
-```bash
-tail -f artifacts/metal-linux-training/long/checkpoint.metrics.jsonl
+tail -f artifacts/metal-budgeted-pilot/hybrid/checkpoint.metrics.jsonl
 nvidia-smi dmon -s pucvmet -d 5
 ```
 
-long config每5000步validation并写periodic checkpoint，总计24个cadence点；phase boundary落在cadence点上。Linux smoke与long使用同一batch geometry，因此以修复后Linux smoke review中的phase-local step rate和`peak_memory_bytes`估算long run：
+达到 cap 后按预登记规则比较微小划痕的 paired-UV/spatial-gradient、逐通道 RGB/chroma、高光 peak/energy 与相同静态成本。质量较低是可以接受并必须如实记录的 empirical outcome；不得自动增加step、seed、asset refinement或模型宽度。
 
-```text
-ETA_seconds ≈ 120000 / smoke_median_steps_per_second
-checkpoint_disk ≈ 25 × smoke_checkpoint_bytes
-```
+## 结构选择后的边界
 
-这两个值是目标机的容量规划观察值，不是质量或完成门。若吞吐/显存异常，按`implementation defect / protocol defect / resource defect / normal empirical outcome`分类；前三类停止并修复或回planning，最后一类照实进入结果审阅，不自动加预算或换seed。
-
-不得继续使用旧四phase run推导约52小时的ETA。新的ETA只在目标Linux以当前semantic fingerprint完成full-cohort smoke后计算，并把一次性MDL materialization、block边界group build、validation/checkpoint I/O与steady-state step分别列出。它只用于容量规划，不是质量或完成保证。
-
-## 训练完成后的首轮审阅
-
-每次 `ncls train` 都会生成 `checkpoint.review.json`。它记录各 phase 初尾 window、固定 2000 次 bootstrap 的 mean-loss delta 区间、finite/gradient/update 健康状态、peak VRAM、step rate、checkpoint/metrics bytes、reference 提交 wall time及 forward/backward/optimizer GPU 时间。loss delta 只作 report-only 观察，不被事后改成质量 hard gate。
-
-训练完成后可以执行一次基础checkpoint evaluation与一个代表性package export：
-
-```bash
-CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls validate \
-  artifacts/metal-linux-training/long/checkpoint.pt --batches 8 --device 5
-
-CUDA_VISIBLE_DEVICES=5 bash scripts/run_falcor_python.sh -m ncls export \
-  artifacts/metal-linux-training/long/checkpoint.pt \
-  artifacts/metal-linux-training/long/package --material-index 0
-```
-
-review明确写入`automatic_followups=[]`与`next_action=user-review-required`。它不会启动formal matrix、更多seed、消融、compact、distillation或Pareto；这些都等待用户先看首轮效果后另行决定。
-
-`ncls export` 只接受 exact identity、`run_class=formal`、phase complete 且 required gradient/update coverage 完整的 checkpoint。Windows 短训即使跑完所有 phase 也只能显式生成 evaluate-only 诊断预览：
-
-```powershell
-.\scripts\prepare_metal_viewer.ps1 `
-  -Checkpoint artifacts\metal-root-fix\windows-learning-probe-final\checkpoint.pt `
-  -OutputRoot artifacts\viewer\metal-diagnostic `
-  -DiagnosticPreview -DiagnosticLimit 1
-```
-
-diagnostic package移除`sample/pdf` capability，并在package/catalog/capture中标记`exact-diagnostic-evaluator-preview`。默认脚本指向120k formal checkpoint；旧20k和仅shape-compatible checkpoint不会再被接受。
-
-交接manifest由以下命令生成，绑定当前commit、toolchain/config/registry/method hashes和上述命令；`linux_execution_status`在目标机运行前保持`pending-on-target-host`：
-
-```bash
-conda run -n neural-shading python -m tools.learning.build_metal_linux_handoff \
-  --output artifacts/metal-linux-training/handoff.json
-```
+只有 direct/hybrid 的 Linux eager 与 QAT 结果完成 failure classification 后，才冻结入选 profile并实现 Slang/package facet。随后再做 quantized Python↔Slang parity、Package@2、typed edit/asset swap与新 package 的 matched runtime。完整 runtime 仍只在 Linux/headless 一次性测量；Windows只允许有硬上限的接口 preflight，不形成 latency 结论。

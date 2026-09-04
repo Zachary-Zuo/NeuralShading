@@ -22,7 +22,8 @@ save/load_training_checkpoint_v1(path) -> TrainingCheckpoint@1
 load_evaluation_snapshot(path) -> EvaluationSnapshot
 assess_checkpoint_readiness(checkpoint, descriptor, mode="formal" | "diagnostic-evaluator")
   -> CheckpointReadiness@1
-MetalAssetCooker.cook_asset(asset_index, mode, refinement_steps, refinement_bound) -> MetalCompiledAssetState
+MetalBudgetedAssetCooker.cook(encoded_values, mode, objective, refinement_steps,
+                              refinement_bound) -> MetalBudgetedCookedAsset
 ```
 
 ## 3. Contracts
@@ -35,8 +36,8 @@ MetalAssetCooker.cook_asset(asset_index, mode, refinement_steps, refinement_boun
 - asset identity包含schema、role、domain、mip与payload；tile request显式给出asset/domain/mip/origin/extent/halo。collection使用有界working-set cache和lease；活跃tile不得被evict，batch构造失败也必须释放已经取得的lease。
 - asset route按`asset/domain` round-robin推进，`asset_indices`只能选择已验证的子cohort；不得让第一个大纹理domain长期饿死其余role或asset。Metal source patch从canonical decoded mip chain随机访问相邻两级，保留transfer、normal renormalization和address mode，不持久化派生mip或训练batch。
 - MDL decoded payload的物理通道数可能少于registry语义通道数（例如灰度`Sint8`对应单一`RGB` role）；asset collection只允许已定义的scalar→RGB广播和RGB→RGB+A默认alpha补全，其余不完整layout必须fail closed，不能靠reshape、截断或重复通道掩盖schema错误。
-- Metal新资产cook固定三条不同identity：`encoder-only`、`encoder-bounded-refinement`、`direct-optimized-control`。三者必须使用同一full-profile shared decoder和packing；bounded refinement从encoder state出发并投影到显式bound，direct control从自由state出发。优化两条路径冻结shared decoder，不能把decoder漂移混入asset state。
-- `metal_fused_full_v1`训练形态固定为9 slots、32×64 typed set、64/128/192/256 shared U-Net、high/low各8通道、rank-8 adapter、6+4 evaluator lobes、11-component matched proposal和四级angular bank。smoke只能缩step、batch、tile/cohort，不能缩这些shape或关闭required branch。BF16 phase中，frame lerp与一维/二维random-access插值显式在FP32执行，其余网络继续autocast。
+- canonical Metal资产cook固定三条不同identity：`encoder-only@1`、`bounded-refinement@1`、`direct-control@1`。三者共用相同的两个RGBA8 SNORM部署asset shape；bounded refinement从encoder结果出发并投影到显式bound，direct control从独立可优化state出发。优化路径不得改变shared runtime decoder，也不得冒充pure compiler/editability证据。
+- `metal_budgeted_hybrid_v1`和`metal_budgeted_direct_control_v1`共享同一静态layout：两次asset读取、`24→32→32→24` prepare decoder、`28→64→64→64→6` evaluator、160 B PreparedState；hybrid/direct差异只能是已登记的final response解释。旧`metal_fused_full_v1`只在历史任务与显式control中保留，不是product registry或新训练配置的兼容目标。
 - 三种batch不共享dummy字段。method descriptor必须严格登记batch dependencies与parameter ownership。
 - engine只启用phase groups；optimizer状态以parameter name保存，`carry-overlap`仅传递同名交集。autocast/scaler由phase配置。方法只能通过 plugin lifecycle/objective facet 提供行为，不能拥有专用 runner。
 - 每步GPU聚合finite检查；audit cadence验证每个required group存在nonzero gradient和实际参数更新。metrics只在log cadence同步。
@@ -63,8 +64,8 @@ MetalAssetCooker.cook_asset(asset_index, mode, refinement_steps, refinement_boun
 | v4 checkpoint 传给新 train resume | v1 loader明确拒绝；只读 evaluation importer 仍可加载 |
 | typed-state recipe schema/字段、registry locator或range未知 | plan/session创建前拒绝 |
 | resume的typed-state pool identity漂移 | producer恢复拒绝，不恢复任何cursor |
-| Metal profile count、layout identity、slot/token上限或required route不精确匹配full profile | model/method config构造拒绝，不创建缩小版identity |
-| Metal full method在runtime compiler完成前被要求`compile_program/compile_asset/compile_instance` | fail closed并指出runtime package边界，不生成伪package；`sample/pdf`数学实现不得随之降级 |
+| Metal profile identity、layout identity、slot/token上限、两次asset读取或required route漂移 | model/method config构造拒绝，不创建隐式兼容identity |
+| budgeted pilot完成结构选择前请求`compile_program/compile_asset/compile_instance` | fail closed并指出pilot selection边界，不生成伪package；`sample/pdf`数学实现不得随之降级 |
 | optimized Metal asset path steps非正、bounded refinement超出`(0,0.5]`或encoder-only携带hidden steps | cook在编码/优化前拒绝 |
 | BF16进入FP32 random-access table却使用不同dtype的lerp weight | 实现测试失败；坐标、表和weight统一提升FP32后再插值 |
 
@@ -73,7 +74,7 @@ MetalAssetCooker.cook_asset(asset_index, mode, refinement_steps, refinement_boun
 - Good：MaterialX的base-color/roughness/metalness/normal按各自role共享一个collection，encoder与decoder联合训练；phase checkpoint同时冻结asset collection identity与每个required group的梯度/更新覆盖。
 - Good：同一Metal graph的base export与多个typed states进入一个group；训练batch先选group再选group-local state，checkpoint冻结完整state pool identity。
 - Good：Metal typed edit只重编`MaterialProgramState`，替换texture bundle只改变`AssetState`；相邻mip分别经shared encoder/decoder后在structured state中连续插值。
-- Good：Windows smoke从第1步同时执行asset/evaluator/sampler三条route，13个required parameter groups都记录finite/nonzero/update coverage；第二phase再以FP32执行部署态QAT。
+- Good：Linux single-material pilot从第1步同时执行asset encoder、typed compiler、semantic prepare、evaluator与proposal六组参数；第二phase再以FP32执行部署态QAT。
 - Base：常量1×1资产仍经同一个tile+halo请求与lease协议，只是其canonical mip chain长度为1。
 - Bad：每个batch新建collection使cache永远失效；在tile lease存活时驱逐payload；或仅因loss finite/shape compatible就把非formal、未完成checkpoint标成正式可部署。
 - Bad：预先离线编码52个纹理grid后只训练evaluator；把bounded refinement和direct control写入同一个asset identity；或为了mixed precision把angular lookup改成最近邻。
@@ -82,7 +83,7 @@ MetalAssetCooker.cook_asset(asset_index, mode, refinement_steps, refinement_boun
 
 - unit：YAML resolve/plugin、三种batch、multi-asset tile+halo、phase graph、carry-overlap resume、component正负例、checkpoint v1 与 legacy v4只读；
 - integration：generic recipe registry扩展Metal train/validation states并验证非默认snapshot IDs不重叠、pool identity可恢复；
-- GPU：NVIDIA Python/Slang evaluator与sampler梯度；Metal full-shape finite/nonnegative、typed missing/discrete与bundle分离、三路径asset cook、BF16/QAT敏感路径、Python/Slang matched proposal parity，以及真实online两phase smoke/resume/evaluate；
+- GPU：NVIDIA Python/Slang evaluator与sampler梯度；Metal budgeted finite/nonnegative、typed missing/discrete与asset分离、三路径asset cook、BF16/QAT敏感路径、Python/Slang matched proposal parity，以及Linux真实online两phase smoke/resume/evaluate；
 - static：无固定lifecycle、旧schema reader、offline batch或family-specific producer。
 
 ## 7. Wrong vs Correct
@@ -118,6 +119,69 @@ spatial = frozen_asset_grids[asset_index]
 # 对：单一正式签名按route请求真实相邻mip patch，codec端到端参与反向。
 tensors = adapter.sample_tensors(source_index, generator, route.options)
 spatial = model.spatial_state(tensors)
+```
+
+## Method-owned diagnostic readiness policy 合同
+
+### 1. Scope / Trigger
+
+修改 `MethodDescriptor`、checkpoint readiness，或让任一新方法支持未完成 checkpoint 的 evaluator-only diagnostic preview 时适用。它防止通用训练层按 `method_key` 猜测方法专属参数组与阶段，并确保 policy 变化进入 descriptor identity。
+
+### 2. Signatures
+
+```text
+MethodReadinessPolicy(required_parameter_groups: tuple[str, ...],
+                      allowed_phases: tuple[str, ...],
+                      minimum_global_step: int = 1)
+MethodDescriptor.readiness_policies: Mapping[str, MethodReadinessPolicy]
+assess_checkpoint_readiness(checkpoint, descriptor,
+                            mode="diagnostic-evaluator")
+  -> CheckpointReadiness@1
+```
+
+### 3. Contracts
+
+- `diagnostic-evaluator` 是当前唯一允许由方法声明的非正式消费 policy；formal export 与纯 visual diagnostic 的公共规则不由方法覆盖。
+- policy 必须写在具体方法 descriptor 中；`required_parameter_groups` 必须是 descriptor 已登记 group 的非空无重复子集，`allowed_phases` 必须是 component active phase 或 `complete` 的非空无重复子集，`minimum_global_step >= 1`。
+- readiness 只读取 policy，不比较任何已知 `method_key`、source family 或模型类。没有声明 policy 的方法一律拒绝 evaluator preview，即使 tensor shape、方法名称或 checkpoint phase 看似兼容。
+- 非空 policy 进入 `MethodDescriptor.to_dict()` 与 `descriptor_sha256`；空 mapping 为兼容既有无 diagnostic 能力的方法而不序列化该可选字段。
+- policy 只放宽显式 evaluator diagnostic 的生命周期入口，不代表 formal、sample/pdf、package 或产品部署 readiness。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+|---|---|
+| policy key 不是 `diagnostic-evaluator` | descriptor 构造失败 |
+| required group 未登记、phase 未被任何 component 声明，或 minimum step 小于1 | descriptor 构造失败 |
+| 方法未声明 policy 却请求 evaluator diagnostic | readiness 拒绝并报告 method does not declare |
+| checkpoint phase/step 不满足 policy | readiness 拒绝 end-to-end evidence |
+| exact descriptor identity 或 required group finite/nonzero/update coverage 不完整 | readiness 拒绝；policy 不覆盖这些公共门 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：budgeted Metal 自己声明 evaluator 所需五组参数以及两个训练 phase；proposal group 不是 evaluator preview 前置，但 formal export 仍要求全部 required component groups。
+- Base：NVIDIA descriptor 没有 diagnostic policy，继续只能从 complete formal checkpoint 导出，不因已有 Metal 支持而获得隐式 preview。
+- Bad：在 `readiness.py` 写 `if descriptor.method_key == "metal-..."`，或把相同 shape 的旧 checkpoint 当作 exact descriptor。
+
+### 6. Tests Required
+
+- unit：已声明 policy 的合法 phase/step/coverage 通过；缺 policy 即使 method key 相同也拒绝；未知 group、未知 phase、非法 policy key 与零 minimum step 均在 descriptor 构造时失败；空 policy 不改变既有 descriptor 序列化形态。
+- static：training/readiness 上层不得出现具体 method key、source family 或模型类分支。
+
+### 7. Wrong vs Correct
+
+```python
+# 错：每增加一个方法就修改通用 readiness。
+if descriptor.method_key == "metal-budgeted-neural-material":
+    required_groups = {"typed_compiler", "directional_evaluator"}
+
+# 对：方法声明，通用层只验证和解释合同。
+readiness_policies={
+    "diagnostic-evaluator": MethodReadinessPolicy(
+        required_parameter_groups=("typed_compiler", "directional_evaluator"),
+        allowed_phases=("joint-response-fit", "complete"),
+    )
+}
 ```
 
 ## Linux DDP reducer、控制组与 checkpoint 提交合同
@@ -196,11 +260,94 @@ loss = execution(batches, phase_context)
 loss.backward()
 ```
 
-## Metal matched sampler 可执行合同
+## Canonical Metal budgeted evaluator 与 Linux pilot 合同
 
 ### 1. Scope / Trigger
 
-修改`metal_fused_full_v1`的proposal state、component、sample/PDF、proposal loss、generated Slang layout或full-method capability时适用。该合同只拥有matched proposal；source reference sampler仍是独立control，不是训练teacher或产品fallback。
+修改`metal_budgeted_hybrid_v1`、`metal_budgeted_direct_control_v1`、对应source adapter、asset cook、proposal、训练phase、calibration或Linux pilot配置时适用。它确保质量结论直接来自目标预算内结构，也防止再次在Windows启动online训练、完整validation或runtime baseline。
+
+### 2. Signatures
+
+```text
+MetalBudgetedModel.prepare/evaluate_prepared/sample_prepared/pdf_prepared(...)
+  -> fixed-layout finite scattering result
+MetalBudgetedAssetCooker.cook(tensors, mode, objective, ...)
+  -> same-shape RGBA8-SNORM deployment asset
+MethodPlugin.lifecycle.initialization_requests(config)
+MethodPlugin.lifecycle.initialize_training_state(model, values, metadata)
+TrainingPlanResolver.resolve("configs/training/runs/metal-budgeted-{hybrid,direct}-pilot.yaml")
+tools/learning/build_metal_linux_handoff.py --output <artifact.json>
+```
+
+### 3. Contracts
+
+- public method key固定为`metal`，implementation key为`metal-budgeted-neural-material`。hybrid与direct使用独立profile/correspondence和checkpoint identity；旧full checkpoint只能作为legacy只读evaluation/control，不能resume或经converter进入新方法。
+- 主profile hard bound固定为`evaluate ≤20,000 dense MAC/direction`、PreparedState `≤192 B`。当前layout分别为10,368 MAC和160 B；prepare decoder为2,560 MAC；runtime asset读取严格为两次。这些值由layout JSON、Python loader和generated Slang layout共同计算，不把analytic scalar/transcendental隐藏成dense MAC。
+- asset输入是detail/context两条RGBA8 SNORM response mip；prepare固定`24→32→32→24`，evaluator固定`28→64→64→64→6`。direct最终线性`f`只消费前三个positive RGB，后三个通道只承担与detached analytic core匹配的训练辅助；hybrid gate为逐RGB`sigmoid`，值域固定`[0,1]`。
+- source adapter保留exact MDL locator、typed state、access/frame/resource责任和最多9-slot native patch。确定性access/frame/resource/distribution字段绕过learned guess；`Aluminum_Anodized`所需Beckmann由registry BSDF-data slot确定，不能用材质名启发式。
+- proposal固定primary analytic、secondary analytic、uniform full-hemisphere fallback三个mixture component。component位置与distribution enum独立：primary可为GGX或Beckmann，secondary可与primary同为GGX；重复distribution ID合法。每个component折回renderer上半球，PDF累加原方向与z镜像两个preimage，sample后独立PDF必须逐值一致。
+- fresh run在第一次model forward之前，按`train-only-reference-rgb-percentiles@1`用固定seed `2026090401`取得16,384条`target_f`，冻结逐通道P50 scale、P95 peak和energy epsilon并写入checkpoint。resume只恢复这些buffer，不重新估计；validation数据不得进入calibration。
+- phase固定为`joint-response-fit → deployment-qat-refine`，六个参数组从step 1共同参与appearance/proposal目标。QAT仅在functional forward中对runtime浮点weight做FP16 STE、对asset做RGBA8 SNORM STE；master、optimizer引用、state key与checkpoint schema不变。
+- progress与metrics固定登记`loss/optimization_total`、`loss/appearance`、`loss/proposal`和`loss/proposal_weight`。连续密度NLL可为负，这是density超过1时合法的对数密度结果；进度显示不得把它误称complex loss，也不得用绝对值改变梯度。
+- single-material direct/hybrid是matched diagnostic pair：Tungsten exact locator、固定spatial anchor、paired one-texel UV、zero/one/four-texel footprint quota、uniform/cosine/near-reflection/grazing方向配额、validation seed `2026090402`、1792 joint + 256 QAT、batch 64和256-batch validation全部一致；唯一结构轴是profile/correspondence。
+- 两个pilot在原生Linux单GPU上串行执行，先step-0 calibration/checkpoint/validation，再各自跑到recoverable step 128后resume至冻结cap。Windows只执行unit、静态layout和必要的小型纯模型测试；不得执行online reference、pilot、完整validation、完整runtime baseline或旧long。
+- pilot observed quality只用于预登记的hybrid/direct选择与failure classification。两者共同失败后也不得自动追加step/seed、扩大模型或启动teacher；任何扩张先回planning。完成结构选择前deployment facet必须fail closed。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+|---|---|
+| profile MAC/state/read超界或layout identity漂移 | 构造/生成器失败；不放宽hard bound |
+| source distribution enum未知，或component位置被当成distribution | compiler/sampler fail closed；合法重复GGX必须保持有效 |
+| calibration缺失、样本数/seed/recipe漂移，或resume尝试重估 | training lifecycle拒绝 |
+| direct/hybrid source、query、loss、optimizer、schedule、precision或asset mode不matched | handoff/config-pair测试失败 |
+| total、appearance、proposal或任一required gradient/update非有限 | engine/readiness失败 |
+| sample与independent forward/reverse PDF不一致 | sampler测试失败，不用clamp或fallback掩盖 |
+| Windows请求pilot、完整validation或完整runtime workload | 停止执行并转交Linux；不得把Windows卡顿结果登记为实验 |
+| pilot cap达到但quality低 | 登记empirical outcome与failure classification，不自动扩张 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：GGX材质proposal distribution是`[0,0,2]`，Beckmann例外是`[1,0,2]`；两者sample/PDF均有限且normalized mixture有效。
+- Good：fresh step 0只做一次train-only calibration并保存buffer；从该checkpoint resume至step 128时不再发出calibration request。
+- Good：direct与hybrid都用`encoder-only@1`资产输入进行结构选择，避免把某一侧latent refinement收益误算成evaluator收益。
+- Base：Windows CPU unit可验证shape、gradient、hash、配置和handoff，不能替代Linux online response、训练收敛或runtime结果。
+- Bad：把旧full long当baseline重新跑、在Windows执行256-batch online validation，或因为hybrid质量较低就让它使用bounded refinement而direct仍用encoder-only。
+
+### 6. Tests Required
+
+- unit：layout budget/identity、两read、state packing、Beckmann/重复GGX、finite/nonnegative、half退化/grazing、sample↔PDF、RGB gate、direct auxiliary、asset cook三identity、all-parameter gradient、metric与progress、fresh/resume calibration、YAML pair和handoff无自动followup；
+- lightweight GPU：budgeted forward/backward、QAT值与梯度；不得隐式打开reference session；
+- Linux online：step-0 calibration、step-128 stop/resume、完整2048 cap、独立256-batch validation和required-group audit；
+- selection后：FP16/RGBA8 pack、Python quantized↔Slang exact/random parity、Package@2、typed edit/asset swap；
+- static：layout generator `--check`、`compileall`、无upper-layer method/platform分支、`git diff --check`和Falcor clean。
+
+### 7. Wrong vs Correct
+
+```python
+# 错：component index决定公式，因而拒绝[GGX, GGX, uniform]。
+distribution = torch.tensor([GGX, BECKMANN, UNIFORM])[component]
+
+# 对：从每个component自己的state读取并验证distribution enum。
+distribution = round(proposal_state[..., DISTRIBUTION_ID])
+selected = gather(distribution, component)
+```
+
+```text
+# 错：在Windows上执行旧full baseline或完整pilot/validation。
+ncls train <removed-legacy-metal-full-run.yaml> ...
+
+# 对：Windows只生成带identity的交接；Linux按direct/hybrid冻结命令串行运行。
+python tools/learning/build_metal_linux_handoff.py --output artifacts/.../linux-pilot-handoff.json
+```
+
+## 历史 `metal_fused_full_v1` matched sampler 只读合同
+
+> 本节只解释旧package与回归测试的数学身份；对应训练run/recipe已从canonical配置目录移除，不能作为新任务入口。
+
+### 1. Scope / Trigger
+
+仅在维护显式历史control、legacy只读evaluation或复现旧package证据时适用；它不定义canonical `metal`，也不授权恢复旧训练。该合同只拥有旧full matched proposal；source reference sampler仍是独立control，不是训练teacher或产品fallback。
 
 ### 2. Signatures
 
@@ -274,11 +421,13 @@ pdf = local_pdf(to_local(wi))
 pdf = local_pdf(to_local(wi)) + local_pdf(to_local(mirror_z(wi)))
 ```
 
-## Metal step-1端到端、两phase QAT与Linux交接合同
+## 历史 `metal_fused_full_v1` training/package evidence合同
+
+> 本节只解释既有artifact的字段，不构成恢复旧训练配置或长运行的授权。
 
 ### 1. Scope / Trigger
 
-修改`metal_fused_full_v1`的phase graph、运行时量化训练、训练profile/review、Metal Windows smoke或Linux smoke/long config时适用。它防止把QAT写成前三phase的别名、把3-export正确性子集误作全族训练，或用Windows结果冒充Linux长训gate。
+本节只用于解释既有旧full artifact、review与legacy package证据；旧Windows smoke和Linux smoke/long配置不再是product入口，不得据此启动新训练。任何canonical Metal训练均受上一节budgeted合同约束。
 
 ### 2. Signatures
 
@@ -287,7 +436,7 @@ fake_quantize_fp16_ste(master: Tensor) -> deployed_value_with_master_gradient
 MethodPlugin.objective.compute(..., phase.name="qat-refine")
   batches == {asset: AssetTileBatch, evaluator: EvaluatorBatch, sampler: MethodSamplerBatch}
 TrainingEngine.run(resume=None, stop_at_step=N) -> checkpoint at exact global step N
-TrainingPlanResolver.resolve("configs/training/runs/metal-linux-long.yaml")
+load_evaluation_snapshot(<legacy-metal-full-checkpoint>) -> EvaluationSnapshot
 build_training_review(config, descriptor, checkpoint, metric_rows, ...) -> ncls.training-review@1
 python -m tools.learning.build_metal_linux_handoff --output <handoff.json>
 ```

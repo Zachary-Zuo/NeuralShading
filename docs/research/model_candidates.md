@@ -337,3 +337,24 @@ P1 v1 中 T 的 test/dense 为 `0.0775/0.3749` 与 `0.0818/0.4392`，在当前 2
 | M4 | TensoRF 2022（VM 分解）；Dupuy 2018（warp）；NDGI 2026（非对称轴预算） | 通用 field 工作未测移动峰下的 rank 行为 |
 | M5 | NGTC 2024（target encoder 不破坏随机访问）；Set Transformer 2019 | per-asset encoder ≠ 跨资产摊销 |
 | M6 | MetaLayer 2023；Neural Appearance 2024 的 source-parameter encoder | 前者逐材质生成权重、后者逐材质训练 encoder，均不直接证明跨状态泛化 |
+
+## 11. Metal budgeted semantic hybrid（当前待测候选）
+
+`metal_fused_full_v1`的质量结果不能回答相同结构在实时预算下是否仍成立，因此当前 Metal 不再沿旧full做比例缩模。新候选先冻结目标运行时，再把训练能力分为typed compiler、两read asset、semantic prepare、directional evaluator和matched proposal五个责任边界。
+
+| 变体 | 最终response | 固定部署成本 | 当前角色 |
+|---|---|---:|---|
+| `metal_budgeted_hybrid_v1` | positive RGB + 逐通道`sigmoid` gate × 双analytic lobe | evaluate 10,368 MAC；PreparedState 160 B；asset reads 2 | 主假设：analytic core保留窄峰/颜色物理结构，神经路径补空间与语义残差 |
+| `metal_budgeted_direct_control_v1` | 相同网络前三通道直接产生positive RGB；后三通道只作core auxiliary | 与hybrid相同 | matched control：测量analytic core是否真的带来净质量收益 |
+
+两个变体共享 `24→32→32→24` semantic decoder、`28→64→64→64→6` evaluator、Tungsten exact source、方向/paired-UV recipe、loss、optimizer、QAT、2048-step cap和`encoder-only@1` asset输入。这样观察差异只归因于final response结构，不把asset refinement或额外参数混进hybrid收益。
+
+失败假设与对应检查为：
+
+- 微小划痕消失：检查one-texel paired UV spatial-gradient、zero/one/four-texel footprint配额和两个独立asset读取；
+- 高光偏色：检查逐通道log/linear/chroma/peak metric、train-only RGB calibration与逐RGB gate，不用单一luminance替代appearance监督；
+- analytic分布错误：source registry提供GGX/Beckmann确定性enum，proposal component位置与distribution独立，合法`[GGX, GGX, uniform]`不得被拒绝；
+- 训练总loss难以解释：日志拆分optimization total、appearance、proposal及权重；连续PDF NLL为负本身不是复数或非有限错误；
+- 部署预算被prepare/asset隐藏：dense MAC、PreparedState、weight bytes、asset bytes、reads和Linux matched latency分别报告。
+
+当前实现与CPU/轻量GPU正确性检查已闭合，但Linux single-material direct/hybrid pilot尚未产生observed quality，不能提前声称hybrid入选。只有按冻结规则完成两者的eager/QAT failure classification后才冻结profile并进入Slang/package；若hybrid无净收益则选择direct，不扩大模型保留设计。

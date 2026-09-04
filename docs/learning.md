@@ -21,18 +21,19 @@ Linux 单卡：
 
 ```bash
 bash scripts/run_falcor_python.sh -m ncls train \
-  configs/training/runs/metal-linux-smoke.yaml \
+  configs/training/runs/metal-budgeted-hybrid-pilot.yaml \
   --devices 0 \
-  --output artifacts/training/metal-smoke/checkpoint.pt
+  --output artifacts/metal-budgeted-pilot/hybrid/checkpoint.pt
 ```
+
+当前 Metal direct/hybrid single-material pilot 只在原生 Linux 单 GPU串行执行；Windows 不运行online reference、完整validation、pilot或runtime baseline。精确的step-0 calibration、step-128恢复点和matched direct命令见[Metal Linux pilot](metal_linux_training.md)。
 
 当 `--devices` 只有一个序号时直接单卡执行；Linux 传多个序号时自动启动一个 torchrun/NCCL 作业，Windows 多卡明确拒绝：
 
 ```bash
 bash scripts/run_falcor_python.sh -m ncls train \
-  configs/training/runs/metal-linux-smoke.yaml \
-  --devices 2,3,4 \
-  --output artifacts/training/metal-ddp/checkpoint.pt
+  <ddp-run.yaml> \
+  --devices 2,3,4 --output <checkpoint.pt>
 ```
 
 Linux多卡的objective按phase包装为真实PyTorch `DistributedDataParallel`：lifecycle先冻结本phase的active parameter，再构造一个`static_graph` reducer；phase合同保证声明为active的参数每步都参与loss，因此不启用unused-parameter兼容扫描。gradient bucket在backward中同步，不在backward后逐parameter执行`all_reduce`。phase切换时所有rank同序重构wrapper；model/resume/optimizer setup与phase transition的rank-local异常会先经control group汇总，不让正常rank独自进入下一次DDP collective。NCCL data group负责梯度和GPU scalar collective，辅助Gloo control group只负责descriptor核对、逐rank RNG/query cursor、checkpoint commit状态与有序退出，训练热循环不新增barrier。

@@ -42,10 +42,9 @@ CUDA_VISIBLE_DEVICES=0 bash scripts/deploy_reference_linux.sh
 CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls reference doctor
 CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls reference probe
 
-# GPU2、3、4 作为一个同步 DDP 作业；仅 rank0 写统一输出
+# 多GPU训练仍走同一入口；具体run必须是已冻结的DDP配置
 bash scripts/run_falcor_python.sh -m ncls train \
-  configs/training/runs/metal-linux-smoke.yaml --devices 2,3,4 \
-  --output artifacts/metal-linux-training/ddp-234/checkpoint.pt
+  <ddp-run.yaml> --devices 2,3,4 --output <checkpoint.pt>
 ```
 
 ## 用户复制资产后的验收
@@ -75,4 +74,4 @@ CUDA_VISIBLE_DEVICES=0 bash scripts/run_falcor_python.sh -m ncls validate \
 
 2026-08-29的已验证环境为Ubuntu 22.04.5、10张RTX A6000、driver 550.78、glibc 2.35、GCC 11.4.0、Conda 24.1.2、Falcor `9dc819c162b2070335c65060436041690b7937f8`与MDL SDK `2025.0.0-387700.1252`。GPU 0上的七文件集合为`20 passed`，固定MDL两步训练与checkpoint evaluate通过；最终重复部署报告为`artifacts/deployment/reference-linux/20260829T125648Z/report.json`，其中`cuda_visible_devices`与`falcor_gpu_index`均为`0`。这个结论只覆盖该实机环境，Windows结果仍不能替代Linux证据。
 
-vMaterials 2 Metal完整方法在reference backend与source assets就绪后，继续执行[Metal Linux训练交接](metal_linux_training.md)中的692-export preflight、两phase smoke与long run。该交接默认单进程单GPU，也可由统一launcher显式启动torchrun/NCCL DDP；不把上面的NVIDIA两步smoke当作Metal训练证据。
+vMaterials 2 Metal 当前在reference backend与source assets就绪后，继续执行[预算内Metal Linux pilot](metal_linux_training.md)中的single-material direct/hybrid matched pair。该pilot固定单进程单GPU，不是DDP scaling或692-export long；不把上面的NVIDIA两步smoke当作Metal训练证据。

@@ -65,7 +65,7 @@ ncls eval worker|collect ...
 
 ## 5. Good / Base / Bad Cases
 
-- Good：一个 YAML 把 `method=metal`、`data=mdl-metal-full` 与 long recipe 组合；同一 plugin/data/engine 在 Windows smoke 和 Linux DDP 运行，只由 execution capability 决定 launch。
+- Good：一个 YAML 把 `method=metal`、`data=mdl-metal-budgeted-tungsten` 与 budgeted pilot recipe 组合；同一 plugin/data/engine 合同可在支持的执行环境运行，但当前 single-material pilot 明确只交给 Linux 单 GPU。
 - Good：多个 native source state 编入 grouped plan，由同一 online session 产生 typed batch；method deployment facet独立输出三段 package，viewer 只解释公共 schema。
 - Base：单 source、无纹理、单 phase、单 GPU 仍走同一 resolver/plugin/session/engine/checkpoint，不新增简化入口。
 - Bad：runner 按 source family 选择 producer；exporter 识别 method 名补 artifact；新增 `configs/learning/*.json` 或 `ncls learn` fallback；用 `@版本` 作为公开 model 名。
@@ -87,7 +87,7 @@ definition = get_method("metal-fused-neural-material@3")
 runner = MetalRunner(definition, config_json)
 
 # 对：短key解析显式plugin，公共engine只依赖facet。
-plan = TrainingPlanResolver(root).resolve("configs/training/runs/metal-linux-long.yaml")
+plan = TrainingPlanResolver(root).resolve("configs/training/runs/metal-budgeted-hybrid-pilot.yaml")
 plugin = get_method_plugin(plan.selection.method)
 TrainingEngine(plugin, data_session, plan.to_runtime_config()).run()
 ```

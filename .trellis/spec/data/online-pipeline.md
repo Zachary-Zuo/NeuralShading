@@ -74,7 +74,7 @@ residency: {budget_mib: 4096}
 
 ## 5. Good / Base / Bad Cases
 
-- Good：Metal source adapter 声明三类 route，并在 8 GiB budget 内复用 GPU mip pyramid；两个 CPU worker只处理 miss 的 payload，命中 step 无 request metadata readback。
+- Good：Metal source adapter 只声明 method 所需的 evaluator/sampler typed route，并在 8 GiB budget 内复用 GPU mip pyramid；两个 CPU worker只处理 miss 的 payload，命中 step 无 request metadata readback。
 - Good：global-sync reference 把同一 group 的四个 logical step 合并一次 dispatch，再按原 ID 切分；RNG/cursor 与四次单步基线一致。
 - Good：step 0/1共用一次packed reference dispatch；模型消费step 0时，step 2的Metal host decode可已提交，但GPU materialize仍由rank owner在后续production执行。
 - Base：`num_workers=0`、`reference_batch_steps=1`、`reference_inflight=1` 使用同一 session/checkpoint 合同，是调试基线而不是另一套实现。

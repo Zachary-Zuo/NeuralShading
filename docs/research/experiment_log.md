@@ -2,7 +2,9 @@
 
 每个正式 run（标准档及以上）一行；快速档 smoke 不入表。可比性、结论强度与对照要求见 [`experiment_framework.md`](experiment_framework.md) §7。详细数值与逐项报告留在 `artifacts/`，本表只保留能回答「现在做到哪了」的最小信息。
 
-下表是迁移前与迁移过程中的历史证据，其中HDF5/corpus及旧checkpoint字段仅用于说明历史，不属于当前online pipeline，也不保留reader、config或磁盘数据。新的正式run必须以source snapshot、reference plan/query/asset identity和`TrainingCheckpoint@4`登记。
+下表是迁移前与迁移过程中的历史证据，其中HDF5/corpus及旧checkpoint字段仅用于说明历史，不属于当前online pipeline，也不保留reader、config或磁盘数据。新的正式run必须以source snapshot、reference plan/query/asset identity和`TrainingCheckpoint@1`登记。
+
+2026-09-05 已冻结 Metal budgeted Tungsten single-material direct/hybrid diagnostic pair：两个候选同为10,368 evaluate MAC、160 B PreparedState和两次asset读取，使用独立profile identity但共享source/query/loss/optimizer/QAT与2048-step cap。当前只有实现与Linux交接清单，`linux_execution_status=pending-on-target-host`；尚无observed quality，因此不在下表伪造正式run或选择结论。
 
 | 日期 | run ID | 候选+配置 | 数据版本 | 预算档 | seeds | 方向 L1 (med/p95) | 能量误差 (med/p95) | 结论 | artifacts |
 |---|---|---|---|---|---|---|---|---|---|
