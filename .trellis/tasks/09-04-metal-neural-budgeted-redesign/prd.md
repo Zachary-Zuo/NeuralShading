@@ -47,10 +47,20 @@
 
 ### 6. 执行边界
 
-- DDP 修复视为已完成的训练基础设施，不在本任务中重复实现；只在新候选进入多 GPU 训练前做必要回归。
+- DDP 基础设施已有独立验收证据；2026-09-05 用户进一步授权在 GPU 5–9 上执行本任务的五卡训练。若真实 budgeted objective 暴露 reducer、rank-local reference、checkpoint 或 teardown 缺陷，本任务允许做范围明确的基础设施修复并补回归，但不得靠放宽 `static_graph`、启用 unused-parameter 扫描或提高 NCCL timeout 掩盖根因。
 - 在单材质表达力、观测完整性和 matched runtime 结果完成审阅前，不恢复旧 v4 checkpoint 的长训，也不启动旧 `metal-compact-ablation` 的盲目 sweep。
 - 不修改固定提交的 `external/` 上游源码，不把临时实验产物提交到根仓库。
 - 这是复杂任务；在实现前补齐 `design.md` 与 `implement.md`，并在需求总结获得用户明确确认后才进入开发阶段。
+
+### 7. 2026-09-05 连续训练与交付增补
+
+- 用户已授权约 12 小时的连续监督、范围内修复和分段本地 commit；不得 push。监督必须以进程退出、checkpoint/metric 事件和低频 heartbeat 驱动，完整 stdout/stderr 写入 `artifacts/`，不在对话中做秒级轮询或转储逐 step 日志。
+- 使用物理 GPU 5–9 运行一个五卡 DDP 作业；hybrid 与 direct 不并发争抢卡，而是在共同的 stop/resume 里程碑间交替执行。两侧必须使用相同 world size、per-rank batch、source/query、loss、optimizer、schedule、precision和验证 cadence。
+- 五卡保持冻结配置的 per-rank batch 64，因此 global batch 为 320、每 step 全局 work units 为单卡协议的五倍。该运行使用独立 `ddp5` artifact/plan identity；hybrid/direct 之间可比较，但不能冒充原单卡 2048-step pilot或与其按 step 直接合并统计。
+- 先完成 DDP step-0/短步 smoke 与 checkpoint/resume，再按 `128/256/512/1024/2048` 共同里程碑交替推进。若实现修复改变 resolved plan、method/data/query identity或训练数值语义，旧 checkpoint 不继续混用，两侧从相同有效边界重跑。
+- 对每个里程碑分析 appearance、proposal、chroma、逐通道 peak、spatial gradient、required-group gradient/update、rank straggler、reference/cache 与显存；有限且下降的 total loss 本身不足以判定模型有效。
+- 最终至少保留 hybrid 与 direct 两个 exact-identity checkpoint，并为两者生成 Windows viewer 可消费的 diagnostic evaluator package/catalog。未完成 formal readiness 或缺少 `sample/pdf` 的候选必须明确标注 diagnostic，不能显示为 formal ready。
+- 约 12 小时是本轮执行 timebox，不是伪造成功的验收门；到时按已完成的共同里程碑给出证据结论、失败分类、可恢复位置与下一步方向。
 
 ## Acceptance Criteria
 
@@ -62,6 +72,8 @@
 - [ ] 【需求交付 + 接口正确性｜来源：用户本轮“实现为新的模型”；项目 runtime 合同】以新的 method/profile 身份实现入选主模型，训练、checkpoint、量化、MethodBundle 与 Slang 路径不依赖旧 full profile 的静默兼容。
 - [ ] 【需求交付｜来源：用户本轮质量—成本可推断性要求】在用户确认的预算内完成冻结 validation 和质量—时间—内存报告；observed quality/time/memory 只用于相对比较和失败分类，不由任务执行过程反写成完成门，也不能用 teacher 结果替代主 profile 结果。
 - [ ] 【理论 / 数值 / 接口正确性｜来源：项目合同与本任务涉及生命周期】通过相关单元测试、静态成本验证、单 GPU smoke、DDP 回归和最终部署 parity；容差在正式结果前由 dtype、oracle 或隔离 calibration 冻结，正式环境与运行证据按项目规则记录。
+- [ ] 【连续执行交付｜来源：用户 2026-09-05 要求】GPU 5–9 的五卡 DDP 以共同里程碑交替完成 hybrid/direct 的可恢复训练；监督日志、异常处置、commit 与比较身份可追溯。
+- [ ] 【Windows 检视交付｜来源：用户 2026-09-05 要求】至少产出 hybrid/direct 两个训练 checkpoint 与两个可由 Windows viewer 加载的 exact-identity diagnostic package/catalog，并明确 formal/diagnostic capability 边界。
 
 ## Notes
 

@@ -22,5 +22,10 @@
   "parent": null,
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "execution_mode": "continuous",
+    "continuous_authorized": "true",
+    "authorization_parent": ".trellis/tasks/09-04-metal-neural-budgeted-redesign",
+    "commit_policy": "preauthorized-scoped-local-no-push"
+  }
 }

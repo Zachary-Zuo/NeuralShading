@@ -313,3 +313,58 @@ controls：optimized MDL source program、NVIDIA faithful package、旧 full pac
 - `docs/research/experiment_log.md`：只登记冻结、matched 的实际结果；
 - `docs/learning.md` 与 `docs/metal_linux_training.md`：新 canonical入口和旧 checkpoint只读边界；
 - task `research/`：probe、runtime、selection、deployment evidence。
+
+## 15. 五卡交替训练与持续监督增补
+
+### 15.1 执行身份
+
+本轮 Linux 执行使用物理 GPU `5,6,7,8,9`，统一通过：
+
+```text
+bash scripts/run_falcor_python.sh --gpus 5,6,7,8,9 -- \
+  -m ncls train <run.yaml> --devices 5,6,7,8,9 ...
+```
+
+每个 rank 内 Torch/SlangPy 只见 `cuda:0`，Falcor 使用对应物理 adapter。任何单独设置 `NCLS_FALCOR_GPU_INDEX`、绕过 launcher 的 `torchrun` 或多作业共享 GPU 5–9 都不是本轮证据。
+
+冻结 recipe 的 `batch_size=64` 解释为 per-rank batch，DDP5 global batch 为 320。schedule 仍按 optimizer step 计数，source/query stream按 `(world_size, rank)` 分区。resolved plan、checkpoint 与报告必须记录五卡 topology；本轮 direct/hybrid 是新的 matched DDP5 pair，不与原单卡协议按 step 混为一组。
+
+### 15.2 交替状态机
+
+两个配置共享里程碑 `0 → 8 → 128 → 256 → 512 → 1024 → 2048`：
+
+1. hybrid 到下一里程碑并写可恢复 checkpoint；
+2. direct 到同一里程碑并写可恢复 checkpoint；
+3. 仅在两侧都到达共同里程碑后生成 paired summary；
+4. 数学/接口正确且没有训练阻断时继续下一段。
+
+step 0 负责 calibration/checkpoint，step 8 是 DDP objective、rank-local reference、metric reduce、checkpoint commit 与 teardown 的短 smoke；step 128 以后沿冻结 validation cadence。phase boundary 1792 前后必须各有一次 stop/resume 证据。
+
+### 15.3 低 token 监督器
+
+监督器只负责 orchestration，不复制训练逻辑：
+
+- child process 的完整 stdout/stderr 逐配置、逐 segment 写入 `artifacts/metal-budgeted-pilot/ddp5/logs/`；
+- 主监督流只在 process exit、checkpoint commit、共同里程碑、错误签名、metric 非有限/突变、GPU 长时间空闲或每 15 分钟 heartbeat 时输出一条紧凑事件；
+- 通过子进程 wait/exit 获取完成事件，metric 文件用增量 offset 读取，不反复把历史日志送入对话；
+- heartbeat 只记录进度、最近 metric、GPU 5–9 利用率/显存与日志 offset，不打印逐 step tqdm；
+- 监督器本身、状态和临时解析脚本位于当前 task `scratch/`；训练产物、监督 journal 与完整日志位于 ignored `artifacts/`。
+
+stall 判定必须同时参考最近 metric/checkpoint 时间、进程存活、GPU 活动和日志 stage。reference 编译或 rank-0 checkpoint I/O 的长尾不能仅因 GPU 暂时空闲而判死；确认 collective desync、worker exit 或超过已观测 stage 上界后才终止整个 process group，并从最后共同有效 checkpoint 恢复。
+
+### 15.4 修复与比较完整性
+
+- DDP graph/reducer 问题优先修 phase ownership、条件分支或跨 rank descriptor；保持 `find_unused_parameters=False`、`static_graph=True`。
+- rank-local reference、metric schema、checkpoint commit或teardown错误按公共合同修复；不得用增大 timeout 代替根因修复。
+- 只改变 supervisor、错误报告或不参与 identity 的 instrumentation 时，可从 exact checkpoint 继续。
+- 改变 model/data/query/loss/optimizer/schedule/precision、calibration或 resolved identity 时，两侧都从相同边界重跑；旧产物保留并标为 superseded，不覆盖。
+- 效果差但实现正确时按冻结 failure classification 收尾，不自动扩宽网络、增加 seed或超过 2048-step cap。
+
+### 15.5 两模型 Windows 交付
+
+结构选择仍按 §9 和冻结 paired 指标决定 canonical profile，但用户需要直接查看两种结果。因此 hybrid/direct 各自保留 exact checkpoint，并允许在结构选择完成后编译独立的 evaluator-only diagnostic package/catalog：
+
+- capability 只包含已通过 parity 的 `prepare/evaluate/anisotropic-frame`；未实现或未验证的 `sample/pdf` 不得声明；
+- catalog/UI/capture 必须标记 `exact-diagnostic-evaluator-preview` 与 profile identity；
+- 两个 package 不共享 checkpoint identity，不用 shape compatibility 互换；
+- Linux 完成 checkpoint、量化 Python、Slang/package validation；Windows 只需按交接命令做 Release viewer 加载与视觉检查，Linux 不宣称完成 D3D12 证据。

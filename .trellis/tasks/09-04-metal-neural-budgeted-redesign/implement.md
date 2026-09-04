@@ -16,6 +16,7 @@
 - product registry 已因 public CLI 必须先解析新 pilot 而提前切换到 `metal_budgeted`；这只是依赖顺序调整，不代表结构已经入选。Slang/package facet 仍须等待 Linux pilot 按预登记规则选择 hybrid 或 direct 后实现。
 - 旧 full 只保留历史实现与显式对照用途；当前阶段不通过兼容 shim 让旧 run 冒充 canonical `metal`。
 - pre-Linux `trellis-check` 已完成：checkpoint diagnostic readiness 由各方法 descriptor 的强校验 policy 声明，通用训练层不再按 Metal method key 分支；Windows 纯 CPU `tests/unit` 为 335 passed，layout/compileall/diff/Falcor clean 均通过。旧 `mdl-metal-full` fragment 保持历史语义，新全 cohort 使用独立 `mdl-metal-budgeted-full` identity。Linux handoff 在本任务 scoped commit 完成后重新生成，以冻结可直接同步的 commit identity。
+- 用户于 2026-09-05 授权在当前 Linux 主机 GPU 5–9 上进行约 12 小时持续监督，并要求范围内 DDP/实现修复、及时本地 commit、neural 设计结论及 hybrid/direct 两个 Windows 可检视模型。本轮新增 `ddp5` 执行身份、事件驱动监督和双 diagnostic package 交付；它不恢复旧 full，不扩大 20k/192 B hard bound，也不把 5 卡 step 数冒充原单卡样本预算。
 
 ## Phase 0：冻结现状与旧基线
 
@@ -76,7 +77,8 @@ Rollback point R2：任何 Python 主形态需要越过 20k/192B 才能闭合接
 - [x] 方法配置固定 `joint-response-fit → deployment-qat-refine`；appearance从step 1启用，curriculum只登记真实 direction/LOD/peak变化。
 - [x] asset cook实现 encoder-only、bounded refinement、direct control三种独立 identity，共用部署shape。
 - [x] pure compiler与optimized ProgramState control分角色训练/报告；不把teacher结果写成editability。
-- [ ] 固定 Tungsten probe 分别训练 direct/hybrid short pilot，保存每步分项 loss和独立validation。
+- [ ] 先在 GPU 5–9 完成 budgeted objective 的 DDP step-0/8、rank mapping、checkpoint/resume与teardown smoke；真实缺陷按公共 DDP 合同修复并补测试。
+- [ ] 以 `0/8/128/256/512/1024/2048` 共同里程碑交替训练 direct/hybrid DDP5 pair，保存分项 loss、独立validation、rank stage/profile和完整日志。
 - [ ] 按预登记规则比较microdetail、RGB/chroma、peak、energy和成本；输出 `research/single-material-selection.md`。
 - [ ] 仅在direct/hybrid共同失败且完成failure classification后，允许启动≤4×主profile neural MAC的teacher diagnostic；不自动追加step/seed。
 
@@ -96,6 +98,7 @@ Rollback point R3：
 - [ ] 生成Slang layout并实现asset fetch、semantic decoder、compiler、evaluator、sample/pdf；矩阵与敏感FP32策略和Python一致。
 - [ ] 完成 eager FP32 → quantized Python → Slang exact/random probe；偏差容差在运行正式test前冻结。
 - [ ] 编译 `ScatteringPackage@2` program/asset/instance，验证typed edit和asset swap原子更新。
+- [ ] 为 hybrid/direct 两个 exact checkpoint 分别生成 evaluator-only diagnostic package/catalog；非入选模型同样可供 Windows 视觉比较，但不能声明 formal 或未验证的 `sample/pdf` capability。
 - [ ] 旧 full代码只保留显式historical control所需边界；不继续作为product plugin，不增加旧checkpoint converter。
 
 Rollback point R4：parity失败时只修改对应数值/packing层并更换implementation identity；不得重训来包住部署误差。
@@ -106,7 +109,7 @@ Rollback point R4：parity失败时只修改对应数值/packing层并更换impl
 
 - [ ] 冻结一个 bounded representative cohort：标准matrix中的Base/Brushed/Scratched，加至少一个paint/crack或patina recipe和`Aluminum_Anodized` Beckmann例外；选择依据写入protocol，不宣称代表全692结论。
 - [ ] 运行单GPU smoke、stop/resume、validation和QAT；检查required groups finite/nonzero/update。
-- [ ] 运行Linux两GPU DDP regression，验证bucket/static graph、rank0-only checkpoint和resume；不做scaling研究扩张。
+- [ ] 汇总本轮 Linux 五卡 DDP regression，验证bucket/static graph、rank0-only checkpoint、resume、phase boundary与同序teardown；只报告该固定 topology，不扩成scaling研究。
 - [ ] 用新package加入matched runtime harness，完成四控制 `prepare/evaluate/sample/pdf` 分解和static账本。
 - [ ] Windows viewer输出reference/neural linear EXR与微细节/高光crop；运行deferred/PT和typed edit/asset swap。
 - [ ] 以source state为单位生成bootstrap CI，observed quality/time/memory只作相对报告。
@@ -156,3 +159,4 @@ Linux DDP只在原生Linux通过统一launcher执行；Windows不请求多GPU。
 | 新method/profile实现 | 2–4 |
 | 冻结validation与Pareto证据 | 3、5 |
 | unit/GPU/DDP/package/viewer | 2–6 |
+| 五卡交替监督与两模型Windows交接 | 3–6、设计§15 |

@@ -127,3 +127,12 @@ authored 参数 state 固定为 registry default：`texture_scale=[1,1]`、`text
 完整 workload 只在新 budgeted package 完成后于 Linux/headless 一次性运行四控制，不作为模型实现或 single-material pilot 的前置条件。Windows 仅执行 `count≤1024`、`warmup≤2`、`measurements≤3` 的 correctness/preflight smoke，用于确认 ABI、资源绑定、prepared-state adapter和 profiler lane；该结果受 dispatch floor支配，不形成相对 latency结论。2026-09-05 曾误启动的 Windows 完整 workload已应用户要求立即终止，未完成结果作废且不登记为实验结果。
 
 当前 NVIDIA artifact 与旧 Metal/Tungsten artifact 的 source family 不同，因此 runtime 比较只表达公共 ABI 下的实现成本对照，不表达相同材质的质量对照。任何不能保证 workload/sync/precision 一致的路径只保留静态账本，不输出相对 latency 结论。
+
+## 7. 2026-09-05 DDP5 执行修订
+
+- `trigger`：用户明确要求在当前 Linux 主机使用 GPU 5–9 做五卡 DDP，交替训练 hybrid/direct，持续监督约 12 小时，并交付两个可在 Windows 检视的模型。
+- `invalidated evidence`：§3.3 中“原生 Linux 单 GPU、每 step global batch 64”不再描述本轮执行 topology；它仍是历史冻结协议，不能用来解释本轮 DDP5 的样本预算或吞吐。本轮开始前尚无 budgeted pilot observed result，因此没有正式质量证据被覆盖。
+- `scope impact`：model、source、query、loss、optimizer、schedule、precision、seed 与 2048-step cap保持不变；per-rank batch 仍为64，但 global batch变为320，source/query stream按 world size 5分区。新增 DDP step-0/8 gate、共同里程碑交替、事件驱动监督，以及 hybrid/direct 两个 evaluator-only diagnostic Windows package交接。
+- `rerun required`：hybrid/direct 都从 fresh DDP5 step 0开始并使用独立 artifact root，不从单卡 checkpoint resume。任何改变 resolved plan、method/data/query identity或训练数值语义的修复都要求两侧从相同有效边界重跑；只改变监督器或不参与 identity 的错误报告可继续 exact checkpoint。
+
+本修订由用户直接授权，不改变 `evaluate ≤ 20,000 dense MAC/direction`、PreparedState `≤192 B`、单 seed、2048-step cap和 failure-classification 规则。DDP5 的 direct/hybrid可以互相做 matched comparison，但不能与原单卡结果按 step合并；约12小时只是一轮执行 timebox，不是 observed quality hard gate。
