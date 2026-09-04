@@ -13,8 +13,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[4]
 METAL_BUDGETED_LAYOUT_PATH = (
     PROJECT_ROOT / "src/ncls/learning/abi/metal_budgeted_layout_v1.json"
 )
-METAL_BUDGETED_HYBRID_PROFILE_ID = "metal_budgeted_hybrid_v2"
-METAL_BUDGETED_DIRECT_PROFILE_ID = "metal_budgeted_direct_control_v2"
+METAL_BUDGETED_HYBRID_PROFILE_ID = "metal_budgeted_hybrid_v3"
+METAL_BUDGETED_DIRECT_PROFILE_ID = "metal_budgeted_direct_control_v3"
 
 _DTYPE_BYTES = {"float16": 2, "float32": 4, "uint32": 4}
 

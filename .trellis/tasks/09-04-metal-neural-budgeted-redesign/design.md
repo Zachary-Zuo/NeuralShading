@@ -6,9 +6,9 @@
 
 - public key：`metal`（公共入口不增加版本化名称）；
 - method key：`metal-budgeted-neural-material`；
-- correspondence：`metal-budgeted-full-semantic-hybrid@2`；
-- 主 profile：`metal_budgeted_hybrid_v2`；
-- matched direct control：`metal_budgeted_direct_control_v2`；
+- correspondence：`metal-budgeted-detail-frame-skip-hybrid@3`；
+- 主 profile：`metal_budgeted_hybrid_v3`；
+- matched direct control：`metal_budgeted_direct_control_v3`；
 - layout：`ncls.metal-budgeted-layout@1`。
 
 `metal_fused_full_v1` 不改 shape、layout 或 checkpoint 语义。旧 v4 继续只读，当前旧实现只在 task-local historical benchmark 和已有 package/capture 证据中使用；新 `metal` plugin 不接受旧 checkpoint resume，也不提供 converter、shape fallback 或同名 profile 替换。
@@ -327,7 +327,7 @@ bash scripts/run_falcor_python.sh --gpus 5,6,7,8,9 -- \
 
 每个 rank 内 Torch/SlangPy 只见 `cuda:0`，Falcor 使用对应物理 adapter。任何单独设置 `NCLS_FALCOR_GPU_INDEX`、绕过 launcher 的 `torchrun` 或多作业共享 GPU 5–9 都不是本轮证据。
 
-旧`@1` recipe的`batch_size=64`解释为per-rank batch，DDP5 global batch为320，只保留为before-profile。吞吐优化后的`@2` v1 recipe经§15.7有界profile后冻结per-rank batch 512、global batch 2560；它已训练到共同step 512并形成结构诊断。当前`@3` v2 recipe保持这套执行几何，只改变§15.8登记的求值器输入。schedule仍按optimizer step计数，source/query stream按`(world_size, rank)`分区；resolved plan、checkpoint与报告必须记录五卡topology、global batch和累计work units，各代不按step混为一组。
+旧`@1` recipe的`batch_size=64`解释为per-rank batch，DDP5 global batch为320，只保留为before-profile。吞吐优化后的`@2` v1 recipe经§15.7有界profile后冻结per-rank batch 512、global batch 2560；它已训练到共同step 512并形成结构诊断。`@3` v2保持这套执行几何并修复完整语义消费，当前`@4` v3再增加§15.9的Detail短路径。schedule仍按optimizer step计数，source/query stream按`(world_size, rank)`分区；resolved plan、checkpoint与报告必须记录五卡topology、global batch和累计work units，各代不按step混为一组。
 
 ### 15.2 交替状态机
 
@@ -402,3 +402,11 @@ stall 判定必须同时参考最近 metric/checkpoint 时间、进程存活、G
 v2保持asset、compiler、两次读取、`24→32→32→24` decoder、160 B PreparedState、输出head、loss、source/query、batch和optimizer不变，只把求值器condition从8维扩为完整24维：`44→64→64→64→6`，dense evaluate成本从10,368增加到11,392 MAC/direction，仍低于20,000 hard bound；state和读取成本不增加。新增单测直接扰动semantic维度8–23并要求最终`f`发生变化，防止再次出现“已生成/监督但runtime不消费”的旁路状态。
 
 该变化使用`metal_budgeted_hybrid_v2`、`metal_budgeted_direct_control_v2`、method schema`@2`和pilot recipe`@3`的新identity。v1的step-512 artifact保留为诊断对照；hybrid/direct v2都必须fresh训练，不能resume v1 checkpoint。首个共同step-128先检查spatial/peak和全部parameter-group梯度，信息不足时继续到共同512/1024/2048，不因早期结果不理想临时改变loss或扩大网络。
+
+### 15.9 Detail→frame semantic 短路径 v3 修订
+
+v2到共同step512后，paired bootstrap显示完整语义输入对hybrid spatial无可辨净收益，direct spatial反而轻微退化。对exact checkpoint重新生成8个online validation batch后，target one-texel log梯度约`0.285`，hybrid/direct只预测约`0.0011/0.0038`；原始patch配对差异约`0.0134`，两读Detail后约`0.0013`，再经semantic decoder后仅约`0.0003–0.0005`。同一固定batch只优化spatial loss 256次仍几乎不能拟合，证明“多训step”不足以修复当前高频信息通路。
+
+v3只增加一个无参数的结构短路径：semantic decoder照常生成24维状态，然后把Detail四通道逐项加到前四个frame semantic分量。Detail仍由role-aware训练端encoder学习，不把source原始通道硬编码成法线；短路径只赋予部署Detail plane“高频frame residual”的明确责任。它绕过三层decoder对paired差异的衰减，同时仍让decoder学习低频条件和修正。Context、ProgramState、PreparedState 160 B、两次读取、`44→64→64→64→6` evaluator、11,392 MAC、loss、optimizer、source/query和batch512全部不变，prepare只增加四次逐项加法。
+
+该变化使用`metal_budgeted_hybrid_v3`、`metal_budgeted_direct_control_v3`、method schema`@3`和pilot recipe`@4`的新identity，并增加“decoder置零时semantic前四维等于Detail”的合同测试。v2 step512保留为matched诊断；v3两侧fresh重跑。此后若runtime消费、梯度和数值实现正确但spatial仍差，按正常empirical outcome登记，不继续自动堆叠v4结构。

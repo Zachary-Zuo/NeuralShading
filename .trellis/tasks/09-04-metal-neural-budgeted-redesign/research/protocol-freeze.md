@@ -163,3 +163,10 @@ authored 参数 state 固定为 registry default：`texture_scale=[1,1]`、`text
 - `rerun required`：使用新的hybrid/direct v2 profile、method schema与`@3` recipe identity；两侧从fresh step0重跑，v1 checkpoint不得resume。v1 step512 artifacts保留且不覆盖；先在共同128/256/512检查spatial、peak和parameter-group梯度，再按既有规则继续。
 
 该修订直接处理runtime未消费已生成状态的实现/架构缺口，不扩展hard budget、seed、材质范围或teacher额度。
+
+## 11. 2026-09-05 Detail→frame semantic 短路径修订
+
+- `trigger`：v2共同step512的matched结果未改善spatial；exact checkpoint的online诊断显示target one-texel log梯度约`0.285`，预测梯度仅约`0.0011/0.0038`，且原始patch差异经过Detail与semantic decoder连续衰减。十倍学习率的fixed-batch spatial-only对照仍不能充分拟合，排除“只需多训主recipe”的解释。
+- `invalidated evidence`：完整24维semantic进入evaluator只修复消费合同，不足以证明Detail的高频信号能穿过semantic decoder到达frame/response；v2作为信息连通消融保留，不再作为当前主候选。
+- `scope impact`：semantic decoder输出后，将Detail四通道逐项residual到前四个frame semantic分量；不硬编码source channel含义，不新增参数、state、read或evaluate MAC。prepare增加四次逐项加法；其他model/loss/data/optimization轴完全不变。
+- `rerun required`：分配hybrid/direct v3 profile、method schema`@3`与pilot recipe`@4`，两侧fresh step0重跑；v2 checkpoint不得resume。v3完成共同里程碑后无论observed quality高低都先做failure classification，不自动继续创建v4。

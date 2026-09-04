@@ -6,10 +6,10 @@
 
 当前阶段不是恢复旧 full long，而是在同一个 Tungsten 材质上比较两个完全 matched 的目标预算内结构：
 
-- `metal_budgeted_hybrid_v2`：解析双 lobe 与神经输出共同形成最终线性 RGB `f`；
-- `metal_budgeted_direct_control_v2`：相同 MLP、state、asset 和训练预算，最终 `f` 只消费 direct positive RGB，另外三个输出只训练为不进入结果的 core auxiliary。
+- `metal_budgeted_hybrid_v3`：解析双 lobe 与神经输出共同形成最终线性 RGB `f`；
+- `metal_budgeted_direct_control_v3`：相同 MLP、state、asset 和训练预算，最终 `f` 只消费 direct positive RGB，另外三个输出只训练为不进入结果的 core auxiliary。
 
-两者的 `evaluate` 都是 11,392 dense MAC/direction，完整消费24维semantic state；prepare decoder 是 2,560 dense MAC，PreparedState 为 160 B，运行时 asset 读取数为 2。hard bound 是 `evaluate ≤20,000 MAC/direction`、PreparedState `≤192 B`；prepare、analytic 运算、weights、asset bytes 和实测 latency 另行完整报告。旧v1的10,368 MAC、8维condition checkpoint只作step512诊断对照，不能resume到v2。
+两者的 `evaluate` 都是 11,392 dense MAC/direction，完整消费24维semantic state；prepare decoder 是 2,560 dense MAC，并把Detail四通道直接residual到四个frame semantic分量。PreparedState 为 160 B，运行时 asset 读取数为 2。hard bound 是 `evaluate ≤20,000 MAC/direction`、PreparedState `≤192 B`；prepare、analytic 运算、weights、asset bytes 和实测 latency 另行完整报告。旧v1/v2 checkpoint只作step512诊断对照，不能resume到v3。
 
 旧 `metal_fused_full_v1`、`metal-windows-smoke.yaml`、`metal-linux-smoke.yaml` 和 `metal-linux-long.yaml` 只解释历史 checkpoint/package，不再是 canonical 训练入口，也不能 resume 到新方法。
 

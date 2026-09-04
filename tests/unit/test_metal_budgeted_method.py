@@ -140,7 +140,7 @@ def test_budgeted_method_descriptor_and_parameter_registry_are_exact() -> None:
     model = METHOD_DEFINITION.create_trainable(METAL_BUDGETED_REQUIRED_CONTEXT)
     groups = METHOD_DEFINITION.parameter_registry(model)
     assert descriptor.method_key == "metal-budgeted-neural-material"
-    assert descriptor.runtime_abi == "ncls.metal-budgeted-method@2"
+    assert descriptor.runtime_abi == "ncls.metal-budgeted-method@3"
     assert descriptor.cost_claims["C_eval_macs"] == 11_392
     assert descriptor.cost_claims["B_prepared"] == 160
     assert descriptor.cost_claims["P_trainable"] == 30_825
@@ -234,7 +234,7 @@ def test_budgeted_proposal_objective_detaches_nonproposal_parameters() -> None:
 def test_budgeted_qat_quantizes_weights_and_direct_auxiliary_stays_training_only() -> None:
     context = {
         **METAL_BUDGETED_REQUIRED_CONTEXT,
-        "profile_id": "metal_budgeted_direct_control_v2",
+        "profile_id": "metal_budgeted_direct_control_v3",
     }
     model = METHOD_DEFINITION.create_trainable(context)
     _initialize_calibration(model)

@@ -141,7 +141,14 @@ class MetalBudgetedPrepare(nn.Module):
         )
         if decoder_input.shape[1] != self.profile.semantic_decoder_layers[0]:
             raise RuntimeError("Metal budgeted semantic decoder input width drifted")
-        semantic = self.semantic_decoder(decoder_input)
+        decoded_semantic = self.semantic_decoder(decoder_input)
+        semantic = torch.cat(
+            (
+                decoded_semantic[:, :4] + asset.detail,
+                decoded_semantic[:, 4:],
+            ),
+            dim=1,
+        )
         base_lobes = program.analytic_lobes
         lobe_delta = semantic[:, 8:].reshape(
             wo.shape[0], self.profile.analytic_lobe_count, 8

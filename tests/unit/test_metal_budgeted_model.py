@@ -175,6 +175,20 @@ def test_budgeted_evaluator_consumes_the_full_prepared_semantic_state() -> None:
     assert not torch.equal(baseline, modified)
 
 
+def test_budgeted_detail_plane_has_a_direct_frame_semantic_path() -> None:
+    torch.manual_seed(20260905)
+    model = MetalBudgetedModel().eval()
+    values = _conditioning(2)
+    with torch.no_grad():
+        program = model.compile_program_state(values)
+        asset = model.sample_asset(values, program, qat=False)
+        for parameter in model.prepared_model.semantic_decoder.parameters():
+            parameter.zero_()
+        prepared = model.prepare_from_components(program, asset, values["wo"])
+    torch.testing.assert_close(prepared.semantic_state[:, :4], asset.detail)
+    assert torch.count_nonzero(prepared.semantic_state[:, 4:]) == 0
+
+
 def test_optimized_program_state_control_cannot_change_deterministic_contract() -> None:
     model = MetalBudgetedModel().eval()
     program = model.compile_program_state(_conditioning(2))

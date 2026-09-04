@@ -312,7 +312,7 @@ class MetalBudgetedMethodDefinition(MethodDefinition):
             ),
         },
         _state_schema(),
-        "ncls.metal-budgeted-method@2",
+        "ncls.metal-budgeted-method@3",
         int(
             BackendCapability.PREPARE
             | BackendCapability.EVALUATE
@@ -804,9 +804,9 @@ class MetalBudgetedMethodDefinition(MethodDefinition):
             raise ValueError("Metal budgeted model_context is required")
         MetalBudgetedModel.from_context(context)
         expected_correspondence = (
-            "metal-budgeted-full-semantic-hybrid@2"
+            "metal-budgeted-detail-frame-skip-hybrid@3"
             if context["profile_id"] == METAL_BUDGETED_HYBRID_PROFILE_ID
-            else "metal-budgeted-full-semantic-direct-control@2"
+            else "metal-budgeted-detail-frame-skip-direct-control@3"
         )
         if config.get("correspondence_id") != expected_correspondence:
             raise ValueError("Metal budgeted correspondence/profile identity drifted")

@@ -77,8 +77,8 @@ def test_composed_linux_pilots_are_matched_except_registered_profile_axis() -> N
         "joint-response-fit",
         "deployment-qat-refine",
     ]
-    assert hybrid.model_context["profile_id"] == "metal_budgeted_hybrid_v2"
-    assert direct.model_context["profile_id"] == "metal_budgeted_direct_control_v2"
+    assert hybrid.model_context["profile_id"] == "metal_budgeted_hybrid_v3"
+    assert direct.model_context["profile_id"] == "metal_budgeted_direct_control_v3"
     assert hybrid.run_class == direct.run_class == "profile"
     for hybrid_phase, direct_phase in zip(hybrid.phases, direct.phases, strict=True):
         assert hybrid_phase.routes == direct_phase.routes

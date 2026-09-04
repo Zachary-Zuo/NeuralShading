@@ -12,7 +12,7 @@
 ## 当前实施断点（2026-09-05）
 
 - Windows 端已完成新 profile、Python 数学核心、训练合同与 CPU 单测；不在本机执行 online reference、pilot、完整 runtime baseline 或旧 long。
-- direct/hybrid pilot已组成同source、query、loss、optimizer、schedule、precision与encoder-only asset输入的matched pair；Linux DDP5旧`@1`、高吞吐`@2` v1与batch profile均已执行，v1共同step512暴露完整semantic state未被neural evaluator消费的问题。当前实现`@3` v2并从fresh共同里程碑重跑。
+- direct/hybrid pilot已组成同source、query、loss、optimizer、schedule、precision与encoder-only asset输入的matched pair；Linux DDP5旧`@1`、高吞吐`@2` v1、full-semantic`@3` v2与batch profile均已执行。v2共同step512证明完整semantic直连仍未保留one-texel响应；当前实现`@4` v3的Detail→frame semantic短路径并fresh重跑。
 - product registry 已因 public CLI 必须先解析新 pilot 而提前切换到 `metal_budgeted`；这只是依赖顺序调整，不代表结构已经入选。Slang/package facet 仍须等待 Linux pilot 按预登记规则选择 hybrid 或 direct 后实现。
 - 旧 full 只保留历史实现与显式对照用途；当前阶段不通过兼容 shim 让旧 run 冒充 canonical `metal`。
 - pre-Linux `trellis-check` 已完成：checkpoint diagnostic readiness 由各方法 descriptor 的强校验 policy 声明，通用训练层不再按 Metal method key 分支；Windows 纯 CPU `tests/unit` 为 335 passed，layout/compileall/diff/Falcor clean 均通过。旧 `mdl-metal-full` fragment 保持历史语义，新全 cohort 使用独立 `mdl-metal-budgeted-full` identity。Linux handoff 在本任务 scoped commit 完成后重新生成，以冻结可直接同步的 commit identity。
@@ -66,6 +66,7 @@ Rollback point R1：若 Linux/headless harness无法保证相同 workload/sync/p
 - [x] 实现 stable two-frame + half/difference方向特征。
 - [x] 实现 v1 `28→64→64→64→6` hybrid evaluator、同 shape direct control和最多双 analytic lobe。
 - [x] 根据v1 step512审计实现v2完整24维semantic输入：`44→64→64→64→6`；保持160 B state、两次读取和20k MAC hard bound，并增加runtime消费回归。
+- [x] 根据v2 step512与fixed-batch诊断实现v3 Detail→frame semantic无参数短路径；保持其他matched轴并增加decoder置零合同测试。
 - [x] 实现三 component analytic proposal及 sample/pdf/weight identity。
 - [x] 为 finite/nonnegative、grazing、half退化、Beckmann例外、RGB gate、state packing和all-parameter gradient写 unit/GPU tests。
 

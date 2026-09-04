@@ -199,3 +199,9 @@ viewer 整帧 timing 只作为 lifecycle 补充，不替代 kernel matched resul
 高吞吐v1 pair在共同step512显示：hybrid/direct总体appearance与peak均在学习，但双方spatial-gradient都停留在约`0.282–0.283`。实现审计进一步确认上述v1结构只把24维semantic state的前8维拼入28维方向输入；decoder后16维虽写入PreparedState，却没有进入neural response body。这使“全部response-ready语义都被最终求值器消费”的原候选前提失效。
 
 当前v2保持其他matched轴不变，把完整24维semantic state拼入方向输入，形成`44→64→64→64→6`，evaluate dense MAC为11,392、PreparedState仍160 B、asset reads仍2。v1两种profile及其step512 artifacts作为历史诊断；v2使用新的profile/method/recipe身份fresh重跑。这个改动首先检验信息连通性，而不是用新loss或更宽网络掩盖通路缺失。
+
+## 11. v2 空间诊断与 v3 短路径
+
+v2共同step512证明完整semantic输入能改善direct的平均log/linear/chroma，却未改善one-texel spatial。在线paired分解显示target log梯度约0.285，而预测只有0.001–0.004；raw patch差异经过Detail与semantic decoder连续缩小约一个数量级和数倍。fixed-batch spatial-only高学习率实验仍无法充分拟合，说明此处不是简单增加训练step或loss权重的问题。
+
+v3给Detail plane明确的高频frame责任：训练端role-aware encoder仍学习四通道含义，prepare把这四通道直接residual到semantic前四个frame分量，同时保留原semantic decoder修正。它不假定source texture的原始通道语义，不增加参数、state、read或evaluate MAC，只增加四次prepare加法。该修订是本轮最后一个自动结构修订；若合同正确但质量仍差，结果进入下一轮候选方向而不继续版本循环。

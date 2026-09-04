@@ -1,12 +1,12 @@
 {
   "schema": "ncls.metal-budgeted-layout@1",
   "method_key": "metal-budgeted-neural-material",
-  "correspondence": "metal-budgeted-full-semantic-hybrid@2",
+  "correspondence": "metal-budgeted-detail-frame-skip-hybrid@3",
   "profiles": {
-    "metal_budgeted_hybrid_v2": {
+    "metal_budgeted_hybrid_v3": {
       "evaluator_mode": "hybrid"
     },
-    "metal_budgeted_direct_control_v2": {
+    "metal_budgeted_direct_control_v3": {
       "evaluator_mode": "direct"
     }
   },
@@ -119,5 +119,5 @@
     "asset_planes": "rgba8-snorm-per-plane-scale-bias",
     "sensitive_accumulation": "float32"
   },
-  "identity": "86a1ace0ab01d7d9efb7297374c717008373fd55143c540f146853a470f125a7"
+  "identity": "7d8c898916ae0da0e16ee48bf82f575d61d0007009d38967aef4ac41900c5a13"
 }

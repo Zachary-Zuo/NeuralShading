@@ -7,9 +7,9 @@ compatible_methods: [metal]
 payload:
   training:
     method_key: metal-budgeted-neural-material
-    correspondence_id: metal-budgeted-full-semantic-hybrid@2
+    correspondence_id: metal-budgeted-detail-frame-skip-hybrid@3
     model_context:
-      profile_id: metal_budgeted_hybrid_v2
+      profile_id: metal_budgeted_hybrid_v3
       asset_variant_count: 52
       maximum_texture_slots: 9
       maximum_typed_tokens: 32

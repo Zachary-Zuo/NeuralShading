@@ -69,3 +69,12 @@
 - proposal轨迹不作为direct evaluator选择主指标：direct的proposal head只调整mixture weight，而semantic/analytic state随direct appearance共同变化，因此density NLL可以与appearance方向不同；当前没有DDP reduce或unused-parameter证据。
 
 处理决定：保留v1 step512为对照，新增full-semantic v2身份，把方向输入从28扩到44、evaluate从10,368增至11,392 MAC，PreparedState 160 B和两次读取不变。hybrid/direct以`@3`从fresh共同边界重跑；不resume v1，也不先改loss。
+
+## full-semantic v2：共同step 512与空间信号诊断
+
+- artifact根为`artifacts/metal-budgeted-pilot/ddp5-full-semantic-2f91791/`。hybrid/direct均fresh到共同step512，DDP、gradient audit、checkpoint与teardown正常；稳定profile step wall约`0.23 s`，单段wall受reference consumer-wait长尾影响但无collective desync。
+- 对同seed、同validation row做v2-v1 paired bootstrap：hybrid appearance差`-0.00083`、spatial差`-0.000017`且CI跨零，peak差`+0.00257`；direct appearance/log/linear/chroma分别改善`-0.00772/-0.06599/-0.06989/-0.00555`，但peak退化`+0.33945`、spatial退化`+0.000544`。完整semantic输入对direct平均响应有用，却没有恢复one-texel细节。
+- task-local脚本重新生成8个online validation batch：target one-texel log梯度均值约`0.285`，hybrid/direct预测仅`0.0011/0.0038`。原始patch配对差异约`0.0134`，Detail/Context输出约`0.0013/0.0011`，semantic差异约`0.00033/0.00054`；模型基本输出空间常数。
+- spatial-only梯度不是断图：hybrid的asset/semantic组L2约`0.00129/0.0293`，direct约`0.00409/0.0113`，direct directional组约`0.0109`。但固定同一batch以原学习率优化256次，误差只从约`0.329`降到`0.327/0.320`；十倍学习率512次也仅降到`0.295/0.269`。因此继续主recipe不能充分弥补当前信息衰减。
+
+处理决定：v2 step512保留为信息连通消融，不继续到1024。v3把Detail四通道无参数residual到frame semantic前四维，其他matched轴和静态预算不变；两侧fresh重跑，之后不再按observed quality自动创建v4。
