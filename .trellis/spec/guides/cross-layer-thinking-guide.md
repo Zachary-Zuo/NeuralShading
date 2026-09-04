@@ -220,6 +220,17 @@ backend.prepare → state.evaluate / state.sample / state.pdf → MIS / throughp
 
 具体生命周期、readiness、profile与回归入口见`../learning/online-training.md`、`../data/reference-query.md`和`../viewer/mdl-reference.md`。
 
+## Profile / Checkpoint Tensor Schema Boundary
+
+当一个公共method在同一`MethodDescriptor`下增加模型profile时，profile是配置轴，不是绕过checkpoint ABI的新类型：
+
+- [ ] 所有profile是否保持相同的state key、dtype、rank和固定shape？只说某个参数“离线使用、不进入shader”仍不足以改变checkpoint schema。
+- [ ] training config resolver是否实际实例化所选profile，并在创建source session或执行step 1前对照descriptor验证完整state？
+- [ ] unit是否枚举全部注册profile，而不只测试默认profile的forward和单独候选的局部shape？
+- [ ] 如果参数shape确实必须变化，是否给它独立的method descriptor/implementation identity，并明确旧checkpoint不能resume？不要让周期checkpoint成为第一个跨层集成测试。
+
+典型失败是：候选profile单测、forward、DDP reducer和validation都正常，但默认模型生成的descriptor仍冻结旧参数shape，直到step128周期checkpoint才报shape mismatch。正确门禁应在YAML resolve时失败。
+
 ---
 
 ## Cross-Platform Template Consistency

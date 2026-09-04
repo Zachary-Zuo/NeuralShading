@@ -161,11 +161,7 @@ class MetalBudgetedTwoReadAsset(nn.Module):
         self.profile = profile
         self.asset_variant_count = asset_variant_count
         self.role_embedding = nn.Embedding(4, 8)
-        feature_width = (
-            24
-            if profile.asset_spatial_features == "signed-cross-summary@1"
-            else 20
-        )
+        feature_width = 20
         self.slot_score = nn.Linear(feature_width, 1)
         self.detail_encoder = nn.Sequential(
             nn.Linear(feature_width, 16), nn.SiLU(), nn.Linear(16, 4), nn.Tanh()
@@ -243,7 +239,6 @@ class MetalBudgetedTwoReadAsset(nn.Module):
                     center,
                     dx,
                     dy,
-                    context,
                     self.role_embedding(torch.clamp(roles, 0, 3)),
                 ),
                 dim=-1,

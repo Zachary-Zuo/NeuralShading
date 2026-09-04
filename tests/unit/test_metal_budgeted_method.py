@@ -265,3 +265,20 @@ def test_budgeted_calibration_is_train_only_state_and_checkpoint_visible() -> No
     assert restored.appearance_calibration_identity_hex == (
         model.appearance_calibration_identity_hex
     )
+
+
+def test_all_budgeted_profiles_match_the_public_checkpoint_tensor_schema() -> None:
+    for profile_id in (
+        "metal_budgeted_hybrid_v3",
+        "metal_budgeted_direct_control_v3",
+        "metal_budgeted_hybrid_role_detail_v4",
+        "metal_budgeted_hybrid_center_detail_v5",
+        "metal_budgeted_hybrid_dual_local_v6",
+    ):
+        model = METHOD_DEFINITION.create_trainable(
+            {**METAL_BUDGETED_REQUIRED_CONTEXT, "profile_id": profile_id}
+        )
+        state = METHOD_DEFINITION.export_training_state(model)
+        assert set(state) == {
+            field.name for field in METHOD_DEFINITION.descriptor.tensor_state_schema
+        }

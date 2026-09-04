@@ -47,6 +47,7 @@ MetalBudgetedAssetCooker.cook(encoded_values, mode, objective, refinement_steps,
 - prefetch有界且不跨validation、checkpoint、phase或stop边界；engine只依赖平台无关的step/session合同。host预取不推进cursor，checkpoint的logical/request/group/tile cursor不得领先已消费batch。
 - objective每次返回active required component的全部Python outputs；完成checkpoint前required groups的gradient/update coverage必须齐全。
 - checkpoint v1 严格冻结 resolved plan、method/facet、data execution/reference/asset/query/source identity、逐 rank RNG/data cursor、hook cursor 与当前 phase optimization 状态。发布前必须调用 data session `drain()`。
+- 同一个`MethodDescriptor`下允许多个profile时，所有profile的checkpoint tensor key/dtype/rank/shape必须满足该descriptor的同一静态schema；“离线参数不进入shader runtime”不能豁免checkpoint合同。config解析必须实例化所选profile并在创建online session前验证完整tensor schema，不能等到周期checkpoint才发现shape漂移。确需不同训练参数shape时必须使用独立method descriptor/implementation identity，不能只增加profile枚举。
 - `stop_at_step=0` 是合法的 train-only initialization/calibration checkpoint：rank 0仍须原子写 checkpoint、summary与review，但此时 metrics可以为空，review以0 record、0 rate和未完成coverage如实表示。`load_metric_rows(..., allow_empty=True)`只允许最终checkpoint的`global_step == 0`调用；任何正step训练仍要求至少一条metric，不能用该参数掩盖日志丢失。
 - 旧 checkpoint v4 只经 `LegacyCheckpointV4Importer` 产生 evaluation snapshot；不得 resume，也不得恢复旧 JSON config reader或 method alias。
 - producer state必须额外保存`typed_state_pool_identity`；resume同时校验pool与`query_stream_identity`，request count、reference logical ID、group/tile cursor只能在identity一致后恢复。每个request的generator由其不可变identity重建，不持久化执行计划相关generator state，也不能只保存seed后在新registry上重生另一批states。
@@ -70,6 +71,7 @@ MetalBudgetedAssetCooker.cook(encoded_values, mode, objective, refinement_steps,
 | typed-state recipe schema/字段、registry locator或range未知 | plan/session创建前拒绝 |
 | resume的typed-state pool identity漂移 | producer恢复拒绝，不恢复任何cursor |
 | Metal profile identity、layout identity、slot/token上限、两次asset读取或required route漂移 | model/method config构造拒绝，不创建隐式兼容identity |
+| 同一method的新profile改变任一checkpoint tensor shape | training config解析阶段拒绝；不得运行到周期checkpoint后才失败 |
 | budgeted pilot完成结构选择前请求`compile_program/compile_asset/compile_instance` | fail closed并指出pilot selection边界，不生成伪package；`sample/pdf`数学实现不得随之降级 |
 | optimized Metal asset path steps非正、bounded refinement超出`(0,0.5]`或encoder-only携带hidden steps | cook在编码/优化前拒绝 |
 | BF16进入FP32 random-access table却使用不同dtype的lerp weight | 实现测试失败；坐标、表和weight统一提升FP32后再插值 |
@@ -87,7 +89,7 @@ MetalBudgetedAssetCooker.cook(encoded_values, mode, objective, refinement_steps,
 
 ## 6. Tests Required
 
-- unit：YAML resolve/plugin、三种batch、multi-asset tile+halo、phase graph、carry-overlap resume、component正负例、checkpoint v1 与 legacy v4只读；metric loader默认拒绝空文件，只有显式step-0路径接受空rows；
+- unit：YAML resolve/plugin、三种batch、multi-asset tile+halo、phase graph、carry-overlap resume、component正负例、checkpoint v1 与 legacy v4只读；同一method的全部注册profile逐项导出并匹配descriptor tensor schema；metric loader默认拒绝空文件，只有显式step-0路径接受空rows；
 - integration：generic recipe registry扩展Metal train/validation states并验证非默认snapshot IDs不重叠、pool identity可恢复；
 - GPU：NVIDIA Python/Slang evaluator与sampler梯度；Metal budgeted finite/nonnegative、typed missing/discrete与asset分离、三路径asset cook、BF16/QAT敏感路径、Python/Slang matched proposal parity，以及Linux真实online两phase smoke/resume/evaluate；
 - static：无固定lifecycle、旧schema reader、offline batch或family-specific producer。

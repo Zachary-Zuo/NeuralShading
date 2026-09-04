@@ -801,6 +801,30 @@ class MetalBudgetedMethodDefinition(MethodDefinition):
         }
         if set(result) != {field.name for field in self.descriptor.tensor_state_schema}:
             raise ValueError("Metal budgeted checkpoint tensor state is incomplete")
+        fields = {field.name: field for field in self.descriptor.tensor_state_schema}
+        symbols: dict[str, int] = {}
+        for name, tensor in result.items():
+            field = fields[name]
+            if field.dtype != str(tensor.dtype).removeprefix("torch."):
+                raise ValueError(
+                    f"Metal budgeted checkpoint tensor {name!r} dtype drifted"
+                )
+            if len(field.shape) != tensor.ndim:
+                raise ValueError(
+                    f"Metal budgeted checkpoint tensor {name!r} rank drifted"
+                )
+            for expected, actual in zip(field.shape, tensor.shape, strict=True):
+                if isinstance(expected, int) and expected != actual:
+                    raise ValueError(
+                        f"Metal budgeted checkpoint tensor {name!r} shape drifted"
+                    )
+                if isinstance(expected, str):
+                    previous = symbols.setdefault(expected, int(actual))
+                    if previous != actual:
+                        raise ValueError(
+                            "Metal budgeted checkpoint symbolic dimension "
+                            f"{expected!r} drifted"
+                        )
         return result
 
     def restore_training_state(
@@ -1040,7 +1064,8 @@ class MetalBudgetedMethodDefinition(MethodDefinition):
         context = config.get("model_context")
         if not isinstance(context, Mapping):
             raise ValueError("Metal budgeted model_context is required")
-        MetalBudgetedModel.from_context(context)
+        model = MetalBudgetedModel.from_context(context)
+        self.export_training_state(model)
         expected_correspondence = {
             METAL_BUDGETED_HYBRID_PROFILE_ID: (
                 "metal-budgeted-detail-frame-skip-hybrid@3"
