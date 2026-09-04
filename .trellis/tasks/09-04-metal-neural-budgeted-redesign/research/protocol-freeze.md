@@ -188,3 +188,10 @@ authored 参数 state 固定为 registry default：`texture_scale=[1,1]`、`text
 - `outcome`：实现`a5e4de7`下四组fresh DDP5均完成。划痕青铜v4的spatial只改善`-0.000140`，但peak退化`+0.004411`且aggregate appearance的95% CI跨零；开裂钢v4的spatial退化`+0.0000546`、aggregate退化`+0.000742`，两项CI均不跨零。因此角色分离不具备跨材质净收益，候选按规则停止在step256；不延长、不替换v3交付、不自动创建v5。
 
 这属于“跨层合同 + 测试覆盖缺口”：纹理内部随机值无法区分zero padding与wrap，合成测试还绕过了最终DDS只读buffer。防复发由三层共同承担：CPU边界unit、真实GPU边界fixture、最终package自加载parity。
+
+## 14. 2026-09-05 fixed-batch spatial capacity diagnostic
+
+- `trigger`：v4 role-separated Detail在青铜只产生极小spatial收益、在钢上退化，不能区分“现有两读/4通道路径缺少表达能力”和“完整训练的多目标/优化竞争未学会使用该路径”。
+- `scope`：分别从fresh v3划痕青铜、开裂钢step256 checkpoint加载一个固定online validation batch；只在内存中对除proposal sampler外的现有参数做128步spatial L1优化，learning rate `3e-4`。不保存模型、不改变recipe/source/query/profile/runtime预算，也不作为候选或质量对照。
+- `interpretation`：若fixed-batch spatial error显著下降且predicted gradient接近target，说明路径具有局部记忆/表达能力，下一轮优先研究训练目标解耦和显式监督；若误差仍接近target gradient，说明当前asset/evaluator信息带宽或结构是硬瓶颈，下一轮优先有界导数通道或asset带宽消融。单batch overfit不能证明未见UV泛化。
+- `stop`：每材质只运行一次、最多128步；无论结果如何都不自动训练新profile。
