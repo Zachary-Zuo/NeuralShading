@@ -86,3 +86,13 @@
 - hybrid/direct spatial都退化约`+0.00033/+0.00032`，95% paired bootstrap CI均不跨零。短路径对平均响应和hybrid peak有净收益，却没有恢复one-texel细节；它不能作为空间问题已解决的证据。
 
 处理决定：不再创建v4。v3作为当前matched结构继续到1024/2048，以获得成熟hybrid/direct checkpoint并完成部署；空间方向登记为下一轮role-separated Detail/Context编码、显式可量化高频latent和对应matched消融，不在本轮继续在线改结构或单纯提高loss权重。
+
+## v3 成熟训练、phase resume 与结构选择
+
+- hybrid/direct 均在同一实现、source/query、seed、global batch 2560 下完成 `0→1792` 的 `joint-response-fit`，并分别从 exact step-1792 checkpoint 恢复到 `deployment-qat-refine` 的 step 2048。两份 step-1792 checkpoint 都记录 `phase_name=deployment-qat-refine, phase_step=0`；恢复后的日志、review 与最终 checkpoint 证明 phase 边界不是只改显示文本。
+- 每侧累计 `2048×2560×2=10,485,760` 个 evaluator/sampler route work units。所有五个 rank 的 required group 均保留 finite/nonzero gradient 与 update；没有 unused parameter、collective desync、非有限 metric、hook failure 或不完整 checkpoint。各训练段 dmon 的平均 SM utilization 约 `67%–76%`，周期性低谷对应每128 step一次的256-batch online reference validation，不支持继续以增大 batch 处理验证瓶颈。
+- hybrid 的 validation appearance 在 step `1024/1152/1280/1408/1536/1664/1792/1920/2048` 为 `1.1308/1.1346/1.1432/1.1372/1.1301/1.1338/1.1560/1.1456/1.1441`。QAT 将末个 joint 点的回弹恢复到 `1.1441`，peak 为 `1.0672`，runtime FP16 weight MAE 约 `5.04e-5`；positive trace 仍约 `2.4e-6`，模型实际行为是 learned gate 调制 analytic core，且 analytic trace 存在明显长尾。
+- direct 的同期 appearance 从 step1024的 `1.9473` 持续改善到 step1792的 `1.8415`，QAT step2048为 `1.8303`；最终 log/linear/chroma/peak/spatial 分别为 `0.6884/1.5920/0.00752/1.7450/0.28120`，runtime FP16 weight MAE约`5.73e-5`。它仍在学习，但与 hybrid 的主质量差距已经明确，不满足“结构选择不确定”这一4096扩展前提。
+- step2048同序256条validation row的paired bootstrap中，`direct-hybrid` 的 appearance、log、linear、chroma与peak均为正，均值与95% CI分别为`+0.68615 [0.68013,0.69220]`、`+0.36807 [0.36633,0.36985]`、`+0.21976 [0.21307,0.22634]`、`+0.005928 [0.005911,0.005946]`和`+0.67777 [0.66522,0.69035]`。direct的spatial error小`0.001745 [0.001563,0.001930]`，但两者预测one-texel变化都远低于target，不能把该小差异解释成高频问题已解决。
+
+处理决定：按预登记规则选择 `metal_budgeted_hybrid_v3` 为 canonical profile，保留 `metal_budgeted_direct_control_v3` 为 exact diagnostic视觉对照；不启动2048→4096。下一阶段先实现两者共形的FP16/RGBA8 runtime与evaluator-only Slang/package parity。由于deployment实现会改变method implementation identity，最终可交付checkpoint必须在deployment commit后fresh复跑，不能把当前训练identity静默贴到新runtime上。

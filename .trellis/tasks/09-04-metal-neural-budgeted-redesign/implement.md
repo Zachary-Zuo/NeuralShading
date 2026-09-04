@@ -84,8 +84,8 @@ Rollback point R2：任何 Python 主形态需要越过 20k/192B 才能闭合接
 - [x] 以`@1`共同step-128证据定位training/validation热点；实现窗口级validation packed reduce与bounded lookahead，补齐单机/DDP等价性和异常清理测试。
 - [x] 用同source/query/model做旧/新执行路径bounded profile；新matched recipe固定每16 step report、depth/reference batch steps=2，并在per-rank batch 64/128/256/512中选出512这一吞吐—显存Pareto点。
 - [x] 在新recipe fresh前审查direct/hybrid输出责任、appearance分项、proposal权重/梯度与calibration量级；v1共同step512确认direct并非零梯度，同时定位求值器只消费前8维semantic state的架构缺陷。
-- [ ] 以`0/8/128/256/512/1024/2048`共同里程碑交替训练direct/hybrid DDP5 pair，保存分项loss、独立validation、rank stage/profile和完整日志；满足设计§15.7时才成对延长到最多4096。
-- [ ] 按预登记规则比较microdetail、RGB/chroma、peak、energy和成本；输出 `research/single-material-selection.md`。
+- [x] 以`0/8/128/256/512/1024/2048`共同里程碑交替训练direct/hybrid DDP5 pair，保存分项loss、独立validation、rank stage/profile和完整日志；满足设计§15.7时才成对延长到最多4096。
+- [x] 按预登记规则比较microdetail、RGB/chroma、peak、energy和成本；输出 `research/single-material-selection.md`。
 - [ ] 仅在direct/hybrid共同失败且完成failure classification后，允许启动≤4×主profile neural MAC的teacher diagnostic；不自动追加step/seed。
 
 Rollback point R3：
