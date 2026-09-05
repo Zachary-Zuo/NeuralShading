@@ -348,3 +348,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 16: Viewer 通用材质接口与 Metal 双侧 PT 部署
+
+**Date**: 2026-09-05
+**Task**: Viewer 通用材质接口与 Metal 双侧 PT 部署
+**Branch**: `main`
+
+### Summary
+
+完成最新 hybrid 四入口部署、统一 scene scattering 和 PT/Deferred renderer、双侧模式标题、整帧调度及相关旧接口清理；修复 deferred 材质输入与 shader 链接错误。96 项相关测试通过，双侧 1024 spp capture 与逐位一致 replay 完成。800×900 单侧 Neural PT GPU median 420.8 ms，deferred 单次 3.66 ms。用户已批准本地提交并归档，任务已归档，未 push；结果位于 artifacts/viewer/metal-viewer-refresh-lighting/current/validation.md。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `19073e07c5398630000fc9536fbc46cf95e08e48` | (see git log) |
+
+### Status
+
+[OK] **Completed**

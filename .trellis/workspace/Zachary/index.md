@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
-- **Last Active**: 2026-08-30
+- **Total Sessions**: 16
+- **Last Active**: 2026-09-05
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~350 | Active |
+| `journal-1.md` | ~371 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-09-05 | Viewer 通用材质接口与 Metal 双侧 PT 部署 | `19073e07c5398630000fc9536fbc46cf95e08e48` | `main` |
 | 15 | 2026-08-30 | 完成 vMaterial Metal 神经材质系统 | `0cfeb88`, `6c20af9`, `867c67b`, `e8deaaa`, `b1008b6`, `bccf2d8`, `3757450` | `main` |
 | 14 | 2026-08-29 | 完成 Neural Shading 与 Appearance 文献深度研究 | `4f54a53` | `main` |
 | 13 | 2026-08-28 | 补齐 vMaterials preset catalog 与 capability audit | `d8d9795`, `5b9672c` | `main` |
