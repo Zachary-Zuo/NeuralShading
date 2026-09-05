@@ -461,7 +461,8 @@ class ResolvedTrainingPlan:
         }
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "ResolvedTrainingPlan":
+    def from_manifest(cls, value: Mapping[str, Any]) -> "ResolvedTrainingPlan":
+        """读取自包含的冻结计划；不把其历史实现身份改写成当前实现。"""
         _require_exact_fields(
             "resolved training plan",
             value,
@@ -505,7 +506,13 @@ class ResolvedTrainingPlan:
             str(value["format_name"]),
             int(value["format_version"]),
         )
-        plugin = get_method_plugin(selection.method)
+        result.to_runtime_config()
+        return result
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ResolvedTrainingPlan":
+        result = cls.from_manifest(value)
+        plugin = get_method_plugin(result.selection.method)
         expected_descriptor = {
             "public_key": plugin.key,
             "implementation_key": plugin.descriptor.method_key,

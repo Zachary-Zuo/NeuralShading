@@ -7,6 +7,10 @@ param(
     [string]$Configuration = "Release",
     [uint32]$Width = 1600,
     [uint32]$Height = 900,
+    [ValidateSet("path-tracing", "deferred")]
+    [string]$LeftMode = "path-tracing",
+    [ValidateSet("path-tracing", "deferred")]
+    [string]$RightMode = "path-tracing",
     [switch]$SkipBuild
 )
 
@@ -25,9 +29,9 @@ if (-not (Test-Path -LiteralPath $handoffPath -PathType Leaf)) {
 }
 $document = Get-Content -LiteralPath $handoffPath -Encoding UTF8 -Raw | ConvertFrom-Json
 if ($document.format_name -ne "ncls.metal-budgeted-viewer-handoff" -or `
-    $document.format_version -ne 1 -or `
-    $document.checkpoint_compatibility -ne "exact-diagnostic-evaluator-preview") {
-    throw "Unsupported or non-diagnostic Metal budgeted handoff"
+    $document.format_version -ne 2 -or `
+    $document.checkpoint_compatibility -ne "exact") {
+    throw "Unsupported handoff; rebuild with tools/viewer/prepare_metal_catalog.py"
 }
 $handoffRoot = Split-Path -Parent $handoffPath
 $catalog = Join-Path $handoffRoot ([string]$document.reference_catalog)
@@ -42,8 +46,11 @@ $packages = @{}
 foreach ($package in $document.packages) {
     $packages[[string]$package.role] = $package
 }
-if (-not $packages.ContainsKey("hybrid") -or -not $packages.ContainsKey("direct")) {
-    throw "Handoff must contain exact hybrid and direct packages"
+if (-not $packages.ContainsKey("hybrid")) {
+    throw "Handoff must contain the selected hybrid package"
+}
+if ($Comparison -ne "ReferenceVsHybrid" -and -not $packages.ContainsKey("direct")) {
+    throw "This comparison requires an explicitly exported direct package"
 }
 
 if (-not $SkipBuild) {
@@ -56,15 +63,14 @@ if (-not (Test-Path -LiteralPath $viewer -PathType Leaf)) {
 }
 
 $slot0Package = "source-reference"
-$slot0Mode = "path-tracing"
+$slot0Mode = $LeftMode
 $slot1Package = [string]$packages["hybrid"].package_id
-$slot1Mode = "deferred"
+$slot1Mode = $RightMode
 if ($Comparison -eq "ReferenceVsDirect") {
     $slot1Package = [string]$packages["direct"].package_id
 }
 elseif ($Comparison -eq "HybridVsDirect") {
     $slot0Package = [string]$packages["hybrid"].package_id
-    $slot0Mode = "deferred"
     $slot1Package = [string]$packages["direct"].package_id
 }
 
@@ -75,7 +81,6 @@ $arguments = @(
     "--slot0-mode", $slot0Mode,
     "--slot1-package", $slot1Package,
     "--slot1-mode", $slot1Mode,
-    "--evaluator-preview-lighting",
     "--width", $Width.ToString(),
     "--height", $Height.ToString()
 )
@@ -84,5 +89,7 @@ $process = Start-Process -FilePath $viewer -ArgumentList $arguments `
 Write-Output "NclsViewer started: PID=$($process.Id)"
 Write-Output "Comparison: $Comparison"
 Write-Output "Hybrid: $($packages['hybrid'].profile_id) / $($packages['hybrid'].package_id)"
-Write-Output "Direct: $($packages['direct'].profile_id) / $($packages['direct'].package_id)"
+if ($packages.ContainsKey("direct")) {
+    Write-Output "Direct: $($packages['direct'].profile_id) / $($packages['direct'].package_id)"
+}
 Write-Output "Compatibility: $($document.checkpoint_compatibility)"

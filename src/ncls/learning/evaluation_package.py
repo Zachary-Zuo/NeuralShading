@@ -100,13 +100,10 @@ def compile_evaluation_package(
         provenance={
             "checkpoint_sha256": evaluation.checkpoint_sha256,
             "checkpoint_readiness_mode": readiness_mode,
-            "checkpoint_compatibility": (
-                "exact-diagnostic-evaluator-preview"
-                if readiness_mode in {"diagnostic-evaluator", "visual-diagnostic"}
-                else "exact"
-            ),
+            "checkpoint_compatibility": "exact",
             "checkpoint_profile_id": profile_id,
             "checkpoint_legacy_v4": evaluation.legacy_v4,
+            "training_method": dict(evaluation.deployment_payload.get("training_method", {})),
         },
     )
     return CompiledEvaluationPackage(

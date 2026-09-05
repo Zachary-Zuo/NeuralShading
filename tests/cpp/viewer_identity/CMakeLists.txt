@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.20)
+project(ViewerIdentityTest LANGUAGES CXX)
+set(NCLS_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../..")
+add_executable(viewer_identity main.cpp "${NCLS_ROOT}/apps/viewer/Hash.cpp")
+target_compile_features(viewer_identity PRIVATE cxx_std_17)
+target_compile_definitions(viewer_identity PRIVATE NOMINMAX)
+target_include_directories(viewer_identity PRIVATE "${NCLS_ROOT}/apps/viewer" "${NCLS_ROOT}/external/Falcor/external/include")
+target_link_libraries(viewer_identity PRIVATE bcrypt)

@@ -11,6 +11,38 @@ from ncls.viewer import (
     finalize_catalog_document,
     link_parameter_view,
 )
+from ncls.viewer.material_catalog import source_catalog_document, source_catalog_entry
+
+
+def test_catalog_supports_source_only_fixed_and_optional_neural_bindings(tmp_path: Path) -> None:
+    entry = source_catalog_entry(export_id="1"*64, display_name="固定 source",
+        source_snapshot_id="2"*64, artifact_sha256="3"*64, artifact_root="reference/one")
+    document = source_catalog_document(mdl_sdk="2025.0.0-387700.1252",
+        target_code_types={"path": "runtime/types.hlsl", "sha256": "4"*64},
+        renderer_runtime={"path": "runtime/mdl.slangh", "sha256": "5"*64},
+        default_export_id="1"*64, entries=[entry])
+    source = ViewerMaterialCatalog.from_dict(document, source_path=tmp_path / "catalog.json", verify_payloads=False)
+    assert source.opaque_entry_count == 1 and source.registry_identity == ""
+    assert source.entries[0].package_root is None
+    assert source.entries[0].parameter_view == {}
+    bound = dict(document)
+    bound["entries"] = [{**entry, "package_id": "6"*64, "package_root": "packages/one",
+        "program_id": "7"*64, "asset_id": "8"*64, "instance_id": "9"*64}]
+    _rehash(bound)
+    loaded = ViewerMaterialCatalog.from_dict(bound, source_path=tmp_path / "catalog.json", verify_payloads=False)
+    assert loaded.entries[0].package_id == "6"*64
+    bound["entries"][0]["instance_id"] = None
+    _rehash(bound)
+    with pytest.raises(ValueError, match="partial package binding"):
+        ViewerMaterialCatalog.from_dict(bound, source_path=tmp_path / "catalog.json", verify_payloads=False)
+
+
+def test_catalog_rejects_retired_schema(tmp_path: Path) -> None:
+    document = _document()
+    document["schema_version"] = 1
+    _rehash(document)
+    with pytest.raises(ValueError, match="unsupported"):
+        ViewerMaterialCatalog.from_dict(document, source_path=tmp_path / "catalog.json", verify_payloads=False)
 
 
 def _view(snapshot_id: str) -> dict[str, object]:
@@ -94,7 +126,7 @@ def _document() -> dict[str, object]:
     return finalize_catalog_document(
         {
             "schema_name": "ncls.viewer-material-catalog",
-            "schema_version": 1,
+            "schema_version": 2,
             "registry": {
                 "identity": "b" * 64,
                 "sha256": "c" * 64,
@@ -105,7 +137,7 @@ def _document() -> dict[str, object]:
                 "sha256": "d" * 64,
                 "checkpoint_descriptor_sha256": "0" * 64,
                 "runtime_descriptor_sha256": "f" * 64,
-                "compatibility": "exact-diagnostic-evaluator-preview",
+                "compatibility": "exact",
                 "method_key": "metal-fused-neural-material",
                 "step": 20_000,
                 "phase": "joint-coarse-to-fine",
@@ -134,7 +166,7 @@ def test_viewer_material_catalog_accepts_linked_typed_entry_without_loading_payl
     )
     assert catalog.checkpoint_step == 20_000
     assert catalog.checkpoint_phase == "joint-coarse-to-fine"
-    assert catalog.checkpoint_compatibility == "exact-diagnostic-evaluator-preview"
+    assert catalog.checkpoint_compatibility == "exact"
     assert catalog.default_export_id == catalog.entries[0].export_id
     assert catalog.entries[0].metal == "brass"
 

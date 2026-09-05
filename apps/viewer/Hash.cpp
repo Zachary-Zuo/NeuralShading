@@ -5,6 +5,10 @@
 #include <bcrypt.h>
 
 #include <array>
+#include <algorithm>
+#include <charconv>
+#include <cmath>
+#include <nlohmann/json.hpp>
 #include <fstream>
 #include <stdexcept>
 #include <vector>
@@ -94,6 +98,54 @@ std::string sha256Hex(const void* data, size_t size)
     Hash hash(algorithm.get());
     hash.update(data, size);
     return toHex(hash.finish());
+}
+
+std::string canonicalJson(const nlohmann::json& value)
+{
+    if (value.is_number_float())
+    {
+        const double number = value.get<double>();
+        if (!std::isfinite(number)) throw std::runtime_error("canonical JSON requires finite numbers");
+        std::array<char, 64> buffer{};
+        const auto converted = std::to_chars(buffer.data(), buffer.data() + buffer.size(), number, std::chars_format::scientific);
+        if (converted.ec != std::errc()) throw std::runtime_error("canonical JSON float conversion failed");
+        const std::string scientific(buffer.data(), converted.ptr);
+        const size_t separator = scientific.find('e');
+        const int exponent = std::stoi(scientific.substr(separator + 1u));
+        // Python json.dumps uses repr(double): shortest round-trip digits,
+        // fixed notation for decimal exponents [-4, 15], otherwise scientific.
+        if (exponent < -4 || exponent >= 16) return scientific;
+        const bool negative = scientific.front() == '-';
+        std::string digits = scientific.substr(negative ? 1u : 0u, separator - (negative ? 1u : 0u));
+        digits.erase(std::remove(digits.begin(), digits.end(), '.'), digits.end());
+        const int point = exponent + 1;
+        std::string result = negative ? "-" : "";
+        if (point <= 0) result += "0." + std::string(-point, '0') + digits;
+        else if (point >= static_cast<int>(digits.size())) result += digits + std::string(point - digits.size(), '0') + ".0";
+        else result += digits.substr(0u, point) + "." + digits.substr(point);
+        return result;
+    }
+    if (value.is_array() || value.is_object())
+    {
+        const bool object = value.is_object();
+        std::string result = object ? "{" : "[";
+        bool first = true;
+        for (auto item = value.begin(); item != value.end(); ++item)
+        {
+            if (!first) result += ',';
+            first = false;
+            if (object) result += nlohmann::json(item.key()).dump() + ":";
+            result += canonicalJson(item.value());
+        }
+        return result + (object ? "}" : "]");
+    }
+    return value.dump();
+}
+
+std::string sha256Json(const nlohmann::json& value)
+{
+    const std::string payload = canonicalJson(value);
+    return sha256Hex(payload.data(), payload.size());
 }
 
 std::string sha256FileHex(const std::filesystem::path& path)

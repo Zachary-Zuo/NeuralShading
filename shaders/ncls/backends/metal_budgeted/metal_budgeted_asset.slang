@@ -187,6 +187,35 @@ NclsMetalBudgetedPrepared nclsMetalBudgetedPrepare(
     result.compactFrame[5] = cos(secondary[6]);
     result.compactFrame[6] = sin(primary[6]);
     result.compactFrame[7] = sin(secondary[6]);
+    float proposalInput[NCLS_METAL_BUDGETED_MAX_WIDTH] = {};
+    float proposalOutput[NCLS_METAL_BUDGETED_MAX_WIDTH] = {};
+    [unroll]
+    for (uint i = 0u; i < 24u; ++i) proposalInput[i] = result.semantic[i];
+    nclsMetalBudgetedDense(NCLS_METAL_BUDGETED_W_PREPARED_MODEL_PROPOSAL_ADAPTER_WEIGHT,
+        NCLS_METAL_BUDGETED_W_PREPARED_MODEL_PROPOSAL_ADAPTER_BIAS,
+        24u, 3u, 0u, proposalInput, proposalOutput);
+    const float3 luminance = float3(0.2126f, 0.7152f, 0.0722f);
+    float3 rawWeights;
+    [unroll]
+    for (uint i = 0u; i < 3u; ++i)
+    {
+        float clue = 1.0f;
+        if (i < 2u)
+            clue = max(dot(float3(result.lobes[8u*i], result.lobes[8u*i+1u], result.lobes[8u*i+2u]),
+                luminance) * result.lobes[8u*i+5u] * result.lobes[8u*i+7u], 1e-5f);
+        rawWeights[i] = nclsMetalBudgetedCompiledHalf(baseWord, 32u+i) * clue
+            * exp(clamp(proposalOutput[i], -4.0f, 4.0f));
+    }
+    const float3 proposalWeights = 0.98f * rawWeights / max(rawWeights.x+rawWeights.y+rawWeights.z, 1e-12f)
+        + float3(0.0f, 0.0f, 0.02f);
+    [unroll]
+    for (uint i = 0u; i < 3u; ++i)
+    {
+        result.proposal[4u*i] = proposalWeights[i];
+        result.proposal[4u*i+1u] = i < 2u ? result.lobes[8u*i+3u] : 1.0f;
+        result.proposal[4u*i+2u] = i < 2u ? result.lobes[8u*i+4u] : 1.0f;
+        result.proposal[4u*i+3u] = i == 0u ? float(nclsMetalBudgetedCompiledFlag(baseWord, 6u)) : i == 1u ? 0.0f : 2.0f;
+    }
     [unroll]
     for (uint index = 0u; index < 4u; ++index)
         result.accessState[index] = access[index];

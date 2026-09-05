@@ -15,9 +15,43 @@ from ncls.learning.training import (
     save_training_checkpoint_v1,
 )
 from ncls.learning.training.checkpoint import TrainingCheckpoint, save_checkpoint
+from ncls.learning.deployment_snapshot import load_deployment_snapshot
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_deployment_preserves_training_identity_when_runtime_code_changes(tmp_path: Path) -> None:
+    plan, plugin, runner = _runner_checkpoint()
+    checkpoint = TrainingCheckpointV1.from_runner_checkpoint(
+        runner, plan=plan, plugin=plugin, data_execution_plan_identity="7" * 64)
+    method = {**checkpoint.method, "implementation_sha256": "f" * 64}
+    manifest = {**checkpoint.plan_manifest, "method_descriptor": method}
+    checkpoint = replace(checkpoint, method=method, plan_manifest=manifest, plan_identity=sha256_json(manifest))
+    path = tmp_path / "checkpoint.pt"
+    original_hash = save_training_checkpoint_v1(path, checkpoint)
+    with pytest.raises(ValueError, match="implementation drifted"):
+        load_evaluation_snapshot(path)
+    deployed = load_deployment_snapshot(path)
+    assert deployed.checkpoint_sha256 == original_hash
+    assert deployed.deployment_payload["training_method"] == method
+    assert not deployed.readiness["diagnostic-evaluator"]["exact_method_identity"]
+    with pytest.raises(ValueError, match="completed checkpoint"):
+        deployed.require_ready("diagnostic-evaluator")
+    assert load_training_checkpoint_v1(path).method == method
+
+
+def test_deployment_rejects_incompatible_weight_shape(tmp_path: Path) -> None:
+    plan, plugin, runner = _runner_checkpoint()
+    checkpoint = TrainingCheckpointV1.from_runner_checkpoint(
+        runner, plan=plan, plugin=plugin, data_execution_plan_identity="7" * 64)
+    state = dict(checkpoint.model_state)
+    name = next(name for name, tensor in state.items() if tensor.numel() > 1)
+    state[name] = state[name].reshape(-1)[:1]
+    path = tmp_path / "checkpoint.pt"
+    save_training_checkpoint_v1(path, replace(checkpoint, model_state=state))
+    with pytest.raises((ValueError, RuntimeError), match="shape|size|drifted"):
+        load_deployment_snapshot(path)
 
 
 def _runner_checkpoint():

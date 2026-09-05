@@ -12,6 +12,7 @@ from ncls.learning.metal_budgeted_asset_cook import MetalBudgetedCompiledAsset
 from ncls.learning.models.metal_budgeted import MetalBudgetedModel
 from ncls.learning.models.metal_budgeted_asset import MetalBudgetedAssetSample
 from ncls.learning.models.metal_budgeted_compiler import MetalBudgetedProgramState
+from ncls.learning.models.metal_budgeted_evaluator import MetalBudgetedPreparedState
 
 
 METAL_BUDGETED_COMPILED_WORD_COUNT = 48
@@ -253,7 +254,7 @@ def _runtime_asset_sample(
     )
 
 
-def evaluate_metal_budgeted_cooked_asset(
+def prepare_metal_budgeted_cooked_asset(
     model: MetalBudgetedModel,
     asset: MetalBudgetedCompiledAsset,
     tensors: Mapping[str, torch.Tensor],
@@ -262,8 +263,7 @@ def evaluate_metal_budgeted_cooked_asset(
     mip_level: float,
     filter_random: float,
     wo: Sequence[float],
-    wi: Sequence[Sequence[float]],
-) -> torch.Tensor:
+) -> MetalBudgetedPreparedState:
     device = next(model.parameters()).device
     runtime_tensors = {name: value.to(device) for name, value in tensors.items()}
     with torch.no_grad():
@@ -293,10 +293,30 @@ def evaluate_metal_budgeted_cooked_asset(
             filter_random=filter_random,
         )
         wo_tensor = torch.tensor([wo], dtype=torch.float32, device=device)
-        wi_tensor = torch.tensor([wi], dtype=torch.float32, device=device)
-        prepared = model.prepare_from_components(program, sampled, wo_tensor)
+        return model.prepare_from_components(program, sampled, wo_tensor)
+
+
+def evaluate_metal_budgeted_cooked_asset(
+    model: MetalBudgetedModel,
+    asset: MetalBudgetedCompiledAsset,
+    tensors: Mapping[str, torch.Tensor],
+    *,
+    uv: Sequence[float],
+    mip_level: float,
+    filter_random: float,
+    wo: Sequence[float],
+    wi: Sequence[Sequence[float]],
+) -> torch.Tensor:
+    prepared = prepare_metal_budgeted_cooked_asset(
+        model, asset, tensors, uv=uv, mip_level=mip_level,
+        filter_random=filter_random, wo=wo,
+    )
+    device = next(model.parameters()).device
+    with torch.no_grad():
         return model.evaluate_prepared(
-            prepared, wo_tensor, wi_tensor
+            prepared,
+            torch.tensor([wo], dtype=torch.float32, device=device),
+            torch.tensor([wi], dtype=torch.float32, device=device),
         ).f.detach().cpu()[0]
 
 
@@ -309,6 +329,7 @@ __all__ = [
     "metal_budgeted_weight_define",
     "pack_metal_budgeted_compiled_material",
     "pack_metal_budgeted_program",
+    "prepare_metal_budgeted_cooked_asset",
     "quantize_metal_budgeted_program_state",
     "quantize_metal_budgeted_runtime_model",
 ]

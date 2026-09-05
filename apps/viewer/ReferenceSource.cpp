@@ -696,8 +696,7 @@ ReferenceSource loadReferenceSource(const std::filesystem::path& path)
         const json document = json::parse(stream);
         if (document.value("schema_name", "") == "ncls.openpbr-material") return loadOpenPbr(path, document);
         const std::string schemaName = document.value("schema_name", "");
-        if (schemaName == "ncls.mdl-viewer-catalog"
-            || schemaName == "ncls.viewer-material-catalog")
+        if (schemaName == "ncls.viewer-material-catalog")
         {
             ReferenceSource source;
             source.family = ReferenceFamily::Mdl;
@@ -705,7 +704,7 @@ ReferenceSource loadReferenceSource(const std::filesystem::path& path)
             const auto found = std::find_if(
                 source.mdlCatalog->entries.begin(), source.mdlCatalog->entries.end(),
                 [&](const MdlCatalogEntry& entry) {
-                    return (source.mdlCatalog->linked() ? entry.exportId : entry.assetId)
+                    return (entry.linked() ? entry.exportId : entry.assetId)
                         == source.mdlCatalog->defaultAssetId;
                 });
             if (found == source.mdlCatalog->entries.end())
@@ -739,7 +738,7 @@ ReferenceSource selectMdlCatalogEntry(const ReferenceSource& source, uint32_t in
     result.displayName = entry.displayName;
     result.mdlEdited = false;
     result.mdlEditStateSha256.clear();
-    if (entry.linked())
+    if (!entry.parameterView.is_null())
         result = applyMdlCatalogParameterView(result, result.mdlParameterView);
     return result;
 }
@@ -792,7 +791,7 @@ ReferenceSource applyMdlCatalogParameterView(
         || source.mdlCatalogIndex >= source.mdlCatalog->entries.size())
         throw std::runtime_error("MDL typed edit requires a selected catalog entry");
     const auto& entry = source.mdlCatalog->entries[source.mdlCatalogIndex];
-    if (!entry.linked()) throw std::runtime_error("legacy MDL catalog entries are not typed-editable");
+    if (entry.parameterView.is_null()) throw std::runtime_error("this source entry does not expose typed editing");
     validateViewerTypedParameterView(parameterView);
     if (parameterView.at("snapshot_id") != entry.sourceSnapshotId)
         throw std::runtime_error("MDL typed edit parameter view has a stale base snapshot");
@@ -955,7 +954,7 @@ json referenceSourceStatePayload(const ReferenceSource& source)
         payload["source_snapshot_id"] = source.sourceSha256;
         payload["compiled_artifact_sha256"] = source.mdlArtifact->artifactSha256;
         payload["texture_filtering"] = "explicit-lod0";
-        if (source.mdlCatalog->linked())
+        if (!source.mdlParameterView.is_null())
         {
             payload["viewer_material_state"] = {
                 {"catalog_id", source.mdlCatalog->catalogId},
@@ -1070,8 +1069,8 @@ ReferenceSource deserializeReferenceSourceState(
             source, static_cast<uint32_t>(found - source.mdlCatalog->entries.begin()));
         if (document.contains("viewer_material_state"))
         {
-            if (!source.mdlCatalog->linked())
-                throw std::runtime_error("viewer scene linked MDL state requires a ViewerMaterialCatalog");
+            if (source.mdlParameterView.is_null())
+                throw std::runtime_error("viewer scene edit state requires an editable source entry");
             const auto& state = document.at("viewer_material_state");
             if (state.at("catalog_id") != source.mdlCatalog->catalogId
                 || state.at("registry_identity") != source.mdlCatalog->registryIdentity

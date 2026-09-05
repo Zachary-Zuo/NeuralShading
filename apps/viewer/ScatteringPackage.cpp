@@ -185,12 +185,6 @@ void validateTypedParameterView(const json& view)
     require(view.at("root").at("path") == "/", "typed material editor root path must be /");
 }
 
-std::string sha256Json(const json& value)
-{
-    const std::string payload = value.dump();
-    return sha256Hex(payload.data(), payload.size());
-}
-
 uint32_t readU32(const std::vector<std::byte>& bytes, size_t offset)
 {
     require(offset + sizeof(uint32_t) <= bytes.size(), "typed resource header is truncated");

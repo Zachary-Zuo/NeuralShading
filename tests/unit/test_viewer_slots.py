@@ -23,21 +23,21 @@ def test_slot_failure_never_changes_peer_or_extent():
 
 
 def test_package_path_tracer_uses_package_prepare_evaluate_pdf_and_sample() -> None:
-    source = Path("apps/viewer/shaders/PackagePathTracer.cs.slang").read_text(
+    source = Path("apps/viewer/shaders/PathTracer.cs.slang").read_text(
         encoding="utf-8"
     )
     for call in (
-        "backend.prepare(context, material)",
+        "nclsViewerPrepareScattering(context)",
         "state.evaluate(wiWorld, sampleGenerator)",
         "state.pdf(lightWorld)",
         "state.sample(scatter, sampleGenerator)",
     ):
         assert call in source
-    assert "ReferencePathTracer.cs.slang" not in source
+    assert "NclsPackageState" not in source
 
 
 def test_reference_and_package_pt_share_the_path_surface_contract() -> None:
-    for shader in ("ReferencePathTracer.cs.slang", "PackagePathTracer.cs.slang"):
+    for shader in ("PathTracer.cs.slang",):
         source = Path("apps/viewer/shaders", shader).read_text(encoding="utf-8")
         assert '#include "PathSurface.slang"' in source
         assert "nclsViewerPrimaryRayConeSpreadAngle(" in source
@@ -66,12 +66,12 @@ def test_path_tracers_share_unbiased_environment_mis_and_directional_origin() ->
 
     for shader, direct_origin in (
         (
-            "ReferencePathTracer.cs.slang",
+            "PathTracer.cs.slang",
             "nclsDirectRayOrigin(surface, directionWorld)",
         ),
         (
-            "PackagePathTracer.cs.slang",
-            "nclsPackageDirectOrigin(surface, directionWorld)",
+            "PathTracer.cs.slang",
+            "nclsDirectRayOrigin(surface, directionWorld)",
         ),
     ):
         source = Path("apps/viewer/shaders", shader).read_text(encoding="utf-8")
@@ -117,15 +117,15 @@ def test_environment_cdf_matches_the_bilinear_radiance_reconstruction() -> None:
 
 
 def test_reference_path_uses_canonical_scene_backend_contract_only() -> None:
-    source = Path("apps/viewer/shaders/ReferencePathTracer.cs.slang").read_text(
+    source = Path("apps/viewer/shaders/PathTracer.cs.slang").read_text(
         encoding="utf-8"
     )
     scene = Path("apps/viewer/shaders/SceneReferenceProgram.slang").read_text(
         encoding="utf-8"
     )
     mdl = Path("shaders/ncls/reference_backends/mdl.slang").read_text(encoding="utf-8")
-    assert '#include "SceneReferenceProgram.slang"' in source
-    assert "backend.prepare(context, material)" in source
+    assert '#include "SceneScattering.slang"' in source
+    assert "nclsViewerPrepareScattering(context)" in source
     assert "state.evaluate(wiWorld, sampleGenerator)" in source
     assert "state.pdf(lightWorld)" in source
     assert "state.sample(scatter, sampleGenerator)" in source
@@ -162,7 +162,7 @@ def test_capture_uses_single_panel_difference_extent_and_headless_target_spp() -
     assert '"reference_spp", kDefaultCapturePathTracingSpp' in viewer
     assert "1u + (maximumTargetSpp - 1u) / options.captureSamplesPerDispatch" in viewer
     assert '{"reference_spp", capturedReferenceSpp}' in viewer
-    assert "uint32_t frameCount = 1024;" in header
+    assert "uint32_t frameCount = 1;" in header
     assert "std::array<uint32_t, 2> captureTargetSpp{1024, 1024};" in header
     assert "uint32_t captureTargetSpp = 1024;" in header
     assert "uint32_t captureSamplesPerDispatch = 1;" in header
@@ -190,10 +190,10 @@ def test_capture_uses_single_panel_difference_extent_and_headless_target_spp() -
 def test_interactive_path_tracing_is_one_unbounded_sample_sequence() -> None:
     viewer = Path("apps/viewer/NclsViewer.cpp").read_text(encoding="utf-8")
     header = Path("apps/viewer/NclsViewer.h").read_text(encoding="utf-8")
-    source = Path("apps/viewer/shaders/ReferencePathTracer.cs.slang").read_text(
+    source = Path("apps/viewer/shaders/PathTracer.cs.slang").read_text(
         encoding="utf-8"
     )
-    package = Path("apps/viewer/shaders/PackagePathTracer.cs.slang").read_text(
+    package = Path("apps/viewer/shaders/PathTracer.cs.slang").read_text(
         encoding="utf-8"
     )
 
@@ -201,22 +201,23 @@ def test_interactive_path_tracing_is_one_unbounded_sample_sequence() -> None:
     assert "std::min(mOptions.captureSamplesPerDispatch, remaining)" in viewer
     assert viewer.count(
         "const uint32_t samplesThisFrame = pathSamplesThisDispatch(slot);"
-    ) == 2
+    ) == 1
     assert "mSamplesPerFrame" not in viewer
     assert "mSamplesPerFrame" not in header
     assert 'group.var("Samples per frame"' not in viewer
     assert '{"samples_per_frame"' not in viewer
     assert '{"format_name", "ncls.viewer-scene"}' in viewer
     assert '{"format_version", 2}' in viewer
-    assert "sceneVersion != 1u && sceneVersion != 2u" in viewer
+    assert "sceneVersion != 2u" in viewer
+    assert "sceneVersion != 1u" not in viewer
     assert "const bool accumulate = !mCameraDragging && !mPanDragging;" not in viewer
     assert "else slot.spp = 0" not in viewer
 
     for shader, spp_name in (
-        (source, "gReferenceSpp"),
-        (package, "gPackageSpp"),
+        (source, "gAccumulatedSpp"),
+        (package, "gAccumulatedSpp"),
     ):
-        assert "gAccumulate" not in shader
+        assert "uint gAccumulate;" not in shader
         assert f"const uint globalSample = {spp_name} + sampleIndex;" in shader
         assert "gResetAccumulation != 0u" in shader
 
@@ -245,7 +246,7 @@ def test_release_viewer_uses_v2_studio_and_package_id_slot_cli() -> None:
 def test_package_source_identity_uses_canonical_mdl_snapshot() -> None:
     viewer = Path("apps/viewer/NclsViewer.cpp").read_text(encoding="utf-8")
     compatibility = viewer[
-        viewer.index("bool NclsViewer::allMaterialsSupportedBy") :
+        viewer.index("bool NclsViewer::activeMaterialSupportedBy") :
         viewer.index("bool NclsViewer::hasActiveProgram")
     ]
 
@@ -337,10 +338,9 @@ def test_linked_mdl_catalog_switches_reference_and_neural_from_one_typed_state()
     assert '"ViewerMaterialCatalog entry"' in catalog
     assert "ensureLinkedMdlProgram(entry)" in linked
     assert "installReferenceSource(std::move(source), catalogPath);" in linked
-    assert "mComparisonSlots[0].contract.mode = ncls::SlotMode::PathTracing;" in linked
-    assert "mComparisonSlots[1].contract.mode = ncls::SlotMode::Deferred;" in linked
-    assert "applyMaterialEditor(mComparisonSlots[1]" in linked
-    assert linked.index("applyMaterialEditor(mComparisonSlots[1]") < linked.index(
+    assert "contract.mode =" not in linked
+    assert "applyMaterialEditor(mComparisonSlots[packageSlot]" in linked
+    assert linked.index("applyMaterialEditor(mComparisonSlots[packageSlot]") < linked.index(
         "mLinkedMdlMode = true;"
     )
     for restored in (
@@ -357,11 +357,11 @@ def test_linked_mdl_catalog_switches_reference_and_neural_from_one_typed_state()
         "applyMaterialEditor(slot, *selected, mReferenceSource.mdlParameterView);"
         in on_load
     )
-    assert '"--evaluator-preview-lighting"' in launcher
+    assert '"--evaluator-preview-lighting"' not in launcher
     assert '"--slot0-package"' in launcher
     assert '"--slot1-package"' in launcher
     assert '"HybridVsDirect"' in launcher
-    assert '"exact-diagnostic-evaluator-preview"' in launcher
+    assert '"exact"' in launcher
     assert "manual-packages" not in launcher
     assert "learn train" not in launcher.lower()
 
@@ -393,47 +393,32 @@ def test_package_profile_and_diagnostic_identity_reach_ui_and_capture() -> None:
     assert '{"checkpoint_compatibility", program ? program->checkpointCompatibility' in viewer
 
 
-def test_package_rendering_time_slices_interactive_preview_without_model_shortcuts() -> None:
+def test_renderers_dispatch_full_panels_and_share_material_binding() -> None:
     viewer = Path("apps/viewer/NclsViewer.cpp").read_text(encoding="utf-8")
-    header = Path("apps/viewer/NclsViewer.h").read_text(encoding="utf-8")
-    deferred = Path("apps/viewer/shaders/DeferredRenderer.cs.slang").read_text(
-        encoding="utf-8"
-    )
-    path = Path("apps/viewer/shaders/PackagePathTracer.cs.slang").read_text(
-        encoding="utf-8"
-    )
-    full_dispatch = viewer[
-        viewer.index("void NclsViewer::executePackageTiles") :
-        viewer.index("void NclsViewer::executeInteractivePackageTile")
-    ]
-    interactive_dispatch = viewer[
-        viewer.index("void NclsViewer::executeInteractivePackageTile") :
-        viewer.index("void NclsViewer::renderPackagePath")
-    ]
-    deferred_render = viewer[
-        viewer.index("void NclsViewer::renderApproximation") :
-        viewer.index("void NclsViewer::executePackageTiles")
-    ]
+    for function, next_function in (("renderPath", "renderDeferred"), ("renderDeferred", "renderComposite")):
+        body = viewer[viewer.index(f"void NclsViewer::{function}"):viewer.index(f"void NclsViewer::{next_function}")]
+        assert "pass->execute(pRenderContext, mViewWidth, mOutputHeight);" in body
+        assert "bindSceneResources(root, slot);" in body
+        assert "submit(true)" not in body
+    for removed in ("executePackageTiles", "executeInteractivePackageTile", "deferredPreviewStride", "gDispatchOffset"):
+        assert removed not in viewer
+    adapter = Path("apps/viewer/shaders/SceneScattering.slang").read_text(encoding="utf-8")
+    assert "context.surface.materialInstanceId == gActiveMaterialId" in adapter
+    assert "nclsLoadSceneReferenceMaterial(context.surface.materialInstanceId, gMaterialCount)" in adapter
 
-    assert "kPackageDispatchTileWidth = 8u" in viewer
-    assert "kPackageDispatchTileRows = 8u" in viewer
-    assert "kInteractiveDeferredInitialStride = 16u" in viewer
-    assert "void executePackageTiles(" in header
-    assert "void executeInteractivePackageTile(" in header
-    assert 'root[constantBufferName]["gDispatchOffset"] = uint2(column, row);' in full_dispatch
-    assert "pRenderContext->submit(true)" in full_dispatch
-    assert "pRenderContext->submit(true)" not in interactive_dispatch
-    assert "for (" not in interactive_dispatch
-    assert "if (mOptions.headless)" in deferred_render
-    assert "executeInteractivePackageTile(" in deferred_render
-    assert "deferredPreviewStride /= 2u" in deferred_render
-    assert "ReferenceFamily::Mdl" not in full_dispatch + interactive_dispatch
-    assert "metal" not in (full_dispatch + interactive_dispatch).lower()
-    assert viewer.count("executePackageTiles(") == 3
-    for shader in (deferred, path):
-        assert "uint2 gDispatchOffset;" in shader
-        assert "[numthreads(8, 8, 1)]" in shader
-    assert "dispatchThreadID.xy + gDispatchOffset" in path
-    assert "previewPixel = dispatchThreadID.xy + gDispatchOffset" in deferred
-    assert "uint gPreviewStride;" in deferred
-    assert "blockOrigin + stride" in deferred
+
+def test_pt_requires_all_four_material_operations() -> None:
+    for capabilities in range(16):
+        slot = ComparisonSlot().activate(package_id="a"*64, program_id="b"*64, asset_id="c"*64,
+            instance_id="d"*64, source_snapshot_id="e"*64, capabilities=capabilities)
+        assert (slot.status == SlotStatus.READY) == (capabilities == 15)
+
+
+def test_title_and_modes_follow_committed_slot_binding() -> None:
+    viewer = Path("apps/viewer/NclsViewer.cpp").read_text(encoding="utf-8")
+    assert '"###ComparisonTitle"' in viewer
+    assert '"Swap sides"' in viewer
+    assert 'slot.contract.mode == ncls::SlotMode::PathTracing ? "PT" : "Deferred"' in viewer
+    assert 'slotProgram(slot)' in viewer
+    assert 'Gui::WindowFlags::NoResize' in viewer
+    assert 'candidate.contract.mode = mode.value_or(mComparisonSlots[slotIndex].contract.mode)' in viewer

@@ -185,6 +185,7 @@ def _implementation_sha256() -> str:
         PROJECT_ROOT / "shaders/ncls/backends/metal_budgeted/metal_budgeted_common.slang",
         PROJECT_ROOT / "shaders/ncls/backends/metal_budgeted/metal_budgeted_asset.slang",
         PROJECT_ROOT / "shaders/ncls/backends/metal_budgeted/metal_budgeted_evaluator.slang",
+        PROJECT_ROOT / "shaders/ncls/backends/metal_budgeted/metal_budgeted_sampler.slang",
         METAL_BUDGETED_LAYOUT_PATH,
     )
     digest = hashlib.sha256()
@@ -919,6 +920,8 @@ class MetalBudgetedMethodDefinition(MethodDefinition):
         capabilities = int(
             BackendCapability.PREPARE
             | BackendCapability.EVALUATE
+            | BackendCapability.SAMPLE
+            | BackendCapability.PDF
             | BackendCapability.ANISOTROPIC_FRAME
         )
         return RuntimePayload(
@@ -1034,9 +1037,42 @@ class MetalBudgetedMethodDefinition(MethodDefinition):
             )
         packed = pack_metal_budgeted_program(deployment["model"])
         asset = deployment["asset"]
+        from ncls.learning.metal_budgeted_runtime import prepare_metal_budgeted_cooked_asset
+
+        model = deployment["model"]
+        device = next(model.parameters()).device
+        prepared = prepare_metal_budgeted_cooked_asset(
+            model, asset, deployment["tensors"], uv=(0.0, 0.0), mip_level=0.0,
+            filter_random=0.0, wo=_PARITY_VIEW,
+        )
+        random_values = []
+        for seed in range(1, len(_PARITY_LIGHTS) + 1):
+            first = (seed * 1664525 + 1013904223) & 0xffffffff
+            second = (first * 1664525 + 1013904223) & 0xffffffff
+            random_values.append([(first >> 8) * 2**-24, (second >> 8) * 2**-24])
+        with torch.no_grad():
+            samples = [model.sample_prepared(prepared,
+                torch.tensor([_PARITY_VIEW], device=device),
+                torch.tensor([value], device=device)) for value in random_values]
+        if not all(bool(sample.valid.all()) for sample in samples):
+            raise ValueError("deployment sampler witness contains invalid samples")
         return {
             "status": "gpu-parity-required",
-            "scope": "diagnostic-evaluator-only",
+            "scope": "prepare-evaluate-sample-pdf",
+            "runtime_cost": {
+                "prepare_dense_macs": deployment["model"].profile.runtime_prepare_dense_macs,
+                "evaluate_dense_macs": deployment["model"].profile.evaluate_dense_macs,
+                "prepared_state_bytes": 160,
+                "asset_reads": 2,
+            },
+            "sampling": {
+                "oracle": "metal-budgeted-fp16-snorm8-python@1",
+                "sample_u": random_values,
+                "expected_wi": [sample.wi[0, 0].cpu().tolist() for sample in samples],
+                "expected_pdf": [[sample.forward_pdf[0].item(), sample.reverse_pdf[0].item()] for sample in samples],
+                "expected_weight": [sample.weight[0, 0].cpu().tolist() for sample in samples],
+                "relative_tolerance": 2e-3, "absolute_tolerance": 2e-5,
+            },
             "parity": {
                 "oracle": "metal-budgeted-fp16-snorm8-python@1",
                 "uv": [0.0, 0.0],

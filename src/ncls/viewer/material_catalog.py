@@ -13,7 +13,7 @@ from ncls.core.scattering import validate_typed_parameter_view
 
 
 FORMAT_NAME = "ncls.viewer-material-catalog"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SUPPORTED_VALUE_TYPES = {"bool", "int", "enum", "float", "vector2", "color3"}
 _RESPONSIBILITIES = {
@@ -195,7 +195,7 @@ class ViewerMaterialEntry:
     artifact_sha256: str
     artifact_root: Path
     package_id: str
-    package_root: Path
+    package_root: Path | None
     program_id: str
     asset_id: str
     instance_id: str
@@ -256,52 +256,59 @@ class ViewerMaterialCatalog:
         if sha256_json(identity_document) != declared_catalog_id:
             raise ValueError("ViewerMaterialCatalog catalog_id does not match semantics")
 
-        registry = _exact(
-            document["registry"],
-            {"identity", "sha256", "opaque_entry_count", "rejected_cutout_count"},
-            "registry",
-        )
-        registry_identity = _require_sha256("registry.identity", registry["identity"])
-        registry_sha256 = _require_sha256("registry.sha256", registry["sha256"])
-        opaque_count = int(registry["opaque_entry_count"])
-        rejected_count = int(registry["rejected_cutout_count"])
-        if opaque_count <= 0 or rejected_count < 0:
-            raise ValueError("ViewerMaterialCatalog registry counts are invalid")
+        registry_identity = registry_sha256 = ""
+        opaque_count, rejected_count = len(document["entries"]), 0
+        if document["registry"] is not None:
+            registry = _exact(
+                document["registry"],
+                {"identity", "sha256", "opaque_entry_count", "rejected_cutout_count"},
+                "registry",
+            )
+            registry_identity = _require_sha256("registry.identity", registry["identity"])
+            registry_sha256 = _require_sha256("registry.sha256", registry["sha256"])
+            opaque_count = int(registry["opaque_entry_count"])
+            rejected_count = int(registry["rejected_cutout_count"])
+            if opaque_count <= 0 or rejected_count < 0:
+                raise ValueError("ViewerMaterialCatalog registry counts are invalid")
 
-        checkpoint = _exact(
-            document["checkpoint"],
-            {
-                "sha256",
-                "method_key",
-                "step",
-                "phase",
-                "checkpoint_descriptor_sha256",
-                "runtime_descriptor_sha256",
-                "compatibility",
-            },
-            "checkpoint",
-        )
-        checkpoint_sha256 = _require_sha256("checkpoint.sha256", checkpoint["sha256"])
-        checkpoint_descriptor_sha256 = _require_sha256(
-            "checkpoint.checkpoint_descriptor_sha256",
-            checkpoint["checkpoint_descriptor_sha256"],
-        )
-        runtime_descriptor_sha256 = _require_sha256(
-            "checkpoint.runtime_descriptor_sha256",
-            checkpoint["runtime_descriptor_sha256"],
-        )
-        checkpoint_compatibility = str(checkpoint["compatibility"])
-        method_key = str(checkpoint["method_key"])
-        checkpoint_step = int(checkpoint["step"])
-        checkpoint_phase = str(checkpoint["phase"])
-        if (
-            not method_key
-            or checkpoint_step < 0
-            or not checkpoint_phase
-            or checkpoint_compatibility
-            not in {"exact", "exact-diagnostic-evaluator-preview"}
-        ):
-            raise ValueError("ViewerMaterialCatalog checkpoint metadata is invalid")
+        checkpoint_sha256 = checkpoint_descriptor_sha256 = runtime_descriptor_sha256 = ""
+        checkpoint_compatibility = method_key = checkpoint_phase = ""
+        checkpoint_step = 0
+        if document["checkpoint"] is not None:
+            checkpoint = _exact(
+                document["checkpoint"],
+                {
+                    "sha256",
+                    "method_key",
+                    "step",
+                    "phase",
+                    "checkpoint_descriptor_sha256",
+                    "runtime_descriptor_sha256",
+                    "compatibility",
+                },
+                "checkpoint",
+            )
+            checkpoint_sha256 = _require_sha256("checkpoint.sha256", checkpoint["sha256"])
+            checkpoint_descriptor_sha256 = _require_sha256(
+                "checkpoint.checkpoint_descriptor_sha256",
+                checkpoint["checkpoint_descriptor_sha256"],
+            )
+            runtime_descriptor_sha256 = _require_sha256(
+                "checkpoint.runtime_descriptor_sha256",
+                checkpoint["runtime_descriptor_sha256"],
+            )
+            checkpoint_compatibility = str(checkpoint["compatibility"])
+            method_key = str(checkpoint["method_key"])
+            checkpoint_step = int(checkpoint["step"])
+            checkpoint_phase = str(checkpoint["phase"])
+            if (
+                not method_key
+                or checkpoint_step < 0
+                or not checkpoint_phase
+                or checkpoint_compatibility
+                != "exact"
+            ):
+                raise ValueError("ViewerMaterialCatalog checkpoint metadata is invalid")
 
         source = Path(source_path).resolve()
         root = source.parent
@@ -328,7 +335,7 @@ class ViewerMaterialCatalog:
         renderer_runtime = runtime_file("renderer_runtime")
 
         raw_entries = document["entries"]
-        if not isinstance(raw_entries, list) or len(raw_entries) != opaque_count:
+        if not isinstance(raw_entries, list) or not raw_entries or len(raw_entries) != opaque_count:
             raise ValueError("ViewerMaterialCatalog entries do not match opaque count")
         entries: list[ViewerMaterialEntry] = []
         unique: dict[str, set[str]] = {
@@ -359,8 +366,13 @@ class ViewerMaterialCatalog:
                 },
                 "entry",
             )
+            optional_ids = {"graph_id", "texture_set_id", "parameter_schema_id", "package_id", "program_id", "asset_id", "instance_id"}
+            binding_fields = ("package_id", "package_root", "program_id", "asset_id", "instance_id")
+            has_binding = item["package_id"] is not None
+            if any((item[name] is not None) != has_binding for name in binding_fields):
+                raise ValueError("ViewerMaterialCatalog partial package binding")
             identities = {
-                name: _require_sha256(f"entry.{name}", item[name])
+                name: "" if name in optional_ids and item[name] is None else _require_sha256(f"entry.{name}", item[name])
                 for name in (
                     "export_id",
                     "graph_id",
@@ -375,84 +387,88 @@ class ViewerMaterialCatalog:
                 )
             }
             for name in unique:
+                if not identities[name]:
+                    continue
                 if identities[name] in unique[name]:
                     raise ValueError(f"ViewerMaterialCatalog duplicate {name}")
                 unique[name].add(identities[name])
-            program_ids.add(identities["program_id"])
+            if has_binding:
+                program_ids.add(identities["program_id"])
             display_name = str(item["display_name"])
-            metal = str(item["metal"])
-            finish = str(item["finish"])
-            if not display_name or not metal or not finish:
+            metal = str(item["metal"] or "")
+            finish = str(item["finish"] or "")
+            if not display_name:
                 raise ValueError("ViewerMaterialCatalog entry taxonomy is incomplete")
             artifact_root = _contained(root, item["artifact_root"], "artifact_root")
-            package_root = _contained(root, item["package_root"], "package_root")
-            parameter_view = dict(item["parameter_view"])
-            validate_typed_parameter_view(parameter_view)
-            if parameter_view.get("snapshot_id") != identities["source_snapshot_id"]:
-                raise ValueError(
-                    "ViewerMaterialCatalog parameter view snapshot does not match entry"
-                )
-            parameter_paths: set[str] = set()
-            parameter_nodes = _walk_parameter_nodes(parameter_view["root"])
-            for node in parameter_nodes:
-                path = str(node.get("path", ""))
-                value_type = str(node.get("value_type", ""))
-                metadata = node.get("metadata")
-                if path in parameter_paths or not path.startswith("/arguments/"):
-                    raise ValueError("ViewerMaterialCatalog parameter paths are invalid")
-                parameter_paths.add(path)
-                if value_type not in _SUPPORTED_VALUE_TYPES:
+            package_root = _contained(root, item["package_root"], "package_root") if has_binding else None
+            parameter_view: dict[str, Any] = {}
+            parameter_nodes: list[dict[str, Any]] = []
+            if item["parameter_view"] is not None:
+                parameter_view = dict(item["parameter_view"])
+                validate_typed_parameter_view(parameter_view)
+                if parameter_view.get("snapshot_id") != identities["source_snapshot_id"]:
                     raise ValueError(
-                        f"ViewerMaterialCatalog unsupported editable type: {value_type}"
+                        "ViewerMaterialCatalog parameter view snapshot does not match entry"
                     )
-                if not isinstance(metadata, Mapping):
-                    raise ValueError("ViewerMaterialCatalog editable parameter has no metadata")
-                responsibility = str(metadata.get("responsibility", ""))
-                reference_write = metadata.get("reference_write")
-                if responsibility not in _RESPONSIBILITIES:
-                    raise ValueError(
-                        "ViewerMaterialCatalog editable parameter responsibility is invalid"
-                    )
-                if not isinstance(reference_write, Mapping) or set(reference_write) not in (
-                    {"offset", "size", "mdl_type"},
-                    {"offset", "size", "mdl_type", "choices"},
-                ):
-                    raise ValueError(
-                        "ViewerMaterialCatalog editable parameter reference write is invalid"
-                    )
-                if int(reference_write["offset"]) < 0 or int(reference_write["size"]) <= 0:
-                    raise ValueError(
-                        "ViewerMaterialCatalog reference write range is invalid"
-                    )
-                expected_write = {
-                    "bool": ("bool", 1),
-                    "int": ("int", 4),
-                    "enum": ("enum", 4),
-                    "float": ("float", 4),
-                    "vector2": ("float2", 8),
-                    "color3": ("color", 12),
-                }[value_type]
-                if (
-                    str(reference_write["mdl_type"]) != expected_write[0]
-                    or int(reference_write["size"]) != expected_write[1]
-                ):
-                    raise ValueError(
-                        "ViewerMaterialCatalog reference write type/size is invalid"
-                    )
-                if value_type == "enum":
-                    choices = reference_write.get("choices")
-                    node_choices = node.get("choices")
-                    if (
-                        not isinstance(choices, Mapping)
-                        or not isinstance(node_choices, list)
-                        or list(choices) != node_choices
-                        or not all(isinstance(item, int) for item in choices.values())
+                parameter_paths: set[str] = set()
+                parameter_nodes = _walk_parameter_nodes(parameter_view["root"])
+                for node in parameter_nodes:
+                    path = str(node.get("path", ""))
+                    value_type = str(node.get("value_type", ""))
+                    metadata = node.get("metadata")
+                    if path in parameter_paths or not path.startswith("/arguments/"):
+                        raise ValueError("ViewerMaterialCatalog parameter paths are invalid")
+                    parameter_paths.add(path)
+                    if value_type not in _SUPPORTED_VALUE_TYPES:
+                        raise ValueError(
+                            f"ViewerMaterialCatalog unsupported editable type: {value_type}"
+                        )
+                    if not isinstance(metadata, Mapping):
+                        raise ValueError("ViewerMaterialCatalog editable parameter has no metadata")
+                    responsibility = str(metadata.get("responsibility", ""))
+                    reference_write = metadata.get("reference_write")
+                    if responsibility not in _RESPONSIBILITIES:
+                        raise ValueError(
+                            "ViewerMaterialCatalog editable parameter responsibility is invalid"
+                        )
+                    if not isinstance(reference_write, Mapping) or set(reference_write) not in (
+                        {"offset", "size", "mdl_type"},
+                        {"offset", "size", "mdl_type", "choices"},
                     ):
                         raise ValueError(
-                            "ViewerMaterialCatalog enum reference write is invalid"
+                            "ViewerMaterialCatalog editable parameter reference write is invalid"
                         )
-            if not parameter_paths:
-                raise ValueError("ViewerMaterialCatalog entry has no editable parameters")
+                    if int(reference_write["offset"]) < 0 or int(reference_write["size"]) <= 0:
+                        raise ValueError(
+                            "ViewerMaterialCatalog reference write range is invalid"
+                        )
+                    expected_write = {
+                        "bool": ("bool", 1),
+                        "int": ("int", 4),
+                        "enum": ("enum", 4),
+                        "float": ("float", 4),
+                        "vector2": ("float2", 8),
+                        "color3": ("color", 12),
+                    }[value_type]
+                    if (
+                        str(reference_write["mdl_type"]) != expected_write[0]
+                        or int(reference_write["size"]) != expected_write[1]
+                    ):
+                        raise ValueError(
+                            "ViewerMaterialCatalog reference write type/size is invalid"
+                        )
+                    if value_type == "enum":
+                        choices = reference_write.get("choices")
+                        node_choices = node.get("choices")
+                        if (
+                            not isinstance(choices, Mapping)
+                            or not isinstance(node_choices, list)
+                            or list(choices) != node_choices
+                            or not all(isinstance(item, int) for item in choices.values())
+                        ):
+                            raise ValueError(
+                                "ViewerMaterialCatalog enum reference write is invalid"
+                            )
 
             if verify_payloads:
                 from ncls.references.mdl import MdlCompiledArtifact
@@ -470,18 +486,19 @@ class ViewerMaterialCatalog:
                         raise ValueError(
                             "ViewerMaterialCatalog reference write exceeds argument block"
                         )
-                package = ScatteringPackage.open(package_root)
-                manifest = package.manifest
-                if (
-                    manifest.package_id != identities["package_id"]
-                    or manifest.program_id != identities["program_id"]
-                    or manifest.asset_id != identities["asset_id"]
-                    or manifest.instance_id != identities["instance_id"]
-                    or manifest.source_snapshot_id != identities["source_snapshot_id"]
-                ):
-                    raise ValueError(
-                        "ViewerMaterialCatalog package binding identity mismatch"
-                    )
+                if has_binding:
+                    package = ScatteringPackage.open(package_root)
+                    manifest = package.manifest
+                    if (
+                        manifest.package_id != identities["package_id"]
+                        or manifest.program_id != identities["program_id"]
+                        or manifest.asset_id != identities["asset_id"]
+                        or manifest.instance_id != identities["instance_id"]
+                        or manifest.source_snapshot_id != identities["source_snapshot_id"]
+                    ):
+                        raise ValueError(
+                            "ViewerMaterialCatalog package binding identity mismatch"
+                        )
 
             entries.append(
                 ViewerMaterialEntry(
@@ -503,8 +520,6 @@ class ViewerMaterialCatalog:
                     parameter_view,
                 )
             )
-        if len(program_ids) != 1:
-            raise ValueError("ViewerMaterialCatalog must contain one shared neural program")
         default_export_id = _require_sha256(
             "default_export_id", document["default_export_id"]
         )
@@ -554,3 +569,35 @@ def finalize_catalog_document(value: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("ViewerMaterialCatalog writer input already has catalog_id")
     result["catalog_id"] = sha256_json(result)
     return result
+
+
+def source_catalog_entry(
+    *, export_id: str, display_name: str, source_snapshot_id: str,
+    artifact_sha256: str, artifact_root: str,
+) -> dict[str, Any]:
+    """固定 source entry；未提供的 taxonomy、编辑和 neural 绑定明确为 null。"""
+    return {
+        "export_id": export_id, "display_name": display_name,
+        "source_snapshot_id": source_snapshot_id, "artifact_sha256": artifact_sha256,
+        "artifact_root": artifact_root,
+        **{name: None for name in (
+            "metal", "finish", "graph_id", "texture_set_id", "parameter_schema_id",
+            "package_id", "package_root", "program_id", "asset_id", "instance_id", "parameter_view",
+        )},
+    }
+
+
+def source_catalog_document(
+    *, mdl_sdk: str, target_code_types: Mapping[str, str],
+    renderer_runtime: Mapping[str, str], default_export_id: str,
+    entries: list[Mapping[str, Any]],
+) -> dict[str, Any]:
+    return finalize_catalog_document({
+        "schema_name": FORMAT_NAME, "schema_version": FORMAT_VERSION,
+        "registry": None, "checkpoint": None,
+        "reference_runtime": {
+            "mdl_sdk": mdl_sdk, "target_code_types": dict(target_code_types),
+            "renderer_runtime": dict(renderer_runtime),
+        },
+        "default_export_id": default_export_id, "entries": [dict(entry) for entry in entries],
+    })

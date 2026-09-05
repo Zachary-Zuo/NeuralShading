@@ -5,28 +5,25 @@ import Utils.Geometry.GeometryHelpers;
 #include "ViewerCommon.slang"
 #include "PathSurface.slang"
 #include "PathSampleGenerator.slang"
-#include "SceneReferenceProgram.slang"
+#include "SceneScattering.slang"
 #include "../../../shaders/ncls/contracts/response_measure.slang"
 #include "../../../shaders/ncls/reference/sampling.slang"
 
-Texture2D<float4> gPreviousReference;
+Texture2D<float4> gPreviousPath;
 Texture2D<float4> gEnvironment;
 StructuredBuffer<float> gEnvironmentMarginalCdf;
 StructuredBuffer<float> gEnvironmentConditionalCdf;
 SamplerState gLinearSampler;
-SamplerState gMaterialXSampler;
-RWTexture2D<float4> gNextReference;
+RWTexture2D<float4> gNextPath;
 RWStructuredBuffer<uint> gNoiseStats;
 
-cbuffer ReferencePathTracerCB
+cbuffer PathTracerCB
 {
     uint2 gFrameDim;
     uint gFrameIndex;
-    uint gMaterialCount;
-    uint gReferenceSpp;
+    uint gAccumulatedSpp;
     uint gSamplesThisFrame;
     uint gMaxSceneBounces;
-    uint gMaxLayerWalkDepth;
     uint gResetAccumulation;
     uint gFlipTexCoordV;
     uint2 gEnvironmentSamplingDimensions;
@@ -54,7 +51,7 @@ cbuffer ReferencePathTracerCB
 
 #include "PathEnvironment.slang"
 
-struct NclsReferenceSampleGenerator : ISampleGenerator
+struct NclsPathEvalSampleGenerator : ISampleGenerator
 {
     uint state;
     [mutating] uint next()
@@ -63,65 +60,6 @@ struct NclsReferenceSampleGenerator : ISampleGenerator
         return state;
     }
 };
-
-struct NclsReferenceSurface
-{
-    float3 position;
-    float3 faceNormal;
-    float3 normal;
-    float3 tangent;
-    float2 uv;
-    float2 uvDx;
-    float2 uvDy;
-    uint materialId;
-    uint frontFacing;
-};
-
-NclsReferenceSurface nclsPrepareReferenceSurface(
-    const VertexData vertex,
-    uint materialId,
-    float3 viewWorld,
-    float3 rayDirection,
-    float rayConeWidth)
-{
-    const NclsViewerPathSurface pathSurface = nclsViewerPreparePathSurface(
-        vertex, materialId, viewWorld, rayDirection, rayConeWidth, gFlipTexCoordV);
-    NclsReferenceSurface surface;
-    surface.position = pathSurface.position;
-    surface.faceNormal = pathSurface.faceNormal;
-    surface.normal = pathSurface.normal;
-    surface.tangent = pathSurface.tangent;
-    surface.uv = pathSurface.uv;
-    surface.uvDx = pathSurface.uvDx;
-    surface.uvDy = pathSurface.uvDy;
-    surface.materialId = pathSurface.materialId;
-    surface.frontFacing = pathSurface.frontFacing;
-    return surface;
-}
-
-NclsScatteringContext nclsReferenceContext(
-    const NclsReferenceSurface surface,
-    float3 woWorld,
-    float filterRandom)
-{
-    NclsScatteringContext context = {};
-    context.surface.position = surface.position;
-    context.surface.geometricNormal = surface.faceNormal;
-    context.surface.shadingFrame.normal = surface.normal;
-    context.surface.shadingFrame.tangent = surface.tangent;
-    context.surface.shadingFrame.bitangent = cross(surface.normal, surface.tangent);
-    context.surface.uv = surface.uv;
-    context.surface.uvDx = surface.uvDx;
-    context.surface.uvDy = surface.uvDy;
-    context.surface.materialInstanceId = surface.materialId;
-    context.surface.frontFacing = surface.frontFacing;
-    context.woWorld = normalize(woWorld);
-    context.transportMode = (uint)NclsTransportMode::Radiance;
-    context.componentMask = (uint)NclsScatteringEvent::Reflection
-        | (uint)NclsScatteringEvent::Transmission;
-    context.filterRandom = filterRandom;
-    return context;
-}
 
 bool nclsVisible(SceneRayQuery<1> query, float3 origin, float3 direction, float maximumDistance)
 {
@@ -136,12 +74,12 @@ float3 nclsDirectRayOrigin(NclsSurfaceInteraction surface, float3 direction)
             ? surface.geometricNormal : -surface.geometricNormal);
 }
 
-float3 nclsReferenceEvaluateResponse(
-    NclsSceneReferenceState state,
+float3 nclsViewerEvaluateResponse(
+    NclsViewerSceneState state,
     float3 wiWorld,
     uint seed)
 {
-    NclsReferenceSampleGenerator sampleGenerator = {seed};
+    NclsPathEvalSampleGenerator sampleGenerator = {seed};
     const NclsScatteringEval evaluation = state.evaluate(wiWorld, sampleGenerator);
     const NclsSurfaceInteraction surface = state.surfaceInteraction();
     return nclsScatteringEvalToResponseCos(
@@ -150,7 +88,7 @@ float3 nclsReferenceEvaluateResponse(
 
 float3 nclsDirectLighting(
     SceneRayQuery<1> query,
-    NclsSceneReferenceState state,
+    NclsViewerSceneState state,
     uint globalSample,
     uint2 pixel,
     uint depth,
@@ -165,7 +103,7 @@ float3 nclsDirectLighting(
         const float3 lightWorld = normalize(gSunDirection);
         if (nclsVisible(query, nclsDirectRayOrigin(surface, lightWorld), lightWorld, 3.402823466e+38f))
         {
-            const float3 response = nclsReferenceEvaluateResponse(
+            const float3 response = nclsViewerEvaluateResponse(
                 state, lightWorld, nclsViewerHash(globalSample ^ depth ^ queryIndex++));
             radiance += state.illuminate(response, gSunColor * gSunIntensity);
         }
@@ -178,7 +116,7 @@ float3 nclsDirectLighting(
         const float3 lightWorld = toLight / distance;
         if (nclsVisible(query, nclsDirectRayOrigin(surface, lightWorld), lightWorld, max(distance - 1e-4f, 0.0f)))
         {
-            const float3 response = nclsReferenceEvaluateResponse(
+            const float3 response = nclsViewerEvaluateResponse(
                 state, lightWorld, nclsViewerHash(globalSample ^ depth ^ queryIndex++));
             radiance += state.illuminate(
                 response, gPointColor * (gPointIntensity / distanceSquared));
@@ -200,7 +138,7 @@ float3 nclsDirectLighting(
         if (lightCosine > 0.0f && area > 0.0f
             && nclsVisible(query, nclsDirectRayOrigin(surface, lightWorld), lightWorld, max(distance - 1e-4f, 0.0f)))
         {
-            const float3 response = nclsReferenceEvaluateResponse(
+            const float3 response = nclsViewerEvaluateResponse(
                 state, lightWorld, nclsViewerHash(globalSample ^ depth ^ queryIndex++));
             const float inversePdf = area * lightCosine / distanceSquared;
             radiance += state.illuminate(
@@ -221,7 +159,7 @@ float3 nclsDirectLighting(
                 query, nclsDirectRayOrigin(surface, lightWorld), lightWorld,
                 3.402823466e+38f))
             {
-                const float3 response = nclsReferenceEvaluateResponse(
+                const float3 response = nclsViewerEvaluateResponse(
                     state, lightWorld,
                     nclsViewerHash(globalSample ^ depth ^ queryIndex++));
                 const NclsScatteringPdf bsdfPdf = state.pdf(lightWorld);
@@ -296,7 +234,7 @@ Ray nclsPrimaryRay(uint2 pixel, uint globalSample)
         gScene.camera.data.farZ * inverseCosine);
 }
 
-float3 nclsTraceReferenceSuffix(
+float3 nclsTraceSceneSuffix(
     Ray ray,
     float3 throughput,
     float rayConeWidth,
@@ -310,7 +248,6 @@ float3 nclsTraceReferenceSuffix(
     NclsRng rng = NclsRng(uint2(branchSeed, pathSampleIndex));
     SceneRayQuery<1> query;
     float3 radiance = float3(0.0f);
-    const NclsSceneReferenceBackend backend = {gMaxLayerWalkDepth, gMaterialXSampler};
 
     [loop]
     for (uint depth = 1u; depth <= max(gMaxSceneBounces, 1u); ++depth)
@@ -340,14 +277,12 @@ float3 nclsTraceReferenceSuffix(
             || materialId >= gMaterialCount) break;
         rayConeWidth += rayConeSpreadAngle * hitDistance;
         const float3 viewWorld = -ray.dir;
-        const NclsReferenceSurface pathSurface = nclsPrepareReferenceSurface(
-            vertex, materialId, viewWorld, ray.dir, rayConeWidth);
-        const NclsScatteringContext context = nclsReferenceContext(
+        const NclsViewerPathSurface pathSurface = nclsViewerPreparePathSurface(
+            vertex, materialId, viewWorld, ray.dir, rayConeWidth, gFlipTexCoordV);
+        const NclsScatteringContext context = nclsViewerSurfaceContext(
             pathSurface, viewWorld,
             nclsViewerHashFloat(branchSeed ^ nclsViewerHash(depth + 0x51ed270bu)));
-        const NclsSceneReferenceCompiledMaterial material = nclsLoadSceneReferenceMaterial(
-            materialId, gMaterialCount);
-        const NclsSceneReferenceState state = backend.prepare(context, material);
+        const NclsViewerSceneState state = nclsViewerPrepareScattering(context);
         radiance += throughput * state.emission();
         radiance += throughput * nclsDirectLighting(
             query, state, pathSampleIndex, pixel, depth, true, rng);
@@ -376,7 +311,7 @@ float3 nclsTraceReferenceSuffix(
     return max(radiance, 0.0f);
 }
 
-float3 nclsTraceReferencePath(uint2 pixel, uint globalSample)
+float3 nclsTraceScenePath(uint2 pixel, uint globalSample)
 {
     const uint linearPixel = pixel.y * gFrameDim.x + pixel.x;
     const uint seed = nclsViewerHash(linearPixel ^ nclsViewerHash(globalSample + 0x9e3779b9u));
@@ -398,15 +333,12 @@ float3 nclsTraceReferencePath(uint2 pixel, uint globalSample)
         gScene.camera.data.cameraV, gScene.camera.data.cameraW, gFrameDim.y);
     const float rayConeWidth = rayConeSpreadAngle * hitDistance;
     const float3 viewWorld = -primaryRay.dir;
-    const NclsReferenceSurface pathSurface = nclsPrepareReferenceSurface(
-        vertex, materialId, viewWorld, primaryRay.dir, rayConeWidth);
-    const NclsScatteringContext context = nclsReferenceContext(
+    const NclsViewerPathSurface pathSurface = nclsViewerPreparePathSurface(
+        vertex, materialId, viewWorld, primaryRay.dir, rayConeWidth, gFlipTexCoordV);
+    const NclsScatteringContext context = nclsViewerSurfaceContext(
         pathSurface, viewWorld,
         nclsViewerHashFloat(seed ^ nclsViewerHash(0x51ed270bu)));
-    const NclsSceneReferenceCompiledMaterial material = nclsLoadSceneReferenceMaterial(
-        materialId, gMaterialCount);
-    const NclsSceneReferenceBackend backend = {gMaxLayerWalkDepth, gMaterialXSampler};
-    const NclsSceneReferenceState state = backend.prepare(context, material);
+    const NclsViewerSceneState state = nclsViewerPrepareScattering(context);
     float3 radiance = state.emission();
     radiance += nclsDirectLighting(
         query, state, globalSample, pixel, 0u, false, rng);
@@ -433,7 +365,7 @@ float3 nclsTraceReferencePath(uint2 pixel, uint globalSample)
         const bool delta = (scatter.eventFlags & (uint)NclsScatteringEvent::Delta) != 0u;
         const uint branchSeed = nclsViewerHash(
             seed ^ nclsViewerHash(pathSampleIndex + 0xa4093822u));
-        radiance += nclsTraceReferenceSuffix(
+        radiance += nclsTraceSceneSuffix(
             ray,
             throughput,
             rayConeWidth,
@@ -461,8 +393,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint groupIndex : SV_Gro
         [loop]
         for (uint sampleIndex = 0u; sampleIndex < gSamplesThisFrame; ++sampleIndex)
         {
-            const uint globalSample = gReferenceSpp + sampleIndex;
-            const float3 sampleRadiance = nclsTraceReferencePath(pixel, globalSample);
+            const uint globalSample = gAccumulatedSpp + sampleIndex;
+            const float3 sampleRadiance = nclsTraceScenePath(pixel, globalSample);
             batchSum += sampleRadiance;
             const float luminance = nclsViewerLuminance(sampleRadiance);
             batchLuminanceSquare += luminance * luminance;
@@ -473,23 +405,23 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint groupIndex : SV_Gro
     if (validPixel)
     {
         const float inverseBatch = 1.0f / max(1u, gSamplesThisFrame);
-        if (gResetAccumulation != 0u || gReferenceSpp == 0u)
+        if (gResetAccumulation != 0u || gAccumulatedSpp == 0u)
             accumulated = float4(batchSum * inverseBatch, batchLuminanceSquare * inverseBatch);
         else
         {
-            const float4 previous = gPreviousReference[pixel];
-            const float oldCount = float(gReferenceSpp);
+            const float4 previous = gPreviousPath[pixel];
+            const float oldCount = float(gAccumulatedSpp);
             const float newCount = oldCount + float(gSamplesThisFrame);
             accumulated = float4(
                 (previous.rgb * oldCount + batchSum) / newCount,
                 (previous.a * oldCount + batchLuminanceSquare) / newCount);
         }
-        gNextReference[pixel] = accumulated;
+        gNextPath[pixel] = accumulated;
     }
 
     const float sampleCount = float(
-        (gResetAccumulation != 0u || gReferenceSpp == 0u)
-        ? gSamplesThisFrame : gReferenceSpp + gSamplesThisFrame);
+        (gResetAccumulation != 0u || gAccumulatedSpp == 0u)
+        ? gSamplesThisFrame : gAccumulatedSpp + gSamplesThisFrame);
     const float meanLuminance = nclsViewerLuminance(accumulated.rgb);
     const float variance = max(accumulated.a - meanLuminance * meanLuminance, 0.0f);
     const float standardError = sqrt(variance / max(sampleCount, 1.0f));

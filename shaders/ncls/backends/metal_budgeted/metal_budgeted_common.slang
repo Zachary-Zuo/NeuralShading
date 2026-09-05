@@ -52,13 +52,11 @@ void nclsMetalBudgetedDense(
     float input[NCLS_METAL_BUDGETED_MAX_WIDTH],
     out float output[NCLS_METAL_BUDGETED_MAX_WIDTH])
 {
-    [loop]
-    [MaxIters(NCLS_METAL_BUDGETED_MAX_WIDTH)]
+    [unroll]
     for (uint row = 0u; row < outputCount; ++row)
     {
         float value = nclsMetalBudgetedWeight(biasOffset + row);
-        [loop]
-        [MaxIters(NCLS_METAL_BUDGETED_MAX_WIDTH)]
+        [unroll]
         for (uint column = 0u; column < inputCount; ++column)
         {
             value += nclsMetalBudgetedWeight(

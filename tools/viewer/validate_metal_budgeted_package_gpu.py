@@ -116,6 +116,16 @@ void main(uint3 threadId : SV_DispatchThreadID)
         const NclsScatteringEval evaluation = state.evaluate(
             normalize(gParityLights[index].xyz), generator);
         gParityOutput[index] = float4(evaluation.f, float(evaluation.valid));
+        NclsPackageParityGenerator sampleRng = {{index + 1u}};
+        NclsScatteringSample sampled;
+        prepared.sample(sampled, sampleRng);
+        const NclsScatteringPdf pdf = prepared.pdf(sampled.wiWorld);
+        const NclsScatteringEval f = prepared.evaluate(sampled.wiWorld, generator);
+        const uint base = NCLS_PACKAGE_PARITY_LIGHT_COUNT + 4u * index;
+        gParityOutput[base] = float4(sampled.wiWorld, float(sampled.valid));
+        gParityOutput[base + 1u] = float4(sampled.pdf.forward, sampled.pdf.reverse, pdf.forward, pdf.reverse);
+        gParityOutput[base + 2u] = float4(sampled.weight, 0.0f);
+        gParityOutput[base + 3u] = float4(f.f, 0.0f);
     }}
 }}
 """
@@ -257,13 +267,14 @@ def validate(package_path: Path) -> None:
         )
         context_buffer.from_numpy(context_values)
         output = device.create_structured_buffer(
-            struct_size=16, element_count=len(lights), bind_flags=uav
+            struct_size=16, element_count=5 * len(lights), bind_flags=uav
         )
         compute.globals.gParityLights = light_buffer
         compute.globals.gParityContext = context_buffer
         compute.globals.gParityOutput = output
         compute.execute(threads_x=1)
-        actual = output.to_numpy().view(np.float32).reshape(len(lights), 4).copy()
+        values = output.to_numpy().view(np.float32).reshape(5 * len(lights), 4).copy()
+        actual = values[:len(lights)]
         device.end_frame()
 
     np.testing.assert_allclose(
@@ -276,8 +287,21 @@ def validate(package_path: Path) -> None:
         actual[:, 3], np.ones(len(lights), dtype=np.float32)
     )
     maximum_error = float(np.max(np.abs(actual[:, :3] - expected)))
+    sampling = manifest.validation["sampling"]
+    samples = values[len(lights):].reshape(len(lights), 4, 4)
+    np.testing.assert_array_equal(samples[:, 0, 3], 1.0)
+    rtol, atol = float(sampling["relative_tolerance"]), float(sampling["absolute_tolerance"])
+    for actual_values, expected_values in (
+        (samples[:, 0, :3], sampling["expected_wi"]),
+        (samples[:, 1, :2], sampling["expected_pdf"]),
+        (samples[:, 2, :3], sampling["expected_weight"]),
+    ):
+        np.testing.assert_allclose(actual_values, expected_values, rtol=rtol, atol=atol)
+    np.testing.assert_allclose(samples[:, 1, :2], samples[:, 1, 2:], rtol=2e-5, atol=2e-6)
+    np.testing.assert_allclose(samples[:, 2, :3],
+        samples[:, 3, :3] * samples[:, 0, 2:3] / samples[:, 1, 0:1], rtol=2e-5, atol=2e-6)
     print(
-        f"GPU parity 通过：package={manifest.package_id} lights={len(lights)} "
+        f"GPU 四入口 parity 通过：package={manifest.package_id} lights={len(lights)} "
         f"max_abs_error={maximum_error:.8g}"
     )
 

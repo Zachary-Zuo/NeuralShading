@@ -40,7 +40,7 @@ class ComparisonSlot:
             for value in (package_id, program_id, asset_id, instance_id, source_snapshot_id)
         ):
             raise ValueError("slot package identities must be SHA-256 sized")
-        required = 4 | 8 if self.mode == SlotMode.PATH_TRACING else 1 | 2
+        required = 1 | 2 | 4 | 8 if self.mode == SlotMode.PATH_TRACING else 1 | 2
         if capabilities & required != required:
             return replace(self, status=SlotStatus.UNSUPPORTED, capabilities=capabilities,
                            diagnostic=f"mode {self.mode.value} requires capabilities {required}")

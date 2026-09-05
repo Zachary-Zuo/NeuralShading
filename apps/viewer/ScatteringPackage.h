@@ -61,9 +61,6 @@ struct ProgramRuntimeCache
     std::string shaderModule;
     std::map<std::string, std::string> shaderDefines;
     uint32_t capabilities = 0;
-    uint32_t stateBytesPerPixel = 16;
-    uint32_t environmentQueryBudget = 1;
-    uint32_t rectangleQueryBudget = 1;
     std::vector<ViewerTypedBlob> blobs;
     std::vector<ViewerSamplerDescriptor> samplers;
 };

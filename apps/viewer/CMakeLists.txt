@@ -24,7 +24,6 @@ target_sources(NclsViewer PRIVATE
     shaders/Composite.cs.slang
     shaders/Denoise.cs.slang
     shaders/PackageBackend.slang
-    shaders/PackagePathTracer.cs.slang
     shaders/PathEnvironment.slang
     shaders/PathEnvironmentMath.slang
     shaders/PathSampleGenerator.slang
@@ -33,7 +32,9 @@ target_sources(NclsViewer PRIVATE
     shaders/SceneVisibility.3d.slang
     shaders/PackageParity.cs.slang
     shaders/Prepare.cs.slang
-    shaders/ReferencePathTracer.cs.slang
+    shaders/PathTracer.cs.slang
+    shaders/SceneScattering.slang
+    shaders/SceneSurface.slang
     shaders/SceneReferenceProgram.slang
     shaders/ViewerCommon.slang
     "${NCLS_PROJECT_ROOT}/shaders/ncls/contracts/layer_stack_ir.slang"

@@ -6,15 +6,15 @@ viewer 不解释 NVIDIA、LayerStack 或其他 program 的私有结构。C++ loa
 
 MDL source reference 是 source 侧的动态 program，不是 neural package。`scripts/prepare_mdl_viewer.ps1` 复用正式 MDL SDK bridge 生成六种 vMaterials 的 hashed compiled artifact/catalog；viewer 再验证 SDK/compiler identity、精确文件集合和 V1 capability。动态 `NclsMdlGenerated` module 只组合 target-code types、项目 renderer callback 与 material-specific HLSL；静态 `reference_backends/mdl.slang` 直接实现 canonical backend，不存在 viewer adapter。falcor2 不在这条启动或运行路径中。
 
-## 两条 renderer 路径
+## 共享 renderer 与材质接口
 
-package path tracer 在每个 scene hit 构造完整 scattering context，包括 position、shading/geometric frame、outgoing direction、material instance、UV 与 ray-cone footprint。续路径直接调用当前 slot binding 的 `prepare/sample/pdf`，直接光调用同一 state 的 `evaluate/pdf`；source scene path tracer 也只调用各 source 自己的 canonical state。二者共享接口而不共享实现，因此 neural PT 不是 source reference PT 的显示别名。
+package path tracer 在每个 scene hit 构造完整 scattering context，包括 position、shading/geometric frame、outgoing direction、material instance、UV 与 ray-cone footprint。续路径直接调用当前 slot binding 的 `prepare/sample/pdf`，直接光调用同一 state 的 `evaluate/pdf`；source scene path tracer 也只调用各 source 自己的 canonical state。两侧使用同一个 `PathTracer.cs.slang`，由 `SceneScattering` 在 active material ID 选择 source 或 package；底座、地面和其他对象保留自己的 source。两侧共享光照、遮挡、MIS 与累积行为。
 
-两个 path tracer 在 primary surface 固定做 4 个 environment-light 样本与 4 个 BSDF path samples；power MIS 两侧分别使用 `4 * p_light` 与 `4 * p_bsdf`。BSDF sample 直接 miss environment 时累计带 MIS 的 direct contribution，命中几何时继续追踪完整 path suffix，因此 first-continuation 积分不会再退化成单样本。secondary surface 仍使用 4+4 environment direct MIS 与一条独立 continuation，避免 path tree 随 bounce 指数增长。所有 path material sample 都由 Falcor `UniformSampleGenerator` 产生，再通过同一 `ISampleGenerator` 交给各 backend 自己的 `sample()`；native direction/event/PDF/weight tuple 不被重建。环境 CDF 由与 GPU 双线性 radiance lookup 相同的 cell-integrated reconstruction 构造，避免亮 texel 过滤到相邻 cell 后仍报告暗 cell PDF。续路径 ray origin 根据实际 sampled direction 相对 geometric normal 的符号选侧，不依赖 reflection/transmission event label。该实现不使用 radiance/throughput clamp。
+共享 path tracer 在 primary surface 固定做 4 个 environment-light 样本与 4 个 BSDF path samples；power MIS 两侧分别使用 `4 * p_light` 与 `4 * p_bsdf`。BSDF sample 直接 miss environment 时累计带 MIS 的 direct contribution，命中几何时继续追踪完整 path suffix，因此 first-continuation 积分不会再退化成单样本。secondary surface 仍使用 4+4 environment direct MIS 与一条独立 continuation，避免 path tree 随 bounce 指数增长。所有 path material sample 都由 Falcor `UniformSampleGenerator` 产生，再通过同一 `ISampleGenerator` 交给各 backend 自己的 `sample()`；native direction/event/PDF/weight tuple 不被重建。环境 CDF 由与 GPU 双线性 radiance lookup 相同的 cell-integrated reconstruction 构造，避免亮 texel 过滤到相邻 cell 后仍报告暗 cell PDF。续路径 ray origin 根据实际 sampled direction 相对 geometric normal 的符号选侧，不依赖 reflection/transmission event label。该实现不使用 radiance/throughput clamp。
 
-deferred renderer从 G-buffer传入相同的 UV/gradient 与 frame，再调用同一 package `prepare/evaluate`。两种 mode只改变 transport，不改变 package math或资源。
+deferred 从 G-buffer 解码 material sentinel、geometric normal/front-facing、UV/gradient 和 frame，经过同一个 scene composer 调用 source/package `prepare/evaluate`。两侧使用相同的局部灯光查询；一次 prepare 复用多次 evaluate。它没有 GI 和场景阴影，不能用 PT 的全图阴影作为材质 parity。
 
-两个 PT 都通过 `PathSurface.slang` 构造 scene surface。Falcor camera basis 含共同 focal-distance 尺度，primary ray-cone spread 使用 `cameraV/cameraW` 的长度比；输出 footprint 是 normalized UV derivative，可直接交给 MaterialX `SampleGrad` 或 neural latent filter。修改这一链路时必须运行 `tests/gpu/test_viewer_path_surface.py`，并用具有明显空间结构的 local-light capture验证，不能只检查 slot `ready` 或平均颜色。
+source/package PT 都通过 `PathSurface.slang` 构造 scene surface。Falcor camera basis 含共同 focal-distance 尺度，primary ray-cone spread 使用 `cameraV/cameraW` 的长度比；输出 footprint 是 normalized UV derivative，可直接交给 MaterialX `SampleGrad` 或 neural latent filter。修改这一链路时必须运行 `tests/gpu/test_viewer_path_surface.py`，并用具有明显空间结构的 local-light capture验证，不能只检查 slot `ready` 或平均颜色。
 
 ## 构建
 
@@ -34,24 +34,24 @@ deferred renderer从 G-buffer传入相同的 UV/gradient 与 frame，再调用�
 
 ```powershell
 .\scripts\prepare_metal_viewer.ps1 `
-  -HybridCheckpoint artifacts\runs\hybrid\checkpoint.pt `
-  -DirectCheckpoint artifacts\runs\direct\checkpoint.pt
+  -HybridCheckpoint artifacts\runs\hybrid\checkpoint.pt
 
 .\scripts\launch_metal_viewer.ps1 `
   -Handoff artifacts\viewer\metal-budgeted-pair\handoff.json `
   -Comparison ReferenceVsHybrid
 ```
 
-`ReferenceVsDirect`查看direct对照，`HybridVsDirect`并排查看两个deferred evaluator。handoff与UI/capture会显示具体profile和`exact-diagnostic-evaluator-preview`；这些package不声明`sample/pdf`或typed edit，launcher不会把neural slot伪装成path tracing。
+默认 `ReferenceVsHybrid` 两侧均为 PT。可用 `-LeftMode deferred` / `-RightMode deferred` 独立选择模式；两侧常驻标题显示真实类型、profile、模式与 spp/状态。`-DirectCheckpoint` 是可选对照，只有显式导出后才能选择 `ReferenceVsDirect` 或 `HybridVsDirect`。新 hybrid 完整提供 prepare/evaluate/sample/pdf，仍不声明 typed edit。handoff v2 精确保存原 checkpoint 和新 package identity，不要求重训。
 
 默认显示 shifting-flakes car paint；`Material` 面板的 `vMaterials preset` 可切换 patinated copper、scratched aluminum、glazed ceramic、velvet 与 pine mosaic。MDL V1 固定 `ExplicitLod(0)`；runtime reference descriptor 完整提供 canonical `prepare/evaluate/sample/pdf`，并落到同一 target code，避免 flakes/coat 与固定 GGX 错配。训练/provider 的方向响应 query 仍只输出 evaluate 数据；这是独立的 capability plane，不代表 runtime 通过私有旁路获得 sampler。
 
-构建产物位于锁定 Falcor Release bin。交互式启动可直接指定 package root；`--method` 是 package ID：
+构建产物位于锁定 Falcor Release bin。交互启动显式指定每侧 package ID 与 mode：
 
 ```powershell
 external\Falcor\build\windows-vs2022\bin\Release\NclsViewer.exe `
   --bundle-root artifacts\exports\example `
-  --method <package-id> --width 1280 --height 720
+  --slot0-package source-reference --slot0-mode path-tracing `
+  --slot1-package <package-id> --slot1-mode path-tracing --width 1600 --height 900
 ```
 
 ## capture v4 与回放
@@ -88,7 +88,7 @@ external\Falcor\build\windows-vs2022\bin\Release\NclsViewer.exe `
 
 ## 操作与诊断
 
-交互模式保留 orbit、pan、dolly、材质/source编辑与 viewer scene保存。交互 PT 固定每次 dispatch 追加 1 spp，只要状态不变就持续累积，不受 headless capture 目标限制；任一相机、场景、材质、package或 mode变化都会把统一 sample sequence 重置到 0。普通运行把详细 shader diagnostics写入 `NclsViewer*.log`；需要完整控制台输出时使用 `--verbose-console`。headless 始终保留控制台日志，便于 CI 和 artifact审计。
+交互模式保留 orbit、pan、dolly、材质/source编辑与 viewer scene保存。Comparison slots 中可换模式或 Swap sides。PT/deferred 均整 panel 更新，无 tile 扫屏；deferred 完成后缓存，实际输入变化才重算。标题不进入线性 capture。交互 PT 固定每次 dispatch 追加 1 spp，只要状态不变就持续累积，不受 headless capture 目标限制；任一相机、场景、材质、package或 mode变化都会把统一 sample sequence 重置到 0。普通运行把详细 shader diagnostics写入 `NclsViewer*.log`；需要完整控制台输出时使用 `--verbose-console`。headless 始终保留控制台日志，便于 CI 和 artifact审计。
 
 固定路径 benchmark仍由项目脚本执行：
 

@@ -32,7 +32,7 @@ output extents:
 - `--frames` 只可延长 headless 运行；较小的值不得让 capture 提前于 target spp。达到 target 后 headless PT 停止累计，后续 benchmark frame 不改变导出图像。
 - `reference_spp` 与 `reference_samples_per_frame` 是 headless execution contract；前者决定输出 sample count，后者只决定 dispatch batching。二者都不得进入交互 UI 或 viewer scene。
 - 交互 PT 每次 dispatch 固定追加 1 spp，并可超过任何 capture target；交互手工 capture 记录 ready PT slot 当前的 matched spp，而不是强制或伪造 1024。
-- quality-first deferred可在交互模式跨frame做coarse-to-fine tile预览，但headless capture必须强制`preview stride=1`并在导出前排空完整像素网格；capture manifest中的deferred ready不能来自未完成的交互coarse pass。
+- deferred 在交互和 headless 都整 panel 一次完成；没有 tile/stride 预览状态。capture 必须等待 `deferredComplete`，target/actual spp 均为 0。标题只进 GUI，不进入线性输出。
 - `difference.exr` 必须由单 panel extent 的独立 linear 纹理导出，并以单 panel 局部 UV 对两个 slot 做逐像素差。不得从全宽 `comparison` 纹理截取或复用全宽 UV。
 - 所有线性 EXR 都从 RGBA32F 资源显式写成 float32 channel。Falcor/FreeImage 的默认压缩 EXR 会落到 half；这会把合法的 `> 65504` HDR 样本写成 `Inf`，因此权威 capture 禁止使用默认 EXR export flags，也禁止用 clamp 掩盖导出溢出。
 - 交互式 difference 显示仍遵守固定 50/50 panel：两个 panel 各自显示同一份正确比例的差分，divider 不参与差分采样。

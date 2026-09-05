@@ -26,14 +26,11 @@ FALCOR_EXPORT_D3D12_AGILITY_SDK
 
 namespace
 {
-constexpr uint32_t kPackageDispatchTileWidth = 8u;
-constexpr uint32_t kPackageDispatchTileRows = 8u;
-constexpr uint32_t kInteractiveDeferredInitialStride = 16u;
 
 constexpr uint32_t kMaximumSceneMaterials = 64;
 constexpr uint32_t kDefaultCapturePathTracingSpp = 1024;
 const Gui::DropdownList kComparisonModes = {
-    {0, "Reference / method split"},
+    {0, "Left / right split"},
     {1, "Linear absolute error"},
     {2, "Linear relative error"},
     {3, "Amplified absolute error"},
@@ -439,10 +436,10 @@ ViewerOptions parseOptions(int argc, char** argv)
         const nlohmann::json replay = nlohmann::json::parse(stream);
         const uint32_t replayVersion = replay.value("format_version", 0u);
         if (replay.value("format_name", "") != "ncls.viewer-capture"
-            || (replayVersion != 3u && replayVersion != 4u))
-            throw std::runtime_error("unsupported replay manifest");
+            || replayVersion != 4u)
+            throw std::runtime_error("unsupported replay manifest; capture v4 with two explicit slots is required");
         if (replay.value("reference_integrator", "") != "ncls.scene-path-tracer@1")
-            throw std::runtime_error("capture v3 requires reference_integrator ncls.scene-path-tracer@1");
+            throw std::runtime_error("capture v4 requires reference_integrator ncls.scene-path-tracer@1");
         const uint32_t referenceTargetSpp = replay.value(
             "reference_spp", kDefaultCapturePathTracingSpp);
         options.captureTargetSpp.fill(referenceTargetSpp);
@@ -462,8 +459,6 @@ ViewerOptions parseOptions(int argc, char** argv)
         options.referenceGeometryPath = resolve(replay.value("reference_geometry", std::string()));
         options.referenceGeometrySha256 = replay.value("reference_geometry_sha256", std::string());
         options.viewerScenePath = resolve(replay.value("viewer_scene", std::string()));
-        options.requestedPackageId = replay.value("method_id", std::string());
-        if (replayVersion == 4u)
         {
             const auto& slots = replay.at("slots");
             if (!slots.is_array() || slots.size() != 2u)
@@ -494,7 +489,7 @@ ViewerOptions parseOptions(int argc, char** argv)
         const auto resolution = replay.at("resolution");
         options.width = resolution.at(0).get<uint32_t>();
         options.height = resolution.at(1).get<uint32_t>();
-        const bool hasPathTracingSlot = replayVersion != 4u || std::any_of(
+        const bool hasPathTracingSlot = std::any_of(
             options.requestedSlotModes.begin(), options.requestedSlotModes.end(),
             [](ncls::SlotMode mode) { return mode == ncls::SlotMode::PathTracing; });
         if (hasPathTracingSlot && referenceTargetSpp == 0u)
@@ -517,11 +512,6 @@ ViewerOptions parseOptions(int argc, char** argv)
         const std::string argument = argv[index];
         if (argument == "--bundle-root") options.packageRoot = value(index, "--bundle-root");
         else if (argument == "--material") options.materialPath = value(index, "--material");
-        else if (argument == "--method")
-        {
-            options.requestedPackageId = value(index, "--method");
-            options.comparisonSelectionExplicit = true;
-        }
         else if (argument == "--slot0-package")
         {
             options.requestedSlotPackages[0] = value(index, "--slot0-package");
@@ -567,7 +557,6 @@ ViewerOptions parseOptions(int argc, char** argv)
         else if (argument == "--width") options.width = static_cast<uint32_t>(std::stoul(value(index, "--width")));
         else if (argument == "--height") options.height = static_cast<uint32_t>(std::stoul(value(index, "--height")));
         else if (argument == "--headless") options.headless = true;
-        else if (argument == "--evaluator-preview-lighting") options.evaluatorPreviewLighting = true;
         else if (argument == "--verbose-console") options.verboseConsole = true;
         else if (argument == "--help")
         {
@@ -576,7 +565,6 @@ ViewerOptions parseOptions(int argc, char** argv)
                    "[--reference-geometry SCENE] [--environment HDRI] "
                    "[--headless --frames N --capture FILE --reference-spp N "
                    "--reference-samples-per-frame N] "
-                   "[--method SHA256] [--evaluator-preview-lighting] "
                    "[--slot0-package ID --slot0-mode path-tracing|deferred] "
                    "[--slot1-package ID --slot1-mode path-tracing|deferred] "
                    "[--width W --height H] [--verbose-console]\n";
@@ -593,13 +581,15 @@ ViewerOptions parseOptions(int argc, char** argv)
 NclsViewer::NclsViewer(const SampleAppConfig& config, ViewerOptions options)
     : SampleApp(config), mOptions(std::move(options))
 {
-    mComparisonSlots[0].sourceReference = true;
-    mComparisonSlots[0].uiValue = 1u;
-    mComparisonSlots[0].contract.mode = ncls::SlotMode::PathTracing;
-    mComparisonSlots[0].contract.status = ncls::SlotStatus::Ready;
-    mComparisonSlots[1].contract.mode = ncls::SlotMode::PathTracing;
     for (uint32_t slotIndex = 0u; slotIndex < mComparisonSlots.size(); ++slotIndex)
-        mComparisonSlots[slotIndex].captureTargetSpp = mOptions.captureTargetSpp[slotIndex];
+    {
+        auto& slot = mComparisonSlots[slotIndex];
+        slot.sourceReference = mOptions.requestedSlotPackages[slotIndex] == "source-reference";
+        slot.uiValue = slot.sourceReference ? 1u : 0u;
+        slot.contract.status = slot.sourceReference ? ncls::SlotStatus::Ready : ncls::SlotStatus::Empty;
+        slot.contract.mode = mOptions.requestedSlotModes[slotIndex];
+        slot.captureTargetSpp = mOptions.captureTargetSpp[slotIndex];
+    }
 }
 
 void NclsViewer::onLoad(RenderContext* pRenderContext)
@@ -700,32 +690,20 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
         if (!mOptions.environmentPath.empty())
             loadEnvironment(mOptions.environmentPath, mOptions.environmentSha256);
     }
-    if (mOptions.evaluatorPreviewLighting)
-    {
-        // 首屏只保留一个方向光，让视觉比较隔离局部 evaluator，
-        // 同时避免把环境积分 query 数隐藏在启动延迟里。
-        mLighting.useEnvironment = false;
-        mLighting.usePoint = false;
-        mLighting.useRectangle = false;
-        mLighting.useSun = true;
-        mLighting.sunDirection = float3(0.35f, 0.55f, 0.76f);
-        mMaxSceneBounces = 0u;
-    }
-    if (!mpScene || !mpReferencePathPass)
-        throw std::runtime_error("the viewer requires a loaded scene and the unified scene reference path");
+    if (!mpScene)
+        throw std::runtime_error("the viewer requires a loaded scene");
     resizeResources(getTargetFbo()->getWidth(), getTargetFbo()->getHeight());
     scanPackages();
     if (mOptions.comparisonSelectionExplicit
         && mReferenceSource.family == ncls::ReferenceFamily::Mdl
-        && mReferenceSource.mdlCatalog && mReferenceSource.mdlCatalog->linked()
+        && mReferenceSource.mdlCatalog && mReferenceSource.hasLinkedMdlPackage()
         && mReferenceSource.mdlCatalogIndex < mReferenceSource.mdlCatalog->entries.size())
     {
         const auto& entry = mReferenceSource.mdlCatalog->entries[mReferenceSource.mdlCatalogIndex];
         const bool requestsLinkedPackage = std::find(
             mOptions.requestedSlotPackages.begin(),
             mOptions.requestedSlotPackages.end(),
-            entry.packageId) != mOptions.requestedSlotPackages.end()
-            || mOptions.requestedPackageId == entry.packageId;
+            entry.packageId) != mOptions.requestedSlotPackages.end();
         if (requestsLinkedPackage) ensureLinkedMdlProgram(entry);
     }
     if (mOptions.hasRequestedSlots
@@ -744,41 +722,29 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
                 throw std::runtime_error("capture v4 slot package did not pass compatibility/parity: " + packageId);
         }
     }
-    if (!mOptions.hasRequestedSlots && !mOptions.requestedPackageId.empty())
-    {
-        int32_t requested = -1;
-        if (mOptions.requestedPackageId != "none")
-            for (uint32_t index = 0; index < mPrograms.size(); ++index)
-                if (mPrograms[index].packageId == mOptions.requestedPackageId) requested = static_cast<int32_t>(index);
-        if (requested < 0 && mOptions.requestedPackageId != "none" && mOptions.headless)
-            throw std::runtime_error("replay ScatteringPackage did not pass compatibility/parity: " + mOptions.requestedPackageId);
-        selectProgram(requested);
-    }
     if (mOptions.comparisonSelectionExplicit
         && mReferenceSource.family == ncls::ReferenceFamily::Mdl
-        && mReferenceSource.mdlCatalog && mReferenceSource.mdlCatalog->linked()
+        && mReferenceSource.mdlCatalog && mReferenceSource.hasLinkedMdlPackage()
         && mReferenceSource.mdlCatalogIndex < mReferenceSource.mdlCatalog->entries.size())
     {
         const auto& entry = mReferenceSource.mdlCatalog->entries[mReferenceSource.mdlCatalogIndex];
         for (auto& slot : mComparisonSlots)
         {
             const auto* selected = slotProgram(slot);
-            if (selected && selected->packageId == entry.packageId)
+            if (selected && selected->packageId == entry.packageId && selected->instance.editable())
                 applyMaterialEditor(slot, *selected, mReferenceSource.mdlParameterView);
         }
     }
     if (mLinkedMdlMode && mReferenceSource.family == ncls::ReferenceFamily::Mdl
-        && mReferenceSource.mdlCatalog && mReferenceSource.mdlCatalog->linked())
-        mStatus = (mReferenceSource.mdlCatalog->checkpointCompatibility == "exact"
-                ? "Formal ViewerMaterialCatalog ready: step "
-                : "Diagnostic evaluator-only preview ready: step ")
+        && mReferenceSource.mdlCatalog && mReferenceSource.hasLinkedMdlPackage())
+        mStatus = std::string("ViewerMaterialCatalog ready: step ")
             + std::to_string(mReferenceSource.mdlCatalog->checkpointStep) + " / "
             + mReferenceSource.mdlCatalog->checkpointPhase + " / "
             + (mReferenceSource.mdlEdited ? "edited-preview" : "authored");
     else
         mStatus = mPrograms.empty()
-            ? "No compatible neural evaluator bundle was found; showing a full-width reference."
-            : "GPU-parity-validated neural evaluator bundles found; the method selection starts empty.";
+            ? "No compatible neural package; source reference remains in its comparison panel."
+            : "Scene and comparison bindings ready.";
 }
 
 void NclsViewer::createPasses()
@@ -1093,14 +1059,38 @@ void NclsViewer::loadScene(const std::filesystem::path& requestedPath, const std
     program.addTypeConformances(scene->getTypeConformances());
     auto visibilityPass = RasterPass::create(getDevice(), program, scene->getSceneDefines());
 
+    const auto previousScene = mpScene;
+    const auto previousInactive = mInactiveSceneMaterials;
+    const auto previousActive = mActiveSceneMaterial;
+    const auto previousMetadata = mpReferenceMaterialMetadata;
     mpScene = std::move(scene);
-    // Path programs specialize against the scene module/type-conformance set.
-    // A scene change invalidates GPU programs but package data identities stay intact.
-    mProgramGpuRuntimes.clear();
+    mActiveSceneMaterial = mpScene->getGeometryInstance(0u).materialID;
+    try
+    {
+        mInactiveSceneMaterials.clear();
+        for (uint32_t materialId = 0u; materialId < mpScene->getMaterialCount(); ++materialId)
+        {
+            if (materialId == mActiveSceneMaterial) continue;
+            MaterialSlotBinding binding;
+            binding.source = ncls::makeDefaultReferenceSource();
+            binding.gpu = createSourceGpuResources(binding.source);
+            mInactiveSceneMaterials.emplace(materialId, std::move(binding));
+        }
+        rebuildReferenceMaterialMetadata();
+        // Recompile cached programs against the candidate scene before committing.
+        createSceneReferencePass();
+    }
+    catch (...)
+    {
+        mpScene = previousScene;
+        mInactiveSceneMaterials = previousInactive;
+        mActiveSceneMaterial = previousActive;
+        mpReferenceMaterialMetadata = previousMetadata;
+        throw;
+    }
     mpSceneVisibilityPass = std::move(visibilityPass);
     mReferenceGeometryPath = path;
     mReferenceGeometrySha256 = geometrySha256;
-    mInactiveSceneMaterials.clear();
     const auto& firstInstance = mpScene->getGeometryInstance(0u);
     mActiveSceneMaterial = firstInstance.materialID;
     mSelectedSceneInstance = 0u;
@@ -1111,16 +1101,6 @@ void NclsViewer::loadScene(const std::filesystem::path& requestedPath, const std
         : "Geometry #" + std::to_string(firstInstance.geometryID);
     const auto firstMaterial = mpScene->getMaterial(MaterialID::fromSlang(firstInstance.materialID));
     mSelectedSceneMaterialName = firstMaterial ? firstMaterial->getName() : "Unnamed material";
-    for (uint32_t materialId = 0u; materialId < mpScene->getMaterialCount(); ++materialId)
-    {
-        if (materialId == mActiveSceneMaterial) continue;
-        MaterialSlotBinding binding;
-        binding.source = ncls::makeDefaultReferenceSource();
-        binding.gpu = createSourceGpuResources(binding.source);
-        mInactiveSceneMaterials.emplace(materialId, std::move(binding));
-    }
-    rebuildReferenceMaterialMetadata();
-    createSceneReferencePass();
 
     const auto& bounds = mpScene->getSceneBounds();
     mCamera.target = bounds.center();
@@ -1134,11 +1114,31 @@ void NclsViewer::loadScene(const std::filesystem::path& requestedPath, const std
 
 void NclsViewer::createSceneReferencePass()
 {
-    if (!mpScene)
+    if (!mpScene) { mpReferencePathPass.reset(); mpReferenceDeferredPass.reset(); return; }
+    auto path = mpReferencePathPass ? createScenePass("NclsViewer/shaders/PathTracer.cs.slang") : ref<ComputePass>{};
+    auto deferred = mpReferenceDeferredPass ? createScenePass("NclsViewer/shaders/DeferredRenderer.cs.slang") : ref<ComputePass>{};
+    auto runtimes = mProgramGpuRuntimes;
+    for (auto& [programId, runtime] : runtimes)
     {
-        mpReferencePathPass.reset();
-        return;
+        const auto found = std::find_if(mPrograms.begin(), mPrograms.end(), [&](const auto& program) {
+            return program.program->programId == programId;
+        });
+        if (found == mPrograms.end()) throw std::runtime_error("scene runtime has no program descriptor");
+        auto candidate = std::make_shared<ProgramGpuRuntime>(*runtime);
+        if (runtime->pPathPass) candidate->pPathPass = createScenePass("NclsViewer/shaders/PathTracer.cs.slang", &*found);
+        if (runtime->pDeferredPass) candidate->pDeferredPass = createScenePass("NclsViewer/shaders/DeferredRenderer.cs.slang", &*found);
+        runtime = std::move(candidate);
     }
+    mpReferencePathPass = std::move(path);
+    mpReferenceDeferredPass = std::move(deferred);
+    mProgramGpuRuntimes = std::move(runtimes);
+    for (auto& slot : mComparisonSlots)
+        if (slot.programRuntime) slot.programRuntime = mProgramGpuRuntimes.at(slot.programRuntime->programId);
+}
+
+ref<ComputePass> NclsViewer::createScenePass(const char* shaderPath, const ncls::ViewerProgram* method)
+{
+    if (!mpScene) throw std::runtime_error("scene material rendering requires a scene");
     ProgramDesc program;
     program.addShaderModules(mpScene->getShaderModules());
     uint32_t familyMask = 1u << static_cast<uint32_t>(mReferenceSource.family);
@@ -1173,12 +1173,17 @@ void NclsViewer::createSceneReferencePass()
         program.addShaderModule("NclsMdlGenerated").addString(
             generatedModule, artifact.root / "ncls_mdl_viewer_generated.slang");
     }
-    program.addShaderLibrary("NclsViewer/shaders/ReferencePathTracer.cs.slang").csEntry("main");
+    program.addShaderLibrary(shaderPath).csEntry("main");
     program.addTypeConformances(mpScene->getTypeConformances());
     DefineList defines = mpScene->getSceneDefines();
     defines.add("NCLS_MAX_SCENE_MATERIALS", std::to_string(mpScene->getMaterialCount()));
     defines.add("NCLS_REFERENCE_FAMILY_MASK", std::to_string(familyMask));
-    mpReferencePathPass = ComputePass::create(getDevice(), program, defines, true);
+    if (method)
+    {
+        defines.add("NCLS_PACKAGE_PROGRAM_HEADER", "\"" + std::filesystem::path(method->program->shaderModule).generic_string() + "\"");
+        for (const auto& [name, value] : method->program->shaderDefines) defines.add(name, value);
+    }
+    return ComputePass::create(getDevice(), program, defines, true);
 }
 
 void NclsViewer::rebuildReferenceMaterialMetadata()
@@ -1254,21 +1259,38 @@ void NclsViewer::activateSceneMaterial(uint32_t materialId)
     auto found = mInactiveSceneMaterials.find(materialId);
     if (found == mInactiveSceneMaterials.end()) return;
 
+    const auto previousInactive = mInactiveSceneMaterials;
+    const auto previousActive = mActiveSceneMaterial;
+    const auto previousMetadata = mpReferenceMaterialMetadata;
     MaterialSlotBinding previous;
-    previous.source = std::move(mReferenceSource);
-    previous.gpu = std::move(mSourceGpu);
-    previous.materialPath = std::move(mMaterialPath);
-    previous.displayName = std::move(mMaterialDisplayName);
+    previous.source = mReferenceSource;
+    previous.gpu = mSourceGpu;
+    previous.materialPath = mMaterialPath;
+    previous.displayName = mMaterialDisplayName;
 
     mReferenceSource = std::move(found->second.source);
     mSourceGpu = std::move(found->second.gpu);
     mMaterialPath = std::move(found->second.materialPath);
     mMaterialDisplayName = std::move(found->second.displayName);
     mInactiveSceneMaterials.erase(found);
-    mInactiveSceneMaterials.emplace(mActiveSceneMaterial, std::move(previous));
+    mInactiveSceneMaterials.emplace(mActiveSceneMaterial, previous);
     mActiveSceneMaterial = materialId;
-    rebuildReferenceMaterialMetadata();
-    createSceneReferencePass();
+    try
+    {
+        rebuildReferenceMaterialMetadata();
+        createSceneReferencePass();
+    }
+    catch (...)
+    {
+        mReferenceSource = previous.source;
+        mSourceGpu = previous.gpu;
+        mMaterialPath = previous.materialPath;
+        mMaterialDisplayName = previous.displayName;
+        mInactiveSceneMaterials = previousInactive;
+        mActiveSceneMaterial = previousActive;
+        mpReferenceMaterialMetadata = previousMetadata;
+        throw;
+    }
     mSelectedInterface = 0u;
     resetReference(false);
 
@@ -1316,7 +1338,7 @@ void NclsViewer::updateReferenceSourceBuffer()
     resetReference(false);
 }
 
-bool NclsViewer::allMaterialsSupportedBy(const ncls::ViewerProgram& method) const
+bool NclsViewer::activeMaterialSupportedBy(const ncls::ViewerProgram& method) const
 {
     const auto supports = [&](const ncls::ReferenceSource& source) {
         if (source.familyId() != method.asset.sourceFamilyId) return false;
@@ -1330,8 +1352,6 @@ bool NclsViewer::allMaterialsSupportedBy(const ncls::ViewerProgram& method) cons
         return source.sourceSha256 == expectedIdentity;
     };
     if (!supports(mReferenceSource)) return false;
-    for (const auto& [materialId, binding] : mInactiveSceneMaterials)
-        if (!supports(binding.source)) return false;
     return true;
 }
 
@@ -1345,12 +1365,18 @@ bool NclsViewer::hasActiveProgram() const
 void NclsViewer::resetReference(bool visibilityChanged)
 {
     mAccumulationSeconds = 0.0;
+    mLastFrameStart = {};
+    mFrameWallSamples.clear();
     mVisibilityDirty |= visibilityChanged;
     for (auto& slot : mComparisonSlots)
     {
         slot.spp = 0u;
         slot.ping = 0u;
         slot.resetAccumulation = true;
+        slot.timing.samples.clear();
+        slot.timing.sampleIndex = 0u;
+        slot.timing.collectedIndex = 0u;
+        slot.timing.milliseconds = 0.0;
     }
 }
 
@@ -1379,7 +1405,7 @@ void NclsViewer::scanPackages()
 {
     const bool autoLink = mLinkedMdlMode
         && mReferenceSource.family == ncls::ReferenceFamily::Mdl
-        && mReferenceSource.mdlCatalog && mReferenceSource.mdlCatalog->linked()
+        && mReferenceSource.mdlCatalog && mReferenceSource.hasLinkedMdlPackage()
         && !mOptions.comparisonSelectionExplicit;
     std::array<std::string, 2> previousIds;
     std::array<bool, 2> previousSources{};
@@ -1392,6 +1418,7 @@ void NclsViewer::scanPackages()
     if (!std::filesystem::is_directory(mOptions.packageRoot))
     {
         mPrograms.clear();
+        mProgramGpuRuntimes.clear();
         mPackageFailures.clear();
         activateComparisonSlot(0u, previousSources[0] ? 1u : 0u);
         activateComparisonSlot(1u, previousSources[1] ? 1u : 0u);
@@ -1423,6 +1450,14 @@ void NclsViewer::scanPackages()
         else scan.failures.push_back({method.root, "GPU parity failed: " + error});
     }
     mPrograms = std::move(accepted);
+    for (auto item = mProgramGpuRuntimes.begin(); item != mProgramGpuRuntimes.end();)
+    {
+        const bool present = std::any_of(mPrograms.begin(), mPrograms.end(), [&](const auto& program) {
+            return program.program->programId == item->first;
+        });
+        if (present) ++item;
+        else item = mProgramGpuRuntimes.erase(item);
+    }
     mPackageFailures = std::move(scan.failures);
     for (const auto& failure : mPackageFailures)
         logWarning("Rejected ScatteringPackage '{}': {}", failure.path, failure.reason);
@@ -1457,23 +1492,6 @@ ref<ComputePass> NclsViewer::createProgramPass(
         "NCLS_PACKAGE_PROGRAM_HEADER",
         "\"" + std::filesystem::path(method.program->shaderModule).generic_string() + "\"");
     for (const auto& [name, value] : method.program->shaderDefines) defines.add(name, value);
-    if (method.instance.editable()) defines.add("NCLS_METAL_RUNTIME_ONLY", "1");
-    return ComputePass::create(getDevice(), program, defines, true);
-}
-
-ref<ComputePass> NclsViewer::createProgramPathPass(const ncls::ViewerProgram& method)
-{
-    if (!mpScene) throw std::runtime_error("package path tracer requires a loaded scene");
-    ProgramDesc program;
-    program.addShaderModules(mpScene->getShaderModules());
-    program.addShaderLibrary("NclsViewer/shaders/PackagePathTracer.cs.slang").csEntry("main");
-    program.addTypeConformances(mpScene->getTypeConformances());
-    DefineList defines = mpScene->getSceneDefines();
-    defines.add(
-        "NCLS_PACKAGE_PROGRAM_HEADER",
-        "\"" + std::filesystem::path(method.program->shaderModule).generic_string() + "\"");
-    for (const auto& [name, value] : method.program->shaderDefines) defines.add(name, value);
-    if (method.instance.editable()) defines.add("NCLS_METAL_RUNTIME_ONLY", "1");
     return ComputePass::create(getDevice(), program, defines, true);
 }
 
@@ -1504,11 +1522,11 @@ std::shared_ptr<NclsViewer::ProgramGpuRuntime> NclsViewer::programGpuRuntime(
     }
 
     if (mode == ncls::SlotMode::Deferred && !runtime->pDeferredPass)
-        runtime->pDeferredPass = createProgramPass(
-            "NclsViewer/shaders/DeferredRenderer.cs.slang", method);
+        runtime->pDeferredPass = createScenePass(
+            "NclsViewer/shaders/DeferredRenderer.cs.slang", &method);
     if (mode == ncls::SlotMode::PathTracing && !runtime->pPathPass
-        && (method.program->capabilities & (4u | 8u)) == (4u | 8u))
-        runtime->pPathPass = createProgramPathPass(method);
+        && (method.program->capabilities & 15u) == 15u)
+        runtime->pPathPass = createScenePass("NclsViewer/shaders/PathTracer.cs.slang", &method);
     if (method.instance.editable() && !runtime->pMaterialCompilerPass)
     {
         ProgramDesc program;
@@ -1780,8 +1798,6 @@ uint32_t NclsViewer::ensureLinkedMdlProgram(const ncls::MdlCatalogEntry& entry)
         || method.asset.sourceSnapshotId != entry.sourceSnapshotId
         || method.asset.sourceFamilyId != "mdl.program@1")
         throw std::runtime_error("linked MDL package does not match the catalog binding");
-    if (!method.instance.editable())
-        throw std::runtime_error("linked MDL package has no typed runtime editor");
     std::string parityError;
     if (!runParityProbe(method, parityError))
         throw std::runtime_error("linked MDL package GPU parity failed: " + parityError);
@@ -1800,7 +1816,7 @@ uint32_t NclsViewer::ensureLinkedMdlProgram(const ncls::MdlCatalogEntry& entry)
 void NclsViewer::applyLinkedMdlSource(ncls::ReferenceSource source)
 {
     if (source.family != ncls::ReferenceFamily::Mdl || !source.mdlCatalog
-        || !source.mdlCatalog->linked()
+        || !source.hasLinkedMdlPackage()
         || source.mdlCatalogIndex >= source.mdlCatalog->entries.size())
         throw std::runtime_error("linked MDL activation requires a ViewerMaterialCatalog entry");
     const auto entry = source.mdlCatalog->entries[source.mdlCatalogIndex];
@@ -1815,28 +1831,30 @@ void NclsViewer::applyLinkedMdlSource(ncls::ReferenceSource source)
     const auto previousPath = mMaterialPath;
     const auto previousMetadata = mpReferenceMaterialMetadata;
     const auto previousPass = mpReferencePathPass;
+    const auto previousDeferredPass = mpReferenceDeferredPass;
     const auto previousSlots = mComparisonSlots;
+    const auto previousRuntimes = mProgramGpuRuntimes;
     const bool previousFreeze = mFreezeReference;
     const bool previousLinkedMdlMode = mLinkedMdlMode;
     const double previousAccumulationSeconds = mAccumulationSeconds;
     const bool previousVisibilityDirty = mVisibilityDirty;
     const auto catalogPath = source.mdlCatalog->sourcePath;
+    const uint32_t sourceSlot = mComparisonSlots[1].sourceReference && !mComparisonSlots[0].sourceReference ? 1u : 0u;
+    const uint32_t packageSlot = 1u - sourceSlot;
     try
     {
         if (!sourceAlreadyInstalled) installReferenceSource(std::move(source), catalogPath);
-        mComparisonSlots[0].contract.mode = ncls::SlotMode::PathTracing;
-        activateComparisonSlot(0u, 1u);
-        mComparisonSlots[1].contract.mode = ncls::SlotMode::Deferred;
-        activateComparisonSlot(1u, programIndex + 2u);
-        const auto* selected = slotProgram(mComparisonSlots[1]);
+        activateComparisonSlot(sourceSlot, 1u);
+        activateComparisonSlot(packageSlot, programIndex + 2u);
+        const auto* selected = slotProgram(mComparisonSlots[packageSlot]);
         if (!mComparisonSlots[0].ready() || !mComparisonSlots[1].ready()
             || !selected || selected->packageId != entry.packageId)
             throw std::runtime_error(
-                mComparisonSlots[1].contract.diagnostic.empty()
+                mComparisonSlots[packageSlot].contract.diagnostic.empty()
                     ? "linked MDL comparison did not become ready"
-                    : mComparisonSlots[1].contract.diagnostic);
-        if (mComparisonSlots[1].editorView != mReferenceSource.mdlParameterView)
-            applyMaterialEditor(mComparisonSlots[1], *selected, mReferenceSource.mdlParameterView);
+                    : mComparisonSlots[packageSlot].contract.diagnostic);
+        if (selected->instance.editable() && mComparisonSlots[packageSlot].editorView != mReferenceSource.mdlParameterView)
+            applyMaterialEditor(mComparisonSlots[packageSlot], *selected, mReferenceSource.mdlParameterView);
         mLinkedMdlMode = true;
         mFreezeReference = false;
         mStatus = "Linked MDL reference and neural preview applied atomically: "
@@ -1850,7 +1868,9 @@ void NclsViewer::applyLinkedMdlSource(ncls::ReferenceSource source)
         mMaterialPath = previousPath;
         mpReferenceMaterialMetadata = previousMetadata;
         mpReferencePathPass = previousPass;
+        mpReferenceDeferredPass = previousDeferredPass;
         mComparisonSlots = previousSlots;
+        mProgramGpuRuntimes = previousRuntimes;
         mFreezeReference = previousFreeze;
         mLinkedMdlMode = previousLinkedMdlMode;
         mAccumulationSeconds = previousAccumulationSeconds;
@@ -1951,14 +1971,6 @@ bool NclsViewer::runParityProbe(const ncls::ViewerProgram& method, std::string& 
     }
 }
 
-void NclsViewer::selectProgram(int32_t methodIndex)
-{
-    activateComparisonSlot(
-        1u,
-        methodIndex >= 0 && methodIndex < static_cast<int32_t>(mPrograms.size())
-            ? static_cast<uint32_t>(methodIndex) + 2u : 0u);
-}
-
 const ncls::ViewerProgram* NclsViewer::slotProgram(const ComparisonSlotRuntime& slot) const
 {
     return slot.programIndex >= 0 && slot.programIndex < static_cast<int32_t>(mPrograms.size())
@@ -1982,16 +1994,14 @@ void NclsViewer::resizeComparisonSlot(ComparisonSlotRuntime& slot)
     slot.ping = 0u;
     slot.spp = 0u;
     slot.resetAccumulation = true;
-    slot.deferredPreviewStride = 1u;
-    slot.deferredTileIndex = 0u;
     slot.deferredComplete = false;
 }
 
-void NclsViewer::activateComparisonSlot(uint32_t slotIndex, uint32_t selection)
+void NclsViewer::activateComparisonSlot(uint32_t slotIndex, uint32_t selection, std::optional<ncls::SlotMode> mode)
 {
     if (slotIndex >= mComparisonSlots.size()) throw std::runtime_error("comparison slot index is invalid");
     ComparisonSlotRuntime candidate;
-    candidate.contract.mode = mComparisonSlots[slotIndex].contract.mode;
+    candidate.contract.mode = mode.value_or(mComparisonSlots[slotIndex].contract.mode);
     candidate.captureTargetSpp = mOptions.captureTargetSpp[slotIndex];
     candidate.uiValue = selection;
     auto initializeTiming = [&](PassTiming& timing) {
@@ -2006,14 +2016,12 @@ void NclsViewer::activateComparisonSlot(uint32_t slotIndex, uint32_t selection)
         }
         else if (selection == 1u)
         {
+            if (candidate.contract.mode == ncls::SlotMode::PathTracing && !mpReferencePathPass)
+                mpReferencePathPass = createScenePass("NclsViewer/shaders/PathTracer.cs.slang");
+            if (candidate.contract.mode == ncls::SlotMode::Deferred && !mpReferenceDeferredPass)
+                mpReferenceDeferredPass = createScenePass("NclsViewer/shaders/DeferredRenderer.cs.slang");
             candidate.sourceReference = true;
-            if (candidate.contract.mode == ncls::SlotMode::PathTracing)
-                candidate.contract.status = ncls::SlotStatus::Ready;
-            else
-            {
-                candidate.contract.status = ncls::SlotStatus::Unsupported;
-                candidate.contract.diagnostic = "source reference currently exposes the scene path integrator only";
-            }
+            candidate.contract.status = ncls::SlotStatus::Ready;
         }
         else
         {
@@ -2027,10 +2035,10 @@ void NclsViewer::activateComparisonSlot(uint32_t slotIndex, uint32_t selection)
                 candidate.editorView = method.instance.parameterView;
                 migrateEditorValues(candidate.editorView, mComparisonSlots[slotIndex].editorView);
             }
-            if (!allMaterialsSupportedBy(method))
+            if (!activeMaterialSupportedBy(method))
             {
                 candidate.contract.status = ncls::SlotStatus::Unsupported;
-                candidate.contract.diagnostic = "package material asset does not match every scene material slot";
+                candidate.contract.diagnostic = "package identity does not match the selected scene material";
             }
             if (candidate.contract.status == ncls::SlotStatus::Ready)
             {
@@ -2088,7 +2096,7 @@ void NclsViewer::activateComparisonSlot(uint32_t slotIndex, uint32_t selection)
 ref<Texture> NclsViewer::slotOutput(const ComparisonSlotRuntime& slot) const
 {
     if (!slot.ready()) return {};
-    if (slot.sourceReference || slot.contract.mode == ncls::SlotMode::PathTracing)
+    if (slot.contract.mode == ncls::SlotMode::PathTracing)
         return slot.pAccumulated[slot.ping];
     return slot.pDeferred;
 }
@@ -2130,7 +2138,13 @@ void NclsViewer::bindLighting(ShaderVar root, const char* constantBufferName)
 void NclsViewer::beginTiming(PassTiming& timing)
 {
     timing.activeSlot = static_cast<uint32_t>(timing.sampleIndex % timing.timers.size());
-    if (timing.sampleIndex >= timing.timers.size()) timing.milliseconds = timing.timers[timing.activeSlot]->getElapsedTime();
+    if (timing.sampleIndex >= timing.timers.size()
+        && timing.collectedIndex < timing.sampleIndex - timing.timers.size() + 1u)
+    {
+        timing.milliseconds = timing.timers[timing.activeSlot]->getElapsedTime();
+        if (timing.samples.size() < 4096u) timing.samples.push_back(timing.milliseconds);
+        timing.collectedIndex = timing.sampleIndex - timing.timers.size() + 1u;
+    }
     timing.timers[timing.activeSlot]->begin();
 }
 
@@ -2139,6 +2153,21 @@ void NclsViewer::endTiming(PassTiming& timing)
     timing.timers[timing.activeSlot]->end();
     timing.timers[timing.activeSlot]->resolve();
     ++timing.sampleIndex;
+    timing.submittedFrame = mFrameIndex;
+}
+
+void NclsViewer::collectTiming(PassTiming& timing, bool gpuIdle)
+{
+    // Device::endFrame waits on its three in-flight frames; reading after four
+    // completed frames needs no additional submit or CPU/GPU wait.
+    if (!gpuIdle && mFrameIndex < timing.submittedFrame + Device::kInFlightFrameCount + 1u) return;
+    while (timing.collectedIndex < timing.sampleIndex)
+    {
+        const auto index = static_cast<uint32_t>(timing.collectedIndex % timing.timers.size());
+        timing.milliseconds = timing.timers[index]->getElapsedTime();
+        if (timing.samples.size() < 4096u) timing.samples.push_back(timing.milliseconds);
+        ++timing.collectedIndex;
+    }
 }
 
 void NclsViewer::renderVisibility(RenderContext* pRenderContext)
@@ -2180,105 +2209,109 @@ uint32_t NclsViewer::pathSamplesThisDispatch(const ComparisonSlotRuntime& slot) 
     return std::min(mOptions.captureSamplesPerDispatch, remaining);
 }
 
-void NclsViewer::renderReference(RenderContext* pRenderContext, ComparisonSlotRuntime& slot)
+void NclsViewer::bindSceneResources(ShaderVar root, const ComparisonSlotRuntime& slot)
 {
-    const uint32_t samplesThisFrame = pathSamplesThisDispatch(slot);
-    if (samplesThisFrame == 0u) return;
-    const uint32_t next = 1u - slot.ping;
-    beginTiming(slot.timing);
-    {
-        auto root = mpReferencePathPass->getRootVar();
-        mpScene->bindShaderDataForRaytracing(pRenderContext, root["gScene"]);
-        root["gMaterialMetadata"] = mpReferenceMaterialMetadata;
-        root["gMaterialXSampler"] = mpMaterialXSampler;
-        root["gPreviousReference"] = slot.pAccumulated[slot.ping];
-        root["gNextReference"] = slot.pAccumulated[next];
-        root["gEnvironment"] = mpEnvironment;
-        root["gEnvironmentMarginalCdf"] = mpEnvironmentMarginalCdf;
-        root["gEnvironmentConditionalCdf"] = mpEnvironmentConditionalCdf;
-        root["gLinearSampler"] = mpLinearSampler;
-        root["gNoiseStats"] = slot.pNoiseStats;
-        bool hasOpenPbr = mReferenceSource.family == ncls::ReferenceFamily::OpenPbr;
-        for (const auto& [materialId, binding] : mInactiveSceneMaterials)
-            hasOpenPbr |= binding.source.family == ncls::ReferenceFamily::OpenPbr;
-        if (hasOpenPbr) mOpenPbrLuts.bind(root);
+    root["gMaterialMetadata"] = mpReferenceMaterialMetadata;
+    root["gMaterialXSampler"] = mpMaterialXSampler;
+    bool hasOpenPbr = mReferenceSource.family == ncls::ReferenceFamily::OpenPbr;
+    for (const auto& [materialId, binding] : mInactiveSceneMaterials)
+        hasOpenPbr |= binding.source.family == ncls::ReferenceFamily::OpenPbr;
+    if (hasOpenPbr) mOpenPbrLuts.bind(root);
 
-        auto bindSource = [&](uint32_t materialId, const SourceGpuResources& gpu) {
-            root["gLayerStacks"][materialId] = gpu.pMaterial;
-            root["gMerlBrdfs"][materialId] = gpu.pMerlBrdf;
-            root["gOpenPbrInputs"][materialId] = gpu.pOpenPbrInputs;
-            root["gMaterialXInputs"][materialId] = gpu.pMaterialXInputs;
-            root["gMaterialXBaseColors"][materialId] = gpu.pMaterialXBaseColor;
-            root["gMaterialXRoughnesses"][materialId] = gpu.pMaterialXRoughness;
-            root["gMaterialXMetalnesses"][materialId] = gpu.pMaterialXMetalness;
-            root["gMaterialXNormalMaps"][materialId] = gpu.pMaterialXNormalMap;
-        };
-        bindSource(mActiveSceneMaterial, mSourceGpu);
-        for (const auto& [materialId, binding] : mInactiveSceneMaterials)
-            bindSource(materialId, binding.gpu);
+    auto bindSource = [&](uint32_t materialId, const SourceGpuResources& gpu) {
+        root["gLayerStacks"][materialId] = gpu.pMaterial;
+        root["gMerlBrdfs"][materialId] = gpu.pMerlBrdf;
+        root["gOpenPbrInputs"][materialId] = gpu.pOpenPbrInputs;
+        root["gMaterialXInputs"][materialId] = gpu.pMaterialXInputs;
+        root["gMaterialXBaseColors"][materialId] = gpu.pMaterialXBaseColor;
+        root["gMaterialXRoughnesses"][materialId] = gpu.pMaterialXRoughness;
+        root["gMaterialXMetalnesses"][materialId] = gpu.pMaterialXMetalness;
+        root["gMaterialXNormalMaps"][materialId] = gpu.pMaterialXNormalMap;
+    };
+    bindSource(mActiveSceneMaterial, mSourceGpu);
+    for (const auto& [materialId, binding] : mInactiveSceneMaterials)
+        bindSource(materialId, binding.gpu);
 
-        const SourceGpuResources* mdlGpu = mReferenceSource.family == ncls::ReferenceFamily::Mdl
-            ? &mSourceGpu : nullptr;
-        const ncls::ReferenceSource* mdlSource = mReferenceSource.family == ncls::ReferenceFamily::Mdl
-            ? &mReferenceSource : nullptr;
-        if (!mdlGpu)
-            for (const auto& [materialId, binding] : mInactiveSceneMaterials)
-                if (binding.source.family == ncls::ReferenceFamily::Mdl)
-                {
-                    mdlGpu = &binding.gpu;
-                    mdlSource = &binding.source;
-                    break;
-                }
-        if (mdlGpu)
-        {
-            root["gMdlArgumentBlock"] = mdlGpu->pMdlArgumentBlock;
-            root["gMdlRoData"] = mdlGpu->pMdlRoData;
-            root["gMdlTextureSampler"] = mdlGpu->pMdlSampler;
-            const uint32_t textureCount = static_cast<uint32_t>(
-                std::max<size_t>(1u, mdlSource->mdlArtifact->textures.size()));
-            for (uint32_t index = 0u; index < textureCount; ++index)
+    const SourceGpuResources* mdlGpu = mReferenceSource.family == ncls::ReferenceFamily::Mdl
+        ? &mSourceGpu : nullptr;
+    const ncls::ReferenceSource* mdlSource = mReferenceSource.family == ncls::ReferenceFamily::Mdl
+        ? &mReferenceSource : nullptr;
+    if (!mdlGpu)
+        for (const auto& [materialId, binding] : mInactiveSceneMaterials)
+            if (binding.source.family == ncls::ReferenceFamily::Mdl)
             {
-                root[fmt::format("gMdlTexture2D{}", index)] = mdlGpu->pMdlTexture2D[index];
-                root[fmt::format("gMdlTexture3D{}", index)] = mdlGpu->pMdlTexture3D[index];
+                mdlGpu = &binding.gpu;
+                mdlSource = &binding.source;
+                break;
             }
-        }
-
-        auto constants = root["ReferencePathTracerCB"];
-        constants["gFrameDim"] = uint2(mViewWidth, mOutputHeight);
-        constants["gFrameIndex"] = mFrameIndex;
-        constants["gMaterialCount"] = mpScene->getMaterialCount();
-        constants["gReferenceSpp"] = slot.spp;
-        constants["gSamplesThisFrame"] = samplesThisFrame;
-        constants["gMaxSceneBounces"] = mMaxSceneBounces;
-        constants["gMaxLayerWalkDepth"] = mMaxLayerWalkDepth;
-        constants["gResetAccumulation"] = uint32_t(slot.resetAccumulation);
-        std::string extension = mReferenceGeometryPath.extension().string();
-        std::transform(extension.begin(), extension.end(), extension.begin(),
-            [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-        constants["gFlipTexCoordV"] = uint32_t(extension == ".obj");
-        constants["gEnvironmentSamplingDimensions"] = mEnvironmentSamplingDimensions;
-        bindLighting(root, "ReferencePathTracerCB");
-        pRenderContext->clearUAV(slot.pNoiseStats->getUAV().get(), uint4(0u));
-        mpReferencePathPass->execute(pRenderContext, mViewWidth, mOutputHeight);
-    }
-    endTiming(slot.timing);
-    if (mFrameIndex % 8u == 0u || slot.resetAccumulation)
+    if (mdlGpu)
     {
-        const auto stats = pRenderContext->readBuffer<uint32_t>(slot.pNoiseStats.get(), 0u, 2u);
-        if (stats.size() == 2u && stats[1] > 0u)
-            mEstimatedRelativeStandardError = float(stats[0]) / (4096.f * float(stats[1]));
+        root["gMdlArgumentBlock"] = mdlGpu->pMdlArgumentBlock;
+        root["gMdlRoData"] = mdlGpu->pMdlRoData;
+        root["gMdlTextureSampler"] = mdlGpu->pMdlSampler;
+        const uint32_t textureCount = static_cast<uint32_t>(
+            std::max<size_t>(1u, mdlSource->mdlArtifact->textures.size()));
+        for (uint32_t index = 0u; index < textureCount; ++index)
+        {
+            root[fmt::format("gMdlTexture2D{}", index)] = mdlGpu->pMdlTexture2D[index];
+            root[fmt::format("gMdlTexture3D{}", index)] = mdlGpu->pMdlTexture3D[index];
+        }
     }
+
+    bindProgramResources(root, slot);
+    const auto* method = slotProgram(slot);
+    auto constants = root["SceneMaterialCB"];
+    constants["gMaterialCount"] = mpScene->getMaterialCount();
+    constants["gActiveMaterialId"] = mActiveSceneMaterial;
+    constants["gCompiledMaterialIndex"] = method ? method->instance.compiledMaterialIndex : 0u;
+    constants["gMaxLayerWalkDepth"] = mMaxLayerWalkDepth;
+}
+
+void NclsViewer::renderPath(RenderContext* pRenderContext, ComparisonSlotRuntime& slot)
+{
+    const auto pass = slot.sourceReference ? mpReferencePathPass : slot.programRuntime->pPathPass;
+    const uint32_t samplesThisFrame = pathSamplesThisDispatch(slot);
+    if (!pass || samplesThisFrame == 0u) return;
+    const uint32_t next = 1u - slot.ping;
+    auto root = pass->getRootVar();
+    mpScene->bindShaderDataForRaytracing(pRenderContext, root["gScene"]);
+    bindSceneResources(root, slot);
+    root["gPreviousPath"] = slot.pAccumulated[slot.ping];
+    root["gNextPath"] = slot.pAccumulated[next];
+    root["gEnvironment"] = mpEnvironment;
+    root["gEnvironmentMarginalCdf"] = mpEnvironmentMarginalCdf;
+    root["gEnvironmentConditionalCdf"] = mpEnvironmentConditionalCdf;
+    root["gLinearSampler"] = mpLinearSampler;
+    root["gNoiseStats"] = slot.pNoiseStats;
+    auto constants = root["PathTracerCB"];
+    constants["gFrameDim"] = uint2(mViewWidth, mOutputHeight);
+    constants["gFrameIndex"] = mFrameIndex;
+    constants["gAccumulatedSpp"] = slot.spp;
+    constants["gSamplesThisFrame"] = samplesThisFrame;
+    constants["gMaxSceneBounces"] = mMaxSceneBounces;
+    constants["gResetAccumulation"] = uint32_t(slot.resetAccumulation);
+    std::string extension = mReferenceGeometryPath.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    constants["gFlipTexCoordV"] = uint32_t(extension == ".obj");
+    constants["gEnvironmentSamplingDimensions"] = mEnvironmentSamplingDimensions;
+    bindLighting(root, "PathTracerCB");
+    pRenderContext->clearUAV(slot.pNoiseStats->getUAV().get(), uint4(0u));
+    beginTiming(slot.timing);
+    pass->execute(pRenderContext, mViewWidth, mOutputHeight);
+    endTiming(slot.timing);
     slot.ping = next;
     slot.spp += samplesThisFrame;
-    mAccumulationSeconds += getFrameRate().getLastFrameTime();
     slot.resetAccumulation = false;
 }
 
-void NclsViewer::renderApproximation(RenderContext* pRenderContext, ComparisonSlotRuntime& slot)
+void NclsViewer::renderDeferred(RenderContext* pRenderContext, ComparisonSlotRuntime& slot)
 {
-    const auto* method = slotProgram(slot);
-    if (!method || !slot.programRuntime || !slot.programRuntime->pDeferredPass) return;
-    auto root = slot.programRuntime->pDeferredPass->getRootVar();
+    const auto pass = slot.sourceReference ? mpReferenceDeferredPass : slot.programRuntime->pDeferredPass;
+    if (!pass) return;
+    if (slot.resetAccumulation) { slot.deferredComplete = false; slot.resetAccumulation = false; }
+    if (slot.deferredComplete) return;
+    auto root = pass->getRootVar();
+    bindSceneResources(root, slot);
     root["gPositionDepth"] = mpPositionDepth;
     root["gNormal"] = mpNormal;
     root["gTangent"] = mpTangent;
@@ -2288,161 +2321,16 @@ void NclsViewer::renderApproximation(RenderContext* pRenderContext, ComparisonSl
     root["gMaterialId"] = mpSceneMaterialId;
     root["gEnvironment"] = mpEnvironment;
     root["gLinearSampler"] = mpLinearSampler;
-    root["gApproximation"] = slot.pDeferred;
-    bindProgramResources(root, slot);
-    root["ApproximationCB"]["gFrameDim"] = uint2(mViewWidth, mOutputHeight);
-    root["ApproximationCB"]["gCompiledMaterialIndex"] = method->instance.compiledMaterialIndex;
-    root["ApproximationCB"]["gEnvironmentQueryBudget"] = method->program->environmentQueryBudget;
-    root["ApproximationCB"]["gRectangleQueryBudget"] = method->program->rectangleQueryBudget;
-    bindLighting(root, "ApproximationCB");
-    if (slot.resetAccumulation)
-    {
-        pRenderContext->clearUAV(slot.pDeferred->getUAV().get(), float4(0.f));
-        slot.deferredPreviewStride = mOptions.headless ? 1u : kInteractiveDeferredInitialStride;
-        slot.deferredTileIndex = 0u;
-        slot.deferredComplete = false;
-        slot.resetAccumulation = false;
-    }
-    if (slot.deferredComplete) return;
-
-    beginTiming(slot.timing);
-    if (mOptions.headless)
-    {
-        root["ApproximationCB"]["gPreviewStride"] = 1u;
-        executePackageTiles(
-            pRenderContext,
-            slot.programRuntime->pDeferredPass,
-            "ApproximationCB",
-            mViewWidth,
-            mOutputHeight);
-        slot.deferredComplete = true;
-    }
-    else
-    {
-        const uint32_t stride = slot.deferredPreviewStride;
-        const uint32_t dispatchWidth = (mViewWidth + stride - 1u) / stride;
-        const uint32_t dispatchHeight = (mOutputHeight + stride - 1u) / stride;
-        const uint32_t tileColumns = (dispatchWidth + kPackageDispatchTileWidth - 1u)
-            / kPackageDispatchTileWidth;
-        const uint32_t tileRows = (dispatchHeight + kPackageDispatchTileRows - 1u)
-            / kPackageDispatchTileRows;
-        const uint32_t tileCount = tileColumns * tileRows;
-        root["ApproximationCB"]["gPreviewStride"] = stride;
-        executeInteractivePackageTile(
-            pRenderContext,
-            slot.programRuntime->pDeferredPass,
-            "ApproximationCB",
-            dispatchWidth,
-            dispatchHeight,
-            slot.deferredTileIndex);
-        if (++slot.deferredTileIndex >= tileCount)
-        {
-            logInfo("Interactive neural preview completed {}x refinement ({}x{} logical samples)",
-                slot.deferredPreviewStride, dispatchWidth, dispatchHeight);
-            if (slot.deferredPreviewStride > 1u)
-            {
-                slot.deferredPreviewStride /= 2u;
-                slot.deferredTileIndex = 0u;
-            }
-            else slot.deferredComplete = true;
-        }
-    }
-    endTiming(slot.timing);
-}
-
-void NclsViewer::executePackageTiles(
-    RenderContext* pRenderContext,
-    const ref<ComputePass>& pPass,
-    const char* constantBufferName,
-    uint32_t dispatchWidth,
-    uint32_t dispatchHeight)
-{
-    auto root = pPass->getRootVar();
-    for (uint32_t row = 0u; row < dispatchHeight; row += kPackageDispatchTileRows)
-    {
-        for (uint32_t column = 0u; column < dispatchWidth; column += kPackageDispatchTileWidth)
-        {
-            root[constantBufferName]["gDispatchOffset"] = uint2(column, row);
-            pPass->execute(
-                pRenderContext,
-                std::min(kPackageDispatchTileWidth, dispatchWidth - column),
-                std::min(kPackageDispatchTileRows, dispatchHeight - row));
-            // A completed workgroup is the scheduling boundary that remains
-            // reliable under Windows TDR for a quality-first neural program.
-            const bool lastTile = row + kPackageDispatchTileRows >= dispatchHeight
-                && column + kPackageDispatchTileWidth >= dispatchWidth;
-            if (!lastTile) pRenderContext->submit(true);
-        }
-    }
-}
-
-void NclsViewer::executeInteractivePackageTile(
-    RenderContext* pRenderContext,
-    const ref<ComputePass>& pPass,
-    const char* constantBufferName,
-    uint32_t dispatchWidth,
-    uint32_t dispatchHeight,
-    uint32_t tileIndex)
-{
-    const uint32_t tileColumns = (dispatchWidth + kPackageDispatchTileWidth - 1u)
-        / kPackageDispatchTileWidth;
-    const uint32_t tileRows = (dispatchHeight + kPackageDispatchTileRows - 1u)
-        / kPackageDispatchTileRows;
-    if (tileColumns == 0u || tileRows == 0u || tileIndex >= tileColumns * tileRows)
-        throw std::runtime_error("interactive package tile is outside the preview grid");
-    const uint32_t column = (tileIndex % tileColumns) * kPackageDispatchTileWidth;
-    const uint32_t row = (tileIndex / tileColumns) * kPackageDispatchTileRows;
-    auto root = pPass->getRootVar();
-    root[constantBufferName]["gDispatchOffset"] = uint2(column, row);
-    pPass->execute(
-        pRenderContext,
-        std::min(kPackageDispatchTileWidth, dispatchWidth - column),
-        std::min(kPackageDispatchTileRows, dispatchHeight - row));
-}
-
-void NclsViewer::renderPackagePath(RenderContext* pRenderContext, ComparisonSlotRuntime& slot)
-{
-    const auto* method = slotProgram(slot);
-    if (!method || !slot.programRuntime || !slot.programRuntime->pPathPass) return;
-    const uint32_t samplesThisFrame = pathSamplesThisDispatch(slot);
-    if (samplesThisFrame == 0u) return;
-    const uint32_t next = 1u - slot.ping;
-    auto root = slot.programRuntime->pPathPass->getRootVar();
-    mpScene->bindShaderDataForRaytracing(pRenderContext, root["gScene"]);
-    root["gPreviousPackage"] = slot.pAccumulated[slot.ping];
-    root["gNextPackage"] = slot.pAccumulated[next];
-    root["gEnvironment"] = mpEnvironment;
-    root["gEnvironmentMarginalCdf"] = mpEnvironmentMarginalCdf;
-    root["gEnvironmentConditionalCdf"] = mpEnvironmentConditionalCdf;
-    root["gLinearSampler"] = mpLinearSampler;
-    root["gPackageNoiseStats"] = slot.pNoiseStats;
-    bindProgramResources(root, slot);
-    auto constants = root["PackagePathTracerCB"];
+    root["gDeferred"] = slot.pDeferred;
+    auto constants = root["DeferredCB"];
     constants["gFrameDim"] = uint2(mViewWidth, mOutputHeight);
-    constants["gFrameIndex"] = mFrameIndex;
-    constants["gPackageSpp"] = slot.spp;
-    constants["gSamplesThisFrame"] = samplesThisFrame;
-    constants["gMaxSceneBounces"] = mMaxSceneBounces;
-    constants["gResetAccumulation"] = uint32_t(slot.resetAccumulation);
-    constants["gCompiledMaterialIndex"] = method->instance.compiledMaterialIndex;
-    std::string extension = mReferenceGeometryPath.extension().string();
-    std::transform(extension.begin(), extension.end(), extension.begin(),
-        [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-    constants["gFlipTexCoordV"] = uint32_t(extension == ".obj");
-    constants["gEnvironmentSamplingDimensions"] = mEnvironmentSamplingDimensions;
-    bindLighting(root, "PackagePathTracerCB");
-    pRenderContext->clearUAV(slot.pNoiseStats->getUAV().get(), uint4(0u));
+    constants["gEnvironmentQueryBudget"] = 1u;
+    constants["gRectangleQueryBudget"] = 1u;
+    bindLighting(root, "DeferredCB");
     beginTiming(slot.timing);
-    executePackageTiles(
-        pRenderContext,
-        slot.programRuntime->pPathPass,
-        "PackagePathTracerCB",
-        mViewWidth,
-        mOutputHeight);
+    pass->execute(pRenderContext, mViewWidth, mOutputHeight);
     endTiming(slot.timing);
-    slot.ping = next;
-    slot.spp += samplesThisFrame;
-    slot.resetAccumulation = false;
+    slot.deferredComplete = true;
 }
 
 void NclsViewer::renderComposite(RenderContext* pRenderContext)
@@ -2472,23 +2360,34 @@ void NclsViewer::renderComposite(RenderContext* pRenderContext)
 
 void NclsViewer::onFrameRender(RenderContext* pRenderContext, const ref<Fbo>& pTargetFbo)
 {
+    collectTiming(mVisibilityTiming);
+    collectTiming(mCompositeTiming);
+    for (auto& slot : mComparisonSlots) collectTiming(slot.timing);
+    const auto now = std::chrono::steady_clock::now();
+    if (mLastFrameStart != std::chrono::steady_clock::time_point{})
+    {
+        const double frameMs = std::chrono::duration<double, std::milli>(now - mLastFrameStart).count();
+        if (mFrameWallSamples.size() < 4096u) mFrameWallSamples.push_back(frameMs);
+        if (!mFreezeReference) mAccumulationSeconds += frameMs / 1000.0;
+    }
+    mLastFrameStart = now;
     if (mVisibilityDirty) renderVisibility(pRenderContext);
     for (auto& slot : mComparisonSlots)
     {
         if (!slot.ready()) continue;
-        if (slot.sourceReference)
+        if (slot.contract.mode == ncls::SlotMode::PathTracing)
         {
-            if (!mFreezeReference) renderReference(pRenderContext, slot);
+            if (!mFreezeReference) renderPath(pRenderContext, slot);
         }
-        else if (slot.contract.mode == ncls::SlotMode::PathTracing)
-        {
-            if (!mFreezeReference) renderPackagePath(pRenderContext, slot);
-        }
-        else renderApproximation(pRenderContext, slot);
+        else renderDeferred(pRenderContext, slot);
     }
     renderComposite(pRenderContext);
     pRenderContext->blit(mpDisplay->getSRV(), pTargetFbo->getRenderTargetView(0));
     ++mFrameIndex;
+
+    if (mOptions.headless && (mFrameIndex == 1u || mFrameIndex % 64u == 0u))
+        logInfo("Capture progress: frame={} slot0={} spp slot1={} spp",
+            mFrameIndex, mComparisonSlots[0].spp, mComparisonSlots[1].spp);
 
     const bool captureSppReady = std::all_of(
         mComparisonSlots.begin(), mComparisonSlots.end(), [&](const ComparisonSlotRuntime& slot) {
@@ -2697,10 +2596,10 @@ void NclsViewer::renderMaterialUi(Gui::Widgets& widgets)
         else if (mReferenceSource.family == ncls::ReferenceFamily::MaterialX) renderMaterialXUi(widgets);
         else if (mReferenceSource.family == ncls::ReferenceFamily::Mdl) renderMdlUi(widgets);
         else widgets.text("MERL is a measured BRDF table with no continuous native controls; select another measurement to switch material.");
-        widgets.text("This source material retains its native representation; no compatible approximation compiler is available yet.");
+        widgets.text("Source controls retain native semantics; renderer and package are selected in Comparison slots.");
         return;
     }
-    widgets.text("Material program (edits normalized LayerStackIR inputs, not a K2 packet)");
+    widgets.text("Material program: native LayerStackIR parameters");
     mSelectedInterface = std::min(mSelectedInterface, mMaterial.interfaceCount - 1);
     Gui::DropdownList layers;
     for (uint32_t index = 0; index < mMaterial.interfaceCount; ++index)
@@ -2820,12 +2719,10 @@ void NclsViewer::renderMdlUi(Gui::Widgets& widgets)
         widgets.text("MDL source has no validated compiled artifact.");
         return;
     }
-    if (mReferenceSource.mdlCatalog->linked())
+    if (mReferenceSource.hasLinkedMdlPackage() || !mReferenceSource.mdlParameterView.is_null())
     {
         const auto& catalog = *mReferenceSource.mdlCatalog;
-        uint32_t family = 0u;
-        const Gui::DropdownList families = {{0u, "Metal / opaque vMaterials 2"}};
-        widgets.dropdown("Material family", families, family);
+        widgets.text("Source family: MDL");
 
         std::vector<std::string> metals;
         for (const auto& entry : catalog.entries) metals.push_back(entry.metal);
@@ -2907,7 +2804,8 @@ void NclsViewer::renderMdlUi(Gui::Widgets& widgets)
         }
 
         bool requestedLinked = mLinkedMdlMode;
-        if (widgets.checkbox("Link reference and neural preview", requestedLinked)
+        if (catalog.entries[mReferenceSource.mdlCatalogIndex].linked()
+            && widgets.checkbox("Link reference and neural material", requestedLinked)
             && requestedLinked != mLinkedMdlMode)
         {
             if (requestedLinked)
@@ -2957,9 +2855,7 @@ void NclsViewer::renderMdlUi(Gui::Widgets& widgets)
 
         const auto& entry = catalog.entries[mReferenceSource.mdlCatalogIndex];
         widgets.text("Preset: " + entry.displayName);
-        widgets.text((catalog.checkpointCompatibility == "exact"
-                ? "Formal neural material: step "
-                : "Diagnostic evaluator-only preview: step ")
+        widgets.text(std::string("Neural checkpoint: step ")
             + std::to_string(catalog.checkpointStep)
             + " / " + catalog.checkpointPhase + " / "
             + (mReferenceSource.mdlEdited ? "edited-preview" : "authored"));
@@ -3012,7 +2908,31 @@ void NclsViewer::renderMdlUi(Gui::Widgets& widgets)
 
 void NclsViewer::onGuiRender(Gui* pGui)
 {
-    Gui::Window window(pGui, "NeuralShading Viewer", {460, 850}, {12, 12});
+    const auto layout = ncls::fixedPanelLayout(mOutputWidth, mOutputHeight);
+    for (uint32_t index = 0u; index < mComparisonSlots.size(); ++index)
+    {
+        const auto& slot = mComparisonSlots[index];
+        const auto* method = slotProgram(slot);
+        const std::string type = slot.sourceReference ? "Reference" : method ? "Neural" : "Empty";
+        const std::string name = slot.sourceReference ? std::string(mReferenceSource.familyId())
+            : method ? (method->checkpointProfileId.empty() ? method->displayName : method->checkpointProfileId) : "No material";
+        const std::string mode = slot.contract.mode == ncls::SlotMode::PathTracing ? "PT" : "Deferred";
+        const std::string status = slot.ready()
+            ? (slot.contract.mode == ncls::SlotMode::PathTracing ? std::to_string(slot.spp) + " spp" : "Ready")
+            : slot.contract.status == ncls::SlotStatus::Unsupported ? "Unsupported"
+            : slot.contract.status == ncls::SlotStatus::Error ? "Error" : "Empty";
+        const uint32_t x = index == 0u ? 0u : layout.rightOffset;
+        const std::string heading = type + " | " + mode + " | " + status
+            + (slot.ready() && !slot.contract.diagnostic.empty() ? " | Request failed" : "");
+        const std::string id = "###ComparisonTitle" + std::to_string(index);
+        Gui::Window title(pGui, id.c_str(), {layout.panelWidth, 64u}, {x, 0u}, Gui::WindowFlags::NoResize);
+        title.windowPos(x, 0u);
+        title.windowSize(layout.panelWidth, 64u);
+        title.text(heading);
+        title.text(name.substr(0u, std::max(12u, layout.panelWidth / 8u - 3u)));
+        title.tooltip(name + (slot.contract.diagnostic.empty() ? "" : "\n" + slot.contract.diagnostic));
+    }
+    Gui::Window window(pGui, "NeuralShading Viewer", {460, 810}, {12, 76});
     const float sceneRadius = mpScene ? std::max(mpScene->getSceneBounds().radius(), 0.01f) : 1.f;
     const float3 sceneCenter = mpScene ? mpScene->getSceneBounds().center() : float3(0.f);
     const float sceneCenterExtent = std::max({
@@ -3235,7 +3155,7 @@ void NclsViewer::onGuiRender(Gui* pGui)
             if (mReferenceSource.family == ncls::ReferenceFamily::LayerStack
                 && group.var("Max layer-walk depth", mMaxLayerWalkDepth, 4u, 128u))
                 resetReference(false);
-            group.checkbox("Freeze reference", mFreezeReference);
+            group.checkbox("Freeze PT accumulation", mFreezeReference);
             group.text("Material and lighting edits automatically resume a frozen reference.");
             if (group.button("Clear accumulation")) resetReference(false);
             if (mComparisonSlots[0].ready() && mComparisonSlots[1].ready())
@@ -3251,8 +3171,6 @@ void NclsViewer::onGuiRender(Gui* pGui)
             if (mComparisonMode == 3u) group.var("Error amplification", mDifferenceScale, 1.f, 100.f, 0.5f);
             group.text("slot 0 spp: " + std::to_string(mComparisonSlots[0].spp)
                 + ", elapsed: " + fmt::format("{:.2f}s", mAccumulationSeconds));
-            group.text("Estimated mean relative standard error: "
-                + fmt::format("{:.2f}%", 100.f * mEstimatedRelativeStandardError));
         }
     }
 
@@ -3260,29 +3178,19 @@ void NclsViewer::onGuiRender(Gui* pGui)
         Gui::Group group = window.group("Comparison slots", false);
         if (group)
         {
+            if (group.button("Swap sides")) std::swap(mComparisonSlots[0], mComparisonSlots[1]);
             if (mLinkedMdlMode && mReferenceSource.family == ncls::ReferenceFamily::Mdl
-                && mReferenceSource.mdlCatalog && mReferenceSource.mdlCatalog->linked())
+                && mReferenceSource.mdlCatalog && mReferenceSource.hasLinkedMdlPackage())
             {
-                group.text("Linked mode: left is the MDL reference; right is the matched neural evaluator.");
-                group.text("Right renderer: deferred evaluator preview");
-                const auto& preview = mComparisonSlots[1];
-                if (preview.contract.mode == ncls::SlotMode::Deferred && preview.ready())
+                group.text("Linked material: reference and matching neural package.");
+                for (uint32_t index = 0u; index < mComparisonSlots.size(); ++index)
                 {
-                    if (preview.deferredComplete) group.text("Right preview: exact-resolution refinement complete");
-                    else
-                    {
-                        const uint32_t stride = std::max(preview.deferredPreviewStride, 1u);
-                        const uint32_t dispatchWidth = (mViewWidth + stride - 1u) / stride;
-                        const uint32_t dispatchHeight = (mOutputHeight + stride - 1u) / stride;
-                        const uint32_t tileColumns = (dispatchWidth + kPackageDispatchTileWidth - 1u)
-                            / kPackageDispatchTileWidth;
-                        const uint32_t tileRows = (dispatchHeight + kPackageDispatchTileRows - 1u)
-                            / kPackageDispatchTileRows;
-                        group.text("Right preview: " + std::to_string(stride)
-                            + "x progressive refinement, tile "
-                            + std::to_string(std::min(preview.deferredTileIndex, tileColumns * tileRows))
-                            + "/" + std::to_string(tileColumns * tileRows));
-                    }
+                    uint32_t mode = mComparisonSlots[index].contract.mode == ncls::SlotMode::PathTracing ? 0u : 1u;
+                    const Gui::DropdownList modes = {{0u, "PT"}, {1u, "Deferred"}};
+                    const std::string label = "Slot " + std::to_string(index) + " mode";
+                    if (group.dropdown(label.c_str(), modes, mode))
+                        activateComparisonSlot(index, mComparisonSlots[index].uiValue,
+                            mode == 0u ? ncls::SlotMode::PathTracing : ncls::SlotMode::Deferred);
                 }
                 if (const auto* method = slotProgram(mComparisonSlots[1]))
                     group.text("Matched package: " + shortId(method->packageId));
@@ -3293,7 +3201,7 @@ void NclsViewer::onGuiRender(Gui* pGui)
             Gui::DropdownList methodList = {{0, "Empty"}, {1, "Source reference"}};
             for (uint32_t index = 0; index < mPrograms.size(); ++index)
             {
-                if (allMaterialsSupportedBy(mPrograms[index]))
+                if (activeMaterialSupportedBy(mPrograms[index]))
                     methodList.push_back({index + 2, mPrograms[index].displayName
                         + " [" + shortId(mPrograms[index].packageId) + "]"});
             }
@@ -3309,9 +3217,8 @@ void NclsViewer::onGuiRender(Gui* pGui)
                 const std::string rendererLabel = prefix + " renderer";
                 if (group.dropdown(rendererLabel.c_str(), kSlotModes, mode))
                 {
-                    slot.contract.mode = mode == 0u
-                        ? ncls::SlotMode::PathTracing : ncls::SlotMode::Deferred;
-                    activateComparisonSlot(slotIndex, slot.uiValue);
+                    activateComparisonSlot(slotIndex, slot.uiValue, mode == 0u
+                        ? ncls::SlotMode::PathTracing : ncls::SlotMode::Deferred);
                 }
                 const char* status = slot.contract.status == ncls::SlotStatus::Ready ? "ready"
                     : slot.contract.status == ncls::SlotStatus::Unsupported ? "unsupported"
@@ -3415,7 +3322,7 @@ void NclsViewer::loadMaterial(const std::filesystem::path& path)
 void NclsViewer::installReferenceSource(ncls::ReferenceSource source, const std::filesystem::path& path)
 {
     const bool linkedMdl = source.family == ncls::ReferenceFamily::Mdl
-        && source.mdlCatalog && source.mdlCatalog->linked();
+        && source.mdlCatalog && source.hasLinkedMdlPackage();
     auto gpu = createSourceGpuResources(source);
     const auto previousSource = mReferenceSource;
     const auto previousGpu = mSourceGpu;
@@ -3423,6 +3330,7 @@ void NclsViewer::installReferenceSource(ncls::ReferenceSource source, const std:
     const auto previousPath = mMaterialPath;
     const auto previousMetadata = mpReferenceMaterialMetadata;
     const auto previousPass = mpReferencePathPass;
+    const auto previousDeferredPass = mpReferenceDeferredPass;
     mReferenceSource = std::move(source);
     mSourceGpu = std::move(gpu);
     mMaterialDisplayName = mReferenceSource.displayName;
@@ -3443,6 +3351,7 @@ void NclsViewer::installReferenceSource(ncls::ReferenceSource source, const std:
         mMaterialPath = previousPath;
         mpReferenceMaterialMetadata = previousMetadata;
         mpReferencePathPass = previousPass;
+        mpReferenceDeferredPass = previousDeferredPass;
         throw;
     }
     if (mReferenceSource.family == ncls::ReferenceFamily::LayerStack) updateMaterialBuffer(false);
@@ -3593,8 +3502,8 @@ void NclsViewer::loadViewerScene(const std::filesystem::path& requestedPath)
     const nlohmann::json document = nlohmann::json::parse(stream);
     const uint32_t sceneVersion = document.value("format_version", 0u);
     if (document.value("format_name", "") != "ncls.viewer-scene"
-        || (sceneVersion != 1u && sceneVersion != 2u))
-        throw std::runtime_error("unsupported viewer scene format: " + path.string());
+        || sceneVersion != 2u)
+        throw std::runtime_error("unsupported viewer scene format; resave as v2: " + path.string());
     if (document.value("reference_integrator", "") != "ncls.scene-path-tracer@1")
         throw std::runtime_error("viewer scene requires reference_integrator ncls.scene-path-tracer@1");
     const fs::path base = path.parent_path();
@@ -3699,7 +3608,8 @@ void NclsViewer::loadViewerScene(const std::filesystem::path& requestedPath)
         mSelectedSceneMaterialName = material->getName();
     rebuildReferenceMaterialMetadata();
     createSceneReferencePass();
-    selectProgram(-1);
+    for (uint32_t index = 0u; index < mComparisonSlots.size(); ++index)
+        activateComparisonSlot(index, mComparisonSlots[index].uiValue);
     resetReference(true);
     mStatus = "Loaded viewer scene with " + std::to_string(mpScene->getMaterialCount())
         + " material-slot binding(s): " + path.string();
@@ -3806,12 +3716,9 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         if (stats.size() == 2u && stats[1] > 0u)
             mEstimatedRelativeStandardError = float(stats[0]) / (4096.f * float(stats[1]));
     }
-    const auto refreshTiming = [](PassTiming& timing) {
-        if (timing.sampleIndex > 0) timing.milliseconds = timing.timers[timing.activeSlot]->getElapsedTime();
-    };
-    refreshTiming(mVisibilityTiming);
-    refreshTiming(mCompositeTiming);
-    for (auto& slot : mComparisonSlots) refreshTiming(slot.timing);
+    collectTiming(mVisibilityTiming, true);
+    collectTiming(mCompositeTiming, true);
+    for (auto& slot : mComparisonSlots) collectTiming(slot.timing, true);
     const bool bothSlotsReady = mComparisonSlots[0].ready() && mComparisonSlots[1].ready();
     if (mReferenceSource.family == ncls::ReferenceFamily::LayerStack)
         ncls::saveMaterialProgram(materialPath, mMaterial, mMaterialDisplayName);
@@ -3834,7 +3741,6 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
     const auto* rightProgram = slotProgram(mComparisonSlots[1]);
     const std::string packageId = rightProgram ? rightProgram->packageId
         : mComparisonSlots[1].sourceReference ? "source-reference" : "none";
-    const std::string methodRoot = rightProgram ? rightProgram->root.string() : std::string();
     nlohmann::json sceneMaterialBindings = nlohmann::json::array();
     auto appendBinding = [&](uint32_t materialId, const ncls::ReferenceSource& source, bool active) {
         std::string sceneMaterialName;
@@ -3879,6 +3785,11 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         }
     };
     nlohmann::json slots = nlohmann::json::array();
+    const auto percentile = [](std::vector<double> values, double fraction) {
+        if (values.empty()) return 0.0;
+        std::sort(values.begin(), values.end());
+        return values[static_cast<size_t>(fraction * double(values.size() - 1u))];
+    };
     for (uint32_t slotIndex = 0u; slotIndex < mComparisonSlots.size(); ++slotIndex)
     {
         const auto& slot = mComparisonSlots[slotIndex];
@@ -3899,13 +3810,16 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
             {"target_spp", slot.contract.mode == ncls::SlotMode::PathTracing
                 ? slot.captureTargetSpp : 0u},
             {"gpu_ms", slot.timing.milliseconds},
+            {"gpu_median_ms", percentile(slot.timing.samples, 0.5)},
+            {"gpu_p90_ms", percentile(slot.timing.samples, 0.9)},
+            {"gpu_timing_samples", slot.timing.samples.size()},
             {"linear_output", slot.ready() ? slotPaths[slotIndex].filename().string() : std::string()},
         });
     }
     nlohmann::json viewerMaterialBinding = nlohmann::json::object();
     nlohmann::json viewerMaterialState = nlohmann::json::object();
     if (mReferenceSource.family == ncls::ReferenceFamily::Mdl
-        && mReferenceSource.mdlCatalog && mReferenceSource.mdlCatalog->linked()
+        && mReferenceSource.mdlCatalog && mReferenceSource.hasLinkedMdlPackage()
         && mReferenceSource.mdlCatalogIndex < mReferenceSource.mdlCatalog->entries.size())
     {
         const auto& catalog = *mReferenceSource.mdlCatalog;
@@ -3928,16 +3842,17 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
             {"asset_id", entry.packageAssetId},
             {"instance_id", entry.instanceId},
         };
-        viewerMaterialState = ncls::serializeReferenceSourceState(
-            mReferenceSource, manifestPath.parent_path()).at("viewer_material_state");
+        if (!mReferenceSource.mdlParameterView.is_null())
+            viewerMaterialState = ncls::serializeReferenceSourceState(
+                mReferenceSource, manifestPath.parent_path()).at("viewer_material_state");
     }
     nlohmann::json manifest = {
         {"format_name", "ncls.viewer-capture"},
+        {"frame_wall_median_ms", percentile(mFrameWallSamples, 0.5)},
+        {"frame_wall_p90_ms", percentile(mFrameWallSamples, 0.9)},
         {"format_version", 4},
         {"comparison_purpose", mOptions.capturePurpose},
         {"slots", slots},
-        {"method_id", packageId},
-        {"method_bundle", methodRoot},
         {"bundle_root", std::filesystem::absolute(mOptions.packageRoot).string()},
         {"source_material_family_id", mReferenceSource.familyId()},
         {"source_material_sha256", mReferenceSource.sourceSha256},
@@ -3961,7 +3876,6 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
             : mReferenceSource.sourcePath.string()},
         {"material_ir_sha256", mReferenceSource.family == ncls::ReferenceFamily::LayerStack ? ncls::layerStackHash(mMaterial) : std::string()},
         {"material_program", mReferenceSource.family == ncls::ReferenceFamily::LayerStack ? materialPath.filename().string() : std::string()},
-        {"approximation_available", mComparisonSlots[1].ready()},
         {"environment", mEnvironmentPath.empty() ? std::string() : std::filesystem::absolute(mEnvironmentPath).string()},
         {"environment_sha256", mEnvironmentSha256},
         {"reference_geometry", mReferenceGeometryPath.empty() ? std::string() : std::filesystem::absolute(mReferenceGeometryPath).string()},
@@ -3997,7 +3911,6 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
                 ? "training_diagnostic_asymmetric_spp_linear_output_difference"
                 : "symmetric_slot_linear_output_difference")
             : "partial_slot_capture"},
-        {"method_runtime_class", rightProgram ? rightProgram->program->runtimeClass : "none"},
         {"camera", {
             {"target", {mCamera.target.x, mCamera.target.y, mCamera.target.z}},
             {"yaw", mCamera.yaw}, {"pitch", mCamera.pitch}, {"distance", mCamera.distance},
@@ -4033,8 +3946,6 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
         {"files", {
             {"slot_0_linear", mComparisonSlots[0].ready() ? slotPaths[0].filename().string() : std::string()},
             {"slot_1_linear", mComparisonSlots[1].ready() ? slotPaths[1].filename().string() : std::string()},
-            {"reference_linear", mComparisonSlots[0].ready() ? slotPaths[0].filename().string() : std::string()},
-            {"approximation_linear", mComparisonSlots[1].ready() ? slotPaths[1].filename().string() : std::string()},
             {"comparison_linear", comparisonPath.filename().string()},
             {"display", displayPath.filename().string()},
             {"difference_linear", bothSlotsReady ? differencePath.filename().string() : std::string()},
@@ -4049,7 +3960,7 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
     stream << manifest.dump(2) << '\n';
     std::ofstream metrics(metricsPath, std::ios::binary | std::ios::trunc);
     if (!metrics) throw std::runtime_error("cannot write capture metrics: " + metricsPath.string());
-    metrics << "method_id,width,height,slot_0_spp,slot_1_spp,estimated_mean_relative_standard_error,visibility_ms,slot_0_ms,slot_1_ms,composite_ms\n";
+    metrics << "slot_1_package_id,width,height,slot_0_spp,slot_1_spp,estimated_mean_relative_standard_error,visibility_ms,slot_0_ms,slot_1_ms,composite_ms\n";
     metrics << packageId << ',' << mOutputWidth << ',' << mOutputHeight << ','
             << mComparisonSlots[0].spp << ',' << mComparisonSlots[1].spp << ','
             << mEstimatedRelativeStandardError << ',' << mVisibilityTiming.milliseconds << ','

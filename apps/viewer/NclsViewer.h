@@ -13,9 +13,11 @@
 #include "ReferenceSource.h"
 
 #include <array>
+#include <chrono>
 #include <filesystem>
 #include <limits>
 #include <map>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -31,7 +33,6 @@ struct ViewerOptions
     std::filesystem::path replayPath;
     std::filesystem::path viewerScenePath;
     std::filesystem::path captureManifest = "artifacts/captures/headless.json";
-    std::string requestedPackageId;
     std::array<std::string, 2> requestedSlotPackages{"source-reference", ""};
     std::array<ncls::SlotMode, 2> requestedSlotModes{
         ncls::SlotMode::PathTracing, ncls::SlotMode::PathTracing};
@@ -39,11 +40,10 @@ struct ViewerOptions
     bool comparisonSelectionExplicit = false;
     bool headless = false;
     bool verboseConsole = false;
-    bool evaluatorPreviewLighting = false;
     std::string capturePurpose = "formal";
     std::array<uint32_t, 2> captureTargetSpp{1024, 1024};
     uint32_t captureSamplesPerDispatch = 1;
-    uint32_t frameCount = 1024;
+    uint32_t frameCount = 1;
     uint32_t width = 1280;
     uint32_t height = 720;
 };
@@ -97,7 +97,10 @@ private:
         std::array<Falcor::ref<Falcor::GpuTimer>, 4> timers;
         double milliseconds = 0.0;
         uint64_t sampleIndex = 0;
+        uint64_t collectedIndex = 0;
+        uint64_t submittedFrame = 0;
         uint32_t activeSlot = 0;
+        std::vector<double> samples;
     };
 
     struct SourceGpuResources
@@ -154,8 +157,6 @@ private:
         uint32_t spp = 0;
         uint32_t captureTargetSpp = 1024;
         bool resetAccumulation = true;
-        uint32_t deferredPreviewStride = 1u;
-        uint32_t deferredTileIndex = 0u;
         bool deferredComplete = false;
 
         bool ready() const { return contract.status == ncls::SlotStatus::Ready; }
@@ -184,8 +185,7 @@ private:
     Falcor::ref<Falcor::ComputePass> createProgramPass(
         const char* shaderPath,
         const ncls::ViewerProgram& method);
-    Falcor::ref<Falcor::ComputePass> createProgramPathPass(
-        const ncls::ViewerProgram& method);
+    Falcor::ref<Falcor::ComputePass> createScenePass(const char* shaderPath, const ncls::ViewerProgram* method = nullptr);
     std::shared_ptr<ProgramGpuRuntime> programGpuRuntime(
         const ncls::ViewerProgram& method,
         ncls::SlotMode mode);
@@ -205,8 +205,7 @@ private:
     uint32_t ensureLinkedMdlProgram(const ncls::MdlCatalogEntry& entry);
     void applyLinkedMdlSource(ncls::ReferenceSource source);
     bool runParityProbe(const ncls::ViewerProgram& method, std::string& error);
-    void selectProgram(int32_t methodIndex);
-    void activateComparisonSlot(uint32_t slotIndex, uint32_t selection);
+    void activateComparisonSlot(uint32_t slotIndex, uint32_t selection, std::optional<ncls::SlotMode> mode = {});
     void resizeComparisonSlot(ComparisonSlotRuntime& slot);
     const ncls::ViewerProgram* slotProgram(const ComparisonSlotRuntime& slot) const;
     Falcor::ref<Falcor::Texture> slotOutput(const ComparisonSlotRuntime& slot) const;
@@ -214,25 +213,13 @@ private:
     void bindLighting(Falcor::ShaderVar root, const char* constantBufferName);
     uint32_t pathSamplesThisDispatch(const ComparisonSlotRuntime& slot) const;
     void renderVisibility(Falcor::RenderContext* pRenderContext);
-    void renderReference(Falcor::RenderContext* pRenderContext, ComparisonSlotRuntime& slot);
-    void renderApproximation(Falcor::RenderContext* pRenderContext, ComparisonSlotRuntime& slot);
-    void renderPackagePath(Falcor::RenderContext* pRenderContext, ComparisonSlotRuntime& slot);
-    void executePackageTiles(
-        Falcor::RenderContext* pRenderContext,
-        const Falcor::ref<Falcor::ComputePass>& pPass,
-        const char* constantBufferName,
-        uint32_t dispatchWidth,
-        uint32_t dispatchHeight);
-    void executeInteractivePackageTile(
-        Falcor::RenderContext* pRenderContext,
-        const Falcor::ref<Falcor::ComputePass>& pPass,
-        const char* constantBufferName,
-        uint32_t dispatchWidth,
-        uint32_t dispatchHeight,
-        uint32_t tileIndex);
+    void bindSceneResources(Falcor::ShaderVar root, const ComparisonSlotRuntime& slot);
+    void renderPath(Falcor::RenderContext* pRenderContext, ComparisonSlotRuntime& slot);
+    void renderDeferred(Falcor::RenderContext* pRenderContext, ComparisonSlotRuntime& slot);
     void renderComposite(Falcor::RenderContext* pRenderContext);
     void beginTiming(PassTiming& timing);
     void endTiming(PassTiming& timing);
+    void collectTiming(PassTiming& timing, bool gpuIdle = false);
     void loadMaterial(const std::filesystem::path& path);
     void installReferenceSource(ncls::ReferenceSource source, const std::filesystem::path& path = {});
     void saveMaterial(const std::filesystem::path& path);
@@ -245,7 +232,7 @@ private:
     void renderOpenPbrUi(Falcor::Gui::Widgets& widgets);
     void renderMaterialXUi(Falcor::Gui::Widgets& widgets);
     void renderMdlUi(Falcor::Gui::Widgets& widgets);
-    bool allMaterialsSupportedBy(const ncls::ViewerProgram& method) const;
+    bool activeMaterialSupportedBy(const ncls::ViewerProgram& method) const;
     bool hasActiveProgram() const;
 
     ViewerOptions mOptions;
@@ -281,6 +268,7 @@ private:
     Falcor::ref<Falcor::Scene> mpScene;
     Falcor::ref<Falcor::RasterPass> mpSceneVisibilityPass;
     Falcor::ref<Falcor::ComputePass> mpReferencePathPass;
+    Falcor::ref<Falcor::ComputePass> mpReferenceDeferredPass;
     Falcor::ref<Falcor::ComputePass> mpCompositePass;
 
     ncls::OpenPbrLuts mOpenPbrLuts;
@@ -324,6 +312,8 @@ private:
     Falcor::float3 mDividerColor{0.85f};
     float mEstimatedRelativeStandardError = 1.f;
     double mAccumulationSeconds = 0.0;
+    std::chrono::steady_clock::time_point mLastFrameStart{};
+    std::vector<double> mFrameWallSamples;
     bool mVisibilityDirty = true;
     bool mFreezeReference = false;
     bool mCameraDragging = false;

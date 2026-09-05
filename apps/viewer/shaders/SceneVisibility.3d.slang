@@ -1,4 +1,5 @@
 import Scene.Raster;
+#include "PathSurfaceMath.slang"
 import Rendering.Materials.TexLODHelpers;
 
 #ifndef USE_ALPHA_TEST
@@ -39,27 +40,16 @@ PSOut psMain(VSOut input, uint triangleIndex : SV_PrimitiveID)
 #endif
 
     const float3 viewDirection = normalize(gScene.camera.getPosition() - vertex.posW);
-    const float3 normal = normalize(vertex.normalW);
-    float3 tangent = normalize(vertex.tangentW.xyz);
-    tangent -= normal * dot(normal, tangent);
-    if (dot(tangent, tangent) < 1e-10f)
-    {
-        const float signZ = normal.z < 0.0f ? -1.0f : 1.0f;
-        const float a = -1.0f / (signZ + normal.z);
-        const float b = normal.x * normal.y * a;
-        tangent = float3(1.0f + signZ * normal.x * normal.x * a, signZ * b, -signZ * normal.x);
-    }
-    else tangent = normalize(tangent);
-
-    float2 texCoord = vertex.texC;
-    if (gFlipTexCoordV != 0u) texCoord.y = 1.0f - texCoord.y;
-
+    const NclsViewerPathSurface surface = nclsViewerPreparePathSurfaceFields(
+        vertex.posW, faceNormal, vertex.normalW, vertex.tangentW.xyz, vertex.texC,
+        0.0f, input.materialID, viewDirection, -viewDirection, 0.0f, gFlipTexCoordV);
+    const float2 texCoord = surface.uv;
     PSOut output;
     output.positionDepth = float4(vertex.posW, length(gScene.camera.getPosition() - vertex.posW));
-    output.normal = float4(normal, 0.0f);
-    output.tangent = float4(tangent, 0.0f);
-    output.viewDirection = float4(viewDirection, 0.0f);
-    output.texCoord = float4(texCoord, 0.0f, 0.0f);
+    output.normal = float4(surface.normal, surface.faceNormal.x);
+    output.tangent = float4(surface.tangent, surface.faceNormal.y);
+    output.viewDirection = float4(viewDirection, surface.faceNormal.z);
+    output.texCoord = float4(texCoord, float(surface.frontFacing), 0.0f);
     output.texCoordGrad = float4(ddx(texCoord), ddy(texCoord));
     output.instanceId = input.instanceID.index + 1u;
     output.materialId = input.materialID + 1u;

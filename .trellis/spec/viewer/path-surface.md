@@ -6,7 +6,7 @@
 
 ## 2. Signatures
 
-公共实现位于 `apps/viewer/shaders/PathSurface.slang` 与 `PathSurfaceMath.slang`：
+公共实现位于 `apps/viewer/shaders/PathSurface.slang`、`PathSurfaceMath.slang` 与 `SceneSurface.slang`：
 
 ```slang
 bool nclsViewerLoadPathVertexData(
@@ -33,6 +33,11 @@ NclsViewerPathUvFootprint nclsViewerPathUvFootprint(
 reference/package PT 只能调用这些入口，不能在各自 shader 中复制 `getVertexDataRayCones()`、frame 整理或 footprint 公式。
 
 ## 3. Contracts
+
+- `nclsViewerSurfaceContext(surface, wo, filterRandom)` 是 PT/raster 共用的最终 context 构造。`nclsViewerDecodeRasterSurface` 在读取边界解码：material buffer 的 0 是背景，真实 ID 为 stored-1；depth<0 同样无效。
+- raster 的 geometric normal 存入 normal.w/tangent.w/viewDirection.w，front-facing 存入 texCoord.z。normal/tangent/frame/V flip 采用同一 `PathSurfaceMath`；不能用 shading normal 假装 geometric normal。
+- deferred 的环境方向以 prepared state 的 shading frame 构造，保留 source normal-map 的语义。PT 的 ray cone 与 raster ddx/ddy 可以有不同 footprint；同输入 witness 才是严格材质 parity。
+
 
 - `cameraU/cameraV/cameraW` 共享 Falcor 的 `focalDistance` 尺度。primary ray 会归一化方向，ray-cone spread 必须使用 `length(cameraV) / length(cameraW)`；共同缩放三个 camera basis vector 不得改变 footprint。
 - `rayConeWidth` 是世界空间长度；`coneTexLODValue` 是三角形 UV/world Jacobian 的 `log2` 尺度；`NclsViewerPathSurface.uvDx/uvDy` 是 normalized UV derivative，调用方不得再次除以或乘以纹理尺寸。
@@ -63,7 +68,7 @@ reference/package PT 只能调用这些入口，不能在各自 shader 中复制
 
 ## 6. Tests Required
 
-- `tests/unit/test_viewer_slots.py`：两个 PT 都 include 共享 helper，且不直接调用 `getVertexDataRayCones()`；续路径 origin 使用实际 sampled direction，不用 event label 选侧。
+- `tests/unit/test_viewer_slots.py`：唯一 PT 与 raster decode 共用 helper，且不直接调用 `getVertexDataRayCones()`；续路径 origin 使用实际 sampled direction，不用 event label 选侧。
 - `tests/gpu/test_viewer_path_surface.py`：在实际 Slang/GPU 上断言 UV/V flip、frame/front-facing、camera basis scale invariance、分辨率/距离/掠射单调性、有限 fallback 与明确数值 oracle。
 - `scripts/build_viewer.ps1 -Configuration Release`：编译 reference/package PT 的真实 scene specialization。
 - headless local-light capture：用明显空间结构和真实 walnut/denim 资产检查 raw EXR 与 display；环境 PT/deferred 的 transport 差异不能被误判成 surface contract 差异。
@@ -82,7 +87,7 @@ float spread = 2.0f * length(cameraV) / max(length(cameraW), 1e-8f)
 
 Wrong：reference/package 各复制一次 vertex/frame/LOD 逻辑，再靠截图发现漂移。
 
-Correct：两条 PT 都经 `nclsViewerLoadPathVertexData()` 与 `nclsViewerPreparePathSurface()`，材质私有逻辑从公共 surface 之后开始。
+Correct：source/package 都经 `nclsViewerLoadPathVertexData()` 与 `nclsViewerPreparePathSurface()`，材质私有逻辑从公共 surface 之后开始。
 
 Wrong：`sample.eventFlags` 标为 transmission 就固定沿 `-geometricNormal` 偏移，即使实际 sampled direction 在另一侧。
 

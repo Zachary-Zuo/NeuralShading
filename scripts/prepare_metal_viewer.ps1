@@ -2,7 +2,6 @@ param(
     [string]$OutputRoot = "artifacts\viewer\metal-budgeted-pair",
     [Parameter(Mandatory = $true)]
     [string]$HybridCheckpoint,
-    [Parameter(Mandatory = $true)]
     [string]$DirectCheckpoint,
     [switch]$AcceptNvidiaOmniverseTerms
 )
@@ -30,11 +29,10 @@ if (-not $?) { throw "Failed to build the formal MDL bridge" }
 
 Push-Location $projectRoot
 try {
-    & (Join-Path $PSScriptRoot "run_falcor_python.ps1") `
-        tools/viewer/prepare_metal_catalog.py `
-        --output-root $OutputRoot `
-        --hybrid-checkpoint $HybridCheckpoint `
-        --direct-checkpoint $DirectCheckpoint
+    $prepareArguments = @("tools/viewer/prepare_metal_catalog.py", "--output-root", $OutputRoot,
+        "--hybrid-checkpoint", $HybridCheckpoint)
+    if ($DirectCheckpoint) { $prepareArguments += @("--direct-checkpoint", $DirectCheckpoint) }
+    & (Join-Path $PSScriptRoot "run_falcor_python.ps1") @prepareArguments
     if (-not $?) { throw "Failed to prepare the Metal budgeted viewer handoff" }
 }
 finally {

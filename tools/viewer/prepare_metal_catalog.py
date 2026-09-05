@@ -18,8 +18,10 @@ from ncls.learning.models.metal_budgeted_profile import (
     METAL_BUDGETED_DIRECT_PROFILE_ID,
     METAL_BUDGETED_HYBRID_PROFILE_ID,
 )
-from ncls.learning.training import EvaluationSnapshot, load_evaluation_snapshot
+from ncls.learning.training import EvaluationSnapshot
+from ncls.learning.deployment_snapshot import load_deployment_snapshot
 from ncls.paths import PROJECT_ROOT
+from ncls.viewer.material_catalog import source_catalog_document, source_catalog_entry, ViewerMaterialCatalog
 from ncls.references.mdl import (
     MdlCompiledArtifact,
     MdlProgramProvider,
@@ -29,16 +31,16 @@ from ncls.references.mdl import (
 
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "artifacts/viewer/metal-budgeted-pair"
 HANDOFF_FORMAT = "ncls.metal-budgeted-viewer-handoff"
-HANDOFF_VERSION = 1
-CHECKPOINT_COMPATIBILITY = "exact-diagnostic-evaluator-preview"
+HANDOFF_VERSION = 2
+CHECKPOINT_COMPATIBILITY = "exact"
 _EXPECTED_PROFILES = {
     "hybrid": METAL_BUDGETED_HYBRID_PROFILE_ID,
     "direct": METAL_BUDGETED_DIRECT_PROFILE_ID,
 }
 
 
-def validate_preview_checkpoint(snapshot: EvaluationSnapshot) -> str:
-    """只接受具有当前精确实现身份的 evaluator-only checkpoint。"""
+def validate_deployment_checkpoint(snapshot: EvaluationSnapshot) -> str:
+    """检查研究 readiness 与精确训练身份；渲染模式由部署 capability 决定。"""
 
     snapshot.require_ready("diagnostic-evaluator")
     return CHECKPOINT_COMPATIBILITY
@@ -135,11 +137,13 @@ def _single_locator(snapshot: EvaluationSnapshot) -> Mapping[str, Any]:
 
 def _validate_pair(
     hybrid: EvaluationSnapshot,
-    direct: EvaluationSnapshot,
+    direct: EvaluationSnapshot | None,
 ) -> tuple[Mapping[str, Any], str]:
-    snapshots = {"hybrid": hybrid, "direct": direct}
+    snapshots = {"hybrid": hybrid}
+    if direct is not None:
+        snapshots["direct"] = direct
     for role, snapshot in snapshots.items():
-        validate_preview_checkpoint(snapshot)
+        validate_deployment_checkpoint(snapshot)
         if snapshot.public_method_key != "metal":
             raise ValueError(f"{role} checkpoint is not the Metal method")
         profile = _checkpoint_profile(snapshot)
@@ -148,15 +152,13 @@ def _validate_pair(
                 f"{role} checkpoint profile is {profile!r}, expected {_EXPECTED_PROFILES[role]!r}"
             )
     hybrid_locator = _single_locator(hybrid)
-    direct_locator = _single_locator(direct)
-    if hybrid_locator != direct_locator:
-        raise ValueError("hybrid/direct checkpoints do not use the same source locator")
-    if hybrid.source_snapshot_ids != direct.source_snapshot_ids:
-        raise ValueError("hybrid/direct checkpoints do not use the same source snapshot")
     if len(hybrid.source_snapshot_ids) != 1:
-        raise ValueError("Metal budgeted viewer pair must contain one source snapshot")
-    if hybrid.global_step != direct.global_step:
-        raise ValueError("hybrid/direct checkpoints are not at a common training milestone")
+        raise ValueError("Metal budgeted deployment requires one source snapshot")
+    if direct is not None:
+        if hybrid_locator != _single_locator(direct) or hybrid.source_snapshot_ids != direct.source_snapshot_ids:
+            raise ValueError("hybrid/direct checkpoints do not use the same source")
+        if hybrid.global_step != direct.global_step:
+            raise ValueError("hybrid/direct checkpoints are not at a common training milestone")
     return hybrid_locator, hybrid.source_snapshot_ids[0]
 
 
@@ -188,38 +190,17 @@ def _reference_catalog(
     target_types: Path,
     renderer_runtime: Path,
 ) -> dict[str, object]:
-    asset_id = f"metal-budgeted-{snapshot.snapshot_id[:16]}"
-    return {
-        "schema_name": "ncls.mdl-viewer-catalog",
-        "schema_version": 1,
-        "reference_id": "ncls.metal-budgeted-fixed-reference@1",
-        "source_material_family_id": "mdl.program@1",
-        "formal_executor": "project-mdl-sdk-bridge-to-current-falcor-8",
-        "validation_oracle": "falcor2-isolated-not-a-runtime-dependency",
-        "mdl_sdk": provider.descriptor.sdk_build,
-        "texture_filtering": "explicit-lod0",
-        "uv_derivatives_consumed": False,
-        "default_asset_id": asset_id,
-        "target_code_types": {
-            "path": "runtime/mdl_target_code_types.hlsl",
-            "sha256": sha256_file(target_types),
-        },
-        "renderer_runtime": {
-            "path": "runtime/mdl_runtime.slangh",
-            "sha256": sha256_file(renderer_runtime),
-        },
-        "assets": [
-            {
-                "asset_id": asset_id,
-                "display_name": display_name,
-                "source_snapshot_id": snapshot.snapshot_id,
-                "artifact_root": _portable(
-                    staging / "reference" / snapshot.snapshot_id, staging
-                ),
-                "compiled_artifact_sha256": _artifact_sha256(artifact),
-            }
-        ],
-    }
+    return source_catalog_document(
+        mdl_sdk=provider.descriptor.sdk_build,
+        target_code_types={"path": "runtime/mdl_target_code_types.hlsl", "sha256": sha256_file(target_types)},
+        renderer_runtime={"path": "runtime/mdl_runtime.slangh", "sha256": sha256_file(renderer_runtime)},
+        default_export_id=snapshot.snapshot_id,
+        entries=[source_catalog_entry(
+            export_id=snapshot.snapshot_id, display_name=display_name,
+            source_snapshot_id=snapshot.snapshot_id, artifact_sha256=_artifact_sha256(artifact),
+            artifact_root=_portable(staging / "reference" / snapshot.snapshot_id, staging),
+        )],
+    )
 
 
 def _package_record(
@@ -241,65 +222,42 @@ def _package_record(
         "program_id": compiled.manifest.program_id,
         "asset_id": compiled.manifest.asset_id,
         "instance_id": compiled.manifest.instance_id,
-        "capabilities": ["prepare", "evaluate", "anisotropic-frame"],
-        "unsupported_capabilities": ["sample", "pdf", "typed-edit"],
+        "capabilities": ["prepare", "evaluate", "sample", "pdf", "anisotropic-frame"],
+        "unsupported_capabilities": ["typed-edit"],
     }
 
 
 def _readme(document: Mapping[str, Any]) -> str:
-    packages = {str(item["role"]): item for item in document["packages"]}
-    return f"""# Metal budgeted 双模型 Windows 诊断交接
+    packages = "\n".join(f"- {item['role']}: `{item['profile_id']}` / `{item['package_id']}`" for item in document["packages"])
+    return f"""# Metal Windows 部署
 
-本目录包含同一 source snapshot、共同 step {packages['hybrid']['checkpoint_step']} 的 hybrid 与 direct checkpoint，以及各自精确编译的 `ScatteringPackage@2`。两者仅验证 `prepare/evaluate/anisotropic-frame`，不声明 `sample/pdf` 或 typed edit。
-
-在 NeuralShading 根目录的 Windows PowerShell 中运行：
+相同 source reference 与 neural package 默认均使用 PT，可在 viewer 中独立切换 Deferred。
+package 部署 prepare/evaluate/sample/pdf；研究 readiness 保留在 package metadata，不表示 formal 质量结论。
+typed edit 未部署。两侧使用相同场景和照明，无自动灯光覆盖。
 
 ```powershell
-.\\scripts\\launch_metal_viewer.ps1 -Handoff \"{document['handoff_hint']}\" -Comparison ReferenceVsHybrid
-.\\scripts\\launch_metal_viewer.ps1 -Handoff \"{document['handoff_hint']}\" -Comparison ReferenceVsDirect -SkipBuild
-.\\scripts\\launch_metal_viewer.ps1 -Handoff \"{document['handoff_hint']}\" -Comparison HybridVsDirect -SkipBuild
+.\\scripts\\launch_metal_viewer.ps1 -Handoff "{document['handoff_hint']}"
 ```
 
-`ReferenceVs*` 左侧使用精确 MDL source path tracing，右侧使用 neural deferred evaluator；`HybridVsDirect` 两侧都使用 deferred。Viewer 首次加载会重新执行 D3D12 GPU parity，失败时不会静默回退。
-
-- hybrid profile：`{packages['hybrid']['profile_id']}`，package `{packages['hybrid']['package_id']}`
-- direct profile：`{packages['direct']['profile_id']}`，package `{packages['direct']['package_id']}`
-- compatibility：`{CHECKPOINT_COMPATIBILITY}`
+{packages}
 """
 
 
 def prepare_metal_catalog(
     output_root: Path,
     hybrid_checkpoint: Path,
-    direct_checkpoint: Path,
+    direct_checkpoint: Path | None = None,
 ) -> Mapping[str, Any]:
     output_root = output_root.resolve()
     hybrid_checkpoint = hybrid_checkpoint.resolve()
-    direct_checkpoint = direct_checkpoint.resolve()
+    checkpoint_paths = {"hybrid": hybrid_checkpoint}
+    if direct_checkpoint is not None:
+        checkpoint_paths["direct"] = direct_checkpoint.resolve()
     handoff_path = output_root / "handoff.json"
-    if handoff_path.is_file():
-        existing = json.loads(handoff_path.read_text(encoding="utf-8"))
-        expected = {
-            "hybrid": sha256_file(hybrid_checkpoint),
-            "direct": sha256_file(direct_checkpoint),
-        }
-        actual = {
-            str(item["role"]): str(item["checkpoint_sha256"])
-            for item in existing.get("packages", [])
-        }
-        if actual != expected:
-            raise ValueError("existing viewer handoff was built from other checkpoints")
-        return existing
     if output_root.exists():
-        raise ValueError("viewer handoff output root must be absent or complete")
-
-    evaluations = {
-        "hybrid": load_evaluation_snapshot(hybrid_checkpoint, map_location="cpu"),
-        "direct": load_evaluation_snapshot(direct_checkpoint, map_location="cpu"),
-    }
-    locator, expected_snapshot_id = _validate_pair(
-        evaluations["hybrid"], evaluations["direct"]
-    )
+        raise ValueError("output root must be absent; use a new deployment directory to avoid stale shader identities")
+    evaluations = {role: load_deployment_snapshot(path) for role, path in checkpoint_paths.items()}
+    locator, expected_snapshot_id = _validate_pair(evaluations["hybrid"], evaluations.get("direct"))
     family = create_source_family("mdl.program@1")
     snapshot = family.load_snapshot(locator)
     family.validate_snapshot(snapshot)
@@ -342,18 +300,11 @@ def prepare_metal_catalog(
             for role, evaluation in evaluations.items()
         }
         checkpoints_root = staging / "checkpoints"
-        _copy_or_link(
-            hybrid_checkpoint,
-            checkpoints_root / "hybrid.pt",
-            objects,
-            expected_sha256=evaluations["hybrid"].checkpoint_sha256,
-        )
-        _copy_or_link(
-            direct_checkpoint,
-            checkpoints_root / "direct.pt",
-            objects,
-            expected_sha256=evaluations["direct"].checkpoint_sha256,
-        )
+        for role, checkpoint_path in checkpoint_paths.items():
+            _copy_or_link(checkpoint_path, checkpoints_root / f"{role}.pt", objects,
+                expected_sha256=evaluations[role].checkpoint_sha256)
+            (checkpoints_root / f"{role}.pt.sha256").write_text(
+                evaluations[role].checkpoint_sha256 + "\n", encoding="ascii")
         reference_catalog = _reference_catalog(
             staging=staging,
             snapshot=snapshot,
@@ -364,6 +315,7 @@ def prepare_metal_catalog(
             renderer_runtime=renderer_runtime,
         )
         write_json_atomic(staging / "catalog.json", reference_catalog)
+        ViewerMaterialCatalog.open(staging / "catalog.json")
         document: dict[str, Any] = {
             "format_name": HANDOFF_FORMAT,
             "format_version": HANDOFF_VERSION,
@@ -374,7 +326,7 @@ def prepare_metal_catalog(
             "bundle_root": "packages",
             "packages": [
                 _package_record(role, evaluations[role], compiled[role], staging)
-                for role in ("hybrid", "direct")
+                for role in evaluations
             ],
             "handoff_hint": _portable(output_root / "handoff.json", PROJECT_ROOT),
         }
@@ -392,13 +344,12 @@ def prepare_metal_catalog(
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "从共同里程碑的 hybrid/direct checkpoint 生成固定 source、双 package 的 "
-            "Windows evaluator-only 诊断交接"
+            "从选中 hybrid checkpoint 生成完整四入口 Windows 部署；direct 为可选 matched 对照"
         )
     )
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--hybrid-checkpoint", type=Path, required=True)
-    parser.add_argument("--direct-checkpoint", type=Path, required=True)
+    parser.add_argument("--direct-checkpoint", type=Path)
     args = parser.parse_args()
     document = prepare_metal_catalog(
         args.output_root,

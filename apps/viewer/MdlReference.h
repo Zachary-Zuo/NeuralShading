@@ -81,7 +81,6 @@ struct MdlViewerCatalog
     std::string rendererRuntimeSha256;
     std::vector<MdlCatalogEntry> entries;
 
-    bool linked() const { return !catalogId.empty() && !entries.empty() && entries.front().linked(); }
 };
 
 MdlViewerCatalog loadMdlViewerCatalog(const std::filesystem::path& path);

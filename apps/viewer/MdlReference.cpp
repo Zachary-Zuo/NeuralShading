@@ -41,12 +41,6 @@ void requireKeys(const json& value, const std::set<std::string>& expected, const
     require(actual == expected, label + " has unknown or missing fields");
 }
 
-std::string sha256Json(const json& value)
-{
-    const std::string payload = value.dump();
-    return sha256Hex(payload.data(), payload.size());
-}
-
 std::filesystem::path contained(
     const std::filesystem::path& root,
     const std::filesystem::path& candidate,
@@ -59,16 +53,6 @@ std::filesystem::path contained(
         && (relative.begin() == relative.end() || *relative.begin() != ".."),
         label + " escapes its root");
     return absoluteCandidate;
-}
-
-std::filesystem::path resolveUri(
-    const std::filesystem::path& base,
-    const std::string& uri,
-    const std::string& label)
-{
-    require(!uri.empty(), label + " is empty");
-    const std::filesystem::path value(uri);
-    return std::filesystem::absolute(value.is_absolute() ? value : base / value).lexically_normal();
 }
 
 std::filesystem::path resolveContainedUri(
@@ -144,18 +128,14 @@ MdlViewerCatalog loadMdlViewerCatalog(const std::filesystem::path& requestedPath
     std::ifstream stream(path, std::ios::binary);
     require(bool(stream), "cannot open MDL viewer catalog: " + path.string());
     const json document = json::parse(stream);
-    const bool legacy = document.value("schema_name", "") == "ncls.mdl-viewer-catalog"
-        && document.value("schema_version", 0u) == 1u;
-    const bool linked = document.value("schema_name", "") == "ncls.viewer-material-catalog"
-        && document.value("schema_version", 0u) == 1u;
-    require(legacy || linked, "unsupported MDL viewer catalog schema");
-    if (linked)
-        requireKeys(document,
-            {"schema_name", "schema_version", "catalog_id", "registry", "checkpoint",
-                "reference_runtime", "default_export_id", "entries"},
-            "ViewerMaterialCatalog root");
+    require(document.value("schema_name", "") == "ncls.viewer-material-catalog"
+            && document.value("schema_version", 0u) == 2u,
+        "unsupported catalog; rebuild with tools/reference/prepare_mdl_viewer.py or tools/viewer/prepare_metal_catalog.py");
+    requireKeys(document,
+        {"schema_name", "schema_version", "catalog_id", "registry", "checkpoint",
+            "reference_runtime", "default_export_id", "entries"}, "ViewerMaterialCatalog root");
     json identityDocument = document;
-    if (linked)
+
     {
         const std::string declared = identityDocument.at("catalog_id").get<std::string>();
         requireSha256(declared, "catalog_id");
@@ -168,8 +148,8 @@ MdlViewerCatalog loadMdlViewerCatalog(const std::filesystem::path& requestedPath
     result.sourcePath = path;
     result.catalogSha256 = sha256FileHex(path);
     const auto base = path.parent_path();
-    const auto& runtime = linked ? document.at("reference_runtime") : document;
-    if (linked)
+    const auto& runtime = document.at("reference_runtime");
+
     {
         requireKeys(runtime,
             {"mdl_sdk", "target_code_types", "renderer_runtime"},
@@ -181,24 +161,20 @@ MdlViewerCatalog loadMdlViewerCatalog(const std::filesystem::path& requestedPath
     }
     result.mdlSdk = runtime.at("mdl_sdk").get<std::string>();
     require(result.mdlSdk == kMdlSdk, "MDL viewer catalog uses another SDK build");
-    result.defaultAssetId = linked
-        ? document.at("default_export_id").get<std::string>()
-        : document.at("default_asset_id").get<std::string>();
+    result.defaultAssetId = document.at("default_export_id").get<std::string>();
     const std::string targetCodeTypesUri =
         runtime.at("target_code_types").at("path").get<std::string>();
-    result.targetCodeTypesPath = linked
-        ? resolveContainedUri(base, targetCodeTypesUri, "MDL target-code types")
-        : resolveUri(base, targetCodeTypesUri, "MDL target-code types");
+    result.targetCodeTypesPath = resolveContainedUri(base, targetCodeTypesUri, "MDL target-code types");
     result.targetCodeTypesSha256 = runtime.at("target_code_types").at("sha256").get<std::string>();
     const std::string rendererRuntimeUri =
         runtime.at("renderer_runtime").at("path").get<std::string>();
-    result.rendererRuntimePath = linked
-        ? resolveContainedUri(base, rendererRuntimeUri, "MDL renderer runtime")
-        : resolveUri(base, rendererRuntimeUri, "MDL renderer runtime");
+    result.rendererRuntimePath = resolveContainedUri(base, rendererRuntimeUri, "MDL renderer runtime");
     result.rendererRuntimeSha256 = runtime.at("renderer_runtime").at("sha256").get<std::string>();
-    if (linked)
+
     {
         result.catalogId = document.at("catalog_id").get<std::string>();
+        if (!document.at("registry").is_null())
+        {
         const auto& registry = document.at("registry");
         requireKeys(registry,
             {"identity", "sha256", "opaque_entry_count", "rejected_cutout_count"},
@@ -210,6 +186,9 @@ MdlViewerCatalog loadMdlViewerCatalog(const std::filesystem::path& requestedPath
             "ViewerMaterialCatalog registry has no opaque entries");
         requireSha256(result.registryIdentity, "registry.identity");
         requireSha256(result.registrySha256, "registry.sha256");
+        }
+        if (!document.at("checkpoint").is_null())
+        {
         const auto& checkpoint = document.at("checkpoint");
         requireKeys(checkpoint,
             {"sha256", "method_key", "step", "phase", "checkpoint_descriptor_sha256",
@@ -225,10 +204,10 @@ MdlViewerCatalog loadMdlViewerCatalog(const std::filesystem::path& requestedPath
         requireSha256(result.checkpointSha256, "checkpoint.sha256");
         requireSha256(result.checkpointDescriptorSha256, "checkpoint.checkpoint_descriptor_sha256");
         requireSha256(result.runtimeDescriptorSha256, "checkpoint.runtime_descriptor_sha256");
-        require((result.checkpointCompatibility == "exact"
-                    || result.checkpointCompatibility == "exact-diagnostic-evaluator-preview")
+        require(result.checkpointCompatibility == "exact"
                 && !result.methodKey.empty() && !result.checkpointPhase.empty(),
             "ViewerMaterialCatalog checkpoint metadata is incomplete");
+        }
     }
     requireSha256(result.targetCodeTypesSha256, "target_code_types.sha256");
     requireSha256(result.rendererRuntimeSha256, "renderer_runtime.sha256");
@@ -240,35 +219,30 @@ MdlViewerCatalog loadMdlViewerCatalog(const std::filesystem::path& requestedPath
         "project MDL renderer runtime is missing or has drifted");
 
     std::set<std::string> assetIds;
-    const auto& assets = linked ? document.at("entries") : document.at("assets");
+    const auto& assets = document.at("entries");
     require(assets.is_array() && !assets.empty(), "MDL viewer catalog has no assets");
-    if (linked)
+    if (!document.at("registry").is_null())
         require(assets.size() == document.at("registry").at("opaque_entry_count").get<size_t>(),
             "ViewerMaterialCatalog entry count differs from the registry");
     std::set<std::string> packageIds;
     std::set<std::string> instanceIds;
-    std::set<std::string> programIds;
     std::set<std::string> sourceSnapshotIds;
     for (const auto& item : assets)
     {
         MdlCatalogEntry entry;
-        entry.assetId = linked
-            ? item.at("export_id").get<std::string>()
-            : item.at("asset_id").get<std::string>();
+        entry.assetId = item.at("export_id").get<std::string>();
         entry.displayName = item.at("display_name").get<std::string>();
         entry.sourceSnapshotId = item.at("source_snapshot_id").get<std::string>();
-        entry.artifactSha256 = item.at(linked ? "artifact_sha256" : "compiled_artifact_sha256").get<std::string>();
+        entry.artifactSha256 = item.at("artifact_sha256").get<std::string>();
         const std::string artifactUri = item.at("artifact_root").get<std::string>();
-        entry.artifactRoot = linked
-            ? resolveContainedUri(base, artifactUri, "MDL compiled artifact")
-            : resolveUri(base, artifactUri, "MDL compiled artifact");
+        entry.artifactRoot = resolveContainedUri(base, artifactUri, "MDL compiled artifact");
         require(!entry.assetId.empty() && assetIds.insert(entry.assetId).second,
             "MDL viewer catalog asset IDs must be nonempty and unique");
         requireSha256(entry.sourceSnapshotId, "source_snapshot_id");
         requireSha256(entry.artifactSha256, "compiled_artifact_sha256");
         require(std::filesystem::is_directory(entry.artifactRoot),
             "MDL compiled artifact is missing: " + entry.artifactRoot.string());
-        if (linked)
+
         {
             requireKeys(item,
                 {"export_id", "display_name", "metal", "finish", "graph_id",
@@ -277,17 +251,23 @@ MdlViewerCatalog loadMdlViewerCatalog(const std::filesystem::path& requestedPath
                     "program_id", "asset_id", "instance_id", "parameter_view"},
                 "ViewerMaterialCatalog entry");
             entry.exportId = entry.assetId;
-            entry.metal = item.at("metal").get<std::string>();
-            entry.finish = item.at("finish").get<std::string>();
-            entry.graphId = item.at("graph_id").get<std::string>();
-            entry.textureSetId = item.at("texture_set_id").get<std::string>();
-            entry.parameterSchemaId = item.at("parameter_schema_id").get<std::string>();
+            entry.metal = item.at("metal").is_null() ? "" : item.at("metal").get<std::string>();
+            entry.finish = item.at("finish").is_null() ? "" : item.at("finish").get<std::string>();
+            entry.graphId = item.at("graph_id").is_null() ? "" : item.at("graph_id").get<std::string>();
+            entry.textureSetId = item.at("texture_set_id").is_null() ? "" : item.at("texture_set_id").get<std::string>();
+            entry.parameterSchemaId = item.at("parameter_schema_id").is_null() ? "" : item.at("parameter_schema_id").get<std::string>();
+            const bool hasBinding = !item.at("package_id").is_null();
+            for (const char* name : {"package_id", "package_root", "program_id", "asset_id", "instance_id"})
+                require(!item.at(name).is_null() == hasBinding, "ViewerMaterialCatalog partial package binding");
+            if (hasBinding)
+            {
             entry.packageId = item.at("package_id").get<std::string>();
             entry.packageRoot = resolveContainedUri(base,
                 item.at("package_root").get<std::string>(), "ScatteringPackage");
             entry.programId = item.at("program_id").get<std::string>();
             entry.packageAssetId = item.at("asset_id").get<std::string>();
             entry.instanceId = item.at("instance_id").get<std::string>();
+            }
             entry.parameterView = item.at("parameter_view");
             for (const auto& [label, value] : std::vector<std::pair<std::string, std::string>>{
                     {"export_id", entry.exportId}, {"graph_id", entry.graphId},
@@ -295,26 +275,28 @@ MdlViewerCatalog loadMdlViewerCatalog(const std::filesystem::path& requestedPath
                     {"parameter_schema_id", entry.parameterSchemaId},
                     {"package_id", entry.packageId}, {"program_id", entry.programId},
                     {"asset_id", entry.packageAssetId}, {"instance_id", entry.instanceId}})
-                requireSha256(value, label);
-            require(!entry.displayName.empty() && !entry.metal.empty() && !entry.finish.empty(),
+                if (!value.empty()) requireSha256(value, label);
+            require(!entry.displayName.empty(),
                 "ViewerMaterialCatalog taxonomy is incomplete");
+            if (hasBinding)
+            {
             require(std::filesystem::is_directory(entry.packageRoot),
                 "ViewerMaterialCatalog package is missing: " + entry.packageRoot.string());
             require(packageIds.insert(entry.packageId).second,
                 "ViewerMaterialCatalog package IDs must be unique");
             require(instanceIds.insert(entry.instanceId).second,
                 "ViewerMaterialCatalog instance IDs must be unique");
+            }
             require(sourceSnapshotIds.insert(entry.sourceSnapshotId).second,
                 "ViewerMaterialCatalog source snapshot IDs must be unique");
-            programIds.insert(entry.programId);
+            if (!entry.parameterView.is_null())
+            {
             validateViewerTypedParameterView(entry.parameterView);
             require(entry.parameterView.at("snapshot_id") == entry.sourceSnapshotId,
                 "ViewerMaterialCatalog parameter view snapshot mismatch");
-            size_t editableCount = 0u;
             std::function<void(const json&)> validateWrites = [&](const json& node) {
                 if (node.value("editable", false))
                 {
-                    ++editableCount;
                     const std::string type = node.at("value_type").get<std::string>();
                     require(type == "bool" || type == "int" || type == "enum"
                             || type == "float" || type == "vector2" || type == "color3",
@@ -359,13 +341,10 @@ MdlViewerCatalog loadMdlViewerCatalog(const std::filesystem::path& requestedPath
                 for (const auto& child : node.at("children")) validateWrites(child);
             };
             validateWrites(entry.parameterView.at("root"));
-            require(editableCount > 0u,
-                "ViewerMaterialCatalog entry has no editable parameters");
+            }
         }
         result.entries.push_back(std::move(entry));
     }
-    require(!linked || programIds.size() == 1u,
-        "ViewerMaterialCatalog must contain one shared neural program");
     require(assetIds.count(result.defaultAssetId) == 1u, "MDL viewer default asset is not in the catalog");
     return result;
 }
@@ -479,7 +458,7 @@ std::shared_ptr<const MdlCompiledArtifact> loadMdlCompiledArtifact(const MdlCata
         result->textures.push_back(std::move(texture));
     }
     require(result->textures.size() <= 16u, "MDL V1 supports at most 16 texture resources");
-    if (entry.linked())
+    if (!entry.parameterView.is_null())
     {
         require(!result->argumentBlock.empty(),
             "ViewerMaterialCatalog editable artifact has no argument block");

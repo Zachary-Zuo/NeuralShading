@@ -12,6 +12,7 @@ SamplerState gNclsMetalBudgetedSampler;
 
 #include "metal_budgeted_asset.slang"
 #include "metal_budgeted_evaluator.slang"
+#include "metal_budgeted_sampler.slang"
 
 struct NclsMetalBudgetedContractState : INclsScatteringState
 {
@@ -38,13 +39,26 @@ struct NclsMetalBudgetedContractState : INclsScatteringState
         out NclsScatteringSample result, inout S sampleGenerator)
     {
         result = {};
-        return false;
+        const float3 wo = nclsFrameToLocal(context.surface.shadingFrame, context.woWorld);
+        const uint u0 = sampleGenerator.next();
+        const uint u1 = sampleGenerator.next();
+        const float2 u = float2(u0 >> 8u, u1 >> 8u) * 0x1p-24f;
+        float3 wi;
+        if (!nclsMetalBudgetedSampleProposal(prepared, wo, u, wi, result.pdf)) return false;
+        result.wiWorld = nclsFrameToWorld(context.surface.shadingFrame, wi);
+        result.weight = nclsMetalBudgetedEvaluateF(prepared, wo, wi) * max(wi.z, 0.0f)
+            / max(result.pdf.forward, 1e-12f);
+        result.eta = 1.0f;
+        result.eventFlags = (uint)NclsScatteringEvent::Reflection | (uint)NclsScatteringEvent::Glossy;
+        result.valid = all(isfinite(result.weight)) ? 1u : 0u;
+        return result.valid != 0u;
     }
 
     NclsScatteringPdf pdf(float3 wiWorld)
     {
-        NclsScatteringPdf result = {};
-        return result;
+        return nclsMetalBudgetedProposalPdf(prepared,
+            nclsFrameToLocal(context.surface.shadingFrame, context.woWorld),
+            nclsFrameToLocal(context.surface.shadingFrame, wiWorld));
     }
 };
 
@@ -122,6 +136,16 @@ NclsMetalBudgetedContractState nclsUnpackMethodState(
     [unroll]
     for (uint index = 0u; index < 12u; ++index)
         state.prepared.proposal[index] = nclsMetalBudgetedUnpackHalf(packed, 56u + index);
+    // The legal minimum 0.015 rounds down in binary16. Restore that boundary
+    // after storage quantization, before validating the proposal contract.
+    [unroll]
+    for (uint component = 0u; component < 3u; ++component)
+    {
+        [unroll]
+        for (uint axis = 1u; axis <= 2u; ++axis)
+            if (state.prepared.proposal[4u * component + axis] == f16tof32(f32tof16(0.015f)))
+                state.prepared.proposal[4u * component + axis] = 0.015f;
+    }
     [unroll]
     for (uint index = 0u; index < 4u; ++index)
         state.prepared.accessState[index] = nclsMetalBudgetedUnpackHalf(packed, 68u + index);

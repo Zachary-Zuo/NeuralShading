@@ -55,8 +55,8 @@ def test_pair_requires_exact_profiles_source_and_common_step() -> None:
     assert snapshot_id == "a" * 64
     assert hybrid.readiness_calls == ["diagnostic-evaluator"]
     assert direct.readiness_calls == ["diagnostic-evaluator"]
-    assert exporter.validate_preview_checkpoint(hybrid) == (
-        "exact-diagnostic-evaluator-preview"
+    assert exporter.validate_deployment_checkpoint(hybrid) == (
+        "exact"
     )
 
 

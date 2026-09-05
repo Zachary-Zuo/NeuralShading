@@ -85,6 +85,11 @@ class MetalBudgetedProfile:
         return _dense_macs(self.semantic_decoder_layers)
 
     @property
+    def runtime_prepare_dense_macs(self) -> int:
+        """完整部署包含语义解码与 proposal adapter；训练 profile 身份保持冻结。"""
+        return self.prepare_dense_macs + self.semantic_decoder_layers[-1] * self.proposal_component_count
+
+    @property
     def evaluate_dense_macs(self) -> int:
         return _dense_macs(self.evaluator_layers)
 

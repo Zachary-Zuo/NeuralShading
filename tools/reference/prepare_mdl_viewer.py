@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 from pathlib import Path
 
 from ncls.core.identity import sha256_file, write_json_atomic
 from ncls.core.source import create_source_family
 from ncls.paths import PROJECT_ROOT
 from ncls.references.mdl import create_mdl_program_provider
+from ncls.viewer.material_catalog import source_catalog_document, source_catalog_entry, ViewerMaterialCatalog
 
 
 ASSET_IDS = (
@@ -74,41 +76,29 @@ def prepare_catalog(output: Path, default_asset_id: str = ASSET_IDS[0]) -> dict[
     )
     renderer_runtime = PROJECT_ROOT / "shaders/ncls/reference_backends/mdl_runtime.slangh"
     base = output.resolve().parent
-    assets = []
+    base.mkdir(parents=True, exist_ok=True)
+    runtime = base / "runtime"
+    runtime.mkdir(exist_ok=True)
+    shutil.copy2(target_types, runtime / "mdl_target_code_types.hlsl")
+    shutil.copy2(renderer_runtime, runtime / "mdl_runtime.slangh")
+    entries = []
     for asset_id in ASSET_IDS:
-        snapshot = snapshots[asset_id]
-        artifact = artifacts[asset_id]
-        assets.append(
-            {
-                "asset_id": asset_id,
-                "display_name": DISPLAY_NAMES[asset_id],
-                "source_snapshot_id": snapshot.snapshot_id,
-                "artifact_root": _portable(artifact.root, base),
-                "compiled_artifact_sha256": artifact.artifact_sha256,
-            }
-        )
-    document: dict[str, object] = {
-        "schema_name": "ncls.mdl-viewer-catalog",
-        "schema_version": 1,
-        "reference_id": "ncls.mdl-vmaterials2@1",
-        "source_material_family_id": "mdl.program@1",
-        "formal_executor": "project-mdl-sdk-bridge-to-current-falcor-8",
-        "validation_oracle": "falcor2-isolated-not-a-runtime-dependency",
-        "mdl_sdk": "2025.0.0-387700.1252",
-        "texture_filtering": "explicit-lod0",
-        "uv_derivatives_consumed": False,
-        "default_asset_id": default_asset_id,
-        "target_code_types": {
-            "path": _portable(target_types, base),
-            "sha256": sha256_file(target_types),
-        },
-        "renderer_runtime": {
-            "path": _portable(renderer_runtime, base),
-            "sha256": sha256_file(renderer_runtime),
-        },
-        "assets": assets,
-    }
+        snapshot, artifact = snapshots[asset_id], artifacts[asset_id]
+        artifact_root = base / "reference" / snapshot.snapshot_id
+        shutil.copytree(artifact.root, artifact_root, dirs_exist_ok=True)
+        entries.append(source_catalog_entry(
+            export_id=snapshot.snapshot_id, display_name=DISPLAY_NAMES[asset_id],
+            source_snapshot_id=snapshot.snapshot_id, artifact_sha256=artifact.artifact_sha256,
+            artifact_root=_portable(artifact_root, base),
+        ))
+    document = source_catalog_document(
+        mdl_sdk="2025.0.0-387700.1252",
+        target_code_types={"path": "runtime/mdl_target_code_types.hlsl", "sha256": sha256_file(target_types)},
+        renderer_runtime={"path": "runtime/mdl_runtime.slangh", "sha256": sha256_file(renderer_runtime)},
+        default_export_id=snapshots[default_asset_id].snapshot_id, entries=entries,
+    )
     write_json_atomic(output.resolve(), document)
+    ViewerMaterialCatalog.open(output)
     return document
 
 
@@ -123,7 +113,7 @@ def main() -> int:
     args = parser.parse_args()
     document = prepare_catalog(args.output, args.default_asset)
     print(args.output.resolve())
-    print(f"assets={len(document['assets'])} default={document['default_asset_id']}")
+    print(f"assets={len(document['entries'])} default={document['default_export_id']}")
     return 0
 
 

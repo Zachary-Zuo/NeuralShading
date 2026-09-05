@@ -11,6 +11,7 @@ from ncls.learning.metal_budgeted_runtime import (
     evaluate_metal_budgeted_cooked_asset,
     pack_metal_budgeted_compiled_material,
     pack_metal_budgeted_program,
+    prepare_metal_budgeted_cooked_asset,
     quantize_metal_budgeted_program_state,
     quantize_metal_budgeted_runtime_model,
 )
@@ -69,12 +70,26 @@ void main(uint3 threadId : SV_DispatchThreadID)
     const NclsPackageState state = nclsUnpackMethodState(
         context, nclsLoadPackageMaterial(0u), packed, gNclsRuntimeWeights);
     [unroll]
+    for (uint component = 0u; component < 3u; ++component)
+        gTestOutput[4u + component] = float4(
+            state.prepared.proposal[4u*component], state.prepared.proposal[4u*component+1u],
+            state.prepared.proposal[4u*component+2u], state.prepared.proposal[4u*component+3u]);
+    [unroll]
     for (uint index = 0u; index < 4u; ++index)
     {
         NclsMetalBudgetedTestGenerator generator = {index + 1u};
         const NclsScatteringEval evaluation = state.evaluate(
             normalize(gTestLights[index].xyz), generator);
         gTestOutput[index] = float4(evaluation.f, float(evaluation.valid));
+        NclsMetalBudgetedTestGenerator sampleRng = {index + 1u};
+        NclsScatteringSample sampleValue;
+        state.sample(sampleValue, sampleRng);
+        const NclsScatteringPdf density = state.pdf(sampleValue.wiWorld);
+        const NclsScatteringEval sampledEval = state.evaluate(sampleValue.wiWorld, generator);
+        gTestOutput[7u + index * 4u] = float4(sampleValue.wiWorld, float(sampleValue.valid));
+        gTestOutput[8u + index * 4u] = float4(sampleValue.pdf.forward, sampleValue.pdf.reverse, density.forward, density.reverse);
+        gTestOutput[9u + index * 4u] = float4(sampleValue.weight, 0.0f);
+        gTestOutput[10u + index * 4u] = float4(sampledEval.f, 0.0f);
     }
 }
 """
@@ -224,12 +239,27 @@ def test_budgeted_fp16_snorm8_prepare_and_evaluator_match_python(
     )
     light_buffer.from_numpy(light_values)
     output = device.create_structured_buffer(
-        struct_size=16, element_count=4, bind_flags=uav
+        struct_size=16, element_count=23, bind_flags=uav
     )
     compute.globals.gTestLights = light_buffer
     compute.globals.gTestOutput = output
     compute.execute(threads_x=1)
-    actual = output.to_numpy().view(np.float32).reshape(4, 4).copy()
+    actual = output.to_numpy().view(np.float32).reshape(23, 4).copy()
     device.end_frame()
-    np.testing.assert_allclose(actual[:, :3], expected, rtol=3e-2, atol=5e-4)
-    np.testing.assert_array_equal(actual[:, 3], np.ones(4, dtype=np.float32))
+    np.testing.assert_allclose(actual[:4, :3], expected, rtol=3e-2, atol=5e-4)
+    np.testing.assert_array_equal(actual[:4, 3], np.ones(4, dtype=np.float32))
+    prepared = prepare_metal_budgeted_cooked_asset(
+        model, asset, tensors, uv=(0.0, 0.0), mip_level=0.0,
+        filter_random=0.0, wo=(0.17364818, -0.33682409, 0.92541658),
+    )
+    np.testing.assert_allclose(
+        actual[4:7], prepared.proposal_state[0].to(torch.float16).float().numpy(),
+        rtol=2e-3, atol=2e-5,
+    )
+    samples = actual[7:].reshape(4, 4, 4)
+    np.testing.assert_array_equal(samples[:, 0, 3], 1.0)
+    np.testing.assert_allclose(samples[:, 1, :2], samples[:, 1, 2:], rtol=2e-5, atol=2e-6)
+    np.testing.assert_allclose(
+        samples[:, 2, :3], samples[:, 3, :3] * samples[:, 0, 2:3] / samples[:, 1, 0:1],
+        rtol=2e-5, atol=2e-6,
+    )
