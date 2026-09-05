@@ -105,6 +105,8 @@ nvidia-smi dmon -s pucvmet -d 5
 
 长运行监督采用事件驱动方式：训练进程保持`tqdm`和JSONL为真实work unit来源，只在step里程碑、validation、checkpoint、退出或异常时读取增量；常态检查按分钟而不是按秒进行。这样不会用高频轮询制造大量终端输出或token消耗。对本轮配置，per-rank batch从512增到1024/2048后，steady global work units/s约从`21.1k`升到`42.4k/87.7k`，峰值显存仍只有约`0.73/0.94/1.37 GiB/rank`，所以后续专项统一使用per-rank 2048；这不反写已完成主pair的训练几何。
 
+多source配置使用`group-block-balanced@2`。training仍每64 optimizer step固定一个execution group；validation由engine为窗口内batch写`validation_group_index`，每64 batch切换一次。DDP5的256-batch validation因此覆盖20个group，并在不同checkpoint重复同一group cohort。旧`@1`按checkpoint step选择validation group，只保留给既有checkpoint复现；不要用它解释新的多source学习轨迹。query RNG仍由独立validation request cursor拥有，所以milestone之间是同cohort、同分布比较，不是假装逐样本复用。
+
 达到cap后按预登记规则比较微小划痕的paired-UV/spatial-gradient、逐通道RGB/chroma、高光peak/energy与相同静态成本。`128/256 step`只是早期探针；实现正确时继续共同里程碑。若2048后选择仍不确定，只能按任务中预登记的单seed matched extension继续，不自动增加seed、asset refinement或模型宽度。
 
 ## 结构选择后的边界

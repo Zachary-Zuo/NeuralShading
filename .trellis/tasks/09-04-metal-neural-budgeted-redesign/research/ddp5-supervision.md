@@ -112,3 +112,16 @@
 - 五rank的reducer、validation、Gloo错误传播和teardown均正常，没有collective desync或NCCL failure；该错误分类为profile注册实现缺陷，失败artifact不作质量证据。
 - 修复`ba024f0`保留20维输入，并把所选profile的完整checkpoint tensor-shape验证前移到config resolve；unit枚举所有注册profile。随后v3/v6在青铜与钢上的四个fresh run均完成step256、checkpoint和teardown。
 - mixed cohort第一次调用传入remapped设备`0–4`，被launcher topology guard在数据初始化前拒绝；正确调用仍以物理GPU`5–9`声明设备，worker内部再各自映射为`cuda:0`。这同样是调用错误，不是DDP实现故障。
+
+## mixed cohort 的初始化与cache并发修复
+
+- 692-source首次正确启动在optimizer前被control descriptor gate拒绝：五rank按设计选择不同execution group，却各自对本地16,384条target求calibration，产生五个不同identity。Tungsten单group曾让错误实现碰巧一致。
+- 公共修复把`TrainingInitializationRequest.sample_count`定义为全job预算，DDP5确定性分成`3277/3277/3277/3277/3276`，Gloo按rank连接tensor后让所有rank消费同一16,384-row payload。两进程Gloo回归明确使用不同rank值，防止单材质fixture再次掩盖缺少聚合。
+- 同次冷启动还发现MDL content cache的atomic winner不能阻止五rank重复编译，也不会清理loser partial。修复为per-key跨进程锁、锁内复查、异常/loser清理；已停止进程后删除3,317个可再生partial目录，合法cache target保留。`mixed-cohort-v2/v3`结束后partial均为0。
+- 修复commit为`e3af85a`；它没有放宽DDP descriptor、static graph、timeout或source identity。
+
+## 多group validation cohort修复与最终run
+
+- `mixed-cohort-v2`完成512 step并证明初始化、reducer、checkpoint和teardown已闭合，但审阅发现旧`group-block-balanced@1`的256-batch validation实际每rank只反复验证一个group，四个milestone又随`global_step`换group；该run不能提供学习轨迹。
+- commit`400a984`增加`group-block-balanced@2`，由engine显式传window-local validation group index；每64 batch切换一次group，DDP5每window稳定覆盖20个group。旧`@1`行为保留，避免同identity静默改写既有checkpoint语义。
+- fresh `mixed-cohort-v3`使用physical GPU5–9完成step0→512，最终checkpoint`61a2b4aae12fa3a1bdd222f51139b6f5092ec66568ef496fbde01b672692b656`；四个validation window约`83.8/76.0/75.3/77.1 s`，每window首轮创建4个group、后续cache命中，无rank脱队、partial泄漏或非有限metric。

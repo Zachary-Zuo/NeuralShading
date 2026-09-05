@@ -103,7 +103,13 @@ v6的额外局部导数与asset带宽只能改善部分平均响应，没有形�
 
 ## mixed cohort 普适性检查
 
-青铜与钢的fresh对照、机制probe和fixed-batch容量复核均指向同一局部语义带宽瓶颈，因此满足预登记的普适性检查触发条件。仓库已有冻结的`mdl-metal-budgeted-full`数据fragment：692个registry source、每export四个typed state、按`metal-core/finish-microstructure/aging-contamination/coating-composite`四类责任分组调度。本轮直接复用它和v3 hybrid recipe，单seed、per-rank batch`2048`、global batch`10,240`，最多512 step；run identity为`metal-budgeted-hybrid-mixed-cohort-probe`，artifact固定在`artifacts/metal-budgeted-probes/mixed-cohort-v1/`。它只检查专项结论能否扩到更广source，不是formal 692-source质量结论，也不与单材质绝对metric直接排序。
+青铜与钢的fresh对照、机制probe和fixed-batch容量复核均指向同一局部语义带宽瓶颈，因此满足预登记的普适性检查触发条件。仓库已有冻结的`mdl-metal-budgeted-full`数据fragment：692个registry source、每export四个typed state、按`metal-core/finish-microstructure/aging-contamination/coating-composite`四类责任分组调度。本轮直接复用它和v3 hybrid recipe，单seed、per-rank batch`2048`、global batch`10,240`，最多512 step；run identity为`metal-budgeted-hybrid-mixed-cohort-probe`。它只检查专项结论能否扩到更广source，不是formal 692-source质量结论，也不与单材质绝对metric直接排序。
+
+首次有效DDP启动暴露了两个公共实现缺陷：多source下五个rank各自估计appearance calibration，导致初始化descriptor分叉；MDL content cache只有atomic publish而没有per-key跨进程互斥，冷cache时五rank重复编译并遗留3,317个loser partial目录。修复后16,384个全局calibration样本按`3277/3277/3277/3277/3276`分片、按rank合并，再由所有rank初始化同一identity；cache在锁内复查并清理loser/异常partial。`mixed-cohort-v2`随后完成512 step，但它又揭示`group-block-balanced@1`每个256-batch validation window只反复使用每rank一个group、不同milestone再换group，因而其DDP/吞吐证据有效，质量轨迹失效。
+
+commit`400a984`增加版本化`group-block-balanced@2`：training仍按64 optimizer step成块，validation改用window-local batch index，每64 batch换组。这样DDP5的一个256-batch window稳定覆盖20个group，所有milestone重放同一group cohort；旧`@1`语义保留供已有checkpoint复现。最终fresh artifact为`artifacts/metal-budgeted-probes/mixed-cohort-v3/`，step512 checkpoint SHA-256为`61a2b4aae12fa3a1bdd222f51139b6f5092ec66568ef496fbde01b672692b656`，无DDP错误、非有限值或cache partial。
+
+同一20-group分布上，step128→512的appearance从`1.77925`降到`1.69251`，log/linear/chroma分别变化`-0.07866/-0.19901/-0.00130`；但peak退化`+0.13626`，spatial只改善`-0.00217`。四个单GPU exact-query group block的matched复评给出log/chroma/peak改善`-0.04966/-0.02299/-0.21679`，linear和spatial却退化`+0.02608/+0.000104`；四组平均target log gradient为`0.14743`，预测从`0.00313`变为`0.00300`，始终只有目标约2%。20-group与4-group的部分指标方向不同，说明有限512-step训练没有形成跨group一致收益；两种口径却共同确认空间响应仍近似常数。结论是局部语义瓶颈可扩到mixed source观察，不能扩成692-source泛化质量声明。
 
 ## 预先解释规则
 
@@ -112,4 +118,4 @@ v6的额外局部导数与asset带宽只能改善部分平均响应，没有形�
 - 四项行为差异明显：保留机制特定结论，下一轮做小型混合cohort，不宣称一个局部修复普适。
 - 四项出现一致的finite/梯度/身份失败：先分类实现或protocol缺陷，不解释模型质量。
 
-四项probe与增益诊断固定写入`artifacts/metal-budgeted-probes/characteristic-v1/`；role-separated、center-texel与dual-local matched pilot分别写入`role-detail-v1/`、`center-detail-v1/`与`dual-local-v2/`；mixed cohort写入`mixed-cohort-v1/`。stdout、metrics、checkpoint、review与dmon不进入根仓库。本文件只追加实际结果和跨材质解释，不反写选择规则。
+四项probe与增益诊断固定写入`artifacts/metal-budgeted-probes/characteristic-v1/`；role-separated、center-texel与dual-local matched pilot分别写入`role-detail-v1/`、`center-detail-v1/`与`dual-local-v2/`；mixed cohort的最终有效证据写入`mixed-cohort-v3/`，v1/v2分别只保留失败和协议诊断。stdout、metrics、checkpoint、review与dmon不进入根仓库。本文件只追加实际结果和跨材质解释，不反写选择规则。

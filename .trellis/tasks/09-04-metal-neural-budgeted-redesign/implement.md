@@ -76,7 +76,7 @@ Rollback point R2：任何 Python 主形态需要越过 20k/192B 才能闭合接
 
 依赖：R2 Python 数学和静态预算通过；Phase 1 metric/query可用。
 
-- [ ] 新增 `metal_budgeted` MethodPlugin 的 model/data/objective/lifecycle/checkpoint/deployment facets；public key保持 `metal`。
+- [x] 新增 `metal_budgeted` MethodPlugin 的 model/data/objective/lifecycle/checkpoint/deployment facets；public key保持 `metal`。
 - [x] 方法配置固定 `joint-response-fit → deployment-qat-refine`；appearance从step 1启用，curriculum只登记真实 direction/LOD/peak变化。
 - [x] asset cook实现 encoder-only、bounded refinement、direct control三种独立 identity，共用部署shape。
 - [x] pure compiler与optimized ProgramState control分角色训练/报告；不把teacher结果写成editability。
@@ -101,12 +101,12 @@ Rollback point R3：
 依赖：R3 已选择 hybrid 或 direct 主profile，profile/layout/训练checkpoint identity冻结。
 
 - [x] registry product module从旧 `metal_fused` 切换到 `metal_budgeted`；更新 method fragment correspondence，新 checkpoint拒绝旧resume。
-- [ ] 实现 runtime parameter分类、FP16 pack、RGBA8 latent pack、ProgramState/PreparedState pack和asset variant resources。
-- [ ] 生成Slang layout并实现asset fetch、semantic decoder、compiler、evaluator、sample/pdf；矩阵与敏感FP32策略和Python一致。
-- [ ] 完成 eager FP32 → quantized Python → Slang exact/random probe；偏差容差在运行正式test前冻结。
+- [x] 实现 runtime parameter分类、FP16 pack、RGBA8 latent pack、ProgramState/PreparedState pack和asset variant resources。
+- [x] 生成Slang layout并实现asset fetch、semantic decoder、compiler、evaluator、sample/pdf；矩阵与敏感FP32策略和Python一致。
+- [x] 完成 eager FP32 → quantized Python → Slang exact/random probe；偏差容差在运行正式test前冻结。
 - [ ] 编译 `ScatteringPackage@2` program/asset/instance，验证typed edit和asset swap原子更新。
-- [ ] 为 hybrid/direct 两个 exact checkpoint 分别生成 evaluator-only diagnostic package/catalog；非入选模型同样可供 Windows 视觉比较，但不能声明 formal 或未验证的 `sample/pdf` capability。
-- [ ] 旧 full代码只保留显式historical control所需边界；不继续作为product plugin，不增加旧checkpoint converter。
+- [x] 为 hybrid/direct 两个 exact checkpoint 分别生成 evaluator-only diagnostic package/catalog；非入选模型同样可供 Windows 视觉比较，但不能声明 formal 或未验证的 `sample/pdf` capability。
+- [x] 旧 full代码只保留显式historical control所需边界；不继续作为product plugin，不增加旧checkpoint converter。
 
 Rollback point R4：parity失败时只修改对应数值/packing层并更换implementation identity；不得重训来包住部署误差。
 
@@ -114,9 +114,9 @@ Rollback point R4：parity失败时只修改对应数值/packing层并更换impl
 
 依赖：R4 package parity通过。
 
-- [ ] 冻结一个 bounded representative cohort：标准matrix中的Base/Brushed/Scratched，加至少一个paint/crack或patina recipe和`Aluminum_Anodized` Beckmann例外；选择依据写入protocol，不宣称代表全692结论。
+- [x] 冻结一个 bounded representative cohort：标准matrix中的Base/Brushed/Scratched，加至少一个paint/crack或patina recipe和`Aluminum_Anodized` Beckmann例外；选择依据写入protocol，不宣称代表全692结论。
 - [ ] 运行单GPU smoke、stop/resume、validation和QAT；检查required groups finite/nonzero/update。
-- [ ] 汇总本轮 Linux 五卡 DDP regression，验证bucket/static graph、rank0-only checkpoint、resume、phase boundary与同序teardown；只报告该固定 topology，不扩成scaling研究。
+- [x] 汇总本轮 Linux 五卡 DDP regression，验证bucket/static graph、rank0-only checkpoint、resume、phase boundary与同序teardown；只报告该固定 topology，不扩成scaling研究。
 - [ ] 用新package加入matched runtime harness，完成四控制 `prepare/evaluate/sample/pdf` 分解和static账本。
 - [ ] Windows viewer输出reference/neural linear EXR与微细节/高光crop；运行deferred/PT和typed edit/asset swap。
 - [ ] 以source state为单位生成bootstrap CI，observed quality/time/memory只作相对报告。
@@ -133,7 +133,7 @@ Rollback point R5：代表性cohort或runtime结果低于预期但正确时如�
 - [x] 检查 source/runtime/package/viewer 没有 method/source family专用upper-layer分支；本轮移除了 training readiness 对新旧 Metal method key 的分支，方法差异回到 descriptor policy。
 - [ ] 运行相关unit、GPU、integration、layout generator `--check`、package validation、Release viewer build/capture、`git diff --check`和Falcor clean。
 - [x] 运行 pre-Linux `trellis-check`；修复本任务引入的问题，不回退用户或其他任务改动。Linux GPU/integration/package/viewer 总检查仍随 Phase 3–5 结果执行。
-- [ ] 逐项勾选PRD acceptance criteria并写最终摘要；不把未授权formal long列为任务未完成。
+- [x] 逐项审阅PRD acceptance criteria并写最终摘要；未闭合项保持未勾选，不把未授权formal long列为任务未完成。
 
 ## Phase 7：剩余时间专项探索（条件执行）
 
@@ -141,8 +141,8 @@ Rollback point R5：代表性cohort或runtime结果低于预期但正确时如�
 
 - [x] 从registry按机制选择四个exact locator：平滑有色金属、Beckmann例外、强划痕和paint/crack复合材质；这是用户追加授权后的冻结扩展，选择依据不按结果挑样本。
 - [x] 用入选profile做每材质单seed、256-step diagnostic probe，分颜色、峰值、空间与内部analytic/neural contribution报告。
-- [ ] 仅当至少两个专项指向同一failure mechanism时，运行一个单seed、最多512-step的小型mixed cohort普适性检查。
-- [ ] 输出`research/characteristic-material-probes.md`，把结构方向写成“失败假设→所需机制→预算增量→下一轮验证”，不自动实现多个新变体。
+- [x] 仅当至少两个专项指向同一failure mechanism时，运行一个单seed、最多512-step的小型mixed cohort普适性检查。
+- [x] 输出`research/characteristic-probes.md`，把结构方向写成“失败假设→所需机制→预算增量→下一轮验证”，不自动实现多个新变体。
 
 Rollback point R7：主交付有任何缺口或时间不足即不启动；专项结果不一致时保留分材质结论，不扩大实验直到得到统一故事。
 

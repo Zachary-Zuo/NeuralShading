@@ -410,3 +410,14 @@ v2到共同step512后，paired bootstrap显示完整语义输入对hybrid spatia
 v3只增加一个无参数的结构短路径：semantic decoder照常生成24维状态，然后把Detail四通道逐项加到前四个frame semantic分量。Detail仍由role-aware训练端encoder学习，不把source原始通道硬编码成法线；短路径只赋予部署Detail plane“高频frame residual”的明确责任。它绕过三层decoder对paired差异的衰减，同时仍让decoder学习低频条件和修正。Context、ProgramState、PreparedState 160 B、两次读取、`44→64→64→64→6` evaluator、11,392 MAC、loss、optimizer、source/query和batch512全部不变，prepare只增加四次逐项加法。
 
 该变化使用`metal_budgeted_hybrid_v3`、`metal_budgeted_direct_control_v3`、method schema`@3`和pilot recipe`@4`的新identity，并增加“decoder置零时semantic前四维等于Detail”的合同测试。v2 step512保留为matched诊断；v3两侧fresh重跑。此后若runtime消费、梯度和数值实现正确但spatial仍差，按正常empirical outcome登记，不继续自动堆叠v4结构。
+
+### 15.10 主交付后的更大batch与结构diagnostic修订
+
+`§15.9`原先禁止在v3后继续自动堆叠结构，目的是防止主pair在observed quality驱动下循环改到好看。用户随后明确要求：主pair交付后若12小时时间仍有余额，先对有特点材质做小探索，再扩到普适性；同时询问能否使用更大`batch_size`提高有限时间内的实验量。此授权只修订`§15.6`后置diagnostic的资源与候选边界，不改变已经完成的v3 hybrid/direct matched选择、hard budget或formal验收。
+
+- 在相同Tungsten/v3结构上，对per-rank `512/1024/2048`分别做96-step有界profile；以steady global work units/s和peak memory选出2048（DDP5 global 10,240）。全部后置训练使用独立recipe/config identity和这个共同batch，不与主pair batch512结果按step比较；本轮不继续profile 4096。
+- 特征cohort在原三个机制locator之外增加一个平滑有色金属control，共四项：平滑有色金属、Beckmann例外、强划痕和paint/crack复合材质。每项仍是单seed、最多256 step，不按结果替换locator。
+- v3在强划痕与paint/crack上共同暴露空间瓶颈后，只允许三个逐项冻结的diagnostic：v4 role-separated Detail、v5 request-center Detail、v6 dual-local signed差分。每个修订使用fresh matched checkpoint，并显式报告静态预算或asset增量；v6结束后停止，不启动v7，也不替换主交付v3。
+- 只有两种高频材质对同一failure mechanism给出一致证据后，才使用既有692-source fragment做一次单seed、512-step mixed diagnostic。它只检查瓶颈能否跨source观察；训练未覆盖完整registry cycle，不得宣称692-source泛化质量。
+
+这次修订不要求重跑主pair。v4–v6和mixed结果只在各自冻结batch、source/query与checkpoint identity内解释，稳定结论写入`research/characteristic-probes.md`。

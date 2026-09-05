@@ -10,7 +10,9 @@
 
 后续fixed-batch spatial-only容量诊断显示，现有路径128步也只能把青铜/钢预测梯度从`0.00309/0.00112`提高到`0.00806/0.00219`，远小于target `0.50342/0.25905`；各参数组梯度finite/nonzero。center-texel v5再验证“取消输入平滑”假设：青铜和钢的spatial分别显著退化`+0.000136/+0.0000620`，peak也都退化。至此可排除单纯增益、role softmax和单点中心三个局部修补；下一轮应把二维signed局部结构和至少color/normal/packed的高分辨率带宽作为显式配置轴，而不是增加step或spatial loss权重。
 
-dual-local v6随后把两张RGBA plane都提升为请求texel加signed x/y局部差分的全分辨率输入，保持两读、160 B state和11,392 MAC，但预计asset bytes为v3的`1.882×`。fresh matched结果中，青铜appearance/peak改善`-0.003751/-0.008728`而spatial无显著变化；钢appearance改善`-0.000485`但peak/spatial退化`+0.003180/+0.000130`。v6固定batch复核仍只能把青铜/钢预测gradient提高到`0.007018/0.004989`，远低于target `0.503423/0.259045`。因此“增加同类局部统计和带宽”仍不足，v6停止且不替换v3；下一轮优先改变source语义到runtime latent的映射和asset cook监督。因两种高频材质共同支持该failure mechanism，追加一轮已有冻结692-source fragment上的v3 hybrid、单seed、512-step mixed cohort，仅检查趋势能否普适，不作为formal long。
+dual-local v6随后把两张RGBA plane都提升为请求texel加signed x/y局部差分的全分辨率输入，保持两读、160 B state和11,392 MAC，但预计asset bytes为v3的`1.882×`。fresh matched结果中，青铜appearance/peak改善`-0.003751/-0.008728`而spatial无显著变化；钢appearance改善`-0.000485`但peak/spatial退化`+0.003180/+0.000130`。v6固定batch复核仍只能把青铜/钢预测gradient提高到`0.007018/0.004989`，远低于target `0.503423/0.259045`。因此“增加同类局部统计和带宽”仍不足，v6停止且不替换v3；下一轮优先改变source语义到runtime latent的映射和asset cook监督。
+
+因两种高频材质共同支持该failure mechanism，又执行一轮已有692-source fragment上的v3 hybrid、单seed、512-step mixed diagnostic。过程中修复了DDP全局calibration聚合、MDL cache per-key并发与多group validation cohort三个公共缺陷；最终`group-block-balanced@2`让DDP5每个256-batch window在所有milestone稳定覆盖同一20个group。fresh run的appearance从step128的`1.77925`到step512的`1.69251`，但peak由`1.25294`退化到`1.38920`，spatial只从`0.18467`到`0.18250`。四个完全matched group block的预测gradient保持约`0.0030`，而target为`0.1474`；不同group的linear/peak收益方向也不一致。因此mixed结果只支持“平均response可学、局部映射跨材质仍失败”，不构成692-source泛化结论。最终artifact为`artifacts/metal-budgeted-probes/mixed-cohort-v3/`。
 
 | 日期 | run ID | 候选+配置 | 数据版本 | 预算档 | seeds | 方向 L1 (med/p95) | 能量误差 (med/p95) | 结论 | artifacts |
 |---|---|---|---|---|---|---|---|---|---|
