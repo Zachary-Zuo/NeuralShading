@@ -15,16 +15,16 @@
 | 证据 | 原始定位 | 可保留结论 | 不能推出的结论 |
 |---|---|---|---|
 | 用户引用的四点总结 | Codex `01a07002-caaa-7c23-9b31-c6095ab05a97`，turn 7 | 当时展示的是 Tungsten 单材质 step2048 hybrid | 不是所有材质或完整 neural correction 的成功证明 |
-| hybrid/direct matched pair | [single-material-selection.md](../../09-04-metal-neural-budgeted-redesign/research/single-material-selection.md:9) | 相同历史预算下 hybrid 的 appearance/peak/chroma 更好 | 无法单独分解 analytic core、gate 和 positive 分支的因果贡献 |
-| v4 role separation、v5 center、v6 signed derivatives | [characteristic-probes.md](../../09-04-metal-neural-budgeted-redesign/research/characteristic-probes.md:59) | 这些具体变体没有同时改善划痕青铜和开裂钢的空间误差 | 没有检验完整二维 patch encoder，也没有隔离共同的采样/target 差异 |
+| hybrid/direct matched pair | [single-material-selection.md](../../../../09-04-metal-neural-budgeted-redesign/research/single-material-selection.md:9) | 相同历史预算下 hybrid 的 appearance/peak/chroma 更好 | 无法单独分解 analytic core、gate 和 positive 分支的因果贡献 |
+| v4 role separation、v5 center、v6 signed derivatives | [characteristic-probes.md](../../../../09-04-metal-neural-budgeted-redesign/research/characteristic-probes.md:59) | 这些具体变体没有同时改善划痕青铜和开裂钢的空间误差 | 没有检验完整二维 patch encoder，也没有隔离共同的采样/target 差异 |
 | 128-step fixed-batch spatial-only | 同文 `:72`、`:104` | 现有模型、初始化、优化器和固定 batch 下拟合困难；梯度非零 | 不是自由 latent 的 optimized-code control；不能证明所有 encoder 或优化方案都失败 |
-| mixed 512-step | 同文 `:106`；[final-conclusions.md](../../09-04-metal-neural-budgeted-redesign/research/final-conclusions.md:57) | 平均响应与空间响应的差距扩展到有限 mixed groups | 不是完整 692-source 泛化 |
-| 前期 texture encoder 设计 | [texture-encoder-sharing.md](../../archive/2026-08/08-30-vmaterial-metal-neural-system/research/texture-encoder-sharing.md:29) | 曾明确提出 role stems、共享多尺度 trunk、跨图关联、encoder-only/refinement/direct control 分工 | 设计存在不等于当前 budgeted 版本已实现它 |
-| 更早的 full model 审计 | [initial-evidence.md](../../09-04-metal-neural-budgeted-redesign/research/initial-evidence.md:21) | 辅助 semantic head 未必被最终 evaluator 消费；不能只看 auxiliary loss | 旧 full 的问题不能直接套到当前 v3，须逐符号重查 |
+| mixed 512-step | 同文 `:106`；[final-conclusions.md](../../../../09-04-metal-neural-budgeted-redesign/research/final-conclusions.md:57) | 平均响应与空间响应的差距扩展到有限 mixed groups | 不是完整 692-source 泛化 |
+| 前期 texture encoder 设计 | [texture-encoder-sharing.md](../../../2026-08/08-30-vmaterial-metal-neural-system/research/texture-encoder-sharing.md:29) | 曾明确提出 role stems、共享多尺度 trunk、跨图关联、encoder-only/refinement/direct control 分工 | 设计存在不等于当前 budgeted 版本已实现它 |
+| 更早的 full model 审计 | [initial-evidence.md](../../../../09-04-metal-neural-budgeted-redesign/research/initial-evidence.md:21) | 辅助 semantic head 未必被最终 evaluator 消费；不能只看 auxiliary loss | 旧 full 的问题不能直接套到当前 v3，须逐符号重查 |
 
 历史 pair 的 appearance 为 hybrid `1.14500`、direct `1.83045`；spatial 为 `0.28299/0.28120`。这些是旧报告的观测值。本轮不重新估计 CI，也不把它们设为新任务验收门槛。
 
-旧资产审计还发现 692 exports 只对应 52 个唯一 texture sets。未见资产的 split 应按 texture-set identity 做；不同金属共享同一组纹理时，按 export 拆分会夸大空间泛化。该数量是旧 registry 的记录，未来正式实验重新核对。[texture-encoder-sharing.md](../../archive/2026-08/08-30-vmaterial-metal-neural-system/research/texture-encoder-sharing.md:3)
+旧资产审计还发现 692 exports 只对应 52 个唯一 texture sets。未见资产的 split 应按 texture-set identity 做；不同金属共享同一组纹理时，按 export 拆分会夸大空间泛化。该数量是旧 registry 的记录，未来正式实验重新核对。[texture-encoder-sharing.md](../../../2026-08/08-30-vmaterial-metal-neural-system/research/texture-encoder-sharing.md:3)
 
 ## 3. 当前 encoder 实际看到什么
 
@@ -54,15 +54,15 @@
 
 ### 3.1 用户明确后的输入合同
 
-原始纹理指经正确文件/通道/颜色/normal 解码后仍保留二维像素场的原生资源。中心值、均值、导数可作为补充特征，但不能成为网络唯一能看到的纹理内容。按语义分组的输入 encoder、共享空间 trunk、跨图融合与联合 latent 已在前期 [texture-encoder-sharing](../../archive/2026-08/08-30-vmaterial-metal-neural-system/research/texture-encoder-sharing.md:29) 中提出；本轮据用户要求将其落实为主路径。
+原始纹理指经正确文件/通道/颜色/normal 解码后仍保留二维像素场的原生资源。中心值、均值、导数可作为补充特征，但不能成为网络唯一能看到的纹理内容。按语义分组的输入 encoder、共享空间 trunk、跨图融合与联合 latent 已在前期 [texture-encoder-sharing](../../../2026-08/08-30-vmaterial-metal-neural-system/research/texture-encoder-sharing.md:29) 中提出；本轮据用户要求将其落实为主路径。
 
-整体是 encoder–decoder，后半段的目标是原生 reference 的散射 `f`。纯纹理 codec 的 decoder 重建 texel，本项目还需要原生参数/图条件与 `wo/wi`，不能因输入是纹理就丢掉这些语义。相关区别也见 [problem_definition.md §5](../../../../docs/research/problem_definition.md:139)。纹理重建 head 可作辅助监督，不能代替最终 response 学习。
+整体是 encoder–decoder，后半段的目标是原生 reference 的散射 `f`。纯纹理 codec 的 decoder 重建 texel，本项目还需要原生参数/图条件与 `wo/wi`，不能因输入是纹理就丢掉这些语义。相关区别也见 [problem_definition.md §5](../../../../../../docs/research/problem_definition.md:139)。纹理重建 head 可作辅助监督，不能代替最终 response 学习。
 
 较强 encoder 让任务相关的邻域信息有机会进入 latent；固定八通道仍是有损压缩，不能保证保留任意原图的一切排列。下一轮评测的是新结构的可用信号、质量和成本，而不是重新投票决定是否满足原始输入要求。
 
 ### 3.2 encoder-only 还需去掉资产专属记忆依赖
 
-当前 [asset.py:172](../../../../src/ncls/learning/methods/metal/asset.py:172) 注册 `variant_scale_bias = nn.Embedding(asset_variant_count,16)`，`:327` 按 `resource_variant` 读取并调制量化后的 Detail/Context。raw grid 虽由 encoder 产生，最终 asset-conditioned 状态还依赖逐资产学到的参数，所以单凭 cook 的 `encoder-only` 标签不足以证明新纹理只需前向编码。
+当前 [asset.py:172](../../../../../../src/ncls/learning/methods/metal/asset.py:172) 注册 `variant_scale_bias = nn.Embedding(asset_variant_count,16)`，`:327` 按 `resource_variant` 读取并调制量化后的 Detail/Context。raw grid 虽由 encoder 产生，最终 asset-conditioned 状态还依赖逐资产学到的参数，所以单凭 cook 的 `encoder-only` 标签不足以证明新纹理只需前向编码。
 
 满足 R8 的首个方案取消这条独立 affine 表，保留基于原生材质参数的 compiler 条件；后续若确需资产 modulation，只能由 encoder 生成并计入成本。资源索引仍可定位原始/编译纹理。该项是用户明确 encoder-only 合同后的设计修正，未证明它是旧空间失败的主因，也未声称表已经在代码中移除。
 

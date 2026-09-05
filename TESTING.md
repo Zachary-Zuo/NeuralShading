@@ -4,7 +4,7 @@
 
 ## 原生多 UV 实施检查点
 
-本机仍为完整 Windows。当前任务 `09-05-neural-material-spatial-optimization-research` 的命令、真实 run 和边界见 [实施验证记录](.trellis/tasks/09-05-neural-material-spatial-optimization-research/research/implementation-validation.md)。全量 unit 366 passed；之后新增 C3/visual phase 回归 11 passed；多 UV GPU parity、独立 reference footprint witness、实际 train 0→2/validate/export/eval 和 Release viewer 均已执行。任务还在实施，尚无 matched 质量结论。
+本机仍为完整 Windows。实现任务 `09-05-neural-material-spatial-optimization-research` 已按用户要求归档，命令、真实 run 和边界见 [实施验证记录](.trellis/tasks/archive/2026-09/09-05-neural-material-spatial-optimization-research/research/implementation-validation.md)。全量 unit 366 passed；之后新增 C3/visual phase 回归 11 passed；多 UV GPU parity、独立 reference footprint witness、实际 train 0→2/validate/export/eval 和 Release viewer 均已执行。剩余实验移交 [服务器 24 小时任务](.trellis/tasks/09-05-neural-material-24h-server-research/server-handoff.md)，尚无 matched 质量结论。
 
 ```powershell
 conda run -n neural-shading python -m pytest tests/unit -q

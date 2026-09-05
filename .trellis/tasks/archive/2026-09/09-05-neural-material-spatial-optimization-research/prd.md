@@ -11,9 +11,9 @@
 **最新收尾边界**：用户已要求提交并归档本实现阶段，把后续实验迁到独立的服务器 24 小时任务。验收完成情况和未完成项去向以 [closure.md](closure.md) 为准；下文原需求/清单保留历史，不以归档状态冒充所有实验已完成。
 
 - 用户先要求创建研究任务、复用先前资料并查看 viewer 图像，随后追加模型审计；又明确 R8 原始纹理 encoder 与 R9 同语义统一数值尺度是必须满足的结构合同。2026-09-05 最新指示说明另一会话已全部提交，要求据当前任务更新 PRD/design，规划具体代码修改；不再以等待架构为规划阻塞。
-- 当前读取 HEAD 为 `e3f1c216401a1156c288a9e735a690bc446dca2b`，架构提交为 `ea2d743`。归档任务是 [architecture-reset-training-workflow](../archive/2026-09/09-05-architecture-reset-training-workflow/prd.md)。代码须接入当前 `Method`、共享 online session/engine、checkpoint、package 与 `outputs/`，不恢复旧训练入口。
+- 当前读取 HEAD 为 `e3f1c216401a1156c288a9e735a690bc446dca2b`，架构提交为 `ea2d743`。归档任务是 [architecture-reset-training-workflow](../09-05-architecture-reset-training-workflow/prd.md)。代码须接入当前 `Method`、共享 online session/engine、checkpoint、package 与 `outputs/`，不恢复旧训练入口。
 - 历史证据基线为 `cc4d76bf4df089b725ad91b2a2673ca177edff86`。用户引用的四点总结定位于 Codex `01a07002-caaa-7c23-9b31-c6095ab05a97` turn 7，实验依据为旧任务的 `research/final-conclusions.md` 与 `characteristic-probes.md`。有限 hybrid/v4–v6/fixed-batch/mixed 结果未定位唯一根因，亦未证明 692-source 泛化或实时帧率。
-- 前期 [texture encoder 共享研究](../archive/2026-08/08-30-vmaterial-metal-neural-system/research/texture-encoder-sharing.md:29) 已提出分组输入、共享空间主干与跨图融合。当前 summary MLP 未满足这一输入合同；架构迁移保留了相关数学实现，当前证据和文件锚点见 [提交后代码核对](research/post-architecture-code-plan.md:15)。
+- 前期 [texture encoder 共享研究](../../2026-08/08-30-vmaterial-metal-neural-system/research/texture-encoder-sharing.md:29) 已提出分组输入、共享空间主干与跨图融合。当前 summary MLP 未满足这一输入合同；架构迁移保留了相关数学实现，当前证据和文件锚点见 [提交后代码核对](research/post-architecture-code-plan.md:15)。
 - 历史 [证据分析](research/evidence-and-diagnosis.md)、[viewer 观察](research/viewer-evidence.md) 和 [模型审计](research/model-design-audit.md) 保留原始结果、单位、源码锚点与限制；它们不作为本轮已运行新模型的证据。具体技术合同和执行步骤分别以 [design.md](design.md) 与 [implement.md](implement.md) 为准。
 
 ## 需求与代码范围
@@ -25,7 +25,7 @@
 - **R5 部署和原生语义边界**：保留 source-native reference、参数编辑、GPU online GT 与有界运行时。每个兼容 UV 组分别编码为 Detail/Context RGBA SNORM plane，Context 每轴 1/4；读取数按 UV 组及其原生 lookup 次数登记。保留 11,392 evaluate dense MAC、C5 独立 proposal frame 与 176 B packed state；prepare 的输入/成本按多组读取重新推算。真实时间/内存另报，静态推算不等于实时性能。
 - **R6 架构对齐与变更隔离**：在 `ea2d743` 后的当前架构上实施；旧 checkpoint/ABI/CLI 不要求兼容。源/target/模型数学改变后 fresh run，不将旧数值直接拼入新 matched 表，不修改其它会话的成果。
 - **R7 模型错误**：C1 control 初值再次 tanh、C2 Slang softplus 尾部消减、C3 无效结果成为有效零、C4 frame 接缝、C5 reverse PDF view-conditioning 缺口均给出确定修复。其触发条件、严重性、历史文件:行号及影响范围由模型审计 C1–C5 持有；当前修复与阻塞关系见 design §3、§8.5/§8.6。Beckmann G、secondary 类型及 view-conditioned core 的物理解释按近似报告，不自动扩大 lobe/模型族。
-- **R8 原始纹理 encoder 必修结构**：五类语义 stem 在各图原生 mip0 上学习，保留完整二维数据与有效通道/缺图 mask，随后对齐 learned feature、跨 slot 融合并生成 hierarchy。默认 encoder-only，不允许中心值/均值/少量导数取代唯一输入，也不允许新资产自由 latent 或 asset-ID 学习表成为隐藏步骤。去掉 `variant_scale_bias` 与固定资产数；新增 C6 处理部署的训练 source 名单限制（[method.py:847](../../../src/ncls/learning/methods/metal/method.py:847)）。固定 E/D 可为已支持 schema 的未见 snapshot 直接 cook，decoder 输出线性 `f`，保留原生图/参数条件，不必先重建完整纹理或层模型。
+- **R8 原始纹理 encoder 必修结构**：五类语义 stem 在各图原生 mip0 上学习，保留完整二维数据与有效通道/缺图 mask，随后对齐 learned feature、跨 slot 融合并生成 hierarchy。默认 encoder-only，不允许中心值/均值/少量导数取代唯一输入，也不允许新资产自由 latent 或 asset-ID 学习表成为隐藏步骤。去掉 `variant_scale_bias` 与固定资产数；新增 C6 处理部署的训练 source 名单限制（[method.py:847](../../../../../src/ncls/learning/methods/metal/method.py:847)）。固定 E/D 可为已支持 schema 的未见 snapshot 直接 cook，decoder 输出线性 `f`，保留原生图/参数条件，不必先重建完整纹理或层模型。
 - **R9 绝对数值语义**：同语义定义与单位使用固定映射；禁止逐图/通道/tile/batch 的 min-max、均值方差、直方图或曝光自适应输入变换。UNORM/声明的颜色和 normal 解码合法，normal 单位化必须核对原生意义及插值顺序；不裁剪合法 HDR/height，不删 authored scale/bias。当前读取链未发现逐图统计归一化，不将这一禁令写成已定位旧根因。边界与反例保留于 design §2.1、证据分析 §3.3。
 
 ## 验收标准

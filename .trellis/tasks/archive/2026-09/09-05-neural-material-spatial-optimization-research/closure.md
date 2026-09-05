@@ -17,4 +17,4 @@
 | AC14 | step 2 capture 与静态成本已交付 | 真正 matched summary、D1/条件分支、CI 和单次查询成本 |
 | AC15 | 新 ABI、实际 bytes/reads/MAC 与 shader 检查已交付 | 后续候选重新登记真实成本 |
 
-后继任务：[服务器 24 小时自主研究](../09-05-neural-material-24h-server-research/prd.md)。它独立计时、独立 fresh run；本任务归档不代表 raw 方法已提高质量，也不代表六个 D1 run 已执行。旧检查点及图像继续保留在原 outputs 位置。
+后继任务：[服务器 24 小时自主研究](../../../09-05-neural-material-24h-server-research/prd.md)。它独立计时、独立 fresh run；本任务归档不代表 raw 方法已提高质量，也不代表六个 D1 run 已执行。旧检查点及图像继续保留在原 outputs 位置。

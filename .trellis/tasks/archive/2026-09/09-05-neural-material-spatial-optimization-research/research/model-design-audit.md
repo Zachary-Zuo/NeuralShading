@@ -12,13 +12,13 @@
 
 | 快照中的文件 | 交付时的新位置 |
 |---|---|
-| `models/metal_budgeted_asset.py` | [asset.py](../../../../src/ncls/learning/methods/metal/asset.py:188) |
-| `models/metal_budgeted_compiler.py` | [compiler.py](../../../../src/ncls/learning/methods/metal/compiler.py:226) |
-| `models/metal_budgeted_evaluator.py` | [evaluator.py](../../../../src/ncls/learning/methods/metal/evaluator.py:25) |
-| `models/metal_budgeted_sampler.py` | [sampler.py](../../../../src/ncls/learning/methods/metal/sampler.py:232) |
-| `mdl_metal_assets.py` | [native_assets.py](../../../../src/ncls/learning/methods/metal/native_assets.py:591) |
+| `models/metal_budgeted_asset.py` | [asset.py](../../../../../../src/ncls/learning/methods/metal/asset.py:188) |
+| `models/metal_budgeted_compiler.py` | [compiler.py](../../../../../../src/ncls/learning/methods/metal/compiler.py:226) |
+| `models/metal_budgeted_evaluator.py` | [evaluator.py](../../../../../../src/ncls/learning/methods/metal/evaluator.py:25) |
+| `models/metal_budgeted_sampler.py` | [sampler.py](../../../../../../src/ncls/learning/methods/metal/sampler.py:232) |
+| `mdl_metal_assets.py` | [native_assets.py](../../../../../../src/ncls/learning/methods/metal/native_assets.py:591) |
 
-旧 `source_adapters.py` 中的 Metal 逻辑已移入 [data.py](../../../../src/ncls/learning/methods/metal/data.py:477)。读取时的 hybrid recipe 仍为 `footprint_samples: 1` 配合 0/1/4 texel 档；路径迁移本身没有解决输入/target 尺度差异。
+旧 `source_adapters.py` 中的 Metal 逻辑已移入 [data.py](../../../../../../src/ncls/learning/methods/metal/data.py:477)。读取时的 hybrid recipe 仍为 `footprint_samples: 1` 配合 0/1/4 texel 档；路径迁移本身没有解决输入/target 尺度差异。
 
 | 项目 | 证据强度与判断 | 修复/决策依赖 | 对旧结论的影响范围 |
 |---|---|---|---|
@@ -52,7 +52,7 @@
 
 同一 helper 在反射半球外或 half-vector 无效时直接返回零，外层同样没有接收失败标记。Python 的 `MetalBudgetedEvaluator.forward():455` 则保留 hemisphere、half-vector 与 finite 的联合 validity，清零数值后仍返回 `valid=false`。因此不能只比较两端的 RGB。
 
-修复方案是让内部 evaluate 返回 `f` 与 validity/失败信息，由公共 `evaluate` 和 `sample` 传播；无效事件可以使用零数值占位，但不能重新标为有效。避免把 NaN/Inf 留给普通 renderer 累加，也避免 silent clamp。具体错误统计沿用新架构已有机制，不另造日常用户检查流程。依据是 [共享 Slang 合同](../../../spec/core/shared-slang-backend.md:44) 的非有限量错误规则。
+修复方案是让内部 evaluate 返回 `f` 与 validity/失败信息，由公共 `evaluate` 和 `sample` 传播；无效事件可以使用零数值占位，但不能重新标为有效。避免把 NaN/Inf 留给普通 renderer 累加，也避免 silent clamp。具体错误统计沿用新架构已有机制，不另造日常用户检查流程。依据是 [共享 Slang 合同](../../../../../spec/core/shared-slang-backend.md:44) 的非有限量错误规则。
 
 后续 witness 包括正常的真实零响应、半球外查询、退化 half-vector 以及受控的非有限 evaluator 结果，分别核对 Python/Slang 的 `f`、validity 和 sample 行为。失败注入只能进入诊断，不通过修改正常 GT 或线上权重来完成。发现实际训练或部署数值溢出时还要定位其产生处；传播修复本身不会治好溢出。
 
