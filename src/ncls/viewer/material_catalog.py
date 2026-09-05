@@ -210,13 +210,6 @@ class ViewerMaterialCatalog:
     registry_sha256: str
     opaque_entry_count: int
     rejected_cutout_count: int
-    checkpoint_sha256: str
-    checkpoint_descriptor_sha256: str
-    runtime_descriptor_sha256: str
-    checkpoint_compatibility: str
-    method_key: str
-    checkpoint_step: int
-    checkpoint_phase: str
     mdl_sdk: str
     target_code_types: Path
     renderer_runtime: Path
@@ -238,7 +231,6 @@ class ViewerMaterialCatalog:
                 "schema_version",
                 "catalog_id",
                 "registry",
-                "checkpoint",
                 "reference_runtime",
                 "default_export_id",
                 "entries",
@@ -270,45 +262,6 @@ class ViewerMaterialCatalog:
             rejected_count = int(registry["rejected_cutout_count"])
             if opaque_count <= 0 or rejected_count < 0:
                 raise ValueError("ViewerMaterialCatalog registry counts are invalid")
-
-        checkpoint_sha256 = checkpoint_descriptor_sha256 = runtime_descriptor_sha256 = ""
-        checkpoint_compatibility = method_key = checkpoint_phase = ""
-        checkpoint_step = 0
-        if document["checkpoint"] is not None:
-            checkpoint = _exact(
-                document["checkpoint"],
-                {
-                    "sha256",
-                    "method_key",
-                    "step",
-                    "phase",
-                    "checkpoint_descriptor_sha256",
-                    "runtime_descriptor_sha256",
-                    "compatibility",
-                },
-                "checkpoint",
-            )
-            checkpoint_sha256 = _require_sha256("checkpoint.sha256", checkpoint["sha256"])
-            checkpoint_descriptor_sha256 = _require_sha256(
-                "checkpoint.checkpoint_descriptor_sha256",
-                checkpoint["checkpoint_descriptor_sha256"],
-            )
-            runtime_descriptor_sha256 = _require_sha256(
-                "checkpoint.runtime_descriptor_sha256",
-                checkpoint["runtime_descriptor_sha256"],
-            )
-            checkpoint_compatibility = str(checkpoint["compatibility"])
-            method_key = str(checkpoint["method_key"])
-            checkpoint_step = int(checkpoint["step"])
-            checkpoint_phase = str(checkpoint["phase"])
-            if (
-                not method_key
-                or checkpoint_step < 0
-                or not checkpoint_phase
-                or checkpoint_compatibility
-                != "exact"
-            ):
-                raise ValueError("ViewerMaterialCatalog checkpoint metadata is invalid")
 
         source = Path(source_path).resolve()
         root = source.parent
@@ -532,13 +485,6 @@ class ViewerMaterialCatalog:
             registry_sha256,
             opaque_count,
             rejected_count,
-            checkpoint_sha256,
-            checkpoint_descriptor_sha256,
-            runtime_descriptor_sha256,
-            checkpoint_compatibility,
-            method_key,
-            checkpoint_step,
-            checkpoint_phase,
             mdl_sdk,
             target_code_types,
             renderer_runtime,
@@ -594,7 +540,7 @@ def source_catalog_document(
 ) -> dict[str, Any]:
     return finalize_catalog_document({
         "schema_name": FORMAT_NAME, "schema_version": FORMAT_VERSION,
-        "registry": None, "checkpoint": None,
+        "registry": None,
         "reference_runtime": {
             "mdl_sdk": mdl_sdk, "target_code_types": dict(target_code_types),
             "renderer_runtime": dict(renderer_runtime),

@@ -20,5 +20,5 @@ $arguments = @($runner, "--mode", $Mode, "--output-dir", $OutputDir)
 foreach ($id in $AssetId) {
     $arguments += @("--asset-id", $id)
 }
-& (Join-Path $projectRoot "scripts\run_falcor_python.ps1") @arguments
+& conda run --no-capture-output -n neural-shading python -m ncls.runtime -- @arguments
 exit $LASTEXITCODE

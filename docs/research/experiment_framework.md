@@ -113,4 +113,4 @@ bootstrap以冻结source state为重采样单位，≥1,000次；只有matched s
 
 ## 8. 实验记录
 
-`docs/research/experiment_log.md`每个正式run一行，记录run identity、source/query recipe、预算、seed、两个主指标、成本、结论与artifacts路径。迁移前HDF5/corpus结果只作为明确标注的历史证据保留，不得与当前online run作matched比较，也不为其恢复reader/config。
+`docs/research/experiment_log.md` 每个正式 run 一行，记录 run identity、source/query recipe、预算、seed、两个主指标、成本、结论与 `outputs/<config-stem>/<run-id>/` 路径；独立研究临时报告可位于 artifacts。迁移前 HDF5/corpus 结果只作为明确标注的历史证据保留，不与当前 online run 作 matched 比较，也不为其恢复 reader/config。

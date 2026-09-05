@@ -1,11 +1,11 @@
-# TrainingCheckpoint@1 合同
+# 训练 checkpoint
 
-新训练只写 `ncls.training-checkpoint@1`。checkpoint 包含公开 method key、内部 implementation key、descriptor/implementation hash、六个 facet identity、完整 `ResolvedTrainingPlan@1` 及其 hash。用户可见 key 不携带 `@版本`；版本变化由结构化 identity 检出。
+当前只有 `learning/training/checkpoint.py` 的 `TrainingCheckpoint`，使用 `save_checkpoint(path, checkpoint)` 和 `load_checkpoint(path)`，eval/export 共用它。文件是一个原子写入的 `.pt`，含 `format: ncls.checkpoint`，没有额外 checksum sidecar 或版本转换 reader。
 
-data identity 同时保存 `DataExecutionPlan`、reference program/plan、native asset collection、query stream、source contract 与 source snapshot identity。运行游标由 `global_step + phase_index/name/step` 表达；逐 rank RNG 与 data session cursor 在 DDP envelope 中保存，checkpoint 前必须 drain，不能让未消费 batch 或活跃 lease 跨越边界。DDP只把这些小型rank-local状态收集到rank 0；完整model/optimizer CPU snapshot与durable write只在rank 0构造，其他rank等待显式commit status，不复制完整checkpoint，也不在rank-0写入时提前销毁process group。
+模型配置和 `model_state` 由方法恢复；optimizer、precision/scaler、phase/global step、RNG 与 query cursor 用于精确续训。DDP checkpoint 先 drain 所有 rank，再收集小型 rank state，由 rank 0 保存完整模型和 optimizer。完成态继续保留 optimizer。
 
-优化状态属于当前 phase，包含 named optimizer state、scheduler 与 precision/scaler；跨 phase 只按 `optimizer_state_policy=carry-overlap` 传递同名重叠参数。checkpoint 同时保存 model tensor、每个 parameter group 的 finite/nonzero-gradient/actual-update coverage、validation/selection evidence、hook cursor 与已经发布的 visual probe identity。完成态不携带失效的 optimization state。
+`resolved_plan`、source/resource identity、代码来源、梯度覆盖和 validation 信息随文件保存，供追溯与诊断。续训比较模型、优化阶段、训练数据与 rank partition；不比较完整 plan、源码 hash 或运行设置。source 资源不符、实际 tensor 名称/shape/dtype 不符、cursor 无法对应时在加载边界报错。
 
-resume 必须匹配同一 resolved plan、method/facet implementation、source、reference、asset、query stream 与 data execution identity；任一漂移都拒绝。读取先验证 `.pt.sha256`，再严格解析字段，并由 method checkpoint facet 恢复 tensor。
+日志频率、TensorBoard、图像 spp、预取和同卡数下物理 GPU 编号可变。改变模型/训练 batch/phase/卡数时建立新 run，不做弹性状态迁移。初始化 checkpoint 可以预览和导出，普通部署不受 formal/complete/coverage 标签限制。
 
-旧 `TrainingCheckpoint@4` 只有一个隔离的只读 importer。它先执行原有 descriptor、shape、identity 和 readiness 校验，再产生 `EvaluationSnapshot`，仅供 `validate`、允许的 export 与 visual eval 使用。v4 不能 resume；项目不提供旧 JSON config reader、converter、method alias 或训练 fallback。
+新训练默认位于 `outputs/<config>/<run>/checkpoints/`。旧成果保持原地，不提供 importer、转换工具或兼容读取。

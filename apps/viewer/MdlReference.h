@@ -65,13 +65,6 @@ struct MdlViewerCatalog
     std::string catalogId;
     std::string registryIdentity;
     std::string registrySha256;
-    std::string checkpointSha256;
-    std::string checkpointDescriptorSha256;
-    std::string runtimeDescriptorSha256;
-    std::string checkpointCompatibility;
-    std::string methodKey;
-    std::string checkpointPhase;
-    uint32_t checkpointStep = 0;
     uint32_t rejectedCutoutCount = 0;
     std::string mdlSdk;
     std::string defaultAssetId;

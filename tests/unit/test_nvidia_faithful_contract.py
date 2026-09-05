@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from ncls.learning.methods.nvidia import METHOD_DEFINITION
+from ncls.learning.methods.nvidia.method import METHOD
 from ncls.learning.source_adaptation import DenseNativeAssetCollection, NativeAssetRole
 from ncls.learning.training import TrainingPlanResolver
 from ncls.bundle.typed_texture import inspect_rgba16f_dds
@@ -16,7 +16,7 @@ from ncls.core.source import SourceSnapshot
 def _formal_config() -> dict:
     return TrainingPlanResolver(Path.cwd()).resolve(
         "configs/training/runs/nvidia-materialx-formal.yaml"
-    ).to_runtime_config().to_dict()
+    ).training.to_dict()
 
 
 def _native_collection(features: tuple[torch.Tensor, ...]) -> DenseNativeAssetCollection:
@@ -32,22 +32,15 @@ def _native_collection(features: tuple[torch.Tensor, ...]) -> DenseNativeAssetCo
     )
 
 
-def test_nvidia_formal_recipe_rejects_budget_adaptations() -> None:
-    config = _formal_config()
-    METHOD_DEFINITION.validate_training_config(config)
-    for path, replacement in (
-        (("phases", 0, "steps"), 25_000),
-        (("phases", 0, "routes", 0, "batch_size"), 16),
-        (("phases", 0, "optimizer", "epsilon"), 1e-8),
-        (("phases", 0, "recipes", "mollification", "samples"), 1),
-    ):
-        changed = deepcopy(config)
-        parent = changed
-        for key in path[:-1]:
-            parent = parent[key]
-        parent[path[-1]] = replacement
-        with pytest.raises(ValueError):
-            METHOD_DEFINITION.validate_training_config(changed)
+def test_nvidia_yaml_controls_training_budget_without_recipe_gates():
+    config = TrainingPlanResolver(Path(__file__).resolve().parents[2]).resolve(
+        "configs/training/runs/nvidia-materialx-formal.yaml"
+    ).training.to_dict()
+    config["seed"] += 1
+    config["correspondence_id"] = "new experiment"
+    config["validation"] = {"interval": 7, "batches": 2}
+    config["phases"][0]["routes"][0]["batch_size"] = 8
+    METHOD.validate_training_config(config)
 
 
 def test_nvidia_encoder_materialization_and_checkpoint_state_roundtrip() -> None:
@@ -57,13 +50,13 @@ def test_nvidia_encoder_materialization_and_checkpoint_state_roundtrip() -> None
         "latent_height": 2,
         "latent_mip_count": 2,
     }
-    model = METHOD_DEFINITION.create_trainable(context)
+    model = METHOD.create_trainable(context)
     features = (torch.randn(2, 2, 5), torch.randn(1, 1, 5))
     expected = tuple(
         model.encode(level.reshape(-1, 5)).reshape(*level.shape[:2], 8)
         for level in features
     )
-    METHOD_DEFINITION.materialize_assets(
+    METHOD.materialize_assets(
         model, _native_collection(features)
     )
     assert model.phase_name == "finetune"
@@ -73,11 +66,11 @@ def test_nvidia_encoder_materialization_and_checkpoint_state_roundtrip() -> None
     for actual, encoded in zip(model.latent_levels, expected, strict=True):
         assert torch.equal(actual.permute(1, 2, 0), encoded)
 
-    state = METHOD_DEFINITION.export_training_state(model)
+    state = METHOD.export_training_state(model)
     assert state["latent_mip_offsets"].tolist() == [0, 4, 5]
-    restored = METHOD_DEFINITION.create_trainable(context)
-    METHOD_DEFINITION.restore_training_state(restored, state)
-    restored_state = METHOD_DEFINITION.export_training_state(restored)
+    restored = METHOD.create_trainable(context)
+    METHOD.restore_training_state(restored, state)
+    restored_state = METHOD.export_training_state(restored)
     assert set(restored_state) == set(state)
     assert all(torch.equal(restored_state[name], state[name]) for name in state)
 
@@ -100,17 +93,17 @@ def test_nvidia_material_compiler_emits_two_full_rgba16f_mip_chains() -> None:
         "latent_height": 2,
         "latent_mip_count": 2,
     }
-    model = METHOD_DEFINITION.create_trainable(context)
-    METHOD_DEFINITION.materialize_assets(
+    model = METHOD.create_trainable(context)
+    METHOD.materialize_assets(
         model,
         _native_collection((torch.randn(2, 2, 2), torch.randn(1, 1, 2))),
     )
     snapshot = SourceSnapshot("ncls.layer-stack@1", 1, "fixture", "a" * 64, b"{}")
-    material = METHOD_DEFINITION.compile_asset(
+    material = METHOD.compile_asset(
         snapshot,
         {
             "source_snapshot_ids": [snapshot.snapshot_id],
-            "model_state": METHOD_DEFINITION.export_training_state(model),
+            "model_state": METHOD.export_training_state(model),
         },
     )
     assert set(material.resources) == {"latent0.dds", "latent1.dds"}
@@ -135,18 +128,18 @@ def test_nvidia_package_freezes_deterministic_fp16_runtime_parity() -> None:
         "latent_height": 2,
         "latent_mip_count": 2,
     }
-    model = METHOD_DEFINITION.create_trainable(context)
-    METHOD_DEFINITION.materialize_assets(
+    model = METHOD.create_trainable(context)
+    METHOD.materialize_assets(
         model,
         _native_collection((torch.randn(2, 2, 2), torch.randn(1, 1, 2))),
     )
     snapshot = SourceSnapshot("ncls.layer-stack@1", 1, "fixture", "a" * 64, b"{}")
     checkpoint = {
         "source_snapshot_ids": [snapshot.snapshot_id],
-        "model_state": METHOD_DEFINITION.export_training_state(model),
+        "model_state": METHOD.export_training_state(model),
     }
-    first = METHOD_DEFINITION.package_validation(snapshot, checkpoint)
-    second = METHOD_DEFINITION.package_validation(snapshot, checkpoint)
+    first = METHOD.package_validation(snapshot, checkpoint)
+    second = METHOD.package_validation(snapshot, checkpoint)
 
     assert first == second
     assert first["status"] == "gpu-parity-required"

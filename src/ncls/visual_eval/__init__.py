@@ -1,38 +1,16 @@
-from .contracts import (
-    DiagnosticSnapshot,
-    VisualArtifact,
-    VisualEvalRequest,
-    VisualEvalResult,
-    VisualEvalStatus,
-    derive_probe_id,
-)
-from .spool import ClaimedVisualEval, VisualEvalSpool
-from .collector import VisualEvalCollector
-from .worker import (
-    ViewerCapture,
-    ViewerPackage,
-    build_viewer_package,
-    default_windows_viewer_path,
-    VisualEvalExecutor,
-    VisualEvalWorker,
-    WindowsViewerExecutor,
-)
+from __future__ import annotations
 
-__all__ = [
-    "ClaimedVisualEval",
-    "DiagnosticSnapshot",
-    "VisualArtifact",
-    "VisualEvalRequest",
-    "VisualEvalResult",
-    "VisualEvalCollector",
-    "VisualEvalSpool",
-    "VisualEvalStatus",
-    "ViewerCapture",
-    "ViewerPackage",
-    "build_viewer_package",
-    "default_windows_viewer_path",
-    "VisualEvalExecutor",
-    "VisualEvalWorker",
-    "WindowsViewerExecutor",
-    "derive_probe_id",
-]
+import platform
+from .evaluator import NoVisualEvaluation, VisualContext, VisualEvaluator, VisualResult
+
+
+def visual_evaluation_available(*, system: str | None = None) -> bool:
+    return (platform.system() if system is None else system) == "Windows"
+
+
+def create_visual_evaluator(settings, *, system: str | None = None) -> VisualEvaluator:
+    if not settings.enabled or not visual_evaluation_available(system=system):
+        return NoVisualEvaluation()
+    from .windows import WindowsVisualEvaluator
+
+    return WindowsVisualEvaluator()

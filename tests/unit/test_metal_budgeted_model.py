@@ -6,22 +6,22 @@ import math
 import pytest
 import torch
 
-from ncls.learning.models.metal_budgeted import (
+from ncls.learning.methods.metal.model import (
     MetalBudgetedModel,
     pack_metal_budgeted_prepared_state,
     pack_metal_budgeted_program_state,
 )
-from ncls.learning.models.metal_budgeted_profile import (
+from ncls.learning.methods.metal.profile import (
     METAL_BUDGETED_CENTER_DETAIL_PROFILE,
     METAL_BUDGETED_DIRECT_PROFILE,
     METAL_BUDGETED_DUAL_LOCAL_PROFILE,
     METAL_BUDGETED_HYBRID_PROFILE,
     METAL_BUDGETED_ROLE_DETAIL_PROFILE,
 )
-from ncls.learning.models.metal_budgeted_compiler import (
+from ncls.learning.methods.metal.compiler import (
     MetalBudgetedOptimizedProgramStateControl,
 )
-from ncls.learning.models.metal_budgeted_sampler import (
+from ncls.learning.methods.metal.sampler import (
     metal_budgeted_proposal_pdf,
     metal_budgeted_sample_proposal,
 )

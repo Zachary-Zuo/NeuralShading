@@ -28,8 +28,6 @@ class TrainingRoute:
         if self.kind == "asset-tile" and self.direction_count != 1:
             raise ValueError("asset-tile routes require direction_count=1")
         options = dict(self.options)
-        if any(name in options for name in ("target_estimator", "query_role")):
-            raise ValueError("training route contains a removed field")
         object.__setattr__(self, "options", options)
 
     def to_dict(self) -> dict[str, Any]:
@@ -216,13 +214,12 @@ class TrainingConfig:
     device: str
     validation: Mapping[str, Any]
     checkpoint_selection: str
-    format_name: str = "ncls.training-config"
-    format_version: int = 4
+    checkpoint_interval: int = 5000
 
     def __post_init__(self) -> None:
-        if self.format_name != "ncls.training-config" or self.format_version != 4:
-            raise ValueError("unsupported training config format")
-        if not self.method_key or self.run_class not in {"smoke", "profile", "adapted", "formal"}:
+        if self.checkpoint_interval < 1:
+            raise ValueError("checkpoint_interval 必须为正整数")
+        if not self.method_key:
             raise ValueError("training method identity or run_class is invalid")
         if (
             not self.correspondence_id
@@ -265,8 +262,6 @@ class TrainingConfig:
         validation = dict(self.validation)
         if set(validation) != {"interval", "batches"} or min(int(value) for value in validation.values()) < 1:
             raise ValueError("validation interval and batches must be positive")
-        if self.checkpoint_selection != "tail_guard":
-            raise ValueError("training configs require tail_guard checkpoint selection")
         if not self.model_context:
             raise ValueError("model_context is required")
         object.__setattr__(
@@ -285,6 +280,21 @@ class TrainingConfig:
             "validation",
             {"interval": int(validation["interval"]), "batches": int(validation["batches"])},
         )
+
+    @property
+    def resume_signature(self) -> dict[str, Any]:
+        # 只比较恢复优化轨迹实际需要的数据，不包含日志、图像、设备和研究标签。
+        phases = []
+        for phase in self.phases:
+            value = phase.to_dict()
+            for name in ("log_interval", "gradient_audit_interval", "checkpoint_boundary", "checkpoint_interval", "prefetch_depth"):
+                value.pop(name, None)
+            phases.append(value)
+        return {
+            "method": self.method_key, "model": dict(self.model_context),
+            "source": dict(self.source), "query": dict(self.online_query),
+            "seed": self.seed, "phases": phases,
+        }
 
     @property
     def total_steps(self) -> int:
@@ -323,8 +333,7 @@ class TrainingConfig:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "format_name": self.format_name,
-            "format_version": self.format_version,
+            "checkpoint_interval": self.checkpoint_interval,
             "method_key": self.method_key,
             "run_class": self.run_class,
             "correspondence_id": self.correspondence_id,
@@ -348,13 +357,13 @@ class TrainingConfig:
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "TrainingConfig":
         required = {
-            "format_name", "format_version", "method_key", "run_class",
+            "method_key", "run_class",
             "correspondence_id", "recipe_id", "source_adaptation_id", "source",
             "online_query", "model_context", "phases", "seed", "device",
             "validation", "checkpoint_selection",
         }
-        if set(value) != required:
-            raise ValueError(f"training config fields must be exactly {sorted(required)}")
+        if set(value) - required - {"checkpoint_interval"} or required - set(value):
+            raise ValueError(f"training config fields are invalid: {sorted(set(value) ^ required)}")
         return cls(
             str(value["method_key"]),
             str(value["run_class"]),
@@ -369,6 +378,5 @@ class TrainingConfig:
             str(value["device"]),
             value["validation"],
             str(value["checkpoint_selection"]),
-            str(value["format_name"]),
-            int(value["format_version"]),
+            int(value.get("checkpoint_interval", 5000)),
         )

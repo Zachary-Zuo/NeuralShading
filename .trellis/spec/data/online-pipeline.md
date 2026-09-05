@@ -7,8 +7,8 @@
 ## 2. Signatures
 
 ```text
-MethodDataFacet.requirements() -> tuple[DataRequirement, ...]
-MethodDataFacet.create_source_adapter(snapshots, device) -> MethodSourceAdapter
+Method.requirements() -> tuple[DataRequirement, ...]
+Method.create_source_adapter(snapshots, device) -> MethodSourceAdapter
 DataExecutionPlan.build(data_key, source_family_id, routes, requirements,
                         execution, rank, world_size) -> DataExecutionPlan@1
 OnlineStepRequest(logical_id, boundary_id, routes)
@@ -27,10 +27,9 @@ ReferenceScheduler(dispatcher, capability, batch_steps,
                    ready_capacity, maximum_inflight)
 ```
 
-YAML `execution` 必须精确包含：
+YAML `execution` 配置队列与预算，GPU 列表来自命令：
 
 ```yaml
-devices: [0]
 num_workers: 0
 host_prefetch: 2
 ready_batches: 2
@@ -54,7 +53,7 @@ residency: {budget_mib: 4096}
 - packed request 保持 logical step、RNG 消费、group、invalid top-up、provenance 和输出切分。每个route request以不可变的`name/seed/request_index`创建独立generator；`ready_batches`、`reference_batch_steps`等执行计划参数不得进入样本RNG identity。`reference_batch_steps=1`是语义基线；大于一必须有逐tensor等价性与resume测试。
 - validation的group schedule是数据cohort合同，不由checkpoint milestone隐式决定。`group-block-balanced@2`只读取engine提供的window-local `validation_group_index`选择group；每个window从0开始、按`block_steps`成块，并与DDP rank共同形成稳定覆盖。该index不替代route `request_index`，后者仍独立拥有query RNG与resume cursor。
 - 一次production中共享native/reference lease的多个step共用一个lifecycle；只有最后一个step释放后才调用producer `end_iteration()`。detached batch在发布ready step前即可结束iteration。
-- `DataExecutionPlan.identity` 进入 checkpoint，rank partition 规则进入公共 identity，具体 rank 进入 session identity。checkpoint 前 session 必须没有 queued batch、in-flight dispatch 或 active consumer lease。
+- `DataExecutionPlan.identity` 只作运行记录；逻辑 query 身份包含 source、route、seed 和 world size，不包含预取设置或物理 GPU 编号。checkpoint 前 session 必须没有 queued batch、in-flight dispatch 或 active consumer lease。
 - 队列深度、host/transfer/reference/model wall、barrier、cache hit/miss/evict、readback/H2D bytes、resident/leased bytes 与峰值显存进入 `PipelineTrace`；观察值不自动成为 hard gate。
 
 ## 4. Validation & Error Matrix
@@ -73,7 +72,7 @@ residency: {budget_mib: 4096}
 | packed dispatch 跨 execution group 或结果数不符 | scheduler 释放已返回 lease 后失败 |
 | `group-block-balanced@2` validation request没有合法window-local group index | producer在prefetch/reference资源创建前拒绝 |
 | checkpoint 时仍有 queue/inflight/lease | `drain/assert_idle` 失败，不发布 checkpoint |
-| resume 的 data plan/query/source identity 漂移 | 恢复拒绝，不装载 cursor |
+| resume 的逻辑 query/source/rank partition 不同 | 无法精确恢复，建立新 run；执行设置变化不阻止恢复 |
 
 ## 5. Good / Base / Bad Cases
 

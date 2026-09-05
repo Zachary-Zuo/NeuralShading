@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from ncls.learning.mdl_metal_assets import MdlMetalNativeAssetCollection
+from ncls.learning.methods.metal.native_assets import MdlMetalNativeAssetCollection
 from ncls.learning.source_states import expand_source_states
 from ncls.source_materials.families.mdl import MdlFamilyDefinition
 from ncls.source_materials.mdl_metal import MdlMetalRegistry

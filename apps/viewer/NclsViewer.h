@@ -24,7 +24,7 @@
 
 struct ViewerOptions
 {
-    std::filesystem::path packageRoot = "artifacts/exports";
+    std::filesystem::path packageRoot = "outputs";
     std::filesystem::path materialPath;
     std::filesystem::path environmentPath;
     std::string environmentSha256;
@@ -41,7 +41,7 @@ struct ViewerOptions
     bool headless = false;
     bool verboseConsole = false;
     std::string capturePurpose = "formal";
-    std::array<uint32_t, 2> captureTargetSpp{1024, 1024};
+    std::array<uint32_t, 2> captureTargetSpp{128, 128};
     uint32_t captureSamplesPerDispatch = 1;
     uint32_t frameCount = 1;
     uint32_t width = 1280;
@@ -155,7 +155,7 @@ private:
         PassTiming timing;
         uint32_t ping = 0;
         uint32_t spp = 0;
-        uint32_t captureTargetSpp = 1024;
+        uint32_t captureTargetSpp = 128;
         bool resetAccumulation = true;
         bool deferredComplete = false;
 

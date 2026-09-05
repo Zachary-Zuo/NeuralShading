@@ -1,11 +1,8 @@
-format_name: ncls.training-run
-format_version: 1
 compose:
   method: nvidia
   data: materialx-walnut
   recipe: nvidia-materialx-smoke
 execution:
-  devices: [0]
   num_workers: 0
   host_prefetch: 2
   ready_batches: 2

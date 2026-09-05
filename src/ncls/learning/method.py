@@ -144,42 +144,6 @@ class ComponentContract:
 
 
 @dataclass(frozen=True)
-class MethodReadinessPolicy:
-    """由方法自己声明非正式 checkpoint 可以进入哪些受限消费路径。"""
-
-    required_parameter_groups: tuple[str, ...]
-    allowed_phases: tuple[str, ...]
-    minimum_global_step: int = 1
-
-    def __post_init__(self) -> None:
-        groups = tuple(str(value) for value in self.required_parameter_groups)
-        phases = tuple(str(value) for value in self.allowed_phases)
-        if (
-            not groups
-            or len(set(groups)) != len(groups)
-            or any(not value for value in groups)
-        ):
-            raise ValueError("method readiness groups must be unique and nonempty")
-        if (
-            not phases
-            or len(set(phases)) != len(phases)
-            or any(not value for value in phases)
-        ):
-            raise ValueError("method readiness phases must be unique and nonempty")
-        if self.minimum_global_step < 1:
-            raise ValueError("method readiness minimum_global_step must be positive")
-        object.__setattr__(self, "required_parameter_groups", groups)
-        object.__setattr__(self, "allowed_phases", phases)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "required_parameter_groups": list(self.required_parameter_groups),
-            "allowed_phases": list(self.allowed_phases),
-            "minimum_global_step": self.minimum_global_step,
-        }
-
-
-@dataclass(frozen=True)
 class MethodDescriptor:
     method_key: str
     version: int
@@ -194,7 +158,6 @@ class MethodDescriptor:
     cost_claims: Mapping[str, int | float | str | bool]
     parameter_groups: Mapping[str, tuple[str, ...]]
     components: tuple[ComponentContract, ...]
-    readiness_policies: Mapping[str, MethodReadinessPolicy] = field(default_factory=dict)
     schema_name: str = "ncls.method-descriptor"
     schema_version: int = 2
 
@@ -222,12 +185,6 @@ class MethodDescriptor:
             raise ValueError("reference-evaluator requirements must include target_f")
         if "method-sampler" in requirements and "sample_u" not in requirements["method-sampler"]:
             raise ValueError("method-sampler requirements must include sample_u")
-        if any(
-            legacy in fields
-            for fields in requirements.values()
-            for legacy in ("target", "query_role", "reference_pdf", "solid_angle_weight")
-        ):
-            raise ValueError("method descriptor contains a removed training batch field")
         if len({field.name for field in self.tensor_state_schema}) != len(self.tensor_state_schema):
             raise ValueError("method tensor state fields must be unique")
         if self.capabilities <= 0:
@@ -257,27 +214,6 @@ class MethodDescriptor:
         }
         if required_groups != set(groups):
             raise ValueError("every method parameter group must belong to a required component")
-        policies = {str(name): value for name, value in self.readiness_policies.items()}
-        if not set(policies).issubset({"diagnostic-evaluator"}):
-            raise ValueError("method descriptor contains an unsupported readiness policy")
-        component_phases = {
-            phase
-            for component in components
-            for phase in component.active_phases
-        }
-        for mode, policy in policies.items():
-            if not isinstance(policy, MethodReadinessPolicy):
-                raise TypeError(f"method readiness policy {mode!r} has an invalid type")
-            unknown_groups = set(policy.required_parameter_groups) - set(groups)
-            if unknown_groups:
-                raise ValueError(
-                    f"method readiness policy references unknown groups: {sorted(unknown_groups)}"
-                )
-            unknown_phases = set(policy.allowed_phases) - (component_phases | {"complete"})
-            if unknown_phases:
-                raise ValueError(
-                    f"method readiness policy references unknown phases: {sorted(unknown_phases)}"
-                )
         object.__setattr__(self, "supported_sources", tuple(self.supported_sources))
         object.__setattr__(self, "training_batch_requirements", requirements)
         object.__setattr__(self, "tensor_state_schema", tuple(self.tensor_state_schema))
@@ -285,7 +221,6 @@ class MethodDescriptor:
         object.__setattr__(self, "cost_claims", dict(self.cost_claims))
         object.__setattr__(self, "parameter_groups", groups)
         object.__setattr__(self, "components", components)
-        object.__setattr__(self, "readiness_policies", policies)
 
     @property
     def descriptor_sha256(self) -> str:
@@ -312,11 +247,6 @@ class MethodDescriptor:
             "parameter_groups": {name: list(values) for name, values in self.parameter_groups.items()},
             "components": [component.to_dict() for component in self.components],
         }
-        if self.readiness_policies:
-            result["readiness_policies"] = {
-                name: policy.to_dict()
-                for name, policy in self.readiness_policies.items()
-            }
         return result
 
     def adaptation_contract(self, snapshot: SourceSnapshot) -> SourceAdaptationContract:
@@ -329,8 +259,19 @@ class MethodDescriptor:
         raise ValueError(f"method {self.method_key!r} does not support source {snapshot.family_id!r}")
 
 
-class MethodDefinition(ABC):
+class Method(ABC):
+    key: str
     descriptor: MethodDescriptor
+
+    def requirements(self):
+        from ncls.data import DataRequirement
+
+        return tuple(DataRequirement(kind, tuple(fields)) for kind, fields in self.descriptor.training_batch_requirements.items())
+
+    @abstractmethod
+    def create_source_adapter(self, snapshots, device):
+        raise NotImplementedError
+
 
     @abstractmethod
     def create_trainable(self, context: Mapping[str, Any]) -> nn.Module:
@@ -352,6 +293,10 @@ class MethodDefinition(ABC):
     @abstractmethod
     def restore_training_state(self, model: nn.Module, state: Mapping[str, torch.Tensor]) -> None:
         raise NotImplementedError
+
+    def prepare_export(self, snapshot: SourceSnapshot, checkpoint: Mapping[str, Any]) -> Mapping[str, Any]:
+        """需要时将当前训练表示编译为部署状态；不修改训练模型或 checkpoint。"""
+        return checkpoint
 
     @abstractmethod
     def compile_program(self, checkpoint: Mapping[str, Any]) -> RuntimePayload:

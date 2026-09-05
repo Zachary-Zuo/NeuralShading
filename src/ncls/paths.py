@@ -10,5 +10,8 @@ ASSET_ROOT = PROJECT_ROOT / "assets"
 SOURCE_MATERIAL_ROOT = ASSET_ROOT / "source-materials"
 VIEWER_ASSET_ROOT = ASSET_ROOT / "viewer"
 
-# 可再生成的报告、捕获、缓存和旧实验输出。
+# 任务临时产物；已有视觉证据仍按原路径保留。
 ARTIFACT_ROOT = PROJECT_ROOT / "artifacts"
+
+# 新实验的权重、日志、图像与部署导出。
+OUTPUT_ROOT = PROJECT_ROOT / "outputs"

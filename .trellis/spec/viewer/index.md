@@ -10,4 +10,4 @@
 
 MDL source 的统一 `ViewerMaterialCatalog@2`（source-only 或可选 linked package）、artifact/component identity、动态 string module、linked typed edit、资源绑定和原子 preset 切换遵守 [mdl-reference.md](mdl-reference.md)。
 
-自动化 EXR/PNG 导出与 replay 的固定 spp、单 panel difference 尺寸统一遵守 [capture-harness.md](capture-harness.md)。
+自动化 EXR/PNG 导出与 replay 的独立 per-slot spp、单 panel difference 尺寸统一遵守 [capture-harness.md](capture-harness.md)。

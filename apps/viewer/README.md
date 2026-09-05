@@ -30,33 +30,18 @@ source/package PT 都通过 `PathSurface.slang` 构造 scene surface。Falcor ca
 .\scripts\launch_mdl_viewer.ps1 -Configuration Release
 ```
 
-查看同一固定MDL source上的budgeted hybrid/direct诊断模型时，先在具备训练checkpoint与reference backend的机器生成一次可搬运handoff；Linux生成的整个输出目录复制到Windows仓库后可直接加载：
+新模型统一从 checkpoint 导出；输出路径由 run 管理。导出命令会打印 package 与 source/catalog 路径：
 
 ```powershell
-.\scripts\prepare_metal_viewer.ps1 `
-  -HybridCheckpoint artifacts\runs\hybrid\checkpoint.pt
-
-.\scripts\launch_metal_viewer.ps1 `
-  -Handoff artifacts\viewer\metal-budgeted-pair\handoff.json `
-  -Comparison ReferenceVsHybrid
+conda run -n neural-shading python -m ncls export outputs/<config>/<run>/checkpoints/latest.pt
+.\scripts\launch_viewer.ps1 -Package <package目录> -Material <source文件或catalog>
 ```
 
-默认 `ReferenceVsHybrid` 两侧均为 PT。可用 `-LeftMode deferred` / `-RightMode deferred` 独立选择模式；两侧常驻标题显示真实类型、profile、模式与 spp/状态。`-DirectCheckpoint` 是可选对照，只有显式导出后才能选择 `ReferenceVsDirect` 或 `HybridVsDirect`。新 hybrid 完整提供 prepare/evaluate/sample/pdf，仍不声明 typed edit。handoff v2 精确保存原 checkpoint 和新 package identity，不要求重训。
-
-默认显示 shifting-flakes car paint；`Material` 面板的 `vMaterials preset` 可切换 patinated copper、scratched aluminum、glazed ceramic、velvet 与 pine mosaic。MDL V1 固定 `ExplicitLod(0)`；runtime reference descriptor 完整提供 canonical `prepare/evaluate/sample/pdf`，并落到同一 target code，避免 flakes/coat 与固定 GGX 错配。训练/provider 的方向响应 query 仍只输出 evaluate 数据；这是独立的 capability plane，不代表 runtime 通过私有旁路获得 sampler。
-
-构建产物位于锁定 Falcor Release bin。交互启动显式指定每侧 package ID 与 mode：
-
-```powershell
-external\Falcor\build\windows-vs2022\bin\Release\NclsViewer.exe `
-  --bundle-root artifacts\exports\example `
-  --slot0-package source-reference --slot0-mode path-tracing `
-  --slot1-package <package-id> --slot1-mode path-tracing --width 1600 --height 900
-```
+两侧模式用 `-ReferenceMode` / `-NeuralMode` 独立选择，默认 reference PT 与 neural deferred。训练中图像由公共 eval hook 调用同一 viewer，reference 默认 128 spp，实际值只由 YAML 决定。旧视觉证据留在 artifacts 原位置，历史 checkpoint handoff 已删除。
 
 ## capture v4 与回放
 
-自动化比较使用 `ncls.viewer-capture@4`。headless capture 从 replay 的 `reference_spp` 读取 reference 目标，正式基线使用 1024 spp；未达到目标时不得导出 EXR，deferred slot 为确定性单次求值，不虚构 spp。`comparison_purpose=formal` 要求所有 path-tracing slot 使用 matched spp；`training-diagnostic` 允许 1024 spp source reference 配合同条件的 neural deferred，或显式有界的低 spp neural path tracing，并在每个 slot 分别记录 `mode/target_spp/spp`。`reference_samples_per_frame` 只控制 headless 每次 dispatch 的 batch，不进入交互状态。manifest 的 `slots[2]` 分别记录 `package_id`、`mode`、status 与 runtime/material/source identity；`*-slot-0.exr`、`*-slot-1.exr` 与 `*-difference.exr` 都固定为单 panel 的 `view_resolution`，difference 不复用双 panel composite 纹理。`source-reference` 是内建的权威 source transport 请求，其余值必须对应 `bundle_root` 下通过验证的 package。验证 neural mode 对称性时，可让两个 slot 绑定同一 neural package并分别选择 PT/deferred。
+自动化比较使用 `ncls.viewer-capture@4`。headless capture 从 replay 的各 slot `target_spp` 读取采样目标，reference 默认 128 spp，可只改 YAML；未达到目标时不得导出 EXR，deferred slot 为确定性单次求值，不虚构 spp。双方 PT 的预算互相独立；training diagnostic 默认 reference PT 与 neural deferred，在每个 slot 分别记录 `mode/target_spp/spp`。研究对照是否 matched 由实验设计解释，不是 renderer 的固定数字门禁。`reference_samples_per_frame` 只控制 headless 每次 dispatch 的 batch，不进入交互状态。manifest 的 `slots[2]` 分别记录 `package_id`、`mode`、status 与 runtime/material/source identity；`*-slot-0.exr`、`*-slot-1.exr` 与 `*-difference.exr` 都固定为单 panel 的 `view_resolution`，difference 不复用双 panel composite 纹理。`source-reference` 是内建的权威 source transport 请求，其余值必须对应 `bundle_root` 下通过验证的 package。验证 neural mode 对称性时，可让两个 slot 绑定同一 neural package并分别选择 PT/deferred。
 
 最小 slot 片段如下：
 
@@ -67,11 +52,11 @@ external\Falcor\build\windows-vs2022\bin\Release\NclsViewer.exe `
   "reference_integrator": "ncls.scene-path-tracer@1",
   "bundle_root": "../exports/example",
   "slots": [
-    {"package_id": "source-reference", "mode": "path-tracing"},
-    {"package_id": "<package-id>", "mode": "path-tracing"}
+    {"package_id": "source-reference", "mode": "path-tracing", "target_spp": 128},
+    {"package_id": "<package-id>", "mode": "deferred", "target_spp": 0}
   ],
   "resolution": [1280, 720],
-  "reference_spp": 1024,
+  "reference_spp": 128,
   "reference_samples_per_frame": 16
 }
 ```
@@ -94,7 +79,7 @@ external\Falcor\build\windows-vs2022\bin\Release\NclsViewer.exe `
 
 ```powershell
 .\scripts\benchmark_viewer.ps1 `
-  -BundleRoot artifacts\exports `
+  -BundleRoot outputs\<config>\<run>\exports `
   -Preset configs\viewer-benchmark-v2.json `
   -OutputDirectory artifacts\benchmarks\viewer
 ```

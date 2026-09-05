@@ -1,11 +1,8 @@
-format_name: ncls.training-run
-format_version: 1
 compose:
   method: metal
   data: mdl-metal-budgeted-tungsten
   recipe: metal-budgeted-hybrid-pilot
 execution:
-  devices: [0]
   num_workers: 0
   host_prefetch: 2
   ready_batches: 2
@@ -21,10 +18,9 @@ hooks:
     flush_seconds: 10
     queue_capacity: 4096
   visual_eval:
-    enabled: false
+    enabled: true
     interval_steps: 128
-    reference_spp: 1024
+    reference_spp: 128
     neural_mode: deferred
     neural_spp: 0
     seed: 2026090402
-    queue_capacity: 8

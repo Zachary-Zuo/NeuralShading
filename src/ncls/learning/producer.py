@@ -24,7 +24,7 @@ from ncls.learning.batches import (
     TrainingConditioning,
     TrainingRouteRequest,
 )
-from ncls.learning.methods.contracts import MethodPlugin
+from ncls.learning.method import Method
 from ncls.learning.source_adaptation import NativeAssetCollection
 from ncls.learning.source_states import expand_source_states
 from ncls.learning.training.config import TrainingConfig
@@ -213,7 +213,7 @@ class OnlineTrainingProducer:
 
     def __init__(
         self,
-        plugin: MethodPlugin,
+        plugin: Method,
         config: TrainingConfig,
         *,
         backend: ReferenceBackendCapability | None = None,
@@ -335,7 +335,7 @@ class OnlineTrainingProducer:
         self.reference_execution_plan_identity = self.plan.identity
         self.reference_backend_identity = self.session.backend_identity
         self.pipeline_trace = PipelineTrace()
-        self.adapter = plugin.data.create_source_adapter(snapshots, self.device)
+        self.adapter = plugin.create_source_adapter(snapshots, self.device)
         self.adapter.configure_data_execution(
             data_execution_plan, self.pipeline_trace
         )
@@ -346,21 +346,15 @@ class OnlineTrainingProducer:
                 "source": dict(config.source),
                 "source_snapshot_ids": list(self.source_snapshot_ids),
                 "reference_program_identity": self.reference_program_identity,
-                "reference_execution_plan_identity": self.reference_execution_plan_identity,
-                "reference_backend_identity": self.reference_backend_identity,
-                "adapter_identity": self.adapter.identity,
+                "adapter_id": self.adapter.adapter_id,
                 "online_query": plan_recipe,
                 "routes": [route.to_dict() for route in config.all_routes],
                 "seed": config.seed,
                 "partition": {
                     "world_size": self.ddp_world_size,
-                    "gpu_indices": list(self.ddp_gpu_indices),
                     "recipe": "rank-strided-logical-request-seed@1",
                 },
             }
-        query_stream_manifest["data_execution_plan_identity"] = (
-            self.data_execution_plan_identity
-        )
         self.query_stream_identity = sha256_json(query_stream_manifest)
         self._request_count: dict[str, int] = {}
         self._group_cursor: dict[str, int] = {}

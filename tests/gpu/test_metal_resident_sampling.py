@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from ncls.learning.mdl_metal_assets import (
+from ncls.learning.methods.metal.native_assets import (
     MdlMetalNativeAssetCollection,
     _ResidentMipPyramid,
 )

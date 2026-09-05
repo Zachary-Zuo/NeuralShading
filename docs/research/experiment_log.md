@@ -1,8 +1,10 @@
 # 实验注册表
 
-每个正式 run（标准档及以上）一行；快速档 smoke 不入表。可比性、结论强度与对照要求见 [`experiment_framework.md`](experiment_framework.md) §7。详细数值与逐项报告留在 `artifacts/`，本表只保留能回答「现在做到哪了」的最小信息。
+> 历史记录：2026-09-05 架构重置前的命令、格式和结果只用于理解当时实验，当前接口见 docs/learning.md。旧权重不迁移、不兼容读取，旧 viewer 图像原地保留。
 
-下表是迁移前与迁移过程中的历史证据，其中HDF5/corpus及旧checkpoint字段仅用于说明历史，不属于当前online pipeline，也不保留reader、config或磁盘数据。新的正式run必须以source snapshot、reference plan/query/asset identity和`TrainingCheckpoint@1`登记。
+每个正式 run（标准档及以上）一行；快速档 smoke 不入表。可比性、结论强度与对照要求见 [`experiment_framework.md`](experiment_framework.md) §7。新训练的详细数值与逐项报告保存在 `outputs/<config-stem>/<run-id>/`，独立研究临时报告可放 artifacts；本表保留研究进展和结论。
+
+下表是迁移前与迁移过程中的历史证据，其中 HDF5/corpus 及旧 checkpoint 字段仅用于说明历史，不属于当前 online pipeline，也不保留 reader、config 或磁盘数据。新的正式 run 记录 source snapshot、query recipe、资产身份和当前 TrainingCheckpoint；执行环境与代码来源作为溯源记录。
 
 2026-09-05 已在Linux物理GPU 5–9上完成Metal budgeted Tungsten pair的DDP正确性与吞吐诊断：旧batch64 pair到共同step128，hybrid/direct validation appearance mean为`1.5644/3.8383`，只作早期观察；随后公共validation packed reduce把同规格验证从`50.99 s`降到`41.25 s`。在新调度下per-rank batch 64/128/256/512的64-step probe中，global work units/s中位数约为`2,936/5,350/10,465/23,354`，peak显存均低于0.75 GiB/rank，因此执行几何冻结为batch512、每16 step report和two-step reference packing。v1共同step512暴露只消费8/24维semantic state；v2修复完整消费后，hybrid总体几乎不变，direct改善平均log/linear/chroma但退化peak/spatial。online paired诊断显示target one-texel log梯度约0.285而预测只有0.001–0.004，因而v3增加无参数Detail→frame semantic短路径；v3共同step512改善hybrid平均与peak，但两侧spatial仍轻微退化，本轮不再创建v4并继续成熟训练。以上仍是diagnostic，不在下表冒充正式run或结构选择；详细身份与证据见任务`research/ddp5-supervision.md`和对应artifacts。
 

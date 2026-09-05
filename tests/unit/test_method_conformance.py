@@ -9,11 +9,11 @@ from ncls.learning.conformance import (
     validate_objective_outputs,
     validate_phase_execution,
 )
-from tests.fixtures.method_definition import METHOD_DEFINITION
+from tests.fixtures.method import METHOD
 
 
 def test_required_component_conformance_accepts_complete_contract() -> None:
-    descriptor = METHOD_DEFINITION.descriptor
+    descriptor = METHOD.descriptor
     validate_phase_execution(
         descriptor,
         (
@@ -45,7 +45,7 @@ def test_required_component_conformance_accepts_complete_contract() -> None:
 
 
 def test_required_component_conformance_rejects_missing_execution_gradient_and_artifact() -> None:
-    descriptor = METHOD_DEFINITION.descriptor
+    descriptor = METHOD.descriptor
     with pytest.raises(ValueError, match="typed batch"):
         validate_phase_execution(
             descriptor,
@@ -72,15 +72,15 @@ def test_required_component_conformance_rejects_missing_execution_gradient_and_a
 
 
 def test_parameter_registry_rejects_orphan_trainable_parameters() -> None:
-    model = METHOD_DEFINITION.create_trainable({})
-    METHOD_DEFINITION.parameter_registry(model)
+    model = METHOD.create_trainable({})
+    METHOD.parameter_registry(model)
     model.register_parameter("orphan", torch.nn.Parameter(torch.ones(1)))
     with pytest.raises(ValueError, match="orphan"):
-        METHOD_DEFINITION.parameter_registry(model)
+        METHOD.parameter_registry(model)
 
 
 def test_artifact_inventory_uses_symbols_from_the_packaged_module_closure() -> None:
-    runtime = METHOD_DEFINITION.compile_program({})
+    runtime = METHOD.compile_program({})
     snapshot = SourceSnapshot(
         "ncls.layer-stack@1",
         1,
@@ -88,7 +88,7 @@ def test_artifact_inventory_uses_symbols_from_the_packaged_module_closure() -> N
         "f" * 64,
         b"fixture",
     )
-    asset = METHOD_DEFINITION.compile_asset(
+    asset = METHOD.compile_asset(
         snapshot,
         {},
     )

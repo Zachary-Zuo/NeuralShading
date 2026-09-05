@@ -20,6 +20,6 @@ pdf(wi) → forward, reverse, valid
 
 带normal map的材质会改变局部shading frame，因此世界半球方向可能落到材质局部horizon以下。producer保留有效行并继续补采，在provenance中写`candidate_count`、`rejected_count`和`rejection_rounds`。这是proposal rejection，不是噪点清洗；达到轮次上限仍无法填满时明确失败。
 
-训练response始终留在同一CUDA device，通过显式CUDA↔Falcor同步与双slot lease管理生命周期。项目不保存或读取HDF5、shard、corpus或recorded batch；磁盘只保存source资产、checkpoint、package与`artifacts/`中的诊断/验证结果。
+训练 response 始终留在同一 CUDA device，通过显式 CUDA↔Falcor 同步与双 slot lease 管理生命周期。项目不保存或读取 HDF5、shard、corpus 或 recorded batch；source 资产位于 assets，checkpoint、package 和训练诊断位于 outputs/config/run，独立验证和研究临时结果位于 artifacts。
 
 公共backend manifest只管理项目源码、锁定的第三方源码/toolchain与编译布局，不管理source assets。Linux部署在`assets/`不存在时也必须完成compile deployment与仓库fixture probe；用户复制资产后，才运行五个真实source snapshot和training验收。

@@ -1,82 +1,87 @@
-format_name: ncls.training-fragment
-format_version: 1
-kind: recipe
-key: nvidia-layer-stack-smoke
-extends: null
-compatible_methods: [nvidia]
-payload:
-  training:
-    run_class: smoke
-    recipe_id: nvidia-rta2024-layer-stack-smoke-2step@1
-    phases:
-      - name: bootstrap
+training:
+  run_class: smoke
+  recipe_id: nvidia-rta2024-layer-stack-smoke-2step@1
+  phases:
+  - name: bootstrap
+    steps: 1
+    routes: &id001
+    - name: evaluator
+      kind: reference-evaluator
+      batch_size: 1
+      direction_count: 1
+      seed_offset: 0
+      options:
+        direction_proposal: uniform-half-difference@1
+        evaluation_samples: 2
+    - name: sampler
+      kind: method-sampler
+      batch_size: 1
+      direction_count: 1
+      seed_offset: 1
+      options:
+        direction_proposal: uniform-hemisphere-conditioning@1
+    parameter_groups:
+    - encoder
+    - evaluator
+    - sampler
+    loss_terms:
+    - evaluator_log1p_l1
+    - sampler_forward_kl
+    recipes: &id002
+      filtering:
+        latent_fetch: discrete-mip-bilinear-wrap@1
+        spatial_filter: uniform-1x1@1
+      mollification:
         steps: 1
-        routes: &routes
-          - name: evaluator
-            kind: reference-evaluator
-            batch_size: 1
-            direction_count: 1
-            seed_offset: 0
-            options:
-              direction_proposal: uniform-half-difference@1
-              evaluation_samples: 2
-          - name: sampler
-            kind: method-sampler
-            batch_size: 1
-            direction_count: 1
-            seed_offset: 1
-            options:
-              direction_proposal: uniform-hemisphere-conditioning@1
-        parameter_groups: [encoder, evaluator, sampler]
-        loss_terms: [evaluator_log1p_l1, sampler_forward_kl]
-        recipes: &recipes
-          filtering:
-            latent_fetch: discrete-mip-bilinear-wrap@1
-            spatial_filter: uniform-1x1@1
-          mollification:
-            steps: 1
-            start_degrees: 10.0
-            samples: 1
-        optimizer: &optimizer
-          kind: adam
-          betas: [0.9, 0.999]
-          epsilon: 1.0e-7
-          weight_decay: 0.0
-        optimizer_state_policy: reset
-        schedule:
-          kind: cosine
-          start: 0.001
-          end: 0.0001
-          total_steps: 2
-          offset: 0
-        precision: &precision
-          autocast: fp32
-          gradient_scaler: false
-        checkpoint_boundary: true
-        transition: materialize-assets
-        log_interval: 1
-        gradient_audit_interval: 1
-        prefetch_depth: 2
-      - name: finetune
-        steps: 1
-        routes: *routes
-        parameter_groups: [asset, evaluator, sampler]
-        loss_terms: [evaluator_log1p_l1, sampler_forward_kl]
-        recipes: *recipes
-        optimizer: *optimizer
-        optimizer_state_policy: carry-overlap
-        schedule:
-          kind: cosine
-          start: 0.001
-          end: 0.0001
-          total_steps: 2
-          offset: 1
-        precision: *precision
-        checkpoint_boundary: true
-        transition: null
-        log_interval: 1
-        gradient_audit_interval: 1
-        prefetch_depth: 2
-    validation:
-      interval: 2
-      batches: 1
+        start_degrees: 10.0
+        samples: 1
+    optimizer: &id003
+      kind: adam
+      betas:
+      - 0.9
+      - 0.999
+      epsilon: 1.0e-07
+      weight_decay: 0.0
+    optimizer_state_policy: reset
+    schedule:
+      kind: cosine
+      start: 0.001
+      end: 0.0001
+      total_steps: 2
+      offset: 0
+    precision: &id004
+      autocast: fp32
+      gradient_scaler: false
+    checkpoint_boundary: true
+    transition: materialize-assets
+    log_interval: 1
+    gradient_audit_interval: 1
+    prefetch_depth: 2
+  - name: finetune
+    steps: 1
+    routes: *id001
+    parameter_groups:
+    - asset
+    - evaluator
+    - sampler
+    loss_terms:
+    - evaluator_log1p_l1
+    - sampler_forward_kl
+    recipes: *id002
+    optimizer: *id003
+    optimizer_state_policy: carry-overlap
+    schedule:
+      kind: cosine
+      start: 0.001
+      end: 0.0001
+      total_steps: 2
+      offset: 1
+    precision: *id004
+    checkpoint_boundary: true
+    transition: null
+    log_interval: 1
+    gradient_audit_interval: 1
+    prefetch_depth: 2
+  validation:
+    interval: 2
+    batches: 1

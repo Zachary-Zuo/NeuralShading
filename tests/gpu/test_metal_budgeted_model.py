@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from ncls.learning.models.metal_budgeted import MetalBudgetedModel
+from ncls.learning.methods.metal.model import MetalBudgetedModel
 
 
 pytestmark = pytest.mark.slangpy

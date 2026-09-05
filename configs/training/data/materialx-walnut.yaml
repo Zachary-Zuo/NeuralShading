@@ -1,24 +1,17 @@
-format_name: ncls.training-fragment
-format_version: 1
-kind: data
-key: materialx-walnut
-extends: null
-compatible_methods: [nvidia]
-payload:
-  training:
-    source_adaptation_id: materialx-standard-surface-spatial@1
-    source:
-      family_id: materialx.document@1.39.4
-      materials:
-        - locator:
-            kind: catalog-asset
-            asset_id: american_walnut_veneer
-    online_query:
-      recipe_id: generic-reference-query@1
-      evaluation_samples: 1
-    model_context:
-      native_feature_count: 38
-      latent_width: 4096
-      latent_height: 4096
-      latent_mip_count: 13
-    seed: 20260827
+training:
+  source_adaptation_id: materialx-standard-surface-spatial@1
+  source:
+    family_id: materialx.document@1.39.4
+    materials:
+    - locator:
+        kind: catalog-asset
+        asset_id: american_walnut_veneer
+  online_query:
+    recipe_id: generic-reference-query@1
+    evaluation_samples: 1
+  model_context:
+    native_feature_count: 38
+    latent_width: 4096
+    latent_height: 4096
+    latent_mip_count: 13
+  seed: 20260827

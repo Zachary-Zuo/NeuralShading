@@ -15,8 +15,6 @@ def test_training_yaml_rejects_duplicate_and_unknown_run_keys(tmp_path: Path) ->
     _write(
         duplicate,
         """\
-format_name: ncls.training-run
-format_version: 1
 compose: {method: nvidia, data: fixture, recipe: fixture}
 compose: {method: metal, data: fixture, recipe: fixture}
 """,
@@ -29,8 +27,6 @@ compose: {method: metal, data: fixture, recipe: fixture}
     _write(
         unknown,
         """\
-format_name: ncls.training-run
-format_version: 1
 compose: {method: nvidia, data: fixture, recipe: fixture}
 surprise: true
 """,
@@ -42,13 +38,7 @@ surprise: true
 def test_training_yaml_rejects_fragment_inheritance_cycle(tmp_path: Path) -> None:
     base = tmp_path / "configs" / "training" / "base"
     template = """\
-format_name: ncls.training-fragment
-format_version: 1
-kind: base
-key: {key}
 extends: {parent}
-compatible_methods: []
-payload: {{}}
 """
     _write(base / "default.yaml", template.format(key="default", parent="alternate"))
     _write(base / "alternate.yaml", template.format(key="alternate", parent="default"))
@@ -56,15 +46,13 @@ payload: {{}}
     _write(
         run,
         """\
-format_name: ncls.training-run
-format_version: 1
 compose: {method: nvidia, data: fixture, recipe: fixture}
 """,
     )
 
     with pytest.raises(
         ValueError,
-        match="training fragment inheritance cycle: default -> alternate -> default",
+        match="配置继承成环：default -> alternate -> default",
     ):
         TrainingPlanResolver(tmp_path).resolve(run)
 
@@ -74,8 +62,6 @@ def test_training_yaml_public_keys_reject_version_suffix(tmp_path: Path) -> None
     _write(
         run,
         """\
-format_name: ncls.training-run
-format_version: 1
 compose: {method: nvidia@1, data: fixture, recipe: fixture}
 """,
     )

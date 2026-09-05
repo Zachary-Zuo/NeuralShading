@@ -7,8 +7,8 @@ from typing import Any, Mapping
 from ncls.bundle import ScatteringPackageManifest, write_scattering_package
 from ncls.core.source import SourceSnapshot, create_source_family
 from ncls.learning.conformance import MethodArtifactInventory, validate_artifact_coverage
-from ncls.learning.methods import get_method_plugin
-from ncls.learning.training import CheckpointReadinessMode, EvaluationSnapshot
+from ncls.learning.methods import get_method
+from ncls.learning.training.checkpoint import TrainingCheckpoint
 from ncls.paths import PROJECT_ROOT
 
 
@@ -35,16 +35,13 @@ def _source_material_path(
 
 
 def compile_evaluation_package(
-    evaluation: EvaluationSnapshot,
+    evaluation: TrainingCheckpoint,
     output: Path | str,
     *,
     material_index: int,
-    readiness_mode: CheckpointReadinessMode,
+    checkpoint_sha256: str | None = None,
 ) -> CompiledEvaluationPackage:
-    readiness = dict(evaluation.require_ready(readiness_mode))
-    plugin = get_method_plugin(evaluation.public_method_key)
-    if plugin.descriptor.method_key != evaluation.implementation_key:
-        raise ValueError("evaluation snapshot method implementation drifted")
+    plugin = get_method(evaluation.method_key)
     source = evaluation.source
     materials = source.get("materials")
     if not isinstance(materials, (list, tuple)) or not 0 <= material_index < len(materials):
@@ -58,7 +55,7 @@ def compile_evaluation_package(
     family.validate_snapshot(snapshot)
     if snapshot.snapshot_id not in evaluation.source_snapshot_ids:
         raise ValueError("evaluation source snapshot does not occur in the checkpoint")
-    payload = evaluation.deployment_payload
+    payload = plugin.prepare_export(snapshot, evaluation.model_payload)
     training_config = payload.get("training_config")
     model_context = (
         training_config.get("model_context")
@@ -70,9 +67,9 @@ def compile_evaluation_package(
         if isinstance(model_context, Mapping)
         else ""
     )
-    runtime = plugin.deployment.compile_program(payload)
-    asset = plugin.deployment.compile_asset(snapshot, payload)
-    instance = plugin.deployment.compile_instance(snapshot, payload)
+    runtime = plugin.compile_program(payload)
+    asset = plugin.compile_asset(snapshot, payload)
+    instance = plugin.compile_instance(snapshot, payload)
     validate_artifact_coverage(
         plugin.descriptor,
         MethodArtifactInventory.from_payloads(
@@ -81,9 +78,9 @@ def compile_evaluation_package(
             checkpoint_model_state=bool(payload["model_state"]),
         ),
     )
-    validation = dict(plugin.deployment.package_validation(snapshot, payload))
+    validation = dict(plugin.package_validation(snapshot, payload))
     validation["checkpoint_step"] = evaluation.global_step
-    validation["checkpoint_readiness"] = readiness
+    validation["training_diagnostics"] = {"phase": evaluation.phase_name, "gradient_coverage": dict(evaluation.gradient_coverage)}
     root = Path(output).resolve()
     manifest = write_scattering_package(
         root,
@@ -98,12 +95,9 @@ def compile_evaluation_package(
         instance_payload=instance,
         validation=validation,
         provenance={
-            "checkpoint_sha256": evaluation.checkpoint_sha256,
-            "checkpoint_readiness_mode": readiness_mode,
-            "checkpoint_compatibility": "exact",
+            "checkpoint_sha256": checkpoint_sha256,
             "checkpoint_profile_id": profile_id,
-            "checkpoint_legacy_v4": evaluation.legacy_v4,
-            "training_method": dict(evaluation.deployment_payload.get("training_method", {})),
+            "training_method": dict(evaluation.model_payload.get("training_method", {})),
         },
     )
     return CompiledEvaluationPackage(

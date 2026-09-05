@@ -12,6 +12,7 @@ __pycache__/
 /data/
 /external/
 /artifacts/
+/outputs/
 
 # 单次正确性验证、实验报告和运行摘要均可再生，不进入根仓库。
 /reports/

@@ -35,7 +35,7 @@ def test_tensorboard_hook_writes_stable_scalar_tags_and_steps(tmp_path: Path) ->
             10,
             0,
             1,
-            artifacts={"display": str(panel)},
+            artifacts={"comparison": str(panel)},
         )
     )
     hook.handle(
@@ -68,18 +68,20 @@ def test_tensorboard_hook_writes_stable_scalar_tags_and_steps(tmp_path: Path) ->
     assert accumulator.Images("visual-eval/comparison")[0].step == 10
 
 
-def test_tensorboard_hook_rejects_step_regression_and_nonzero_rank(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="rank 0"):
-        TensorBoardHook(tmp_path / "wrong-rank", rank=1)
-
-    hook = TensorBoardHook(tmp_path / "run", rank=0)
-    hook.handle(TrainingEvent("step-completed", 2, 0, 1, scalars={"loss": 1.0}))
-    with pytest.raises(ValueError, match="step regressed"):
-        hook.handle(TrainingEvent("step-completed", 1, 0, 1, scalars={"loss": 0.5}))
+def test_tensorboard_resume_discards_only_events_after_restored_checkpoint(tmp_path: Path) -> None:
+    hook = TensorBoardHook(tmp_path)
+    for step in (1, 2, 3):
+        hook.handle(TrainingEvent("step-completed", step, 0, 1, scalars={"loss": float(step)}))
     hook.close()
+    hook = TensorBoardHook(tmp_path, resume_step=1)
+    hook.handle(TrainingEvent("step-completed", 2, 0, 1, scalars={"loss": 0.5}))
+    hook.handle(TrainingEvent("step-completed", 3, 1, 2, scalars={"loss": 99.0}))
+    hook.close()
+    events = EventAccumulator(str(tmp_path)).Reload().Scalars("train/loss")
+    assert [(event.step, event.value) for event in events] == [(1, 1.0), (2, 0.5)]
 
 
-def test_tensorboard_background_errors_are_reported_on_flush(tmp_path: Path) -> None:
+def test_tensorboard_writer_errors_reach_the_caller(tmp_path: Path) -> None:
     class FailingWriter:
         def __init__(self, **kwargs):
             del kwargs
@@ -97,8 +99,6 @@ def test_tensorboard_background_errors_are_reported_on_flush(tmp_path: Path) -> 
     hook = TensorBoardHook(
         tmp_path, rank=0, writer_factory=FailingWriter, queue_capacity=4
     )
-    hook.handle(TrainingEvent("step-completed", 1, 0, 1, scalars={"loss": 1.0}))
-    with pytest.raises(RuntimeError, match="TensorBoard writer failed"):
-        hook.flush()
-    with pytest.raises(RuntimeError, match="TensorBoard writer failed"):
-        hook.close()
+    with pytest.raises(OSError, match="disk failed"):
+        hook.handle(TrainingEvent("step-completed", 1, 0, 1, scalars={"loss": 1.0}))
+    hook.close()

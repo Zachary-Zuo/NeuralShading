@@ -1,5 +1,7 @@
 # P1 v2 实施计划：lobe-residual 候选、单一 Slang 后端与 PT 对照
 
+> 历史记录：2026-09-05 架构重置前的命令、格式和结果只用于理解当时实验，当前接口见 docs/learning.md。旧权重不迁移、不兼容读取，旧 viewer 图像原地保留。
+
 本文是 [`p1_audit.md`](p1_audit.md) §5–§7 与 [`experiment_framework.md`](experiment_framework.md) §0.1 部署预算落地为工程任务的计划。它回答：新候选长什么样、每一步改哪些文件、每一步用什么测试判定完成、哪些决定已经做了。所有行号对应 commit `9a458fa`。
 
 ## 0. 目标与完成判定

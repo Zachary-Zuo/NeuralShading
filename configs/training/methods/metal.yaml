@@ -1,16 +1,9 @@
-format_name: ncls.training-fragment
-format_version: 1
-kind: method
-key: metal
-extends: null
-compatible_methods: [metal]
-payload:
-  training:
-    method_key: metal-budgeted-neural-material
-    correspondence_id: metal-budgeted-detail-frame-skip-hybrid@3
-    model_context:
-      profile_id: metal_budgeted_hybrid_v3
-      asset_variant_count: 52
-      maximum_texture_slots: 9
-      maximum_typed_tokens: 32
-      runtime_asset_reads: 2
+training:
+  method_key: metal-budgeted-neural-material
+  correspondence_id: metal-budgeted-detail-frame-skip-hybrid@3
+  model_context:
+    profile_id: metal_budgeted_hybrid_v3
+    asset_variant_count: 52
+    maximum_texture_slots: 9
+    maximum_typed_tokens: 32
+    runtime_asset_reads: 2

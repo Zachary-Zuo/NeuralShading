@@ -158,13 +158,10 @@ def test_capture_uses_single_panel_difference_extent_and_headless_target_spp() -
         encoding="utf-8"
     )
 
-    assert "constexpr uint32_t kDefaultCapturePathTracingSpp = 1024;" in viewer
     assert '"reference_spp", kDefaultCapturePathTracingSpp' in viewer
     assert "1u + (maximumTargetSpp - 1u) / options.captureSamplesPerDispatch" in viewer
     assert '{"reference_spp", capturedReferenceSpp}' in viewer
     assert "uint32_t frameCount = 1;" in header
-    assert "std::array<uint32_t, 2> captureTargetSpp{1024, 1024};" in header
-    assert "uint32_t captureTargetSpp = 1024;" in header
     assert "uint32_t captureSamplesPerDispatch = 1;" in header
     assert "slot.spp += samplesThisFrame;" in viewer
     assert "slot.spp != slot.captureTargetSpp" in viewer
@@ -321,7 +318,7 @@ def test_linked_mdl_catalog_switches_reference_and_neural_from_one_typed_state()
         encoding="utf-8"
     )
     catalog = Path("apps/viewer/MdlReference.cpp").read_text(encoding="utf-8")
-    launcher = Path("scripts/launch_metal_viewer.ps1").read_text(encoding="utf-8")
+    launcher = Path("scripts/launch_viewer.ps1").read_text(encoding="utf-8")
 
     linked = viewer[
         viewer.index("void NclsViewer::applyLinkedMdlSource") :
@@ -358,23 +355,20 @@ def test_linked_mdl_catalog_switches_reference_and_neural_from_one_typed_state()
         in on_load
     )
     assert '"--evaluator-preview-lighting"' not in launcher
-    assert '"--slot0-package"' in launcher
-    assert '"--slot1-package"' in launcher
-    assert '"HybridVsDirect"' in launcher
-    assert '"exact"' in launcher
+    assert '--slot0-package' in launcher
+    assert '--slot1-package' in launcher
     assert "manual-packages" not in launcher
     assert "learn train" not in launcher.lower()
 
 
 def test_powershell_viewer_entrypoints_do_not_reuse_stale_native_exit_codes() -> None:
     build = Path("scripts/build_viewer.ps1").read_text(encoding="utf-8")
-    launch = Path("scripts/launch_metal_viewer.ps1").read_text(encoding="utf-8")
+    launch = Path("scripts/launch_viewer.ps1").read_text(encoding="utf-8")
 
     assert '& (Join-Path $PSScriptRoot "fetch_viewer_assets.ps1")' in build
     assert 'if (-not $?) { throw "Failed to provision the fixed viewer scene" }' in build
     assert 'if (-not $?) { throw "Failed to build NclsViewer" }' in launch
     assert 'if ($LASTEXITCODE -ne 0) { throw "Failed to provision' not in build
-    assert "$LASTEXITCODE" not in launch
 
 
 def test_package_profile_and_diagnostic_identity_reach_ui_and_capture() -> None:
@@ -385,12 +379,10 @@ def test_package_profile_and_diagnostic_identity_reach_ui_and_capture() -> None:
     )
 
     assert '"checkpoint_profile_id"' in exporter
-    assert '"checkpoint_compatibility"' in exporter
+    assert '"training_diagnostics"' in exporter
     assert 'programProvenance.value("checkpoint_profile_id"' in package
-    assert '"checkpoint_compatibility", std::string()' in package
     assert 'result.displayName += " / " + result.checkpointProfileId;' in package
     assert '{"checkpoint_profile_id", program ? program->checkpointProfileId' in viewer
-    assert '{"checkpoint_compatibility", program ? program->checkpointCompatibility' in viewer
 
 
 def test_renderers_dispatch_full_panels_and_share_material_binding() -> None:

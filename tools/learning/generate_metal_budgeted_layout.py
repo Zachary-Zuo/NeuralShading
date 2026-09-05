@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ncls.learning.models.metal_budgeted_profile import (
+from ncls.learning.methods.metal.profile import (
     METAL_BUDGETED_LAYOUT_PATH,
     load_metal_budgeted_layout,
 )

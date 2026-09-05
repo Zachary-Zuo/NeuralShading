@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from ncls.learning.models.nvidia_neural_appearance import NvidiaModel
+from ncls.learning.methods.nvidia.model import NvidiaModel
 from ncls.learning.objectives import sampler_forward_kl_score
 from ncls.learning.training.engine import TrainingEngine
 

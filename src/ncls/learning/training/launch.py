@@ -2,13 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
-from pathlib import Path
 import platform
-import subprocess
-import sys
 from typing import Mapping, Sequence
-
-from .distributed import configure_distributed_debug_environment
 
 
 @dataclass(frozen=True)
@@ -109,9 +104,6 @@ def worker_execution_context(
     expected_gpu_list = ",".join(str(item) for item in topology.devices)
     if gpu_list != expected_gpu_list:
         raise RuntimeError("distributed worker GPU list disagrees with device topology")
-    declared_world = environment.get("NCLS_DDP_WORLD_SIZE")
-    if declared_world is not None and int(declared_world) != world:
-        raise RuntimeError("distributed worker declared world size disagrees")
     return ExecutionContext(
         topology,
         rank,
@@ -121,106 +113,3 @@ def worker_execution_context(
         "cuda:0",
         rank == 0,
     )
-
-
-def prepare_process_environment(
-    topology: ExecutionTopology,
-    *,
-    environment: dict[str, str] | None = None,
-) -> None:
-    target = os.environ if environment is None else environment
-    if topology.mode == "distributed-launch":
-        raise ValueError("distributed-launch topology belongs to the outer launcher")
-    if topology.mode == "single":
-        physical = str(topology.devices[0])
-        visible = target.get("CUDA_VISIBLE_DEVICES")
-        if visible not in {None, "", physical}:
-            raise RuntimeError(
-                "CUDA_VISIBLE_DEVICES disagrees with the selected single physical GPU"
-            )
-        falcor = target.get("NCLS_FALCOR_GPU_INDEX")
-        if falcor not in {None, "", physical}:
-            raise RuntimeError(
-                "NCLS_FALCOR_GPU_INDEX disagrees with the selected single physical GPU"
-            )
-        target["CUDA_VISIBLE_DEVICES"] = physical
-        target["NCLS_FALCOR_GPU_INDEX"] = physical
-        return
-    gpu_list = ",".join(str(item) for item in topology.devices)
-    if target.get("NCLS_DDP_GPU_LIST") != gpu_list:
-        raise RuntimeError("distributed worker GPU list disagrees with execution topology")
-    local_raw = target.get("LOCAL_RANK")
-    if local_raw is None:
-        raise RuntimeError("distributed worker requires LOCAL_RANK")
-    local_rank = int(local_raw)
-    physical = str(topology.devices[local_rank])
-    if target.get("CUDA_VISIBLE_DEVICES") != physical:
-        raise RuntimeError(
-            "distributed worker must expose only its assigned physical GPU"
-        )
-    falcor = target.get("NCLS_FALCOR_GPU_INDEX")
-    if falcor not in {None, "", physical}:
-        raise RuntimeError("distributed worker Falcor GPU disagrees with its assignment")
-    target["NCLS_FALCOR_GPU_INDEX"] = physical
-
-
-def distributed_command(
-    topology: ExecutionTopology,
-    *,
-    config: Path | str,
-    output: Path | str,
-    extra_arguments: Sequence[str] = (),
-) -> tuple[str, ...]:
-    if topology.mode != "distributed-launch":
-        raise ValueError("torchrun command requires a distributed-launch topology")
-    return (
-        sys.executable,
-        "-m",
-        "torch.distributed.run",
-        "--standalone",
-        "--nnodes=1",
-        f"--nproc-per-node={len(topology.devices)}",
-        "-m",
-        "ncls.ddp_worker",
-        "-m",
-        "ncls.cli",
-        "train",
-        str(config),
-        "--output",
-        str(output),
-        *tuple(extra_arguments),
-    )
-
-
-def launch_distributed(
-    topology: ExecutionTopology,
-    *,
-    config: Path | str,
-    output: Path | str,
-    extra_arguments: Sequence[str] = (),
-) -> int:
-    command = distributed_command(
-        topology, config=config, output=output, extra_arguments=extra_arguments
-    )
-    environment = dict(os.environ)
-    gpu_list = ",".join(str(item) for item in topology.devices)
-    environment.update(
-        {
-            "CUDA_VISIBLE_DEVICES": gpu_list,
-            "NCLS_DDP_GPU_LIST": gpu_list,
-            "NCLS_DDP_WORLD_SIZE": str(len(topology.devices)),
-        }
-    )
-    configure_distributed_debug_environment(environment)
-    return int(subprocess.run(command, env=environment, check=False).returncode)
-
-
-__all__ = [
-    "ExecutionContext",
-    "ExecutionTopology",
-    "distributed_command",
-    "launch_distributed",
-    "prepare_process_environment",
-    "preflight_topology",
-    "worker_execution_context",
-]

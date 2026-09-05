@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import torch
 
-from ncls.learning.models.metal_budgeted_sampler import (
+from ncls.learning.methods.metal.sampler import (
     metal_budgeted_proposal_pdf,
     metal_budgeted_sample_proposal,
 )

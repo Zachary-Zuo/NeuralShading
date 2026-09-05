@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from ncls.learning.models.metal_budgeted_asset import MetalBudgetedAssetCooker
+from ncls.learning.methods.metal.asset import MetalBudgetedAssetCooker
 
 
 def test_budgeted_asset_cook_modes_share_shape_and_keep_distinct_identity() -> None:

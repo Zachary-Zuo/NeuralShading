@@ -32,6 +32,7 @@ def main() -> int:
     # Keep the full list in NCLS_DDP_GPU_LIST for identity checks, while the
     # CUDA runtime sees only this worker's physical adapter as cuda:0.
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_indices[local_rank])
+    os.environ["NCLS_FALCOR_GPU_INDEX"] = str(gpu_indices[local_rank])
     os.environ["NCLS_DDP_DEVICE_INDEX"] = "0"
     os.environ["NCLS_DDP_WORKER"] = "1"
     sys.argv = [module, *sys.argv[3:]]

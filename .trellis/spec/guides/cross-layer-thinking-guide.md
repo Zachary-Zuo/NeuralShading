@@ -206,30 +206,16 @@ backend.prepare → state.evaluate / state.sample / state.pdf → MIS / throughp
 
 具体合同与测试入口见 `../viewer/mdl-reference.md`。
 
-## Learned Checkpoint Capability Boundary
+## 模型状态、执行设置与部署
 
-当训练状态跨越`TrainingConfig → checkpoint → compiler/package → viewer`时，tensor存在、shape一致、数值finite和slot ready分别只证明局部结构或执行状态，不能推出目标runtime已经接受过训练：
+- [ ] 当前 tensor/资源是否可执行，是否在加载边界验证实际 shape/dtype？
+- [ ] 模型/optimizer/query 身份是否与 GPU 编号、日志、图像和预取设置分开？
+- [ ] 当前状态是否可以直接预览/导出，训练阶段和 coverage 只作诊断？
+- [ ] profile 改变时，模型与 compiler/资源 ABI 是否对应实际配置，而非默认模型的固定 shape？
+- [ ] 新训练是否写入 config/run 下的 outputs，旧图像是否保持原位置？
+- [ ] 是否有逐层重复解析、源码 hash gate、旧 reader 或只剩测试消费者的历史实现需要删除？
 
-- [ ] phase cursor是否区分“即将进入phase”和“已经完成phase”？边界step不能仅凭phase名称推断能力。
-- [ ] 每个可部署capability是否有明确parameter-group依赖，并要求finite gradient、nonzero gradient和actual update三类coverage？
-- [ ] checkpoint是否与当前method descriptor/implementation完全同一identity？tensor schema兼容不能替代前向语义兼容。
-- [ ] formal与diagnostic是否由一个共享readiness owner判定？diagnostic必须显式请求、收窄capability，并在package/catalog/UI中保留不可误认的标记。
-- [ ] 学习证据是否沿同一exact checkpoint完成fixed query和viewer reference-neural对照？Python↔Slang parity只能证明两个实现一致，不能证明它们一致地学对了。
-- [ ] 训练吞吐是否按phase-local/rolling window记录，并把cache materialization、validation和checkpoint I/O分开？run-global均值不能证明后续phase没有结构性退化。
-- [ ] bounded LRU的访问序列是否与容量共同检查？当复用距离大于容量时，逐request round-robin会把“有cache”变成确定性的稳态thrash。
-
-具体生命周期、readiness、profile与回归入口见`../learning/online-training.md`、`../data/reference-query.md`和`../viewer/mdl-reference.md`。
-
-## Profile / Checkpoint Tensor Schema Boundary
-
-当一个公共method在同一`MethodDescriptor`下增加模型profile时，profile是配置轴，不是绕过checkpoint ABI的新类型：
-
-- [ ] 所有profile是否保持相同的state key、dtype、rank和固定shape？只说某个参数“离线使用、不进入shader”仍不足以改变checkpoint schema。
-- [ ] training config resolver是否实际实例化所选profile，并在创建source session或执行step 1前对照descriptor验证完整state？
-- [ ] unit是否枚举全部注册profile，而不只测试默认profile的forward和单独候选的局部shape？
-- [ ] 如果参数shape确实必须变化，是否给它独立的method descriptor/implementation identity，并明确旧checkpoint不能resume？不要让周期checkpoint成为第一个跨层集成测试。
-
-典型失败是：候选profile单测、forward、DDP reducer和validation都正常，但默认模型生成的descriptor仍冻结旧参数shape，直到step128周期checkpoint才报shape mismatch。正确门禁应在YAML resolve时失败。
+具体合同见 `../learning/online-training.md` 和 `../learning/deployment.md`。
 
 ## Distributed Initialization / Calibration Boundary
 
@@ -260,7 +246,7 @@ backend.prepare → state.evaluate / state.sample / state.pdf → MIS / throughp
 - [ ] DDP rank是否在同一window batch覆盖不同group，同时所有checkpoint重放相同group序列？
 - [ ] group切换频率是否既覆盖多个group，又保留足够长的block以避免reference/cache thrash？
 - [ ] metric是否保留每个batch行，且matched checkpoint比较确认source cohort相同？
-- [ ] 旧schedule语义是否通过版本保留，而不是在同一recipe identity下静默改变已有checkpoint的query stream？
+- [ ] query recipe 改变后是否明确新建实验，而不添加旧 schedule 的兼容分支？
 
 具体请求字段、错误行为与测试入口见`../learning/online-training.md`和`../data/online-pipeline.md`。
 

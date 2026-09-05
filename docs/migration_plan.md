@@ -1,3 +1,3 @@
-# 统一 pipeline 迁移状态
+# 架构重置状态
 
-2026-09-04 训练架构迁移把 YAML composition、`MethodPlugin`、`DataExecutionPlan/OnlineDataSession`、固定 `TrainingEngine`、`TrainingCheckpoint@1`、TensorBoard/visual hooks、三段 package 与 viewer 消费者接入同一合同。旧 offline/HDF5、family-specific producer、旧 JSON config、`ncls learn` 和旧 runner 入口已删除。`TrainingCheckpoint@4` 只保留隔离的只读 evaluation importer，不得用于继续训练。历史由 Git 与仓库外 artifacts 追溯；后续新增 source 或 method 直接遵循 `.trellis/spec/project/unified-pipeline.md`。
+2026-09-05 起采用统一 Python 入口、按 config/run 聚合的 outputs、直接 Method 接口和单一 checkpoint。旧 checkpoint importer、旧训练脚本、full Metal 及跨机视觉队列已删除。旧成果不迁移，旧 viewer 图像原地保留。当前使用说明见 [architecture.md](architecture.md) 和 [learning.md](learning.md)，执行合同见 `.trellis/spec/project/unified-pipeline.md`。

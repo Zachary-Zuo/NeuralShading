@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from ncls.learning.models.metal_budgeted_profile import (
+from ncls.learning.methods.metal.profile import (
     METAL_BUDGETED_CENTER_DETAIL_PROFILE,
     METAL_BUDGETED_DIRECT_PROFILE,
     METAL_BUDGETED_DUAL_LOCAL_PROFILE,

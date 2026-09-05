@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-ncls = "ncls.cli:main"
+ncls = "ncls.launcher:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -32,6 +32,6 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-ra --import-mode=importlib"
 markers = [
-  "falcor: requires the built Falcor Python module and a D3D12 GPU",
+  "falcor: requires the built Falcor Python module and the platform GPU backend",
   "slangpy: requires SlangPy with CUDA interop and a supported GPU",
 ]

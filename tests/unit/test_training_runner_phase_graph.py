@@ -17,12 +17,12 @@ from ncls.learning.batches import (
 )
 from ncls.learning.method import (
     ComponentContract,
-    MethodDefinition,
+    Method,
     MethodDescriptor,
     SourceAdaptationContract,
     TensorField,
 )
-from ncls.learning.methods import MethodPlugin
+from ncls.learning.methods import Method
 from ncls.learning.source_adaptation import (
     DenseNativeAssetCollection,
     NativeAssetCollection,
@@ -42,7 +42,12 @@ class _PhaseModel(torch.nn.Module):
         self.phase_name = "bootstrap"
 
 
-class _PhaseMethod(MethodDefinition):
+class _PhaseMethod(Method):
+    key = "phase-fixture"
+
+    def create_source_adapter(self, snapshots, device):
+        raise AssertionError("fixture uses an explicit producer")
+
     descriptor = MethodDescriptor(
         "phase-fixture", 1, "Phase fixture", "e" * 64,
         (SourceAdaptationContract("fixture.family", 1, ("/",), "recompile"),),
@@ -276,12 +281,8 @@ class _RouteProducer:
         pass
 
 
-def _plugin(definition: MethodDefinition) -> MethodPlugin:
-    return MethodPlugin.adapt_definition(
-        "fixture",
-        definition,
-        source_adapter_factory=lambda snapshots, device: None,
-    )
+def _plugin(definition: Method) -> Method:
+    return definition
 
 
 def _phase(
@@ -376,6 +377,44 @@ def test_runner_resume_matches_uninterrupted_phase_graph() -> None:
         value["parameter_update_observed"]
         for value in resumed.gradient_coverage.values()
     )
+
+
+def test_common_visual_hook_noop_preserves_training_and_independent_cadences(tmp_path):
+    from dataclasses import replace
+    from ncls.learning.training.events import TrainingEventBus
+    from ncls.learning.training.hooks.visual_eval import VisualEvalHook
+    from ncls.learning.training.plan import VisualEvalSettings
+    from ncls.visual_eval import create_visual_evaluator
+    from ncls.visual_eval.evaluator import VisualContext
+
+    config = _config()
+    config = replace(config, checkpoint_interval=3,
+        phases=tuple(replace(phase, checkpoint_boundary=False) for phase in config.phases))
+    method = _PhaseMethod()
+    baseline_producer, actual_producer = _RouteProducer(), _RouteProducer()
+    baseline = TrainingEngine(method, _data_session(baseline_producer), config).run()
+    calls, saved = [], []
+    implementation = create_visual_evaluator(VisualEvalSettings(interval_steps=1), system="Linux")
+
+    class ObservedEvaluator:
+        def evaluate(self, model, context):
+            calls.append(context.step)
+            before = torch.random.get_rng_state()
+            result = implementation.evaluate(model, context)
+            assert torch.equal(before, torch.random.get_rng_state())
+            return result
+
+    hook = VisualEvalHook(ObservedEvaluator(), VisualContext(0, method, config, ("a" * 64,),
+        VisualEvalSettings(interval_steps=1), tmp_path / "eval"), TrainingEventBus(()))
+    result = TrainingEngine(method, _data_session(actual_producer), config, visual_callback=hook,
+        checkpoint_callback=lambda checkpoint: saved.append(checkpoint.global_step)).run()
+    assert calls == [1, 2, 3, 4]
+    assert saved == [3]
+    assert [int(row["step"]) for row in result.metrics if "validation/loss" in row] == [2, 4]
+    assert not (tmp_path / "eval").exists()
+    assert baseline_producer.dispatches == actual_producer.dispatches
+    assert all(torch.equal(baseline.checkpoint.model_state[name], result.checkpoint.model_state[name])
+        for name in result.checkpoint.model_state)
 
 
 def test_runner_accounts_training_and_validation_backend_profiles_separately() -> None:

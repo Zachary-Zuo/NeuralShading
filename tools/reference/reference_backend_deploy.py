@@ -375,7 +375,7 @@ def write_report(
             "ready": doctor.ready,
             "statuses": [asdict(value) for value in doctor.statuses],
         },
-        "next_command": "scripts/run_falcor_python.sh -m ncls.cli reference probe",
+        "next_command": "python -m ncls reference probe",
     }
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(

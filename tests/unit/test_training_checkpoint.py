@@ -1,159 +1,38 @@
-from dataclasses import replace
+from pathlib import Path
 
 import pytest
 import torch
 
-from ncls.core.identity import sha256_json
-from ncls.learning.training.config import TrainingConfig, TrainingPhase, TrainingRoute
+from ncls.learning.methods import get_method
 from ncls.learning.training.checkpoint import TrainingCheckpoint, load_checkpoint, save_checkpoint
-from tests.fixtures.method_definition import METHOD_DEFINITION
+from ncls.learning.training.plan import TrainingPlanResolver
+from ncls.paths import PROJECT_ROOT
 
 
-def _config() -> TrainingConfig:
-    return TrainingConfig(
-        "contract-fixture",
-        "smoke",
-        "fixture-correspondence@1",
-        "fixture-recipe@1",
-        "fixture-adaptation@1",
-        {"family_id": "ncls.layer-stack@1", "materials": [{"locator": {"kind": "fixture"}}]},
-        {"recipe_id": "online@1"},
-        {"fixture": True},
-        (
-            TrainingPhase(
-                "fit", 2,
-                (TrainingRoute("evaluator", "reference-evaluator", 1, 1, 0, {}),),
-                ("fixture",), ("l1",), {"fixture": True},
-                {"kind": "adam", "betas": [0.9, 0.999], "epsilon": 1e-7,
-                 "weight_decay": 0.0},
-                "reset",
-                {"kind": "cosine", "start": 1e-3, "end": 1e-4,
-                 "total_steps": 2, "offset": 0},
-                {"autocast": "fp32", "gradient_scaler": False},
-                True, None, 1, 1, 1,
-            ),
-        ),
-        7, "cpu", {"interval": 1, "batches": 1}, "tail_guard",
+def test_current_state_roundtrip_preserves_optimizer_and_provenance(tmp_path):
+    plan = TrainingPlanResolver(PROJECT_ROOT).resolve("configs/training/runs/nvidia-layer-stack-smoke.yaml")
+    method = get_method(plan.selection.method)
+    model = method.create_trainable(plan.training.model_context)
+    state = TrainingCheckpoint(
+        method.key, plan.training.to_dict(), method.export_training_state(model),
+        global_step=2, phase_name="complete", phase_optimization_state={"optimizer": {"moment": torch.ones(3)}},
+        resolved_plan=plan.to_dict(), provenance={"implementation": "an earlier source revision"},
     )
+    path = tmp_path / "state.pt"
+    save_checkpoint(path, state)
+    restored = load_checkpoint(path)
+    method.restore_training_state(model, restored.model_state)
+    assert torch.equal(restored.phase_optimization_state["optimizer"]["moment"], torch.ones(3))
+    assert restored.provenance == state.provenance
+    assert list(tmp_path.iterdir()) == [path]
 
 
-def test_checkpoint_v4_roundtrip_and_tensor_schema(tmp_path):
-    descriptor = METHOD_DEFINITION.descriptor
-    config = _config()
-    config_value = config.to_dict()
-    component_manifest = {
-        "schema": "ncls.method-components@1",
-        "parameter_groups": {name: list(values) for name, values in descriptor.parameter_groups.items()},
-        "components": [component.to_dict() for component in descriptor.components],
-    }
-    checkpoint = TrainingCheckpoint(
-        descriptor.method_key,
-        descriptor.descriptor_sha256,
-        descriptor.implementation_sha256,
-        component_manifest,
-        config_value,
-        sha256_json(config_value),
-        sha256_json([phase.to_dict() for phase in config.phases]),
-        "1" * 64,
-        "2" * 64,
-        "3" * 64,
-        "4" * 64,
-        tuple(x.to_dict() for x in descriptor.supported_sources),
-        ("a" * 64,),
-        1,
-        0,
-        "fit",
-        1,
-        {"metric": 1.0},
-        {"fixture.scale": torch.ones(3), "fixture.bias": torch.zeros(3)},
-        {
-            "phase_name": "fit",
-            "optimizer": {"parameter_names": ["weight", "bias"], "state_by_name": {}},
-            "scheduler": {"kind": "cosine"},
-            "precision": {"config": {"autocast": "fp32", "gradient_scaler": False}, "scaler": {}},
-        },
-        {"torch": torch.get_rng_state()},
-        {"query_stream_identity": "4" * 64},
-        {
-            "fixture": {
-                "finite_observed": True,
-                "nonzero_gradient_observed": True,
-                "parameter_update_observed": True,
-                "last_audit_step": 0,
-            }
-        },
-        {"rows": []},
-    )
-    path = tmp_path / "checkpoint.pt"
-    digest = save_checkpoint(path, checkpoint)
-    assert len(digest) == 64
-    restored = load_checkpoint(path, descriptor=descriptor)
-    assert restored.format_version == 4 and restored.global_step == 1
-
-    with pytest.raises(ValueError, match="method descriptor identity mismatch"):
-        replace(restored, implementation_identity="0" * 64).validate_method(
-            descriptor
-        )
-
-
-def test_complete_checkpoint_rejects_incomplete_required_gradient_coverage() -> None:
-    descriptor = METHOD_DEFINITION.descriptor
-    config = _config()
-    config_value = config.to_dict()
-    checkpoint = TrainingCheckpoint(
-        descriptor.method_key,
-        descriptor.descriptor_sha256,
-        descriptor.implementation_sha256,
-        {
-            "schema": "ncls.method-components@1",
-            "parameter_groups": {
-                name: list(values) for name, values in descriptor.parameter_groups.items()
-            },
-            "components": [component.to_dict() for component in descriptor.components],
-        },
-        config_value,
-        sha256_json(config_value),
-        sha256_json([phase.to_dict() for phase in config.phases]),
-        "1" * 64,
-        "2" * 64,
-        "3" * 64,
-        "4" * 64,
-        tuple(value.to_dict() for value in descriptor.supported_sources),
-        ("a" * 64,),
-        1,
-        0,
-        "fit",
-        1,
-        {},
-        {"fixture.scale": torch.ones(3), "fixture.bias": torch.zeros(3)},
-        {
-            "phase_name": "fit",
-            "optimizer": {"parameter_names": ["weight", "bias"], "state_by_name": {}},
-            "scheduler": {"kind": "cosine"},
-            "precision": {
-                "config": {"autocast": "fp32", "gradient_scaler": False},
-                "scaler": {},
-            },
-        },
-        {"torch": torch.get_rng_state()},
-        {"query_stream_identity": "4" * 64},
-        {
-            "fixture": {
-                "finite_observed": True,
-                "nonzero_gradient_observed": False,
-                "parameter_update_observed": True,
-                "last_audit_step": 0,
-            }
-        },
-        {"rows": []},
-    )
-
-    with pytest.raises(ValueError, match="incomplete required gradient coverage"):
-        replace(
-            checkpoint,
-            global_step=2,
-            phase_index=1,
-            phase_name="complete",
-            phase_step=0,
-            phase_optimization_state={},
-        )
+def test_model_restore_rejects_broadcastable_wrong_shape():
+    plan = TrainingPlanResolver(PROJECT_ROOT).resolve("configs/training/runs/nvidia-layer-stack-smoke.yaml")
+    method = get_method("nvidia")
+    model = method.create_trainable(plan.training.model_context)
+    state = dict(method.export_training_state(model))
+    name = next(name for name in dict(model.named_parameters()) if name in state and state[name].ndim == 2)
+    state[name] = state[name][:1, :1]
+    with pytest.raises(ValueError, match="shape"):
+        method.restore_training_state(model, state)

@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Mapping
 
+from ncls.runtime import configure_distributed_debug_environment
+
 import pytest
 import torch
 import torch.distributed as dist
@@ -15,7 +17,6 @@ from torch.nn.parallel import DistributedDataParallel
 from ncls.learning.training.distributed import (
     DistributedContext,
     DistributedObjective,
-    configure_distributed_debug_environment,
 )
 from ncls.learning.training import TrainingEngine
 from tests.unit.test_training_runner_phase_graph import (
@@ -30,7 +31,7 @@ from tests.unit.test_training_runner_phase_graph import (
 class _QuadraticObjective:
     implementation_sha256 = "f" * 64
 
-    def compute(
+    def training_objective(
         self,
         model: torch.nn.Module,
         batches: Mapping[str, Any],
@@ -52,7 +53,7 @@ class _TwoPhaseModel(torch.nn.Module):
 class _TwoPhaseObjective:
     implementation_sha256 = "c" * 64
 
-    def compute(
+    def training_objective(
         self,
         model: torch.nn.Module,
         batches: Mapping[str, Any],
@@ -326,10 +327,11 @@ def test_distributed_debug_environment_is_explicit_and_non_destructive() -> None
 
 
 def test_non_rank_zero_checkpoint_does_not_encode_full_model_state() -> None:
-    plugin = replace(
-        _plugin(_PhaseMethod()),
-        checkpoint=_ForbiddenCheckpointCodec(),
-    )
+    class MethodWithoutCheckpoint(_PhaseMethod):
+        def export_training_state(self, model):
+            raise AssertionError("non-rank0 must not encode weights")
+
+    plugin = MethodWithoutCheckpoint()
     producer = _RouteProducer()
     engine = TrainingEngine(
         plugin,
@@ -337,7 +339,7 @@ def test_non_rank_zero_checkpoint_does_not_encode_full_model_state() -> None:
         _config(),
         distributed_context=_RankOneCheckpointContext(),  # type: ignore[arg-type]
     )
-    model = plugin.model_factory.create({})
+    model = plugin.create_trainable({})
 
     def forbidden_optimization_state() -> Mapping[str, Any]:
         raise AssertionError("non-rank0 must not snapshot optimizer state")

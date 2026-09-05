@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import torch
 
-from ncls.learning.mdl_metal_assets import (
+from ncls.learning.methods.metal.native_assets import (
     MdlMetalNativeAssetCollection,
     _ResidentMipPyramid,
     _canonicalize_decoded_channels,

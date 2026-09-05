@@ -130,9 +130,9 @@ MdlViewerCatalog loadMdlViewerCatalog(const std::filesystem::path& requestedPath
     const json document = json::parse(stream);
     require(document.value("schema_name", "") == "ncls.viewer-material-catalog"
             && document.value("schema_version", 0u) == 2u,
-        "unsupported catalog; rebuild with tools/reference/prepare_mdl_viewer.py or tools/viewer/prepare_metal_catalog.py");
+        "unsupported catalog; prepare the source again with tools/reference/prepare_mdl_viewer.py or ncls export");
     requireKeys(document,
-        {"schema_name", "schema_version", "catalog_id", "registry", "checkpoint",
+        {"schema_name", "schema_version", "catalog_id", "registry",
             "reference_runtime", "default_export_id", "entries"}, "ViewerMaterialCatalog root");
     json identityDocument = document;
 
@@ -187,27 +187,7 @@ MdlViewerCatalog loadMdlViewerCatalog(const std::filesystem::path& requestedPath
         requireSha256(result.registryIdentity, "registry.identity");
         requireSha256(result.registrySha256, "registry.sha256");
         }
-        if (!document.at("checkpoint").is_null())
-        {
-        const auto& checkpoint = document.at("checkpoint");
-        requireKeys(checkpoint,
-            {"sha256", "method_key", "step", "phase", "checkpoint_descriptor_sha256",
-                "runtime_descriptor_sha256", "compatibility"},
-            "ViewerMaterialCatalog checkpoint");
-        result.checkpointSha256 = checkpoint.at("sha256").get<std::string>();
-        result.checkpointDescriptorSha256 = checkpoint.at("checkpoint_descriptor_sha256").get<std::string>();
-        result.runtimeDescriptorSha256 = checkpoint.at("runtime_descriptor_sha256").get<std::string>();
-        result.checkpointCompatibility = checkpoint.at("compatibility").get<std::string>();
-        result.methodKey = checkpoint.at("method_key").get<std::string>();
-        result.checkpointStep = checkpoint.at("step").get<uint32_t>();
-        result.checkpointPhase = checkpoint.at("phase").get<std::string>();
-        requireSha256(result.checkpointSha256, "checkpoint.sha256");
-        requireSha256(result.checkpointDescriptorSha256, "checkpoint.checkpoint_descriptor_sha256");
-        requireSha256(result.runtimeDescriptorSha256, "checkpoint.runtime_descriptor_sha256");
-        require(result.checkpointCompatibility == "exact"
-                && !result.methodKey.empty() && !result.checkpointPhase.empty(),
-            "ViewerMaterialCatalog checkpoint metadata is incomplete");
-        }
+
     }
     requireSha256(result.targetCodeTypesSha256, "target_code_types.sha256");
     requireSha256(result.rendererRuntimeSha256, "renderer_runtime.sha256");

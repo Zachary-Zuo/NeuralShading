@@ -64,7 +64,7 @@ def _phase_loss_summary(
 def load_metric_rows(
     path: Path,
     *,
-    config_sha256: str,
+    config_sha256: str | None = None,
     allow_empty: bool = False,
 ) -> list[Mapping[str, Any]]:
     rows = []
@@ -72,7 +72,7 @@ def load_metric_rows(
         if not line.strip():
             continue
         value = json.loads(line)
-        if value.get("training_config_sha256") != config_sha256:
+        if config_sha256 is not None and value.get("training_config_sha256") != config_sha256:
             raise ValueError(f"metric row {line_number} belongs to another training config")
         numeric = [
             float(item)
@@ -116,7 +116,6 @@ def build_training_review(
 ) -> Mapping[str, Any]:
     if checkpoint.training_config_sha256 != config.sha256:
         raise ValueError("training review checkpoint belongs to another config")
-    checkpoint.validate_method(descriptor)
     training_rows = [row for row in metric_rows if row.get("record_kind") == "training"]
     validation_rows = [row for row in metric_rows if row.get("record_kind") == "validation"]
     phases = []

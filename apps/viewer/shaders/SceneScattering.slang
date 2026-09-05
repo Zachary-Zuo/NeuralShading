@@ -72,7 +72,8 @@ struct NclsViewerSceneState : INclsScatteringState
 
 NclsViewerSceneState nclsViewerPrepareScattering(NclsScatteringContext context)
 {
-    NclsViewerSceneState result = {};
+    // 后端 state 可包含资源句柄；分别赋值当前分支，不能把资源初始化为零。
+    NclsViewerSceneState result;
 #ifdef NCLS_PACKAGE_PROGRAM_HEADER
     result.usePackage = context.surface.materialInstanceId == gActiveMaterialId;
     if (result.usePackage)

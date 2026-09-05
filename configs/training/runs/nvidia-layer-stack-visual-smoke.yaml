@@ -1,11 +1,8 @@
-format_name: ncls.training-run
-format_version: 1
 compose:
   method: nvidia
   data: layer-stack-smoke
   recipe: nvidia-layer-stack-smoke
 execution:
-  devices: [0]
   num_workers: 0
   host_prefetch: 2
   ready_batches: 2
@@ -18,6 +15,5 @@ hooks:
   visual_eval:
     enabled: true
     interval_steps: 1
-    reference_spp: 1024
+    reference_spp: 128
     seed: 20260904
-    queue_capacity: 2

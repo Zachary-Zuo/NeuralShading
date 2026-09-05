@@ -28,7 +28,7 @@ namespace
 {
 
 constexpr uint32_t kMaximumSceneMaterials = 64;
-constexpr uint32_t kDefaultCapturePathTracingSpp = 1024;
+constexpr uint32_t kDefaultCapturePathTracingSpp = 128;
 const Gui::DropdownList kComparisonModes = {
     {0, "Left / right split"},
     {1, "Linear absolute error"},
@@ -473,13 +473,6 @@ ViewerOptions parseOptions(int argc, char** argv)
                     const uint32_t targetSpp = slots[slotIndex].value("target_spp", referenceTargetSpp);
                     if (targetSpp == 0u)
                         throw std::runtime_error("capture v4 path-tracing slot target_spp must be positive");
-                    if (options.requestedSlotPackages[slotIndex] == "source-reference"
-                        && targetSpp != referenceTargetSpp)
-                        throw std::runtime_error("capture source-reference target_spp must equal reference_spp");
-                    if (options.capturePurpose != "training-diagnostic" && targetSpp != referenceTargetSpp)
-                        throw std::runtime_error("asymmetric path-tracing spp is restricted to training-diagnostic capture");
-                    if (targetSpp > referenceTargetSpp)
-                        throw std::runtime_error("capture slot target_spp cannot exceed reference_spp");
                     options.captureTargetSpp[slotIndex] = targetSpp;
                 }
                 else options.captureTargetSpp[slotIndex] = 0u;
@@ -572,7 +565,7 @@ ViewerOptions parseOptions(int argc, char** argv)
         }
         else throw std::runtime_error("unknown argument: " + argument);
     }
-    if (options.width < 320 || options.height < 240 || options.frameCount < 1)
+    if (options.width < 2 || options.height < 1 || options.frameCount < 1)
         throw std::runtime_error("viewer dimensions/frame count are outside supported bounds");
     return options;
 }
@@ -737,10 +730,7 @@ void NclsViewer::onLoad(RenderContext* pRenderContext)
     }
     if (mLinkedMdlMode && mReferenceSource.family == ncls::ReferenceFamily::Mdl
         && mReferenceSource.mdlCatalog && mReferenceSource.hasLinkedMdlPackage())
-        mStatus = std::string("ViewerMaterialCatalog ready: step ")
-            + std::to_string(mReferenceSource.mdlCatalog->checkpointStep) + " / "
-            + mReferenceSource.mdlCatalog->checkpointPhase + " / "
-            + (mReferenceSource.mdlEdited ? "edited-preview" : "authored");
+        mStatus = "ViewerMaterialCatalog ready";
     else
         mStatus = mPrograms.empty()
             ? "No compatible neural package; source reference remains in its comparison panel."
@@ -2855,17 +2845,13 @@ void NclsViewer::renderMdlUi(Gui::Widgets& widgets)
 
         const auto& entry = catalog.entries[mReferenceSource.mdlCatalogIndex];
         widgets.text("Preset: " + entry.displayName);
-        widgets.text(std::string("Neural checkpoint: step ")
-            + std::to_string(catalog.checkpointStep)
-            + " / " + catalog.checkpointPhase + " / "
-            + (mReferenceSource.mdlEdited ? "edited-preview" : "authored"));
+
         widgets.text("Viewer state: " + shortId(mReferenceSource.mdlEditStateSha256));
         Gui::Group diagnostics = widgets.group("Identity diagnostics", false);
         if (diagnostics)
         {
             diagnostics.text("Catalog: " + shortId(catalog.catalogId));
             diagnostics.text("Registry: " + shortId(catalog.registryIdentity));
-            diagnostics.text("Checkpoint compatibility: " + catalog.checkpointCompatibility);
             diagnostics.text("Export: " + shortId(entry.exportId));
             diagnostics.text("Source snapshot: " + shortId(entry.sourceSnapshotId));
             diagnostics.text("Program / asset / instance: " + shortId(entry.programId)
@@ -3799,7 +3785,6 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
             {"package_id", program ? program->packageId : slot.sourceReference ? "source-reference" : ""},
             {"program_id", program ? program->program->programId : slot.sourceReference ? "ncls.scene-path-tracer@1" : ""},
             {"checkpoint_profile_id", program ? program->checkpointProfileId : ""},
-            {"checkpoint_compatibility", program ? program->checkpointCompatibility : ""},
             {"asset_id", program ? program->asset.assetId : ""},
             {"instance_id", program ? program->instance.instanceId : ""},
             {"source_snapshot_id", program ? program->asset.sourceSnapshotId : ncls::referenceSourceStateHash(mReferenceSource)},
@@ -3828,13 +3813,6 @@ void NclsViewer::capture(const std::filesystem::path& requestedManifestPath)
             {"catalog_id", catalog.catalogId},
             {"registry_identity", catalog.registryIdentity},
             {"registry_sha256", catalog.registrySha256},
-            {"checkpoint_sha256", catalog.checkpointSha256},
-            {"checkpoint_descriptor_sha256", catalog.checkpointDescriptorSha256},
-            {"runtime_descriptor_sha256", catalog.runtimeDescriptorSha256},
-            {"checkpoint_compatibility", catalog.checkpointCompatibility},
-            {"method_key", catalog.methodKey},
-            {"checkpoint_step", catalog.checkpointStep},
-            {"checkpoint_phase", catalog.checkpointPhase},
             {"export_id", entry.exportId},
             {"source_snapshot_id", entry.sourceSnapshotId},
             {"package_id", entry.packageId},

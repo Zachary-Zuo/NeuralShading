@@ -312,8 +312,6 @@ class PipelineOnlineDataSession:
             or int(state["format_version"]) != 1
         ):
             raise ValueError("unsupported online data session state format")
-        if state["execution_plan_identity"] != self._execution_plan_identity:
-            raise ValueError("online data session execution plan identity mismatch")
         next_logical_id = int(state["next_logical_id"])
         consumed_steps = int(state["consumed_steps"])
         consumed_batches = int(state["consumed_batches"])

@@ -92,7 +92,7 @@ current_step="mdl-provider-build"
 bash "${project_root}/scripts/build_mdl_program_provider.sh"
 
 current_step="asset-free-probe"
-bash "${project_root}/scripts/run_falcor_python.sh" -m ncls.cli reference probe
+conda run --no-capture-output -n neural-shading python -m ncls reference probe --device "${CUDA_VISIBLE_DEVICES:-0}"
 
 current_step="complete"
 write_report "ready"

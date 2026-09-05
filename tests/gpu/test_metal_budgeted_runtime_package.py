@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 import torch
 
-from ncls.learning.metal_budgeted_asset_cook import MetalBudgetedCompiledAsset
-from ncls.learning.metal_budgeted_runtime import (
+from ncls.learning.methods.metal.asset_cook import MetalBudgetedCompiledAsset
+from ncls.learning.methods.metal.runtime import (
     evaluate_metal_budgeted_cooked_asset,
     pack_metal_budgeted_compiled_material,
     pack_metal_budgeted_program,
@@ -15,7 +15,7 @@ from ncls.learning.metal_budgeted_runtime import (
     quantize_metal_budgeted_program_state,
     quantize_metal_budgeted_runtime_model,
 )
-from ncls.learning.models.metal_budgeted import MetalBudgetedModel
+from ncls.learning.methods.metal.model import MetalBudgetedModel
 from ncls.references.backend import create_reference_backend
 
 

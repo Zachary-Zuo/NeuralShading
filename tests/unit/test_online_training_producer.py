@@ -17,7 +17,7 @@ from ncls.learning.source_adaptation import (
     DenseNativeAssetCollection,
     NativeAssetRole,
 )
-from ncls.learning.source_adapters import _balanced_one_native_texel_offsets
+from ncls.learning.methods.metal.data import _balanced_one_native_texel_offsets
 
 
 class _Lease:

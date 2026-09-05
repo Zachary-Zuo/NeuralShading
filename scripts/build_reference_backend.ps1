@@ -50,7 +50,7 @@ if (-not (Test-Path -LiteralPath $falcorExtension)) {
 & (Join-Path $PSScriptRoot "build_mdl_reference.ps1") -Configuration $Configuration
 if ($LASTEXITCODE -ne 0) { throw "MDL program provider build 失败" }
 
-& (Join-Path $PSScriptRoot "run_falcor_python.ps1") -m ncls.cli reference probe
+& conda run --no-capture-output -n neural-shading python -m ncls reference probe
 if ($LASTEXITCODE -ne 0) { throw "reference backend asset-free probe 失败" }
 
 Write-Host "Reference backend ready: Windows/D3D12; assets not managed"

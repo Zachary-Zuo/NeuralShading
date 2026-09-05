@@ -7,8 +7,8 @@ import torch
 
 from ncls.core.identity import sha256_file
 from ncls.core.source import SourceSnapshot
-from ncls.learning.methods import get_method_plugin
-from ncls.learning.methods.nvidia import METHOD_DEFINITION
+from ncls.learning.methods import get_method
+from ncls.learning.methods.nvidia.method import METHOD
 from ncls.learning.source_adaptation import (
     MDL_FIXED_PARAMETER_SLOTS,
     encode_mdl_fixed_native_features,
@@ -90,7 +90,7 @@ def _arguments():
 
 def test_mdl_fixed_uniform_adapter_is_bounded_finite_and_one_by_one() -> None:
     snapshot = _snapshot(_arguments())
-    adapter = get_method_plugin("nvidia").data.create_source_adapter(
+    adapter = get_method("nvidia").create_source_adapter(
         (snapshot,), torch.device("cpu")
     )
     tensors, provenance = adapter.sample_tensors(
@@ -136,7 +136,7 @@ def test_mdl_fixed_uniform_adapter_rejects_spatial_or_unbounded_inputs() -> None
 def test_mdl_fixed_uniform_adapter_rejects_multiple_snapshots() -> None:
     snapshot = _snapshot(_arguments())
     with pytest.raises(RuntimeError, match="one snapshot"):
-        get_method_plugin("nvidia").data.create_source_adapter(
+        get_method("nvidia").create_source_adapter(
             (snapshot, snapshot),
             torch.device("cpu"),
         )
@@ -145,7 +145,7 @@ def test_mdl_fixed_uniform_adapter_rejects_multiple_snapshots() -> None:
 def test_mdl_effect_pigment_smoke_config_matches_adapter_contract() -> None:
     config = TrainingPlanResolver(PROJECT_ROOT).resolve(
         "configs/training/runs/nvidia-mdl-effect-pigment-smoke.yaml"
-    ).to_runtime_config()
+    ).training
     assert config.source_adaptation_id == "nvidia.mdl-fixed-uniform@1"
     assert config.model_context["native_feature_count"] == (
         mdl_fixed_native_feature_layout().channel_count
@@ -156,5 +156,5 @@ def test_mdl_effect_pigment_smoke_config_matches_adapter_contract() -> None:
     )
     assert any(
         value.family_id == "mdl.program@1"
-        for value in METHOD_DEFINITION.descriptor.supported_sources
+        for value in METHOD.descriptor.supported_sources
     )

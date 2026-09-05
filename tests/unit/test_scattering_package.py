@@ -6,18 +6,18 @@ import pytest
 from ncls.bundle import ScatteringPackage, write_scattering_package
 from ncls.core.scattering import InstancePayload
 from ncls.core.source import SourceSnapshot
-from tests.fixtures.method_definition import METHOD_DEFINITION
+from tests.fixtures.method import METHOD
 
 
 def test_scattering_package_roundtrip_has_program_asset_instance_identities(tmp_path):
     source = SourceSnapshot("ncls.layer-stack@1", 1, "fixture", "a" * 64, b"{}")
     package_root = tmp_path / "package"
     manifest = write_scattering_package(
-        package_root, program_kind="method", program_key=METHOD_DEFINITION.descriptor.method_key,
-        program_version=1, program_descriptor_sha256=METHOD_DEFINITION.descriptor.descriptor_sha256,
-        runtime_abi=METHOD_DEFINITION.descriptor.runtime_abi, source=source,
-        program_payload=METHOD_DEFINITION.compile_program({}),
-        asset_payload=METHOD_DEFINITION.compile_asset(source, {}),
+        package_root, program_kind="method", program_key=METHOD.descriptor.method_key,
+        program_version=1, program_descriptor_sha256=METHOD.descriptor.descriptor_sha256,
+        runtime_abi=METHOD.descriptor.runtime_abi, source=source,
+        program_payload=METHOD.compile_program({}),
+        asset_payload=METHOD.compile_asset(source, {}),
         validation={"status": "passed"}, provenance={"test": True},
     )
     assert len({manifest.package_id, manifest.program_id, manifest.asset_id, manifest.instance_id}) == 4
@@ -35,8 +35,8 @@ def test_scattering_package_roundtrip_has_program_asset_instance_identities(tmp_
 
 def test_scattering_package_writer_hardlinks_shared_content(tmp_path):
     source = SourceSnapshot("ncls.layer-stack@1", 1, "fixture", "a" * 64, b"{}")
-    program = METHOD_DEFINITION.compile_program({})
-    asset = METHOD_DEFINITION.compile_asset(source, {})
+    program = METHOD.compile_program({})
+    asset = METHOD.compile_asset(source, {})
     linked_content_store = {}
     manifests = []
     roots = []
@@ -47,10 +47,10 @@ def test_scattering_package_writer_hardlinks_shared_content(tmp_path):
             write_scattering_package(
                 root,
                 program_kind="method",
-                program_key=METHOD_DEFINITION.descriptor.method_key,
+                program_key=METHOD.descriptor.method_key,
                 program_version=1,
-                program_descriptor_sha256=METHOD_DEFINITION.descriptor.descriptor_sha256,
-                runtime_abi=METHOD_DEFINITION.descriptor.runtime_abi,
+                program_descriptor_sha256=METHOD.descriptor.descriptor_sha256,
+                runtime_abi=METHOD.descriptor.runtime_abi,
                 source=source,
                 program_payload=program,
                 asset_payload=asset,
@@ -169,13 +169,13 @@ def test_editable_instance_roundtrip_preserves_typed_blobs_and_compiler(tmp_path
     write_scattering_package(
         root,
         program_kind="method",
-        program_key=METHOD_DEFINITION.descriptor.method_key,
+        program_key=METHOD.descriptor.method_key,
         program_version=1,
-        program_descriptor_sha256=METHOD_DEFINITION.descriptor.descriptor_sha256,
-        runtime_abi=METHOD_DEFINITION.descriptor.runtime_abi,
+        program_descriptor_sha256=METHOD.descriptor.descriptor_sha256,
+        runtime_abi=METHOD.descriptor.runtime_abi,
         source=source,
-        program_payload=METHOD_DEFINITION.compile_program({}),
-        asset_payload=METHOD_DEFINITION.compile_asset(source, {}),
+        program_payload=METHOD.compile_program({}),
+        asset_payload=METHOD.compile_asset(source, {}),
         instance_payload=_editable_instance(source.snapshot_id),
         validation={"status": "passed"},
         provenance={"test": True},

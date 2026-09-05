@@ -377,12 +377,8 @@ ViewerProgram loadPackage(const std::filesystem::path& root)
     result.asset.sourceAssetSha256 = sourceIdentity.at("source_asset_sha256").get<std::string>();
     result.displayName = manifest.at("program_key").get<std::string>();
     result.checkpointProfileId = programProvenance.value("checkpoint_profile_id", std::string());
-    result.checkpointCompatibility = programProvenance.value(
-        "checkpoint_compatibility", std::string());
     if (!result.checkpointProfileId.empty())
         result.displayName += " / " + result.checkpointProfileId;
-    if (!result.checkpointCompatibility.empty())
-        result.displayName += " [" + result.checkpointCompatibility + "]";
     programCache->backendId = result.displayName;
     programCache->runtimeClass = manifest.at("program_kind").get<std::string>();
     programCache->architectureId = programCache->programId;

@@ -1,18 +1,12 @@
 # NeuralShading
 
-NeuralShading 研究如何把多种保持原生语义的源材质族编译为统一、随机访问、运行成本有界的 neural material program。目标方法用小型 MLP 直接实现逐方向 `evaluate(wo, wi)`，让同一份编译材质进入 deferred、hybrid ray tracing 和 path tracing 的材质求值位置。源材质可以是纯数学模型、可编辑材质图、程序材质、高分辨率纹理或测量外观；每个材质族保留自己的权威 reference，不要求 GT 先被分解成某种层参数或固定 closure。
+NeuralShading 研究如何把保持原生语义的源材质编译为随机访问、运行成本有界的 neural material program。源材质族用自己的 reference 产生 GT；目标运行时用小型 MLP 实现 `evaluate(wo, wi)`，通过 `prepare()` 复用同一着色点的编码，需要方向采样时提供匹配的 `sample()/pdf()`。
 
-项目的正式架构分为三段：CorpusPlan 驱动的 reference 语料、统一 neural evaluator 训练/评测、Windows/D3D12 部署验证。三段只通过 `MaterialProgram`、`reference-corpus`/矩形 HDF5 shard 和 `MethodBundle` 交换数据。LayerStack、MERL、OpenPBR 与 MaterialX 已有保持原生语义的 provider；P0 首先完整冻结 LayerStack v1 语料，其他材质族随后接入同一 corpus 合同。
+当前 reference 支持 LayerStack、MERL、OpenPBR、MaterialX 和 MDL。正式训练只在 GPU 上在线产生方向查询，不保存训练 batch。当前方法为 `nvidia` 和 `metal`，共用配置解析、数据调度、训练、checkpoint 与 TensorBoard。
 
-目标运行时分成三个清晰阶段：`compile_material()` 生成 view-independent latent 资产；`prepare()` 在每个 raster pixel 或 ray hit 获取、过滤并编码 latent、footprint 与 `wo`；小型 evaluator MLP 对每个 `wi` 直接输出散射。Path tracing profile 在 evaluator 成形后再增加匹配且具有可计算密度的 `sample()/pdf()`；环境光和面光积分作为后续独立能力研究。
+## 开始训练
 
-当前采用基准优先顺序：先生成 LayerStack v1 corpus 并冻结 `quality-v1`，再在着色器预算内比较 evaluator 候选，之后进入 compiler、Slang、sampler 与 Falcor/UE 式系统验收。现有解析 backend 只承担部署回归 fixture、成本对照和可选物理 core/sampling proposal，不注册为研究候选。
-
-源材质 reference 已扩展为五个 active package：LayerStack 随机游走、pbrt coated 独立验证、OpenPBR 1.1.1、MERL 测量 BRDF，以及 8 个原生 MaterialX/Poly Haven 4K 纹理材质。它们从 `references/registry.json` 统一发现，但各自保留原始参数、测量表或图/纹理 GT。
-
-## 最短启动路径
-
-创建唯一环境并安装项目：
+创建唯一环境，按[部署说明](docs/reference_backend_deployment.md)构建当前平台的 reference backend：
 
 ```powershell
 conda env create -f environment.yml
@@ -20,41 +14,38 @@ conda run -n neural-shading python -m pip install -r requirements-torch-cu128.tx
 conda run -n neural-shading python -m pip install -e .
 ```
 
-解析 LayerStack v1 语料计划：
+激活 `neural-shading` 后，Windows/Linux 使用同一个 Python 入口：
 
-```powershell
-conda run -n neural-shading python -m ncls.cli data plan-corpus `
-  --config configs\corpus\layer-stack-v1.json `
-  --shard-root data\reference-responses `
-  --output artifacts\corpus\layer-stack-v1-plan.json
+```bash
+python -m ncls train 0 --config configs/training/runs/nvidia-layer-stack-smoke.yaml
+# Linux 多卡：自动启动一个 DDP 作业
+python -m ncls train 0,1 --config configs/training/runs/nvidia-layer-stack-smoke.yaml
+tensorboard --logdir outputs
 ```
 
-正式采集需要锁定的 Falcor Python；命令支持 verified-file 断点续采：
+GPU 编号只在命令中指定。每次新训练自动建立 `outputs/<config文件名>/<run-id>/`，checkpoint、TensorBoard、eval、导出和日志都在其中。明确 `--resume <checkpoint>` 才续写原 run。
 
-```powershell
-.\scripts\run_falcor_python.ps1 -m ncls.cli data collect-corpus `
-  --config configs\corpus\layer-stack-v1.json `
-  --shard-root data\reference-responses `
-  --output artifacts\corpus\layer-stack-v1.json
+Windows 训练中的图像对照直接进入 TensorBoard，reference 默认 128 spp，可在 YAML 调整。Linux 保留数值 validation 和同一个图像 eval 接口，当前图像实现为空操作。
 
-conda run -n neural-shading python -m ncls.cli data validate-corpus `
-  artifacts\corpus\layer-stack-v1.json
-```
+## 目录
 
-P1 已完成 M1 S/M/L、matched M2 S/M/L、per-state teacher 与 M3 response-space oracle 的正式比较；统一使用 `ncls learn train/evaluate/compare/benchmark`、`ncls learn oracle-m3` 和 [`quality-v1`](docs/learning.md)，不启用迁移前 pipeline 或 config。M1-M 是通过全部主参考线的质量起点，M1-S 是更快的 Pareto 端点；详细结论见 [`experiment_log.md`](docs/research/experiment_log.md)。P1 的 30-state selection 与完整 LayerStack v1 共用同一单-state 方向密度，只缩减当前阶段研究的 state 范围；reference 样本预算按排名、训练和诊断用途分别冻结。
+| 目录 | 内容 |
+|---|---|
+| `src/ncls` | Python 源码；方法位于 `learning/methods/nvidia/`、`learning/methods/metal/` |
+| `apps/viewer`、`shaders/ncls` | Windows viewer 与共享着色器 |
+| `configs`、`references` | 实验配置、源材质/reference 清单 |
+| `assets`、`external` | 原始资产、锁定的第三方源码与 SDK |
+| `build` | 可重建的构建和编译缓存 |
+| `outputs` | 按 config/run 聚合的训练成果，删除前自行确认 |
+| `artifacts` | 可清理的临时研究产物；旧 viewer PNG/EXR 原地保留，供后续模型分析 |
+| `docs`、`.trellis` | 稳定文档、规范和任务记录 |
 
-## 文档入口
+`artifacts` 不再承载新训练权重或默认部署依赖。本次架构重置不迁移旧成果，也不提供旧 checkpoint 兼容；后续实验从新架构重新训练。
 
-- [这个问题是什么、如何进入 UE 式实时管线](docs/realtime_material_compilation.md)
-- [架构与边界](docs/architecture.md)
-- [源材质族与统一神经材质程序](docs/material_scope.md)
-- [Reference package 固定入口](references/README.md)
-- [数据采集](docs/data.md)
-- [训练、评测与导出](docs/learning.md)
-- [Windows viewer](apps/viewer/README.md)
-- [稳定合同](docs/contracts/)
-- [分层测试](TESTING.md)
-- [仓库边界](docs/repository_policy.md)
-- [当前研究问题、相关工作与实验路线](docs/research/README.md)
+## 文档
 
-Falcor 8.0、pbrt-v4、OpenPBR、openpbr-bsdf、GLM 和 MaterialX 位于被 Git 忽略的 `external/` 独立克隆，固定提交见 `AGENTS.md`。本项目源码不会把未说明修改留在上游工作树。
+- [训练、续训、验证与导出](docs/learning.md)
+- [架构](docs/architecture.md)、[仓库边界](docs/repository_policy.md)
+- [源材质语义](docs/material_scope.md)、[在线数据](docs/data.md)
+- [研究目标](docs/realtime_material_compilation.md)、[实验记录](docs/research/experiment_log.md)
+- [Windows viewer](apps/viewer/README.md)、[测试与 Linux 验证交接](TESTING.md)

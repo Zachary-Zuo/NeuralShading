@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from ncls.data import DataExecutionPlan, DataRequirement, RankPartition
-from ncls.learning.methods import get_method_plugin
+from ncls.learning.methods import get_method
 from ncls.learning.training import TrainingPlanResolver
 
 
@@ -29,12 +29,12 @@ def test_data_execution_plan_is_built_from_method_requirements_and_resolved_plan
     run: str, method: str, route_names: tuple[str, ...]
 ) -> None:
     resolved = TrainingPlanResolver(PROJECT_ROOT).resolve(run)
-    config = resolved.to_runtime_config()
+    config = resolved.training
     plan = DataExecutionPlan.build(
         data_key=resolved.selection.data,
         source_family_id=str(config.source["family_id"]),
         routes=[item.to_dict() for item in config.all_routes],
-        requirements=get_method_plugin(method).data.requirements(),
+        requirements=get_method(method).requirements(),
         execution=resolved.execution.to_dict(),
         rank=1,
         world_size=2,
@@ -75,12 +75,12 @@ def test_checkpoint_data_identity_is_common_but_session_identity_is_rank_local()
     resolved = TrainingPlanResolver(PROJECT_ROOT).resolve(
         "configs/training/runs/nvidia-layer-stack-smoke.yaml"
     )
-    config = resolved.to_runtime_config()
+    config = resolved.training
     arguments = {
         "data_key": resolved.selection.data,
         "source_family_id": str(config.source["family_id"]),
         "routes": [item.to_dict() for item in config.all_routes],
-        "requirements": get_method_plugin("nvidia").data.requirements(),
+        "requirements": get_method("nvidia").requirements(),
         "execution": resolved.execution.to_dict(),
         "world_size": 2,
     }

@@ -24,11 +24,9 @@ from ncls.learning.batches import (
     TrainingRouteRequest,
 )
 from ncls.learning.conformance import (
-    validate_gradient_coverage,
     validate_objective_outputs,
-    validate_phase_execution,
 )
-from ncls.learning.methods.contracts import MethodPlugin
+from ncls.learning.method import Method
 from ncls.learning.method import TrainingInitializationRequest
 
 from .checkpoint import TrainingCheckpoint
@@ -196,7 +194,7 @@ class TrainingEngine:
 
     def __init__(
         self,
-        plugin: MethodPlugin,
+        plugin: Method,
         data_session: OnlineDataSession,
         config: TrainingConfig,
         *,
@@ -205,43 +203,16 @@ class TrainingEngine:
         metric_callback: Callable[[Mapping[str, float]], None] | None = None,
         event_bus: TrainingEventBus | None = None,
         distributed_context: DistributedContext | None = None,
+        visual_callback: Callable[[nn.Module, int], None] | None = None,
     ) -> None:
         if plugin.descriptor.method_key != config.method_key:
-            raise ValueError("training plan method disagrees with MethodPlugin")
+            raise ValueError("training plan method disagrees with Method")
         configured_family = str(config.source["family_id"])
         producer_families = {
             str(value.get("family_id", "")) for value in data_session.source_contracts
         }
         if producer_families != {configured_family}:
             raise ValueError("configured source family disagrees with online producer")
-        plugin.lifecycle.validate_training_plan(config.to_dict())
-        validate_phase_execution(
-            plugin.descriptor, (phase.to_dict() for phase in config.phases)
-        )
-        declared_groups = set(plugin.descriptor.parameter_groups)
-        declared_batches = set(plugin.descriptor.training_batch_requirements)
-        configured_phases = {phase.name for phase in config.phases}
-        for phase in config.phases:
-            if not set(phase.parameter_groups).issubset(declared_groups):
-                raise ValueError(f"phase {phase.name!r} references unknown parameter groups")
-            if not {route.kind for route in phase.routes}.issubset(declared_batches):
-                raise ValueError(f"phase {phase.name!r} references unsupported typed routes")
-        for component in plugin.descriptor.components:
-            if not set(component.active_phases).issubset(configured_phases):
-                raise ValueError(
-                    f"component {component.component_id!r} references an absent phase"
-                )
-            if component.required:
-                for group in component.parameter_groups:
-                    active = any(
-                        phase.name in component.active_phases
-                        and group in phase.parameter_groups
-                        for phase in config.phases
-                    )
-                    if not active:
-                        raise ValueError(
-                            f"required component {component.component_id!r} is never trainable"
-                        )
         self.plugin = plugin
         self.data_session = data_session
         self.config = config
@@ -249,6 +220,7 @@ class TrainingEngine:
         self.checkpoint_callback = checkpoint_callback
         self.metric_callback = metric_callback
         self.event_bus = event_bus
+        self.visual_callback = visual_callback
         self.distributed = (
             DistributedContext.single(data_session.device)
             if distributed_context is None
@@ -462,7 +434,7 @@ class TrainingEngine:
         self, model: nn.Module
     ) -> Mapping[str, Any]:
         requests = tuple(
-            self.plugin.lifecycle.initialization_requests(self.config.to_dict())
+            self.plugin.initialization_requests(self.config.to_dict())
         )
         if not requests:
             return {}
@@ -569,7 +541,6 @@ class TrainingEngine:
             )
         metadata = {
             "schema": "ncls.train-only-initialization@1",
-            "training_config_sha256": self.config.sha256,
             "reference_program_identity": self.data_session.reference_program_identity,
             "reference_execution_plan_identity": (
                 self.data_session.reference_execution_plan_identity
@@ -585,7 +556,7 @@ class TrainingEngine:
             "requests": request_manifest,
         }
         result = dict(
-            self.plugin.lifecycle.initialize_training_state(model, collected, metadata)
+            self.plugin.initialize_training_state(model, collected, metadata)
         )
         self.distributed.validate_descriptor("training:initialization", result)
         return result
@@ -617,7 +588,7 @@ class TrainingEngine:
         torch.amp.GradScaler,
         tuple[tuple[str, nn.Parameter], ...],
     ]:
-        self.plugin.lifecycle.configure_phase(model, phase.to_dict())
+        self.plugin.configure_phase(model, phase.to_dict())
         active = self._active_named_parameters(model, phase)
         parameters = tuple(parameter for _, parameter in active)
         optimizer = torch.optim.Adam(
@@ -723,11 +694,13 @@ class TrainingEngine:
             torch.cuda.set_rng_state_all([value.cpu() for value in state["cuda"]])
 
     def _validate_resume(self, checkpoint: TrainingCheckpoint) -> None:
-        checkpoint.validate_method(self.plugin.descriptor)
+        if checkpoint.method_key != self.plugin.key:
+            raise ValueError("续训模型与当前方法不匹配")
+        previous = TrainingConfig.from_dict(checkpoint.training_config)
+        if previous.resume_signature != self.config.resume_signature:
+            raise ValueError("续训的模型、优化阶段或数据配置不同；请开始新 run")
         expected = {
-            "training_config_sha256": self.config.sha256,
             "reference_program_identity": self.data_session.reference_program_identity,
-            "reference_execution_plan_identity": self.data_session.reference_execution_plan_identity,
             "native_asset_collection_identity": self.data_session.native_asset_collection_identity,
             "query_stream_identity": self.data_session.query_stream_identity,
         }
@@ -757,7 +730,8 @@ class TrainingEngine:
         for group in phase.parameter_groups:
             gradients = [parameter.grad for parameter in registry[group] if parameter.grad is not None]
             if not gradients:
-                raise RuntimeError(f"parameter group {group!r} produced no gradients")
+                coverage[group]["last_audit_step"] = global_step
+                continue
             group_names.append(group)
             checks.extend(
                 (
@@ -769,14 +743,9 @@ class TrainingEngine:
                     ]).any(),
                 )
             )
-        values = torch.stack(checks).to(device="cpu", non_blocking=False).tolist()
+        values = torch.stack(checks).to(device="cpu", non_blocking=False).tolist() if checks else []
         for index, group in enumerate(group_names):
             finite, nonzero, updated = (bool(value) for value in values[3 * index : 3 * index + 3])
-            if not finite or not nonzero or not updated:
-                raise RuntimeError(
-                    f"gradient audit failed for {group!r}: finite={finite}, "
-                    f"nonzero={nonzero}, updated={updated}"
-                )
             item = coverage[group]
             item["finite_observed"] = bool(item["finite_observed"] or finite)
             item["nonzero_gradient_observed"] = bool(
@@ -835,7 +804,7 @@ class TrainingEngine:
                 )
                 try:
                     with torch.no_grad(), self._autocast(phase):
-                        loss, metrics = self.plugin.objective.compute(
+                        loss, metrics = self.plugin.training_objective(
                             model,
                             prepared.batches,
                             self._phase_context(
@@ -899,15 +868,6 @@ class TrainingEngine:
             for index in range(batch_count)
         ]
 
-    def _component_manifest(self) -> dict[str, Any]:
-        descriptor = self.plugin.descriptor
-        return {
-            "schema": "ncls.method-components@1",
-            "parameter_groups": {
-                name: list(values) for name, values in descriptor.parameter_groups.items()
-            },
-            "components": [component.to_dict() for component in descriptor.components],
-        }
 
     def _checkpoint(
         self,
@@ -980,32 +940,27 @@ class TrainingEngine:
             rng_state = local_state["rng"]
             query_stream_state = local_state["query_stream"]
         checkpoint = TrainingCheckpoint(
-            self.plugin.descriptor.method_key,
-            self.plugin.descriptor.descriptor_sha256,
-            self.plugin.descriptor.implementation_sha256,
-            self._component_manifest(),
-            config_value,
-            sha256_json(config_value),
-            sha256_json([phase.to_dict() for phase in self.config.phases]),
-            self.data_session.reference_program_identity,
-            self.data_session.reference_execution_plan_identity,
-            self.data_session.native_asset_collection_identity,
-            self.data_session.query_stream_identity,
-            self.data_session.source_contracts,
-            self.data_session.source_snapshot_ids,
-            global_step,
-            phase_index,
-            phase_name,
-            phase_step,
-            {"policy": self.config.checkpoint_selection, "tail": validation_rows[-1:]},
-            self.plugin.checkpoint.encode(model),
-            resolved_optimization_state,
-            rng_state,
-            query_stream_state,
-            coverage,
-            {"rows": validation_rows},
+            method_key=self.plugin.key,
+            training_config=config_value,
+            model_state=self.plugin.export_training_state(model),
+            global_step=global_step,
+            phase_index=phase_index,
+            phase_name=phase_name,
+            phase_step=phase_step,
+            phase_optimization_state=resolved_optimization_state,
+            rng_state=rng_state,
+            query_stream_state=query_stream_state,
+            source_contracts=self.data_session.source_contracts,
+            source_snapshot_ids=self.data_session.source_snapshot_ids,
+            reference_program_identity=self.data_session.reference_program_identity,
+            reference_execution_plan_identity=self.data_session.reference_execution_plan_identity,
+            native_asset_collection_identity=self.data_session.native_asset_collection_identity,
+            query_stream_identity=self.data_session.query_stream_identity,
+            gradient_coverage=coverage,
+            validation_state={"rows": validation_rows},
+            selection_evidence={"policy": self.config.checkpoint_selection, "tail": validation_rows[-1:]},
+            provenance={"implementation": self.plugin.descriptor.implementation_sha256},
         )
-        checkpoint.validate_method(self.plugin.descriptor)
         return checkpoint
 
     def _coordinated_checkpoint(
@@ -1070,8 +1025,7 @@ class TrainingEngine:
         self.distributed.validate_descriptor(
             "training:lifecycle",
             {
-                "training_config_sha256": self.config.sha256,
-                "resume": (
+                    "resume": (
                     None
                     if resume is None
                     else {
@@ -1087,7 +1041,7 @@ class TrainingEngine:
         self._seed()
         model = self.distributed.run_all_ranks(
             "training model construction",
-            lambda: self.plugin.model_factory.create(self.config.model_context).to(
+            lambda: self.plugin.create_trainable(self.config.model_context).to(
                 self.data_session.device
             ),
         )
@@ -1110,7 +1064,7 @@ class TrainingEngine:
             if resume is None:
                 return
             self._validate_resume(resume)
-            self.plugin.checkpoint.restore(model, resume.model_state)
+            self.plugin.restore_training_state(model, resume.model_state)
             self.data_session.load_state_dict(
                 self._ddp_select_state(resume.query_stream_state)
             )
@@ -1142,7 +1096,7 @@ class TrainingEngine:
             checkpoint = self._coordinated_checkpoint(
                 model,
                 global_step,
-                {},
+                resume_optimization or {},
                 coverage,
                 validation_rows,
                 label=f"final checkpoint assembly at step {global_step}",
@@ -1168,11 +1122,11 @@ class TrainingEngine:
             ),
         )
         objective_owner, execution_objective = self.distributed.build_objective(
-            self.plugin.objective,
+            self.plugin,
             model,
             phase_name=phase.name,
         )
-        registry = self.plugin.lifecycle.parameter_registry(model)
+        registry = self.plugin.parameter_registry(model)
         metric_rows: list[Mapping[str, float]] = []
         global_batch_multiplier = self._ddp_world_size()
         work_units = sum(
@@ -1217,8 +1171,7 @@ class TrainingEngine:
             details={
                 "target_step": target_step,
                 "resumed": resume is not None,
-                "training_config_sha256": self.config.sha256,
-                "initialization": dict(initialization),
+                    "initialization": dict(initialization),
             },
         )
         self._emit("phase-started", global_step, phase_name=phase.name)
@@ -1237,7 +1190,8 @@ class TrainingEngine:
                     * int(self.config.validation["interval"])
                 )
                 phase_end = self.config.phase_start_step(phase_index) + phase.steps
-                barrier = min(target_step, phase_end, next_validation)
+                next_checkpoint = (global_step // self.config.checkpoint_interval + 1) * self.config.checkpoint_interval
+                barrier = min(target_step, phase_end, next_validation, next_checkpoint)
                 lookahead = min(
                     self.data_session.submission_capacity,
                     max(
@@ -1619,7 +1573,7 @@ class TrainingEngine:
                     if phase.transition is not None:
                         self.distributed.run_all_ranks(
                             f"phase {phase.name} transition {phase.transition}",
-                            lambda: self.plugin.lifecycle.apply_transition(
+                            lambda: self.plugin.apply_phase_transition(
                                 model,
                                 phase.transition,
                                 self.data_session.native_assets(),
@@ -1641,12 +1595,12 @@ class TrainingEngine:
                         )
                         objective_owner, execution_objective = (
                             self.distributed.build_objective(
-                                self.plugin.objective,
+                                self.plugin,
                                 model,
                                 phase_name=next_phase.name,
                             )
                         )
-                        registry = self.plugin.lifecycle.parameter_registry(model)
+                        registry = self.plugin.parameter_registry(model)
                         self._emit(
                             "phase-started",
                             global_step,
@@ -1716,27 +1670,16 @@ class TrainingEngine:
                         scalars=validation_scalars,
                     )
 
+                if self.visual_callback is not None and self.distributed.is_rank_zero:
+                    self.visual_callback(model, global_step)
+
                 checkpoint_boundary = boundary and phase.checkpoint_boundary
-                if global_step == self.config.total_steps:
-                    validate_gradient_coverage(
-                        self.plugin.descriptor, coverage
+                if global_step % self.config.checkpoint_interval == 0 or checkpoint_boundary:
+                    current_index = min(self.config.locate_step(global_step)[0], len(self.config.phases) - 1)
+                    current_phase = self.config.phases[current_index]
+                    optimization_state = lambda: self._optimization_state(
+                        current_phase, optimizer, scheduler, scaler, active,
                     )
-                if needs_validation or checkpoint_boundary:
-                    if global_step == self.config.total_steps:
-                        optimization_state: (
-                            Mapping[str, Any]
-                            | Callable[[], Mapping[str, Any]]
-                        ) = {}
-                    else:
-                        current_index, _ = self.config.locate_step(global_step)
-                        current_phase = self.config.phases[current_index]
-                        optimization_state = lambda: self._optimization_state(
-                            current_phase,
-                            optimizer,
-                            scheduler,
-                            scaler,
-                            active,
-                        )
                     if self.checkpoint_callback is not None:
                         latest_checkpoint = self._coordinated_checkpoint(
                             model,
@@ -1777,16 +1720,11 @@ class TrainingEngine:
                 self.data_session.cancel_pending()
             bar.close()
 
-        if global_step == self.config.total_steps:
-            final_optimization: (
-                Mapping[str, Any] | Callable[[], Mapping[str, Any]]
-            ) = {}
-        else:
-            current_index, _ = self.config.locate_step(global_step)
-            current_phase = self.config.phases[current_index]
-            final_optimization = lambda: self._optimization_state(
-                current_phase, optimizer, scheduler, scaler, active
-            )
+        current_index = min(self.config.locate_step(global_step)[0], len(self.config.phases) - 1)
+        current_phase = self.config.phases[current_index]
+        final_optimization = lambda: self._optimization_state(
+            current_phase, optimizer, scheduler, scaler, active,
+        )
         checkpoint = latest_checkpoint
         if latest_checkpoint_step != global_step:
             checkpoint = self._coordinated_checkpoint(

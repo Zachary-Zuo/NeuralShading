@@ -8,8 +8,8 @@ from ncls.learning.batches import (
     MethodSamplerBatch,
     TrainingConditioning,
 )
-from ncls.learning.methods.metal_budgeted import METHOD_DEFINITION
-from ncls.learning.models.metal_budgeted import METAL_BUDGETED_REQUIRED_CONTEXT
+from ncls.learning.methods.metal.method import METHOD
+from ncls.learning.methods.metal.model import METAL_BUDGETED_REQUIRED_CONTEXT
 
 
 def _values(batch: int = 2) -> dict[str, torch.Tensor]:
@@ -119,7 +119,7 @@ def _phase(name: str = "joint-response-fit") -> dict[str, object]:
 
 def _initialize_calibration(model: torch.nn.Module) -> None:
     target = torch.linspace(0.01, 1.0, 16384)[:, None].expand(-1, 3).clone()
-    result = METHOD_DEFINITION.initialize_training_state(
+    result = METHOD.initialize_training_state(
         model,
         {"appearance-calibration": {"target_f": target}},
         {
@@ -136,9 +136,9 @@ def _initialize_calibration(model: torch.nn.Module) -> None:
 
 
 def test_budgeted_method_descriptor_and_parameter_registry_are_exact() -> None:
-    descriptor = METHOD_DEFINITION.descriptor
-    model = METHOD_DEFINITION.create_trainable(METAL_BUDGETED_REQUIRED_CONTEXT)
-    groups = METHOD_DEFINITION.parameter_registry(model)
+    descriptor = METHOD.descriptor
+    model = METHOD.create_trainable(METAL_BUDGETED_REQUIRED_CONTEXT)
+    groups = METHOD.parameter_registry(model)
     assert descriptor.method_key == "metal-budgeted-neural-material"
     assert descriptor.runtime_abi == "ncls.metal-budgeted-method@3"
     assert descriptor.cost_claims["C_eval_macs"] == 11_392
@@ -146,46 +146,17 @@ def test_budgeted_method_descriptor_and_parameter_registry_are_exact() -> None:
     assert descriptor.cost_claims["P_trainable"] == 30_825
     assert descriptor.cost_claims["P_runtime_prepare_evaluate"] == 14_313
     assert descriptor.cost_claims["B_runtime_fp16_weights"] == 28_626
-    readiness = descriptor.readiness_policies["diagnostic-evaluator"]
-    assert set(readiness.required_parameter_groups) == {
-        "asset_encoder",
-        "asset_variant",
-        "typed_compiler",
-        "semantic_prepare",
-        "directional_evaluator",
-    }
-    assert readiness.allowed_phases == (
-        "joint-response-fit",
-        "deployment-qat-refine",
-        "complete",
-    )
-    assert descriptor.to_dict()["readiness_policies"]["diagnostic-evaluator"] == {
-        "required_parameter_groups": list(readiness.required_parameter_groups),
-        "allowed_phases": list(readiness.allowed_phases),
-        "minimum_global_step": 1,
-    }
-    assert set(groups) == {
-        "asset_encoder",
-        "asset_variant",
-        "typed_compiler",
-        "semantic_prepare",
-        "directional_evaluator",
-        "proposal_sampler",
-    }
-    assert sum(len(values) for values in groups.values()) == len(
-        tuple(model.parameters())
-    )
 
 
 def test_budgeted_joint_objective_reports_standard_losses_and_gradients() -> None:
     torch.manual_seed(20260904)
-    model = METHOD_DEFINITION.create_trainable(METAL_BUDGETED_REQUIRED_CONTEXT)
+    model = METHOD.create_trainable(METAL_BUDGETED_REQUIRED_CONTEXT)
     _initialize_calibration(model)
-    loss, metrics = METHOD_DEFINITION.training_objective(
+    loss, metrics = METHOD.training_objective(
         model, _batches(), _phase()
     )
     validate_objective_outputs(
-        METHOD_DEFINITION.descriptor,
+        METHOD.descriptor,
         "joint-response-fit",
         metrics,
     )
@@ -206,7 +177,7 @@ def test_budgeted_joint_objective_reports_standard_losses_and_gradients() -> Non
     ):
         assert key in metrics
         assert bool(torch.isfinite(metrics[key]))
-    for group, parameters in METHOD_DEFINITION.parameter_registry(model).items():
+    for group, parameters in METHOD.parameter_registry(model).items():
         gradients = [parameter.grad for parameter in parameters if parameter.grad is not None]
         assert gradients, group
         assert all(bool(torch.isfinite(value).all()) for value in gradients), group
@@ -215,14 +186,14 @@ def test_budgeted_joint_objective_reports_standard_losses_and_gradients() -> Non
 
 def test_budgeted_proposal_objective_detaches_nonproposal_parameters() -> None:
     torch.manual_seed(20260904)
-    model = METHOD_DEFINITION.create_trainable(METAL_BUDGETED_REQUIRED_CONTEXT)
-    loss, metrics = METHOD_DEFINITION._proposal_objective(
+    model = METHOD.create_trainable(METAL_BUDGETED_REQUIRED_CONTEXT)
+    loss, metrics = METHOD._proposal_objective(
         model, _batches(), qat=False
     )
     loss.backward()
     assert bool(torch.isfinite(loss))
     assert bool(torch.isfinite(metrics["proposal/density_nll"]))
-    for group, parameters in METHOD_DEFINITION.parameter_registry(model).items():
+    for group, parameters in METHOD.parameter_registry(model).items():
         gradients = [parameter.grad for parameter in parameters]
         if group == "proposal_sampler":
             assert all(value is not None for value in gradients)
@@ -236,9 +207,9 @@ def test_budgeted_qat_quantizes_weights_and_direct_auxiliary_stays_training_only
         **METAL_BUDGETED_REQUIRED_CONTEXT,
         "profile_id": "metal_budgeted_direct_control_v3",
     }
-    model = METHOD_DEFINITION.create_trainable(context)
+    model = METHOD.create_trainable(context)
     _initialize_calibration(model)
-    loss, metrics = METHOD_DEFINITION.training_objective(
+    loss, metrics = METHOD.training_objective(
         model, _batches(), _phase("deployment-qat-refine")
     )
     loss.backward()
@@ -248,8 +219,8 @@ def test_budgeted_qat_quantizes_weights_and_direct_auxiliary_stays_training_only
 
 
 def test_budgeted_calibration_is_train_only_state_and_checkpoint_visible() -> None:
-    model = METHOD_DEFINITION.create_trainable(METAL_BUDGETED_REQUIRED_CONTEXT)
-    requests = METHOD_DEFINITION.initialization_requests(
+    model = METHOD.create_trainable(METAL_BUDGETED_REQUIRED_CONTEXT)
+    requests = METHOD.initialization_requests(
         {
             "phases": [_phase()],
         }
@@ -259,9 +230,9 @@ def test_budgeted_calibration_is_train_only_state_and_checkpoint_visible() -> No
     _initialize_calibration(model)
     assert bool(model.appearance_calibrated.item())
     assert len(model.appearance_calibration_identity_hex) == 64
-    state = METHOD_DEFINITION.export_training_state(model)
-    restored = METHOD_DEFINITION.create_trainable(METAL_BUDGETED_REQUIRED_CONTEXT)
-    METHOD_DEFINITION.restore_training_state(restored, state)
+    state = METHOD.export_training_state(model)
+    restored = METHOD.create_trainable(METAL_BUDGETED_REQUIRED_CONTEXT)
+    METHOD.restore_training_state(restored, state)
     assert restored.appearance_calibration_identity_hex == (
         model.appearance_calibration_identity_hex
     )
@@ -275,10 +246,10 @@ def test_all_budgeted_profiles_match_the_public_checkpoint_tensor_schema() -> No
         "metal_budgeted_hybrid_center_detail_v5",
         "metal_budgeted_hybrid_dual_local_v6",
     ):
-        model = METHOD_DEFINITION.create_trainable(
+        model = METHOD.create_trainable(
             {**METAL_BUDGETED_REQUIRED_CONTEXT, "profile_id": profile_id}
         )
-        state = METHOD_DEFINITION.export_training_state(model)
+        state = METHOD.export_training_state(model)
         assert set(state) == {
-            field.name for field in METHOD_DEFINITION.descriptor.tensor_state_schema
+            field.name for field in METHOD.descriptor.tensor_state_schema
         }

@@ -1,0 +1,123 @@
+from __future__ import annotations
+
+from typing import Any, Mapping
+
+import torch
+
+from ncls.core.scattering import MaterialPayload, RuntimePayload
+from ncls.core.source import SourceSnapshot
+from ncls.learning.method import (
+    ComponentContract,
+    Method,
+    MethodDescriptor,
+    SourceAdaptationContract,
+    TensorField,
+)
+from ncls.learning.batches import OnlineTrainingBatch
+
+
+class ContractFixtureMethod(Method):
+    key = "contract-fixture"
+
+    def create_source_adapter(self, snapshots, device):
+        raise AssertionError("fixture uses an explicit producer")
+
+    descriptor = MethodDescriptor(
+        "contract-fixture", 1, "Contract fixture", "f" * 64,
+        (
+            SourceAdaptationContract("openpbr.material@1.1.1", 1, ("/inputs",), "runtime-patch"),
+            SourceAdaptationContract("ncls.layer-stack@1", 1, ("/interfaces", "/slabs"), "recompile"),
+        ),
+        {
+            "reference-evaluator": ("wo", "wi", "target_f"),
+            "method-sampler": ("wo", "sample_u"),
+        },
+        (TensorField("fixture.scale", "float32", (3,)), TensorField("fixture.bias", "float32", (3,))),
+        "ncls.scattering-backend@1", 3,
+        {"maximum_prepare_steps": 1, "maximum_evaluate_steps": 2, "maximum_state_bytes": 16, "maximum_reads": 2},
+        {"fixture": True},
+        {"fixture": ("weight", "bias")},
+        (
+            ComponentContract(
+                "fixture-core",
+                True,
+                ("fixture",),
+                ("fit",),
+                ("reference-evaluator",),
+                ("l1",),
+                ("program:fixture", "asset:fixture"),
+                ("NclsPackageEvaluate",),
+            ),
+        ),
+    )
+
+    def create_trainable(self, context: Mapping[str, Any]) -> torch.nn.Module:
+        del context
+        return torch.nn.Linear(3, 3)
+
+    def training_objective(
+        self,
+        model: torch.nn.Module,
+        batches: Mapping[str, OnlineTrainingBatch],
+        phase: Mapping[str, Any],
+    ):
+        del phase
+        batch = next(iter(batches.values()))
+        prediction = model(batch.tensors["wi"])
+        loss = torch.mean(torch.abs(prediction - batch.tensors["target_f"]))
+        return loss, {"l1": loss.detach()}
+
+    def export_training_state(self, model: torch.nn.Module):
+        return {"fixture.scale": model.weight.diagonal().detach(), "fixture.bias": model.bias.detach()}
+
+    def restore_training_state(self, model: torch.nn.Module, state: Mapping[str, torch.Tensor]) -> None:
+        with torch.no_grad():
+            model.weight.zero_()
+            model.weight.diagonal().copy_(state["fixture.scale"])
+            model.bias.copy_(state["fixture.bias"])
+
+    def compile_program(self, checkpoint: Mapping[str, Any]) -> RuntimePayload:
+        del checkpoint
+        module = b"struct NclsPackageBackend {};\n"
+        return RuntimePayload(
+            "fixture.slang",
+            {"fixture.slang": module},
+            {},
+            {},
+            3,
+            sampler_descriptors={
+                "program-sampler": {
+                    "kind": "sampler",
+                    "usage": "gFixtureProgramSampler",
+                    "filter": "point",
+                    "address_mode": "clamp",
+                }
+            },
+        )
+
+    def compile_asset(self, snapshot: SourceSnapshot, checkpoint: Mapping[str, Any]) -> MaterialPayload:
+        del checkpoint
+        return MaterialPayload(
+            snapshot.snapshot_id,
+            {"fixture": b"\0" * 16},
+            {
+                "fixture": {
+                    "dtype": "uint8",
+                    "shape": [16],
+                    "stride": 1,
+                    "alignment": 16,
+                    "usage": "fixture",
+                }
+            },
+            sampler_descriptors={
+                "asset-sampler": {
+                    "kind": "sampler",
+                    "usage": "gFixtureAssetSampler",
+                    "filter": "linear",
+                    "address_mode": "wrap",
+                }
+            },
+        )
+
+
+METHOD = ContractFixtureMethod()

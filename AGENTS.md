@@ -32,7 +32,7 @@
 ## 根 Git 仓库边界
 
 - 根仓库包含项目自有源码、测试、环境声明、中文稳定文档、版本化验收门槛、资产清单，以及 `references/` 中的 reference registry/package 说明。
-- 根仓库不包含 `external/`、`assets/`、`data/`、`build/`、`artifacts/`、`reports/` 和缓存。单次正确性验证、实验报告与运行摘要统一进入 `artifacts/`；第三方 reference 源码固定在 `external/`；原始源材质、纹理、测量表和 viewer 运行资产固定在 `assets/`。正式训练数据只由 reference 在 GPU 上在线生成，不存在持久化的 batch/corpus 数据产品；source 与 runtime 由 `references/` 中的 package/manifest 追溯。
+- 根仓库不包含 `external/`、`assets/`、`data/`、`build/`、`outputs/`、`artifacts/`、`reports/` 和缓存。新训练成果统一进入 `outputs/<config-stem>/<run-id>/`，其中集中保存 checkpoint、TensorBoard、eval、导出与日志；`artifacts/` 只承载可清理研究产物和原地保留的旧 viewer 图像，不是正式功能的运行依赖；第三方 reference 源码固定在 `external/`；原始源材质、纹理、测量表和 viewer 运行资产固定在 `assets/`。正式训练数据只由 reference 在 GPU 上在线生成，不存在持久化的 batch/corpus 数据产品；source 与 runtime 由 `references/` 中的 package/manifest 追溯。
 - 完整规则见 `docs/repository_policy.md`。
 - `external/Falcor`、`external/pbrt-v4`、`external/OpenPBR`、`external/openpbr-bsdf`、`external/glm`、`external/MaterialX`、`external/falcor2` 和 `external/stb` 是固定提交的独立克隆；MDL SDK 使用固定官方 binary package。当前均不得保留未说明的上游修改。MaterialX viewer 所需的 NanoGUI 及其依赖使用上游 gitlink 固定提交，由获取脚本初始化。falcor2 仅是 MDL validation oracle，不进入正式 provider/runtime。
 - 若以后确实需要修改上游，先把改动保存为根仓库中的显式补丁和应用脚本，并更新本文件；不得把未说明的修改留在 `external/`。
@@ -57,7 +57,8 @@
   ```
 
 - 不使用 `base`、其他已有 Conda 环境或系统 Python 执行本项目代码。
-- 需要导入 Falcor Python 模块时，Windows 统一通过 `scripts/run_falcor_python.ps1` 启动，Ubuntu 统一通过 `scripts/run_falcor_python.sh` 启动；两个脚本都设置锁定构建的 `PATH`/`PYTHONPATH` 后继续使用 `neural-shading` 环境。Ubuntu 只承载 headless Falcor/Vulkan reference 采集，不承载 Windows/D3D12 viewer。
+- Windows/Linux 统一使用 `python -m ncls train GPU_LIST --config YAML`；Linux 多卡自动 DDP，GPU 只指定一次。入口在导入 Torch/Falcor 前准备当前平台环境。其他需要 Falcor 的 Python 工具/测试通过 `python -m ncls.runtime --device N -- <python-args>` 启动。Linux 保留数值 validation，图像 eval 在相同接口绑定空实现；Windows 图像在本 run 的 TensorBoard 显示，reference 默认 128 spp，可只改 YAML。
+- 新训练不读取旧 checkpoint，不保留 importer、转换工具或旧入口。旧视觉证据留在原 artifacts 位置，不迁移成果；训练身份与运行设置分离，诊断标签和完整配置/源码 hash 不作为恢复或导出门禁。
 - 新增长期依赖时同步更新 `environment.yml`，确保环境可复现。
 - 首次创建环境：
 

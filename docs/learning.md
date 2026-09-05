@@ -1,102 +1,89 @@
-# 训练、验证与部署
+# 训练、验证与导出
 
-## 配置方式
+## 入口与输出
 
-正式入口只接受 `configs/training/runs/*.yaml`。一个 run 组合四部分：默认执行策略、方法、数据定义和训练 recipe；resolver 会展开 source set、严格合并字段并生成不可变的 `ResolvedTrainingPlan@1`。公开方法名为 `nvidia` 或 `metal`，内部版本和实现 hash 自动进入 manifest。
-
-方法通过统一 `MethodPlugin` 提供 model、data、objective、lifecycle、checkpoint 和 deployment 六个 facet。新增方法不应复制 CLI 或训练循环，只需实现自己的数据需求/source adapter、模型/目标及部署编译器，然后注册一个短 key。
-
-## 命令
-
-Windows 单卡：
-
-```powershell
-.\scripts\run_falcor_python.ps1 -m ncls train `
-  configs/training/runs/nvidia-layer-stack-smoke.yaml `
-  --devices 0 `
-  --output artifacts/training/nvidia-smoke/checkpoint.pt
-```
-
-Linux固定五卡Metal pair：
+以下命令均在 `neural-shading` 环境中运行。非交互调用可统一加 `conda run -n neural-shading`。
 
 ```bash
-bash scripts/run_falcor_python.sh --gpus 5,6,7,8,9 -- -m ncls train \
-  configs/training/runs/metal-budgeted-hybrid-pilot.yaml \
-  --devices 5,6,7,8,9 \
-  --output artifacts/metal-budgeted-pilot/hybrid/checkpoint.pt
+python -m ncls train 0 --config configs/training/runs/nvidia-layer-stack-smoke.yaml
+python -m ncls train 0,1 --config configs/training/runs/nvidia-layer-stack-smoke.yaml
 ```
 
-当前Metal direct/hybrid single-material pilot只在原生Linux按固定GPU 5–9 DDP5拓扑串行执行；Windows不运行online reference、完整validation、pilot或runtime baseline。精确的step-0 calibration、共同恢复点和matched direct命令见[Metal Linux pilot](metal_linux_training.md)。
+Windows/Linux 单卡进入同一 engine；Linux 多卡自动启动 torchrun/NCCL，Windows 当前只支持单卡。入口在导入 Torch/Falcor 前设置原生库与设备环境，每个 rank 的 Torch 使用 `cuda:0`，Falcor 使用对应物理卡。无需另写 shell 启动器或 `CUDA_VISIBLE_DEVICES`。
 
-当 `--devices` 只有一个序号时直接单卡执行；Linux 传多个序号时自动启动一个 torchrun/NCCL 作业，Windows 多卡明确拒绝：
+启动时打印一个 run 目录，DDP 启动前只分配一次：
+
+```text
+outputs/<config-stem>/<run-id>/
+  config.yaml              # 入口配置副本
+  resolved.yaml            # 展开后的实际参数
+  run.json                 # 配置来源、提交、设备和执行状态
+  checkpoints/latest.pt
+  checkpoints/step-00005000.pt
+  tensorboard/
+  eval/step-00005000-<id>/  # replay、package、PNG、EXR 和 capture
+  exports/
+  logs/                    # metrics.jsonl、summary.json、review.json
+```
+
+子目录按实际使用创建。每次新启动创建独立 run；显式 `--resume` 才使用 checkpoint 所属目录。`artifacts/` 中的旧视觉证据原地保留，不作为新训练输入或默认 package。
+
+## YAML
+
+run 的 `compose` 选择 base/method/data/recipe；run 文件可覆盖 `training`、`execution`、`hooks`。fragment 直接写这些字段，不需要 schema/version、内部实现 key 或兼容标签。默认设置见 `configs/training/base/default.yaml`。
+
+```yaml
+compose:
+  method: nvidia
+  data: layer-stack-smoke
+  recipe: nvidia-layer-stack-smoke
+training:
+  checkpoint_interval: 5000
+  validation:
+    interval: 1000
+    batches: 8
+hooks:
+  visual_eval:
+    enabled: true
+    interval_steps: 5000
+    reference_spp: 128
+    neural_mode: deferred
+    neural_spp: 0
+    width: 640
+    height: 360
+```
+
+`reference_spp` 只在 YAML 设置，改为 33 或 256 不需要改协议、worker 或测试常量。reference 与 neural 的 spp 独立；neural 若采用 `path-tracing`，将 `neural_spp` 设为正整数。renderer 最后一次 dispatch 使用剩余采样预算。
+
+日志 cadence 位于各 phase 的 `log_interval`，checkpoint、数值 validation 和图像 eval 各用自己的 cadence。阶段切换可按 `checkpoint_boundary` 额外保存 checkpoint；图像不为自己保存 optimizer 快照。
+
+`execution` 调节 host worker、队列、reference packing 和 residency 预算。GPU 主进程拥有 CUDA/Falcor 与资源 lease，worker 只处理 host 数据。队列深度或 packing 不改变逻辑样本的 RNG。
+
+## 续训与观察
 
 ```bash
-bash scripts/run_falcor_python.sh -m ncls train \
-  <ddp-run.yaml> \
-  --devices 2,3,4 --output <checkpoint.pt>
+python -m ncls train 0 --config <run.yaml> --stop-at-step 100
+python -m ncls train 0 --config <run.yaml> --resume outputs/<config>/<run>/checkpoints/latest.pt
+tensorboard --logdir outputs
 ```
 
-Linux多卡的objective按phase包装为真实PyTorch `DistributedDataParallel`：lifecycle先冻结本phase的active parameter，再构造一个`static_graph` reducer；phase合同保证声明为active的参数每步都参与loss，因此不启用unused-parameter兼容扫描。gradient bucket在backward中同步，不在backward后逐parameter执行`all_reduce`。phase切换时所有rank同序重构wrapper；model/resume/optimizer setup与phase transition的rank-local异常会先经control group汇总，不让正常rank独自进入下一次DDP collective。NCCL data group负责梯度和GPU scalar collective，辅助Gloo control group只负责descriptor核对、逐rank RNG/query cursor、checkpoint commit状态与有序退出，训练热循环不新增barrier。
+一份 checkpoint 保存模型、optimizer/precision 状态、phase/step、RNG 和在线 query cursor。续训检查实际训练定义与数据，不比较完整 YAML 或源码 hash。日志、TensorBoard、图像 spp、预取设置和相同卡数下的物理卡号可以改变；改变模型、训练 batch、phase 或卡数后请创建新 run。本次不实现不同拓扑的弹性状态迁移。
 
-诊断运行可显式设置：
+从较早 checkpoint 回退时，JSONL 截断到恢复 step，TensorBoard 使用相应 purge step 隐藏后续旧事件。完成态仍保存 optimizer 状态。
+
+Windows 在训练线程的图像调用点使用当前模型编译 package、同步渲染，再把 comparison/difference 写入同一个 TensorBoard。材质选择与 compiler 使用隔离并恢复的 RNG；图像耗时单独记录。PT 与 deferred 对照中的阴影差异不能解释为纯模型误差。
+
+Linux 数值 validation 正常执行，DDP 按窗口汇总各 rank 的数值；只有 rank 0 写日志。公共图像 hook 仍调用 `evaluate(model, context)`，Linux 实现直接返回 `None`，不准备模型快照、渲染资源、文件、队列或额外 collective。以后只需替换图像实现。
+
+## 独立验证、图像与导出
 
 ```bash
-NCLS_DDP_DEBUG=1 \
-NCLS_DDP_TIMEOUT_SECONDS=300 \
-NCLS_DDP_CONTROL_TIMEOUT_SECONDS=1800 \
-bash scripts/run_falcor_python.sh -m ncls train <run.yaml> \
-  --devices 0,1 --output <checkpoint.pt>
+python -m ncls validate <checkpoint.pt> --batches 8 --device 0
+python -m ncls eval <checkpoint.pt> --device 0
+python -m ncls eval <checkpoint.pt> --config <run.yaml> --device 0
+python -m ncls export <checkpoint.pt> --material-index 0
 ```
 
-`NCLS_DDP_DEBUG=1`会启用PyTorch/NCCL detail、flight recorder、timeout dump、desync和timing信息，会影响性能，只用于诊断。两个timeout分属训练数据面和低频控制面；不得靠增大NCCL训练timeout掩盖reference/data长尾。
+`validate` 使用内嵌计划；`eval --config` 覆盖图像设置。Linux 图像 eval 当前为空实现。`export` 默认写入该 run 的 `exports/step-N/material-I/`，也可显式 `--output <新目录>`。
 
-停止、恢复、数值验证和正式导出：
-
-```bash
-bash scripts/run_falcor_python.sh -m ncls train <run.yaml> \
-  --devices 0 --output <checkpoint.pt> --stop-at-step <N>
-bash scripts/run_falcor_python.sh -m ncls train <run.yaml> \
-  --devices 0 --output <checkpoint.pt> --resume <checkpoint.stepXXXXXXXX.pt>
-bash scripts/run_falcor_python.sh -m ncls validate <checkpoint.pt> --batches 8 --device 0
-bash scripts/run_falcor_python.sh -m ncls export <checkpoint.pt> <package-dir> --material-index 0
-```
-
-新 checkpoint 内嵌 resolved plan，因此 `validate` 不再要求再次传 config。新训练 resume 只接受 `TrainingCheckpoint@1`；旧 v4 checkpoint 可只读地用于 `validate`、满足原 readiness 时的 export，以及 visual eval，不能继续训练。
-
-## 数据调度与 GPU 利用率
-
-`execution` 段统一声明目标数据调度策略：
-
-- `num_workers`：只并行 CPU/host decode、读取和预处理；worker 不持有 CUDA/Falcor。
-- `host_prefetch`、`ready_batches`：限制队列深度并提供 backpressure，避免无限占用内存。
-- `reference_batch_steps`、`reference_inflight`：在 backend capability 允许时控制 reference packed dispatch/在途数。
-- `transfer_streams`：控制 cache miss 的异步 H2D 通道；常驻或已命中的 tensor 不重复交换。
-- `residency.budget_mib`：GPU 资源缓存的字节上限；lease 中对象不能被 LRU 驱逐。
-
-生产入口统一使用`PipelineOnlineDataSession`：engine按step提交named routes，session以有界pending/ready ring严格按logical ID交付；`ready_batches=1`和`reference_batch_steps=1`仍通过同一实现表达同步调试基线，不存在另一套兼容session。producer先为每个logical request冻结独立RNG，再把同group的连续evaluator请求合并成一次reference dispatch，按原ID切分target；改变pack或队列深度不会改变训练样本。只有可复制host阶段交给worker并可提前提交，CUDA residency、Falcor和lease仍由rank主进程拥有。`global-sync` Vulkan路径只获得host重叠与packed dispatch收益，`reference_inflight`不能视为同卡真实异步；只有backend明确提供stream fence时才允许增加inflight。Linux数值通过stage trace分开报告host、transfer、reference、model、barrier、cache与峰值显存，不能仅用平均GPU utilization判断。
-
-## 输出与 hooks
-
-rank 0 写出：
-
-- `checkpoint.pt` 与 `.sha256`：新 checkpoint；
-- `checkpoint.stepXXXXXXXX.pt`：周期/phase boundary checkpoint；
-- `checkpoint.metrics.jsonl`：逐 cadence 指标和 data/reference profile；
-- `checkpoint.summary.json`、`checkpoint.review.json`：运行与首轮审阅；
-- `checkpoint.tensorboard/`：TensorBoard event；
-- `checkpoint.visual-eval/`：异步 request/status spool（启用时）。
-
-DDP checkpoint先在所有rank drain，只把小型RNG/data cursor收集到rank 0；完整model/optimizer CPU snapshot和文件写入只在rank 0执行。写入结果随后经control group广播，final artifact和hook关闭完成后所有rank再共同退出。metrics同时记录正确的`steps_per_second`、`local_work_units_per_second`、`global_work_units_per_second`，以及关键stage的逐rank原值、min/mean/max和straggler rank；reference group的48-bit identity也逐rank记录，`profile/backward_reducer_gpu_seconds`包含backward与reducer的合并区间。
-
-TensorBoard hook 使用稳定 tag/global step，队列有界且只由 rank 0 写。visual eval 不属于验证集指标：它按固定 step 选择可恢复的随机 probe，比较 reference 和 neural 渲染。默认 reference 为 1024 spp path tracing，neural 为 deterministic deferred（`neural_mode: deferred`、`neural_spp: 0`）；一次当前 Windows 实测约 12.429 秒。把 neural 改成 path tracing 是显式手工诊断，不应加入常规 cadence。
-
-Windows worker 与迟到结果收集：
-
-```powershell
-.\scripts\run_falcor_python.ps1 -m ncls eval worker `
-  <spool-dir> <artifact-root> --max-jobs 1
-.\scripts\run_falcor_python.ps1 -m ncls eval collect `
-  <spool-dir> <artifact-root> <tensorboard-dir>
-```
-
-visual eval 失败只记录 hook/status，不改变训练 checkpoint。正式 export 仍要求 exact method identity、formal run、complete phase 与所需 parameter group 的 finite/nonzero-gradient/actual-update coverage；短 smoke 只能作为诊断证据。
+初始化状态和短训状态均可预览/导出，训练完成度与梯度覆盖是诊断信息。加载时只检查实际模型张量和资源，质量结论由实验评测给出。没有旧 checkpoint reader、转换工具、跨机图像 worker 或旧训练入口。

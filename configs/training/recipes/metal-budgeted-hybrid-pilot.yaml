@@ -1,146 +1,149 @@
-format_name: ncls.training-fragment
-format_version: 1
-kind: recipe
-key: metal-budgeted-hybrid-pilot
-extends: null
-compatible_methods: [metal]
-payload:
-  training:
-    run_class: profile
-    recipe_id: metal-budgeted-tungsten-detail-frame-skip-hybrid-pilot-2048@4
-    phases:
-      - name: joint-response-fit
-        steps: 1792
-        routes: &routes
-          - name: evaluator
-            kind: reference-evaluator
-            batch_size: 512
-            direction_count: 1
-            seed_offset: 0
-            options:
-              direction_proposal: balanced-four-mode-probe@1
-              validation_seed: 2026090402
-              evaluation_samples: 1
-              footprint_samples: 1
-              source_execution_mode: authoritative@1
-              asset_tile_coherent: true
-              spatial_anchor: [0.371, 0.619]
-              spatial_tile_extent: 0.015625
-              footprint_recipe: balanced-zero-one-four-texel@1
-              paired_uv: true
-              paired_uv_recipe: one-native-texel-axis-balanced@1
-              source_patch_size: 8
-              maximum_rejection_rounds: 64
-          - name: sampler
-            kind: method-sampler
-            batch_size: 512
-            direction_count: 1
-            seed_offset: 1
-            options:
-              direction_proposal: uniform-hemisphere-conditioning@1
-              validation_seed: 2026090402
-              asset_tile_coherent: true
-              spatial_anchor: [0.371, 0.619]
-              spatial_tile_extent: 0.015625
-              footprint_recipe: balanced-zero-one-four-texel@1
-              source_patch_size: 8
-        parameter_groups: &groups
-          - asset_encoder
-          - asset_variant
-          - typed_compiler
-          - semantic_prepare
-          - directional_evaluator
-          - proposal_sampler
-        loss_terms: &losses
-          - appearance-log-rgb
-          - appearance-linear-rgb
-          - appearance-chroma
-          - appearance-channel-peak
-          - appearance-spatial-gradient
-          - semantic-runtime
-          - proposal-forward-kl
-          - proposal-density-fit
-          - sample-pdf-identity
-        recipes: &joint-recipes
-          profile_id: metal_budgeted_hybrid_v3
-          asset_cook_mode: encoder-only@1
-          compiler_role: pure-typed-compiler@1
-          optimized_program_state_control: report-only@1
-          direction: balanced-four-mode-probe@1
-          appearance_calibration:
-            schema: train-only-reference-rgb-percentiles@1
-            route: evaluator
-            sample_count: 16384
-            seed: 2026090401
-            scale_percentile: 0.5
-            peak_percentile: 0.95
-            scale_clamp: [0.000244140625, 256.0]
-          proposal_weight:
-            schema: linear-nonzero-ramp@1
-            start: 0.05
-            end: 0.5
-            ramp_steps: 512
-        optimizer: &optimizer
-          kind: adam
-          betas: [0.9, 0.99]
-          epsilon: 1.0e-8
-          weight_decay: 1.0e-6
-        optimizer_state_policy: reset
-        schedule:
-          kind: cosine
-          start: 0.0003
-          end: 0.00005
-          total_steps: 2048
-          offset: 0
-        precision:
-          autocast: bfloat16
-          gradient_scaler: false
-        checkpoint_boundary: true
-        transition: null
-        log_interval: 16
-        gradient_audit_interval: 128
-        prefetch_depth: 2
-      - name: deployment-qat-refine
-        steps: 256
-        routes: *routes
-        parameter_groups: *groups
-        loss_terms: *losses
-        recipes:
-          profile_id: metal_budgeted_hybrid_v3
-          asset_cook_mode: encoder-only@1
-          compiler_role: pure-typed-compiler@1
-          optimized_program_state_control: report-only@1
-          direction: balanced-four-mode-probe@1
-          appearance_calibration:
-            schema: train-only-reference-rgb-percentiles@1
-            route: evaluator
-            sample_count: 16384
-            seed: 2026090401
-            scale_percentile: 0.5
-            peak_percentile: 0.95
-            scale_clamp: [0.000244140625, 256.0]
-          proposal_weight:
-            schema: linear-nonzero-ramp@1
-            start: 0.5
-            end: 0.5
-            ramp_steps: 1
-          runtime_quantization: fp16-weights-state-rgba8-snorm-asset@1
-        optimizer: *optimizer
-        optimizer_state_policy: carry-overlap
-        schedule:
-          kind: cosine
-          start: 0.00005
-          end: 0.00001
-          total_steps: 2048
-          offset: 1792
-        precision:
-          autocast: fp32
-          gradient_scaler: false
-        checkpoint_boundary: true
-        transition: null
-        log_interval: 16
-        gradient_audit_interval: 128
-        prefetch_depth: 2
-    validation:
-      interval: 128
-      batches: 256
+training:
+  run_class: profile
+  recipe_id: metal-budgeted-tungsten-detail-frame-skip-hybrid-pilot-2048@4
+  phases:
+  - name: joint-response-fit
+    steps: 1792
+    routes: &id001
+    - name: evaluator
+      kind: reference-evaluator
+      batch_size: 512
+      direction_count: 1
+      seed_offset: 0
+      options:
+        direction_proposal: balanced-four-mode-probe@1
+        validation_seed: 2026090402
+        evaluation_samples: 1
+        footprint_samples: 1
+        source_execution_mode: authoritative@1
+        asset_tile_coherent: true
+        spatial_anchor:
+        - 0.371
+        - 0.619
+        spatial_tile_extent: 0.015625
+        footprint_recipe: balanced-zero-one-four-texel@1
+        paired_uv: true
+        paired_uv_recipe: one-native-texel-axis-balanced@1
+        source_patch_size: 8
+        maximum_rejection_rounds: 64
+    - name: sampler
+      kind: method-sampler
+      batch_size: 512
+      direction_count: 1
+      seed_offset: 1
+      options:
+        direction_proposal: uniform-hemisphere-conditioning@1
+        validation_seed: 2026090402
+        asset_tile_coherent: true
+        spatial_anchor:
+        - 0.371
+        - 0.619
+        spatial_tile_extent: 0.015625
+        footprint_recipe: balanced-zero-one-four-texel@1
+        source_patch_size: 8
+    parameter_groups: &id002
+    - asset_encoder
+    - asset_variant
+    - typed_compiler
+    - semantic_prepare
+    - directional_evaluator
+    - proposal_sampler
+    loss_terms: &id003
+    - appearance-log-rgb
+    - appearance-linear-rgb
+    - appearance-chroma
+    - appearance-channel-peak
+    - appearance-spatial-gradient
+    - semantic-runtime
+    - proposal-forward-kl
+    - proposal-density-fit
+    - sample-pdf-identity
+    recipes:
+      profile_id: metal_budgeted_hybrid_v3
+      asset_cook_mode: encoder-only@1
+      compiler_role: pure-typed-compiler@1
+      optimized_program_state_control: report-only@1
+      direction: balanced-four-mode-probe@1
+      appearance_calibration:
+        schema: train-only-reference-rgb-percentiles@1
+        route: evaluator
+        sample_count: 16384
+        seed: 2026090401
+        scale_percentile: 0.5
+        peak_percentile: 0.95
+        scale_clamp:
+        - 0.000244140625
+        - 256.0
+      proposal_weight:
+        schema: linear-nonzero-ramp@1
+        start: 0.05
+        end: 0.5
+        ramp_steps: 512
+    optimizer: &id004
+      kind: adam
+      betas:
+      - 0.9
+      - 0.99
+      epsilon: 1.0e-08
+      weight_decay: 1.0e-06
+    optimizer_state_policy: reset
+    schedule:
+      kind: cosine
+      start: 0.0003
+      end: 5.0e-05
+      total_steps: 2048
+      offset: 0
+    precision:
+      autocast: bfloat16
+      gradient_scaler: false
+    checkpoint_boundary: true
+    transition: null
+    log_interval: 16
+    gradient_audit_interval: 128
+    prefetch_depth: 2
+  - name: deployment-qat-refine
+    steps: 256
+    routes: *id001
+    parameter_groups: *id002
+    loss_terms: *id003
+    recipes:
+      profile_id: metal_budgeted_hybrid_v3
+      asset_cook_mode: encoder-only@1
+      compiler_role: pure-typed-compiler@1
+      optimized_program_state_control: report-only@1
+      direction: balanced-four-mode-probe@1
+      appearance_calibration:
+        schema: train-only-reference-rgb-percentiles@1
+        route: evaluator
+        sample_count: 16384
+        seed: 2026090401
+        scale_percentile: 0.5
+        peak_percentile: 0.95
+        scale_clamp:
+        - 0.000244140625
+        - 256.0
+      proposal_weight:
+        schema: linear-nonzero-ramp@1
+        start: 0.5
+        end: 0.5
+        ramp_steps: 1
+      runtime_quantization: fp16-weights-state-rgba8-snorm-asset@1
+    optimizer: *id004
+    optimizer_state_policy: carry-overlap
+    schedule:
+      kind: cosine
+      start: 5.0e-05
+      end: 1.0e-05
+      total_steps: 2048
+      offset: 1792
+    precision:
+      autocast: fp32
+      gradient_scaler: false
+    checkpoint_boundary: true
+    transition: null
+    log_interval: 16
+    gradient_audit_interval: 128
+    prefetch_depth: 2
+  validation:
+    interval: 128
+    batches: 256

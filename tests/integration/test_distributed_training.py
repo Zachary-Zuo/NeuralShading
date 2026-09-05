@@ -18,7 +18,7 @@ from ncls.learning.training import (
 class _NCCLObjective:
     implementation_sha256 = "d" * 64
 
-    def compute(
+    def training_objective(
         self,
         model: torch.nn.Module,
         batches: Mapping[str, Any],
@@ -34,7 +34,6 @@ def _is_two_rank_linux_worker() -> bool:
     return (
         platform.system() == "Linux"
         and os.environ.get("WORLD_SIZE") == "2"
-        and os.environ.get("NCLS_DDP_WORLD_SIZE") == "2"
     )
 
 

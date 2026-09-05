@@ -2,23 +2,18 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import re
-from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
 import yaml
 
 from ncls.core.identity import sha256_file, sha256_json
-from ncls.learning.methods import get_method_plugin
-
+from ncls.learning.methods import get_method
 from .config import TrainingConfig
 
-
 _PUBLIC_KEY = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-_FRAGMENT_KINDS = ("base", "method", "data", "recipe")
 _PAYLOAD_FIELDS = {"training", "execution", "hooks"}
-
 
 def _require_public_key(name: str, value: object) -> str:
     result = str(value)
@@ -52,36 +47,6 @@ def _require_exact_fields(
         raise ValueError(f"{name} fields are invalid: {', '.join(details)}")
 
 
-def _freeze(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return MappingProxyType({str(key): _freeze(item) for key, item in value.items()})
-    if isinstance(value, (list, tuple)):
-        return tuple(_freeze(item) for item in value)
-    return value
-
-
-def _thaw(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return {str(key): _thaw(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_thaw(item) for item in value]
-    return value
-
-
-def _same_value_category(left: object, right: object) -> bool:
-    if isinstance(left, Mapping) or isinstance(right, Mapping):
-        return isinstance(left, Mapping) and isinstance(right, Mapping)
-    if isinstance(left, (list, tuple)) or isinstance(right, (list, tuple)):
-        return isinstance(left, (list, tuple)) and isinstance(right, (list, tuple))
-    if left is None or right is None:
-        return True
-    if isinstance(left, bool) or isinstance(right, bool):
-        return isinstance(left, bool) and isinstance(right, bool)
-    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
-        return True
-    return type(left) is type(right)
-
-
 def _deep_merge(base: Mapping[str, Any], overlay: Mapping[str, Any], path: str) -> dict[str, Any]:
     result = deepcopy(dict(base))
     for key, value in overlay.items():
@@ -93,10 +58,6 @@ def _deep_merge(base: Mapping[str, Any], overlay: Mapping[str, Any], path: str) 
         if isinstance(previous, Mapping) and isinstance(value, Mapping):
             result[key] = _deep_merge(previous, value, child_path)
             continue
-        if not _same_value_category(previous, value):
-            raise ValueError(
-                f"configuration merge changes the value category at {child_path!r}"
-            )
         result[key] = deepcopy(value)
     return result
 
@@ -134,19 +95,6 @@ def _load_yaml_mapping(path: Path) -> Mapping[str, Any]:
     except yaml.YAMLError as error:
         raise ValueError(f"invalid training YAML {path}: {error}") from error
     return _require_mapping(f"training YAML {path}", value)
-
-
-def _safe_project_path(project_root: Path, value: object, name: str) -> Path:
-    relative = str(value)
-    posix = PurePosixPath(relative)
-    if not relative or posix.is_absolute() or ".." in posix.parts or "\\" in relative:
-        raise ValueError(f"{name} must be a safe project-relative POSIX path")
-    path = (project_root / Path(*posix.parts)).resolve()
-    try:
-        path.relative_to(project_root)
-    except ValueError as error:
-        raise ValueError(f"{name} resolves outside the project root") from error
-    return path
 
 
 @dataclass(frozen=True)
@@ -198,7 +146,6 @@ class ExecutionSettings:
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "ExecutionSettings":
         required = {
-            "devices",
             "num_workers",
             "host_prefetch",
             "ready_batches",
@@ -211,9 +158,9 @@ class ExecutionSettings:
             "execution",
             value,
             required=required,
-            optional={"batch_size_multiplier"},
+            optional={"batch_size_multiplier", "devices"},
         )
-        devices_value = value["devices"]
+        devices_value = value.get("devices", [0])
         if not isinstance(devices_value, (list, tuple)):
             raise ValueError("execution.devices must be a list")
         devices = tuple(int(item) for item in devices_value)
@@ -291,65 +238,32 @@ class TensorBoardSettings:
 
 @dataclass(frozen=True)
 class VisualEvalSettings:
-    enabled: bool
-    interval_steps: int
-    reference_spp: int
-    neural_mode: str
-    neural_spp: int
-    seed: int
-    queue_capacity: int
+    enabled: bool = True
+    interval_steps: int = 5000
+    reference_spp: int = 128
+    neural_mode: str = "deferred"
+    neural_spp: int = 0
+    seed: int = 20260904
+    width: int = 640
+    height: int = 360
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "VisualEvalSettings":
-        _require_exact_fields(
-            "hooks.visual_eval",
-            value,
-            required={
-                "enabled",
-                "interval_steps",
-                "reference_spp",
-                "neural_mode",
-                "neural_spp",
-                "seed",
-                "queue_capacity",
-            },
-        )
-        result = cls(
-            bool(value["enabled"]),
-            int(value["interval_steps"]),
-            int(value["reference_spp"]),
-            str(value["neural_mode"]),
-            int(value["neural_spp"]),
-            int(value["seed"]),
-            int(value["queue_capacity"]),
-        )
-        if min(result.interval_steps, result.reference_spp, result.queue_capacity) < 1:
-            raise ValueError("visual eval cadence, reference spp and queue capacity must be positive")
+        result = cls(**value)
+        for name in ("interval_steps", "reference_spp", "width", "height"):
+            number = getattr(result, name)
+            if type(number) is not int or number < 1:
+                raise ValueError(f"hooks.visual_eval.{name} 必须为正整数")
+        if type(result.neural_spp) is not int or result.neural_spp < 0:
+            raise ValueError("hooks.visual_eval.neural_spp 必须为非负整数")
         if result.neural_mode not in {"deferred", "path-tracing"}:
-            raise ValueError("visual eval neural mode must be deferred or path-tracing")
-        if result.neural_mode == "deferred" and result.neural_spp != 0:
-            raise ValueError("visual eval deferred neural mode requires neural_spp=0")
-        if (
-            result.neural_mode == "path-tracing"
-            and not 1 <= result.neural_spp <= result.reference_spp
-        ):
-            raise ValueError(
-                "visual eval path-tracing neural spp must be within [1, reference_spp]"
-            )
-        if result.seed < 0:
-            raise ValueError("visual eval seed must be nonnegative")
+            raise ValueError("图像模式应为 deferred 或 path-tracing")
+        if result.neural_mode == "path-tracing" and result.neural_spp < 1:
+            raise ValueError("path-tracing 的 neural_spp 必须为正整数")
         return result
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "enabled": self.enabled,
-            "interval_steps": self.interval_steps,
-            "reference_spp": self.reference_spp,
-            "neural_mode": self.neural_mode,
-            "neural_spp": self.neural_spp,
-            "seed": self.seed,
-            "queue_capacity": self.queue_capacity,
-        }
+        return dict(vars(self))
 
 
 @dataclass(frozen=True)
@@ -376,286 +290,71 @@ class HookSettings:
         }
 
 
-@dataclass(frozen=True)
-class PlanInputRecord:
-    kind: str
-    key: str
-    path: str
-    sha256: str
-
-    def to_dict(self) -> dict[str, str]:
-        return {
-            "kind": self.kind,
-            "key": self.key,
-            "path": self.path,
-            "sha256": self.sha256,
-        }
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "PlanInputRecord":
-        _require_exact_fields(
-            "training plan input",
-            value,
-            required={"kind", "key", "path", "sha256"},
-        )
-        result = cls(
-            str(value["kind"]),
-            str(value["key"]),
-            str(value["path"]),
-            str(value["sha256"]),
-        )
-        if not result.kind or not result.key or not result.path:
-            raise ValueError("training plan input identity is incomplete")
-        if not re.fullmatch(r"[0-9a-f]{64}", result.sha256):
-            raise ValueError("training plan input SHA-256 is invalid")
-        return result
-
-
-@dataclass(frozen=True)
+@dataclass
 class ResolvedTrainingPlan:
     selection: ComponentSelection
-    training: Mapping[str, Any]
+    training: TrainingConfig
     execution: ExecutionSettings
     hooks: HookSettings
-    method_descriptor: Mapping[str, Any]
-    inputs: tuple[PlanInputRecord, ...]
-    overrides: Mapping[str, Any]
-    format_name: str = "ncls.training-plan"
-    format_version: int = 1
+    inputs: tuple[Mapping[str, str], ...] = ()
 
-    def __post_init__(self) -> None:
-        if self.format_name != "ncls.training-plan" or self.format_version != 1:
-            raise ValueError("unsupported resolved training plan format")
-        object.__setattr__(self, "training", _freeze(_thaw(self.training)))
-        object.__setattr__(
-            self, "method_descriptor", _freeze(_thaw(self.method_descriptor))
-        )
-        object.__setattr__(self, "overrides", _freeze(_thaw(self.overrides)))
-
-    def to_runtime_config(self) -> TrainingConfig:
-        """Materialize the validated phase graph consumed by TrainingEngine."""
-
-        value = _thaw(self.training)
-        if self.execution.batch_size_multiplier != 1:
-            for phase in value["phases"]:
-                for route in phase["routes"]:
-                    route["batch_size"] = (
-                        int(route["batch_size"])
-                        * self.execution.batch_size_multiplier
-                    )
-        value["format_name"] = "ncls.training-config"
-        value["format_version"] = 4
-        return TrainingConfig.from_dict(value)
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "format_name": self.format_name,
-            "format_version": self.format_version,
-            "selection": self.selection.to_dict(),
-            "training": _thaw(self.training),
-            "execution": self.execution.to_dict(),
-            "hooks": self.hooks.to_dict(),
-            "method_descriptor": _thaw(self.method_descriptor),
-            "inputs": [item.to_dict() for item in self.inputs],
-            "overrides": _thaw(self.overrides),
+            "selection": self.selection.to_dict(), "training": self.training.to_dict(),
+            "execution": self.execution.to_dict(), "hooks": self.hooks.to_dict(),
+            "inputs": list(self.inputs),
         }
-
-    @classmethod
-    def from_manifest(cls, value: Mapping[str, Any]) -> "ResolvedTrainingPlan":
-        """读取自包含的冻结计划；不把其历史实现身份改写成当前实现。"""
-        _require_exact_fields(
-            "resolved training plan",
-            value,
-            required={
-                "format_name",
-                "format_version",
-                "selection",
-                "training",
-                "execution",
-                "hooks",
-                "method_descriptor",
-                "inputs",
-                "overrides",
-            },
-        )
-        input_values = value["inputs"]
-        if not isinstance(input_values, (list, tuple)) or not input_values:
-            raise ValueError("resolved training plan inputs must be a nonempty list")
-        selection = ComponentSelection.from_dict(
-            _require_mapping("resolved training plan selection", value["selection"])
-        )
-        result = cls(
-            selection,
-            _require_mapping("resolved training plan training", value["training"]),
-            ExecutionSettings.from_dict(
-                _require_mapping("resolved training plan execution", value["execution"])
-            ),
-            HookSettings.from_dict(
-                _require_mapping("resolved training plan hooks", value["hooks"])
-            ),
-            _require_mapping(
-                "resolved training plan method descriptor", value["method_descriptor"]
-            ),
-            tuple(
-                PlanInputRecord.from_dict(
-                    _require_mapping("resolved training plan input", item)
-                )
-                for item in input_values
-            ),
-            _require_mapping("resolved training plan overrides", value["overrides"]),
-            str(value["format_name"]),
-            int(value["format_version"]),
-        )
-        result.to_runtime_config()
-        return result
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "ResolvedTrainingPlan":
-        result = cls.from_manifest(value)
-        plugin = get_method_plugin(result.selection.method)
-        expected_descriptor = {
-            "public_key": plugin.key,
-            "implementation_key": plugin.descriptor.method_key,
-            "descriptor_sha256": plugin.descriptor.descriptor_sha256,
-            "implementation_sha256": plugin.descriptor.implementation_sha256,
-            "facets": dict(plugin.facet_identities),
-        }
-        if _thaw(result.method_descriptor) != expected_descriptor:
-            raise ValueError("resolved training plan method implementation drifted")
-        result.to_runtime_config()
-        return result
+        return cls(
+            ComponentSelection.from_dict(value["selection"]), TrainingConfig.from_dict(value["training"]),
+            ExecutionSettings.from_dict(value["execution"]), HookSettings.from_dict(value["hooks"]),
+            tuple(value["inputs"]),
+        )
 
     @property
     def sha256(self) -> str:
         return sha256_json(self.to_dict())
 
 
-@dataclass(frozen=True)
-class _Fragment:
-    kind: str
-    key: str
-    extends: str | None
-    compatible_methods: tuple[str, ...]
-    payload: Mapping[str, Any]
-    record: PlanInputRecord
-
-
 class TrainingPlanResolver:
     def __init__(self, project_root: Path | str) -> None:
         self.project_root = Path(project_root).resolve()
-        self.config_root = self.project_root / "configs" / "training"
+        self.config_root = self.project_root / "configs/training"
 
-    def _relative_path(self, path: Path) -> str:
-        return path.resolve().relative_to(self.project_root).as_posix()
+    def _record(self, path: Path) -> dict[str, str]:
+        return {"path": str(path), "sha256": sha256_file(path)}
 
-    def _fragment_path(self, kind: str, key: str) -> Path:
+    def _fragment(self, kind: str, key: str, stack: tuple[str, ...] = ()):
+        key = _require_public_key(kind, key)
+        if key in stack:
+            raise ValueError(f"配置继承成环：{' -> '.join((*stack, key))}")
         directory = {"method": "methods", "recipe": "recipes"}.get(kind, kind)
-        return self.config_root / directory / f"{key}.yaml"
+        path = self.config_root / directory / f"{key}.yaml"
+        value = dict(_load_yaml_mapping(path))
+        parent = value.pop("extends", None)
+        _require_exact_fields(f"fragment {path}", value, required=set(), optional=_PAYLOAD_FIELDS)
+        merged, inputs = ({}, []) if parent is None else self._fragment(kind, parent, (*stack, key))
+        return _deep_merge(merged, value, ""), [*inputs, self._record(path)]
 
-    def _load_fragment(self, kind: str, key: str) -> _Fragment:
-        if kind not in _FRAGMENT_KINDS:
-            raise ValueError(f"unsupported training fragment kind {kind!r}")
-        key = _require_public_key(f"{kind} key", key)
-        path = self._fragment_path(kind, key)
-        value = _load_yaml_mapping(path)
-        _require_exact_fields(
-            f"{kind} fragment {key!r}",
-            value,
-            required={
-                "format_name", "format_version", "kind", "key", "extends",
-                "compatible_methods", "payload",
-            },
-        )
-        if value["format_name"] != "ncls.training-fragment" or int(value["format_version"]) != 1:
-            raise ValueError(f"unsupported format for {kind} fragment {key!r}")
-        if value["kind"] != kind or value["key"] != key:
-            raise ValueError(f"{kind} fragment path and declared identity disagree")
-        extends = value["extends"]
-        if extends is not None:
-            extends = _require_public_key(f"{kind} fragment extends", extends)
-        compatible_value = value["compatible_methods"]
-        if not isinstance(compatible_value, (list, tuple)):
-            raise ValueError(f"{kind} fragment compatible_methods must be a list")
-        compatible = tuple(
-            _require_public_key("compatible method", item) for item in compatible_value
-        )
-        if len(set(compatible)) != len(compatible):
-            raise ValueError(f"{kind} fragment repeats a compatible method")
-        payload = _require_mapping(f"{kind} fragment payload", value["payload"])
-        unknown_payload = set(payload) - _PAYLOAD_FIELDS
-        if unknown_payload:
-            raise ValueError(
-                f"{kind} fragment payload has unknown fields {sorted(unknown_payload)}"
-            )
-        for name, item in payload.items():
-            _require_mapping(f"{kind} fragment payload.{name}", item)
-        return _Fragment(
-            kind,
-            key,
-            extends,
-            compatible,
-            deepcopy(dict(payload)),
-            PlanInputRecord(kind, key, self._relative_path(path), sha256_file(path)),
-        )
-
-    def _fragment_chain(self, kind: str, key: str) -> tuple[_Fragment, ...]:
-        result: list[_Fragment] = []
-        visiting: list[str] = []
-        current: str | None = key
-        while current is not None:
-            if current in visiting:
-                cycle = " -> ".join([*visiting, current])
-                raise ValueError(f"training fragment inheritance cycle: {cycle}")
-            visiting.append(current)
-            fragment = self._load_fragment(kind, current)
-            result.append(fragment)
-            current = fragment.extends
-        result.reverse()
-        return tuple(result)
-
-    def _expand_material_set(
-        self, training: dict[str, Any]
-    ) -> tuple[dict[str, Any], PlanInputRecord | None]:
-        source = _require_mapping("training.source", training.get("source"))
+    def _expand_material_set(self, training: dict[str, Any]) -> None:
+        source = training["source"]
         if "material_set" not in source:
-            return training, None
+            return
+        spec = source.pop("material_set")
         if "materials" in source:
-            raise ValueError("training.source cannot contain both materials and material_set")
-        material_set = _require_mapping("training.source.material_set", source["material_set"])
-        _require_exact_fields(
-            "training.source.material_set",
-            material_set,
-            required={"resolver", "path", "module_root", "expected_count"},
-        )
-        if material_set["resolver"] != "mdl-metal-registry":
-            raise ValueError(f"unsupported material set resolver {material_set['resolver']!r}")
-        registry_path = _safe_project_path(
-            self.project_root, material_set["path"], "training.source.material_set.path"
-        )
+            raise ValueError("source 只能指定 materials 或 material_set 其中一个")
+        if spec["resolver"] != "mdl-metal-registry":
+            raise ValueError(f"未知 material_set resolver：{spec['resolver']}")
         from ncls.source_materials.mdl_metal import MdlMetalRegistry
 
-        registry = MdlMetalRegistry.load(registry_path)
-        module_root = str(material_set["module_root"])
-        materials = []
-        for item in registry.exports:
-            locator = dict(item.exact_locator)
-            locator["module_root"] = module_root
-            materials.append({"locator": locator})
-        expected_count = int(material_set["expected_count"])
-        if len(materials) != expected_count:
-            raise ValueError(
-                f"material set expected {expected_count} records, found {len(materials)}"
-            )
-        result = deepcopy(training)
-        result["source"] = dict(source)
-        del result["source"]["material_set"]
-        result["source"]["materials"] = materials
-        return result, PlanInputRecord(
-            "source-set",
-            str(material_set["resolver"]),
-            self._relative_path(registry_path),
-            sha256_file(registry_path),
-        )
+        registry = MdlMetalRegistry.load(self.project_root / spec["path"])
+        source["materials"] = [
+            {"locator": {**item.exact_locator, "module_root": spec["module_root"]}}
+            for item in registry.exports
+        ]
 
     @staticmethod
     def _materialize_phase_graph(training: dict[str, Any]) -> dict[str, Any]:
@@ -698,124 +397,35 @@ class TrainingPlanResolver:
         result["phases"] = phases
         return result
 
-    def resolve(
-        self,
-        run_path: Path | str,
-        *,
-        devices: Sequence[int] | None = None,
-    ) -> ResolvedTrainingPlan:
+    def resolve(self, run_path: Path | str, *, devices: Sequence[int] | None = None) -> ResolvedTrainingPlan:
         path = Path(run_path)
         if not path.is_absolute():
             path = self.project_root / path
-        path = path.resolve()
-        try:
-            path.relative_to(self.project_root)
-        except ValueError as error:
-            raise ValueError("training run YAML must be inside the project root") from error
-        run = _load_yaml_mapping(path)
-        _require_exact_fields(
-            "training run",
-            run,
-            required={"format_name", "format_version", "compose"},
-            optional={"training", "execution", "hooks"},
-        )
-        if run["format_name"] != "ncls.training-run" or int(run["format_version"]) != 1:
-            raise ValueError("unsupported training run format")
-        compose = _require_mapping("training run compose", run["compose"])
-        _require_exact_fields(
-            "training run compose", compose, required={"method", "data", "recipe"}
-        )
-        selection = ComponentSelection(
-            method=str(compose["method"]),
-            data=str(compose["data"]),
-            recipe=str(compose["recipe"]),
-        )
-
+        run = dict(_load_yaml_mapping(path))
+        compose = run.pop("compose")
+        selection = ComponentSelection(**compose)
+        _require_exact_fields("training run", run, required=set(), optional=_PAYLOAD_FIELDS)
         merged: dict[str, Any] = {}
-        records: list[PlanInputRecord] = []
-        for kind, key in (
-            ("base", selection.base),
-            ("method", selection.method),
-            ("data", selection.data),
-            ("recipe", selection.recipe),
-        ):
-            for fragment in self._fragment_chain(kind, key):
-                if fragment.compatible_methods and selection.method not in fragment.compatible_methods:
-                    raise ValueError(
-                        f"{kind} fragment {fragment.key!r} is incompatible with method "
-                        f"{selection.method!r}"
-                    )
-                merged = _deep_merge(merged, fragment.payload, "")
-                records.append(fragment.record)
-
-        explicit = {
-            name: deepcopy(dict(_require_mapping(f"training run {name}", run[name])))
-            for name in _PAYLOAD_FIELDS
-            if name in run
-        }
-        merged = _deep_merge(merged, explicit, "")
-        records.append(
-            PlanInputRecord("run", path.stem, self._relative_path(path), sha256_file(path))
-        )
-        override_manifest: dict[str, Any] = {}
+        inputs = []
+        for kind in ("base", "method", "data", "recipe"):
+            fragment, records = self._fragment(kind, getattr(selection, kind))
+            merged = _deep_merge(merged, fragment, "")
+            inputs.extend(records)
+        merged = _deep_merge(merged, run, "")
+        inputs.append(self._record(path))
         if devices is not None:
-            device_values = [int(item) for item in devices]
-            merged = _deep_merge(merged, {"execution": {"devices": device_values}}, "")
-            override_manifest["execution.devices"] = device_values
-
-        _require_exact_fields(
-            "resolved training payload", merged, required={"training", "execution", "hooks"}
-        )
-        training_value = deepcopy(
-            dict(_require_mapping("resolved training", merged["training"]))
-        )
-        if "format_name" in training_value or "format_version" in training_value:
-            raise ValueError("resolved training payload must not expose the legacy config format")
-        training_value, source_record = self._expand_material_set(training_value)
-        training_value = self._materialize_phase_graph(training_value)
-        if source_record is not None:
-            records.append(source_record)
-        legacy_value = {
-            **training_value,
-            "format_name": "ncls.training-config",
-            "format_version": 4,
-        }
-        legacy_config = TrainingConfig.from_dict(legacy_value)
-
-        plugin = get_method_plugin(selection.method)
-        descriptor = plugin.descriptor
-        if legacy_config.method_key != descriptor.method_key:
-            raise ValueError("resolved method component disagrees with its product descriptor")
-        plugin.lifecycle.validate_training_plan(legacy_config.to_dict())
-        method_descriptor = {
-            "public_key": selection.method,
-            "implementation_key": descriptor.method_key,
-            "descriptor_sha256": descriptor.descriptor_sha256,
-            "implementation_sha256": descriptor.implementation_sha256,
-            "facets": dict(plugin.facet_identities),
-        }
-        execution = ExecutionSettings.from_dict(
-            _require_mapping("resolved execution", merged["execution"])
-        )
-        hooks = HookSettings.from_dict(_require_mapping("resolved hooks", merged["hooks"]))
-        return ResolvedTrainingPlan(
-            selection,
-            training_value,
-            execution,
-            hooks,
-            method_descriptor,
-            tuple(records),
-            override_manifest,
-        )
-
-
-__all__ = [
-    "ComponentSelection",
-    "ExecutionSettings",
-    "HookSettings",
-    "PlanInputRecord",
-    "ResolvedTrainingPlan",
-    "TensorBoardSettings",
-    "TrainingPlanResolver",
-    "VisualEvalSettings",
-]
+            merged["execution"]["devices"] = list(devices)
+        execution = ExecutionSettings.from_dict(merged["execution"])
+        hooks = HookSettings.from_dict(merged["hooks"])
+        training = self._materialize_phase_graph(merged["training"])
+        self._expand_material_set(training)
+        if execution.batch_size_multiplier != 1:
+            for phase in training["phases"]:
+                for route in phase["routes"]:
+                    route["batch_size"] *= execution.batch_size_multiplier
+        config = TrainingConfig.from_dict(training)
+        method = get_method(selection.method)
+        if config.method_key != method.descriptor.method_key:
+            raise ValueError("config 的方法与 compose.method 不一致")
+        method.validate_training_config(config.to_dict())
+        return ResolvedTrainingPlan(selection, config, execution, hooks, tuple(inputs))

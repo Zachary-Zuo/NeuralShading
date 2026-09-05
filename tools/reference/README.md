@@ -7,7 +7,7 @@
 `pbrt_compare.py` 同时比较 coated diffuse 与 coated conductor，默认覆盖 clear、吸收介质和散射介质，以及有方位差异的粗糙各向异性 conductor。它验证的是 LayerStack reference 的真实两界面分支，不把 pbrt probe 扩成按 `N` 枚举的材质系统。
 
 ```powershell
-.\scripts\run_falcor_python.ps1 tools\reference\pbrt_compare.py `
+conda run -n neural-shading python -m ncls.runtime -- tools\reference\pbrt_compare.py `
   --pbrt-exe build\pbrt-probe-current\Release\ncls_pbrt_probe.exe `
   --samples 65536 --batches 8 --max-depth 32
 ```

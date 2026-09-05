@@ -10,7 +10,7 @@ from torch import nn
 from torch.nn.parallel import DistributedDataParallel
 
 from ncls.learning.batches import OnlineTrainingBatch
-from ncls.learning.methods.contracts import ObjectiveFacet
+from ncls.learning.method import Method
 
 
 _T = TypeVar("_T")
@@ -19,7 +19,7 @@ _T = TypeVar("_T")
 class DistributedObjective(nn.Module):
     """让 method objective 成为 DDP 可追踪的统一 forward owner。"""
 
-    def __init__(self, objective: ObjectiveFacet, model: nn.Module) -> None:
+    def __init__(self, objective: Method, model: nn.Module) -> None:
         super().__init__()
         self.objective = objective
         self.model = model
@@ -30,7 +30,7 @@ class DistributedObjective(nn.Module):
         batches: Mapping[str, OnlineTrainingBatch],
         phase: Mapping[str, Any],
     ) -> torch.Tensor:
-        loss, metrics = self.objective.compute(self.model, batches, phase)
+        loss, metrics = self.objective.training_objective(self.model, batches, phase)
         self._last_metrics = metrics
         return loss
 
@@ -217,7 +217,7 @@ class DistributedContext:
 
     def build_objective(
         self,
-        objective: ObjectiveFacet,
+        objective: Method,
         model: nn.Module,
         *,
         phase_name: str,
@@ -500,22 +500,7 @@ class DistributedContext:
             dist.destroy_process_group()
 
 
-def configure_distributed_debug_environment(
-    environment: dict[str, str],
-) -> None:
-    """按显式 opt-in 启用 PyTorch 2.11 已存在的 NCCL 诊断开关。"""
-
-    if environment.get("NCLS_DDP_DEBUG") != "1":
-        return
-    environment.setdefault("TORCH_DISTRIBUTED_DEBUG", "DETAIL")
-    environment.setdefault("TORCH_NCCL_TRACE_BUFFER_SIZE", "20000")
-    environment.setdefault("TORCH_NCCL_DUMP_ON_TIMEOUT", "1")
-    environment.setdefault("TORCH_NCCL_DESYNC_DEBUG", "1")
-    environment.setdefault("TORCH_NCCL_ENABLE_TIMING", "1")
-
-
 __all__ = [
     "DistributedContext",
     "DistributedObjective",
-    "configure_distributed_debug_environment",
 ]

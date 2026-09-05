@@ -5,11 +5,11 @@ from types import SimpleNamespace
 import numpy as np
 import torch
 
-from ncls.learning.metal_budgeted_asset_cook import (
+from ncls.learning.methods.metal.asset_cook import (
     MetalBudgetedAssetCompiler,
     MetalBudgetedCompiledAsset,
 )
-from ncls.learning.metal_budgeted_runtime import (
+from ncls.learning.methods.metal.runtime import (
     METAL_BUDGETED_COMPILED_WORD_COUNT,
     _sample_level,
     evaluate_metal_budgeted_cooked_asset,
@@ -18,8 +18,8 @@ from ncls.learning.metal_budgeted_runtime import (
     quantize_metal_budgeted_program_state,
     quantize_metal_budgeted_runtime_model,
 )
-from ncls.learning.models.metal_budgeted import MetalBudgetedModel
-from ncls.learning.models.metal_budgeted_profile import (
+from ncls.learning.methods.metal.model import MetalBudgetedModel
+from ncls.learning.methods.metal.profile import (
     METAL_BUDGETED_DUAL_LOCAL_PROFILE,
 )
 

@@ -146,8 +146,12 @@ def test_pipeline_session_does_not_batch_across_boundaries() -> None:
     assert producer.dispatches == [(0,), (1,)]
 
 
-def test_pipeline_session_rejects_cross_plan_resume() -> None:
+def test_pipeline_session_restores_cursor_with_changed_execution_settings() -> None:
     source = _session(_Producer(), "plan-a")
     target = _session(_Producer(), "plan-b")
-    with pytest.raises(ValueError, match="execution plan identity mismatch"):
-        target.load_state_dict(source.state_dict())
+    logical_id = source.submit_step(_routes("a"), boundary_id="train")
+    source.acquire_step(logical_id).release()
+    source.drain()
+    target.load_state_dict(source.state_dict())
+    assert target.state_dict()["next_logical_id"] == 1
+    assert target.state_dict()["producer"] == source.state_dict()["producer"]

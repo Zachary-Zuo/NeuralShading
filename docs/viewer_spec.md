@@ -6,7 +6,7 @@ viewer 是 Windows/D3D12 部署验证工具。已编译方法从 `ScatteringPack
 
 `ComparisonSlot[2]` 在选择、状态、输出与生命周期上完全对称；每侧独立保存 binding请求、mode、capability、status、GPU resource、accumulation 与 timing。binding请求可以是已验证 package或特殊值 `source-reference`，mode 为 `path-tracing` 或 `deferred`。加载、hash、ABI、module 或 capability 失败只在对应 slot 显示错误。
 
-自动化 capture harness 对所有 ready 的 path-tracing slot 固定累计到 1024 spp 后才导出；最后一帧截断到剩余 sample，deferred slot 保持 0 spp。`slot-0.exr`、`slot-1.exr` 与 `difference.exr` 都使用单 panel 的 `view_resolution`，difference 由独立同尺寸纹理按 panel-local UV 计算；双 panel 的 `comparison.exr` 才使用总 `resolution`。正式基线使用 1024 spp，显式 headless target 可用于 smoke；交互持续 1 spp/dispatch。不得用全宽 composite 生成横向拉伸的 difference。
+自动化 capture harness 对每个 ready 的 path-tracing slot 累计到 YAML/replay 指定的 target_spp 后才导出；最后一帧截断到剩余 sample，deferred slot 保持 0 spp。`slot-0.exr`、`slot-1.exr` 与 `difference.exr` 都使用单 panel 的 `view_resolution`，difference 由独立同尺寸纹理按 panel-local UV 计算；双 panel 的 `comparison.exr` 才使用总 `resolution`。reference 默认 128 spp，合法采样数可直接调整；交互持续 1 spp/dispatch。不得用全宽 composite 生成横向拉伸的 difference。
 
 线性 capture 从 RGBA32F 资源显式导出 float32 EXR；不能使用 Falcor/FreeImage 默认的 half EXR 路径，否则合法的高动态范围样本超过 65504 后会在文件中变成 `Inf`。导出阶段不做 radiance clamp，raw EXR 保留真实尾部供收敛与 firefly 诊断。
 

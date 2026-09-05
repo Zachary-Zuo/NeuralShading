@@ -1,22 +1,16 @@
-format_name: ncls.training-fragment
-format_version: 1
-kind: data
-key: mdl-metal-budgeted-steel-painted-cracked
 extends: mdl-metal-budgeted-tungsten
-compatible_methods: [metal]
-payload:
-  training:
-    source:
-      family_id: mdl.program@1
-      materials:
-        - locator:
-            kind: mdl-export
-            module_root: assets/source-materials/mdl-vmaterials2/2.4.0/Materials
-            module: ::vMaterials_2::Metal::Steel_Painted_Cracked
-            export: ::vMaterials_2::Metal::Steel_Painted_Cracked::Steel_Painted_Light_Blue_Cracked_Matte(bool,color,float,float,float,float,float,float,bool,float,float,float,float2,float,float2,int,bool,float,bool)
-            pack_id: nvidia.vmaterials2
-            pack_version: 2.4.0
-    online_query:
-      recipe_id: metal-budgeted-steel-painted-cracked-paired-uv-probe@1
-      typed_state_recipe:
-        recipe_id: metal-budgeted-steel-painted-cracked-default-state@1
+training:
+  source:
+    family_id: mdl.program@1
+    materials:
+    - locator:
+        kind: mdl-export
+        module_root: assets/source-materials/mdl-vmaterials2/2.4.0/Materials
+        module: ::vMaterials_2::Metal::Steel_Painted_Cracked
+        export: ::vMaterials_2::Metal::Steel_Painted_Cracked::Steel_Painted_Light_Blue_Cracked_Matte(bool,color,float,float,float,float,float,float,bool,float,float,float,float2,float,float2,int,bool,float,bool)
+        pack_id: nvidia.vmaterials2
+        pack_version: 2.4.0
+  online_query:
+    recipe_id: metal-budgeted-steel-painted-cracked-paired-uv-probe@1
+    typed_state_recipe:
+      recipe_id: metal-budgeted-steel-painted-cracked-default-state@1

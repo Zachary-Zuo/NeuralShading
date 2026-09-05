@@ -133,15 +133,6 @@ def _document() -> dict[str, object]:
                 "opaque_entry_count": 1,
                 "rejected_cutout_count": 145,
             },
-            "checkpoint": {
-                "sha256": "d" * 64,
-                "checkpoint_descriptor_sha256": "0" * 64,
-                "runtime_descriptor_sha256": "f" * 64,
-                "compatibility": "exact",
-                "method_key": "metal-fused-neural-material",
-                "step": 20_000,
-                "phase": "joint-coarse-to-fine",
-            },
             "reference_runtime": {
                 "mdl_sdk": "2025.0.0-387700.1252",
                 "target_code_types": {"path": "runtime/types.hlsl", "sha256": "e" * 64},
@@ -164,9 +155,6 @@ def test_viewer_material_catalog_accepts_linked_typed_entry_without_loading_payl
     catalog = ViewerMaterialCatalog.from_dict(
         _document(), source_path=tmp_path / "catalog.json", verify_payloads=False
     )
-    assert catalog.checkpoint_step == 20_000
-    assert catalog.checkpoint_phase == "joint-coarse-to-fine"
-    assert catalog.checkpoint_compatibility == "exact"
     assert catalog.default_export_id == catalog.entries[0].export_id
     assert catalog.entries[0].metal == "brass"
 
@@ -175,7 +163,7 @@ def test_viewer_material_catalog_rejects_tamper_duplicate_and_unsafe_path(
     tmp_path: Path,
 ) -> None:
     tampered = _document()
-    tampered["checkpoint"]["step"] = 19_999  # type: ignore[index]
+    tampered["default_export_id"] = "f" * 64
     with pytest.raises(ValueError, match="catalog_id"):
         ViewerMaterialCatalog.from_dict(
             tampered, source_path=tmp_path / "catalog.json", verify_payloads=False
