@@ -13,6 +13,8 @@
 
 旧 `metal_fused_full_v1`、`metal-windows-smoke.yaml`、`metal-linux-smoke.yaml` 和 `metal-linux-long.yaml` 只解释历史 checkpoint/package，不再是 canonical 训练入口，也不能 resume 到新方法。
 
+截至2026-09-05，这个matched pair已经在物理GPU 5–9上完成到step2048。hybrid按冻结规则入选，direct保留为exact diagnostic对照；两者的Windows可消费package/catalog位于`artifacts/viewer/metal-budgeted-ddp5-wrap-1d5f813-step2048/`。该目录的README给出Windows命令，Linux Falcor/Vulkan已通过边界UV parity；Windows D3D12视觉检查仍应在目标Windows主机执行。
+
 ## 为什么只在 Linux 运行
 
 本轮 Windows 只做 unit、静态 layout 和必要的纯模型小测试。不要在 Windows 启动 online reference、256-batch validation、single-material pilot、完整 runtime baseline 或旧 long；这些操作曾造成整机失去响应，而且不能提供当前结构选择所需的 Linux matched 证据。
@@ -100,6 +102,8 @@ direct 使用 `metal-budgeted-direct-pilot.yaml` 和 `artifacts/metal-budgeted-p
 tail -f artifacts/metal-budgeted-pilot/hybrid/checkpoint.metrics.jsonl
 nvidia-smi dmon -s pucvmet -d 5
 ```
+
+长运行监督采用事件驱动方式：训练进程保持`tqdm`和JSONL为真实work unit来源，只在step里程碑、validation、checkpoint、退出或异常时读取增量；常态检查按分钟而不是按秒进行。这样不会用高频轮询制造大量终端输出或token消耗。对本轮配置，per-rank batch从512增到1024/2048后，steady global work units/s约从`21.1k`升到`42.4k/87.7k`，峰值显存仍只有约`0.73/0.94/1.37 GiB/rank`，所以后续专项统一使用per-rank 2048；这不反写已完成主pair的训练几何。
 
 达到cap后按预登记规则比较微小划痕的paired-UV/spatial-gradient、逐通道RGB/chroma、高光peak/energy与相同静态成本。`128/256 step`只是早期探针；实现正确时继续共同里程碑。若2048后选择仍不确定，只能按任务中预登记的单seed matched extension继续，不自动增加seed、asset refinement或模型宽度。
 

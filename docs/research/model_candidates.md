@@ -338,7 +338,7 @@ P1 v1 中 T 的 test/dense 为 `0.0775/0.3749` 与 `0.0818/0.4392`，在当前 2
 | M5 | NGTC 2024（target encoder 不破坏随机访问）；Set Transformer 2019 | per-asset encoder ≠ 跨资产摊销 |
 | M6 | MetaLayer 2023；Neural Appearance 2024 的 source-parameter encoder | 前者逐材质生成权重、后者逐材质训练 encoder，均不直接证明跨状态泛化 |
 
-## 11. Metal budgeted semantic hybrid（当前待测候选）
+## 11. Metal budgeted semantic hybrid（当前已选部署候选）
 
 `metal_fused_full_v1`的质量结果不能回答相同结构在实时预算下是否仍成立，因此当前 Metal 不再沿旧full做比例缩模。新候选先冻结目标运行时，再把训练能力分为typed compiler、两read asset、semantic prepare、directional evaluator和matched proposal五个责任边界。
 
@@ -359,4 +359,6 @@ P1 v1 中 T 的 test/dense 为 `0.0775/0.3749` 与 `0.0818/0.4392`，在当前 2
 - 训练总loss难以解释：日志拆分optimization total、appearance、proposal及权重；连续PDF NLL为负本身不是复数或非有限错误；
 - 部署预算被prepare/asset隐藏：dense MAC、PreparedState、weight bytes、asset bytes、reads和Linux matched latency分别报告。
 
-v1 Linux DDP5在共同step512观察到hybrid/direct appearance分别约`1.152/2.220`，但spatial-gradient均停留在约`0.282–0.283`；这与只消费前8维semantic state的审计共同触发v2。v2完整输入后hybrid总体几乎不变，direct改善log/linear/chroma却退化peak/spatial；online paired probe显示目标梯度约0.285而预测仅约0.001–0.004，触发v3短路径。v3共同step512相对v2改善hybrid appearance/peak约`0.0121/0.0074`，direct总appearance几乎持平，但两侧spatial都退化约`0.00032`。因此v3继续成熟训练但不宣称解决空间问题；本轮不再自动扩展v4。只有按冻结规则完成两者的eager/QAT failure classification后才冻结profile并进入Slang/package；若hybrid无净收益则选择direct，不扩大模型保留设计。
+v1 Linux DDP5在共同step512观察到hybrid/direct appearance分别约`1.152/2.220`，但spatial-gradient均停留在约`0.282–0.283`；这与只消费前8维semantic state的审计共同触发v2。v2完整输入后hybrid总体几乎不变，direct改善log/linear/chroma却退化peak/spatial；online paired probe显示目标梯度约0.285而预测仅约0.001–0.004，触发v3短路径。部署实现与wrap oracle修复后的fresh v3 pair均完成2048 step：`direct-hybrid` appearance为`+0.68544 [0.67929,0.69144]`，log/linear/chroma/peak也显著偏向hybrid；direct仅在spatial上小幅占优`-0.001790`，但两者仍远未恢复one-texel变化。因此当前部署选择是v3 hybrid，direct保留为matched视觉对照。
+
+剩余时间的v4角色分离、v5中心texel和v6双局部signed导数都以青铜/开裂钢fresh matched运行。v4/v5没有跨材质净收益；v6虽改善两项材质的平均appearance，却没有同时改善spatial，且预计需要v3的`1.882×`asset bytes。固定batch spatial-only优化同样无法逼近target，说明瓶颈不再是step数、loss权重、共享softmax、中心平滑或简单signed导数。下一轮应把“source-semantic局部场如何被cook成可插值latent”作为主配置轴：让高分辨率通道保留color/normal/roughness/mask等不同职责，并在训练中监督编译后plane的实际bilinear读取，而不是继续扩大同一个patch-summary encoder或方向MLP。
