@@ -1,0 +1,6 @@
+{"file":".trellis/spec/project/index.md","reason":"项目工程规则入口"}
+{"file":".trellis/spec/project/dev-environment.md","reason":"区分 Windows 证据与 Linux 实机能力"}
+{"file":".trellis/spec/project/research-execution.md","reason":"预登记、冻结、失败分类与用户授权范围"}
+{"file":".trellis/spec/project/method-constraints.md","reason":"候选必须有硬件部署可能"}
+{"file":".trellis/spec/learning/online-training.md","reason":"公共训练、资源与恢复合同"}
+{"file":".trellis/spec/learning/deployment.md","reason":"真实量化读取、ABI 与阶段部署"}
