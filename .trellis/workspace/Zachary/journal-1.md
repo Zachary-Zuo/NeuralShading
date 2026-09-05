@@ -405,3 +405,39 @@
 ### Next Steps
 
 - 在原生 Linux 目标机按 TESTING.md 验证单卡、NCCL 两卡、物理设备映射和续训；此项尚未实机验证。
+
+
+## Session 18: 原生多 UV 实现归档与服务器 24 小时研究规划
+
+**Date**: 2026-09-05
+**Task**: 原生多 UV 实现归档与服务器 24 小时研究规划
+**Branch**: `main`
+
+### Summary
+
+按用户最新边界提交并归档实现阶段；创建独占 GPU 5–9、事件触发 Codex、固定 24h 截止的服务器自主研究任务，实际研究尚未启动。
+
+### Main Changes
+
+- 提交原生多 UV raw encoder、共享资源移交、流式 cook、176 B runtime ABI、C1–C5 修复和公开入口 smoke；剩余 D0/D1/C6 实机质量显式转交。
+- 整理既有深入论文与旧 Metal 负结果，预列 E00–E10 及动态 R-### 实验规则，冻结选择/最终考核隔离、同预算对照、截止收束和及时 scoped commit。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e044156` | (see git log) |
+| `7e26e32` | (see git log) |
+
+### Testing
+
+- [OK] 已有全量 unit 366 passed，随后 C3/visual phase 回归 11 passed；spatial GPU/reference、Release viewer 与 train 0→2/validate/export/eval 已验证，Linux/NCCL 未验证。
+- [OK] 本次 git diff --check、两个任务 context 校验通过；归档和后继文档 121 个本地链接无缺失。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 服务器同步本任务，按 server-handoff.md 先实现并验证独立事件监管器，再设 T0 启动 GPU 5–9 的 24h；24h 到期提交结论与负结果，不自动延期。
