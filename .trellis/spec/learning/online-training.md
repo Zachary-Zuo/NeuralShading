@@ -18,6 +18,8 @@ MethodSourceAdapter.sample_tensors(source_index, generator, options) -> Mapping[
 expand_source_states(family, base_snapshots, typed_state_recipe) -> ExpandedSourceStates
 MethodPlugin.objective.compute(model, batches, phase) -> (loss, metrics)
 TrainingEngine.run(resume=None, stop_at_step=None) -> TrainingRunResult
+TrainingEngine._route_requests(..., validation_group_index=N)
+  -> TrainingRouteRequest.options["validation_group_index"] == N
 save/load_training_checkpoint_v1(path) -> TrainingCheckpoint@1
 load_evaluation_snapshot(path) -> EvaluationSnapshot
 assess_checkpoint_readiness(checkpoint, descriptor, mode="formal" | "diagnostic-evaluator")
@@ -45,6 +47,7 @@ MetalBudgetedAssetCooker.cook(encoded_values, mode, objective, refinement_steps,
 - 每步GPU聚合finite检查；audit cadence验证每个required group存在nonzero gradient和实际参数更新。metrics只在log cadence同步。
 - optional producer profile在training与validation之间严格分账。validation开始前先把尚未落盘的training counter暂存，validation结束后以`profile/validation_reference_*`写入首条validation row并reset；下一条training row只合并`profile/reference_*`训练计数。counter求和、`*_max`取最大、`resident_groups`取最后状态。
 - prefetch有界且不跨validation、checkpoint、phase或stop边界；engine只依赖平台无关的step/session合同。host预取不推进cursor，checkpoint的logical/request/group/tile cursor不得领先已消费batch。
+- 多group的`group-block-balanced@2`把training与validation的block cursor分开：training继续以`global_step // block_steps`选择group；validation必须由engine为窗口内第N个batch写入非负整数`validation_group_index=N`，并以`validation_offset_blocks + N // block_steps`选择group。这样一个DDP validation window每`block_steps`个batch切换一次group、各rank仍选择相邻不同group，而且不同checkpoint从N=0重放同一group序列。旧`group-block-balanced@1`保留原`global_step`语义，只用于复现已有checkpoint，不能用于新的多group质量轨迹。
 - objective每次返回active required component的全部Python outputs；完成checkpoint前required groups的gradient/update coverage必须齐全。
 - checkpoint v1 严格冻结 resolved plan、method/facet、data execution/reference/asset/query/source identity、逐 rank RNG/data cursor、hook cursor 与当前 phase optimization 状态。发布前必须调用 data session `drain()`。
 - 同一个`MethodDescriptor`下允许多个profile时，所有profile的checkpoint tensor key/dtype/rank/shape必须满足该descriptor的同一静态schema；“离线参数不进入shader runtime”不能豁免checkpoint合同。config解析必须实例化所选profile并在创建online session前验证完整tensor schema，不能等到周期checkpoint才发现shape漂移。确需不同训练参数shape时必须使用独立method descriptor/implementation identity，不能只增加profile枚举。
@@ -67,6 +70,7 @@ MetalBudgetedAssetCooker.cook(encoded_values, mode, objective, refinement_steps,
 | formal export不是`run_class=formal`、phase不是`complete`，或缺required group finite/nonzero/update coverage | readiness拒绝；不生成正式package/catalog |
 | diagnostic evaluator preview没有exact descriptor、step-1端到端evaluator组覆盖或合法phase | readiness拒绝；不得用旧tensor shape兼容冒充可部署状态 |
 | validation backend counter出现在下一条training profile | engine profile隔离测试失败；不得据此归因冷启动或长期吞吐 |
+| `group-block-balanced@2` validation缺少、复用窗口外cursor或传入负的`validation_group_index` | producer在reference dispatch前拒绝；engine/独立validate必须从每个window的0开始编号 |
 | v4 checkpoint 传给新 train resume | v1 loader明确拒绝；只读 evaluation importer 仍可加载 |
 | typed-state recipe schema/字段、registry locator或range未知 | plan/session创建前拒绝 |
 | resume的typed-state pool identity漂移 | producer恢复拒绝，不恢复任何cursor |
@@ -83,13 +87,15 @@ MetalBudgetedAssetCooker.cook(encoded_values, mode, objective, refinement_steps,
 - Good：Metal typed edit只重编`MaterialProgramState`，替换texture bundle只改变`AssetState`；相邻mip分别经shared encoder/decoder后在structured state中连续插值。
 - Good：Linux single-material pilot从第1步同时执行asset encoder、typed compiler、semantic prepare、evaluator与proposal六组参数；第二phase再以FP32执行部署态QAT。
 - Good：fresh run以`--stop-at-step 0`完成calibration，review明确记录0 metric与未完成coverage；随后exact resume从step 1开始训练。
+- Good：DDP5的256-batch validation使用`block_steps=64`时依次覆盖四个稳定rank cohort、共20个group；step128与step512都从相同20个group开始，batch行仍逐项保留。
 - Base：常量1×1资产仍经同一个tile+halo请求与lease协议，只是其canonical mip chain长度为1。
 - Bad：每个batch新建collection使cache永远失效；在tile lease存活时驱逐payload；或仅因loss finite/shape compatible就把非formal、未完成checkpoint标成正式可部署。
 - Bad：预先离线编码52个纹理grid后只训练evaluator；把bounded refinement和direct control写入同一个asset identity；或为了mixed precision把angular lookup改成最近邻。
+- Bad：整段validation固定一个group，随后又按checkpoint step换group；这种均值既缺少cohort覆盖，也不能解释成学习曲线。
 
 ## 6. Tests Required
 
-- unit：YAML resolve/plugin、三种batch、multi-asset tile+halo、phase graph、carry-overlap resume、component正负例、checkpoint v1 与 legacy v4只读；同一method的全部注册profile逐项导出并匹配descriptor tensor schema；metric loader默认拒绝空文件，只有显式step-0路径接受空rows；
+- unit：YAML resolve/plugin、三种batch、multi-asset tile+halo、phase graph、carry-overlap resume、component正负例、checkpoint v1 与 legacy v4只读；同一method的全部注册profile逐项导出并匹配descriptor tensor schema；metric loader默认拒绝空文件，只有显式step-0路径接受空rows；`group-block-balanced@2`验证窗口跨milestone重放同一group并在block边界换组，缺index时fail closed；
 - integration：generic recipe registry扩展Metal train/validation states并验证非默认snapshot IDs不重叠、pool identity可恢复；
 - GPU：NVIDIA Python/Slang evaluator与sampler梯度；Metal budgeted finite/nonnegative、typed missing/discrete与asset分离、三路径asset cook、BF16/QAT敏感路径、Python/Slang matched proposal parity，以及Linux真实online两phase smoke/resume/evaluate；
 - static：无固定lifecycle、旧schema reader、offline batch或family-specific producer。
@@ -139,6 +145,14 @@ spatial = frozen_asset_grids[asset_index]
 # 对：单一正式签名按route请求真实相邻mip patch，codec端到端参与反向。
 tensors = adapter.sample_tensors(source_index, generator, route.options)
 spatial = model.spatial_state(tensors)
+```
+
+```python
+# 错：validation group由checkpoint step决定；每个window只反复看一个group。
+block = global_step // block_steps + validation_offset_blocks
+
+# 对：engine显式传window-local batch序号，milestone不改变验证cohort。
+block = validation_offset_blocks + validation_group_index // block_steps
 ```
 
 ## Method-owned diagnostic readiness policy 合同

@@ -297,7 +297,11 @@ class OnlineTrainingProducer:
         if self._group_schedule_recipe is None:
             self._group_sequence = self.plan.groups
         elif (
-            self._group_schedule_recipe == "group-block-balanced@1"
+            self._group_schedule_recipe
+            in {
+                "group-block-balanced@1",
+                "group-block-balanced@2",
+            }
             and schedule.get("weight") == "record-count"
             and self._group_block_steps >= 1
             and self._group_validation_offset_blocks >= 1
@@ -390,10 +394,35 @@ class OnlineTrainingProducer:
         return request_index, generator
 
     def _select_group(self, request: TrainingRouteRequest) -> ReferenceExecutionGroup:
-        if self._group_schedule_recipe == "group-block-balanced@1":
-            block = request.global_step // self._group_block_steps
-            if bool(request.options.get("validation", False)):
-                block += self._group_validation_offset_blocks
+        if self._group_schedule_recipe in {
+            "group-block-balanced@1",
+            "group-block-balanced@2",
+        }:
+            validation = bool(request.options.get("validation", False))
+            if (
+                self._group_schedule_recipe == "group-block-balanced@2"
+                and validation
+            ):
+                validation_group_index = request.options.get(
+                    "validation_group_index"
+                )
+                if (
+                    isinstance(validation_group_index, bool)
+                    or not isinstance(validation_group_index, int)
+                    or validation_group_index < 0
+                ):
+                    raise ValueError(
+                        "group-block-balanced@2 validation requires a nonnegative "
+                        "validation_group_index"
+                    )
+                block = (
+                    self._group_validation_offset_blocks
+                    + validation_group_index // self._group_block_steps
+                )
+            else:
+                block = request.global_step // self._group_block_steps
+                if validation:
+                    block += self._group_validation_offset_blocks
             sequence_index = block * self.ddp_world_size + self.ddp_rank
             return self._group_sequence[sequence_index % len(self._group_sequence)]
         cursor = self._group_cursor.get(request.name, 0)
@@ -521,7 +550,10 @@ class OnlineTrainingProducer:
             raise RuntimeError("online training producer is closed")
         # Only the block schedule can be inspected without advancing a route
         # cursor. Other schedules remain correct and simply do no early host work.
-        if self._group_schedule_recipe != "group-block-balanced@1":
+        if self._group_schedule_recipe not in {
+            "group-block-balanced@1",
+            "group-block-balanced@2",
+        }:
             return
         visited: set[tuple[str, int]] = set()
         for step in requests:

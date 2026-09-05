@@ -609,6 +609,7 @@ def _validate_checkpoint(checkpoint_path: Path, batches: int, device: int) -> in
                             **dict(route.options),
                             "recipes": dict(phase.recipes),
                             "validation": True,
+                            "validation_group_index": index,
                         },
                     )
                     for route in phase.routes

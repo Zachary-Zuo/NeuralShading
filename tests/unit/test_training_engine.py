@@ -103,3 +103,19 @@ def test_invalid_stop_target_fails_before_online_initialization() -> None:
             _plugin(definition), _data_session(), _config()
         ).run(stop_at_step=5)
     assert definition.initialization_calls == 0
+
+
+def test_validation_requests_carry_window_local_group_indices() -> None:
+    engine = TrainingEngine(_plugin(_PhaseMethod()), _data_session(), _config())
+    phase = engine.config.phases[0]
+    requests = engine._route_requests(
+        phase,
+        1024,
+        validation=True,
+        validation_group_index=7,
+    )
+    assert requests
+    assert {
+        request.options["validation_group_index"] for request in requests.values()
+    } == {7}
+    assert all(request.options["validation"] for request in requests.values())

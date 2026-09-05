@@ -252,6 +252,18 @@ backend.prepare → state.evaluate / state.sample / state.pdf → MIS / throughp
 
 典型失败是：原子`os.replace`保证target正确，却没有保证只编译一次，也没有删除返回`False`的loser目录。结果功能测试通过，但全cohort DDP冷启动重复消耗CPU并泄漏数GiB ignored cache。
 
+## Validation Cohort Scheduling Boundary
+
+当验证数据从`TrainingEngine`跨到online producer的group schedule时，稳定seed并不等于稳定cohort：
+
+- [ ] 每个validation window是否有显式、从0开始的batch/group序号，而不是复用training `global_step`或累计producer cursor？
+- [ ] DDP rank是否在同一window batch覆盖不同group，同时所有checkpoint重放相同group序列？
+- [ ] group切换频率是否既覆盖多个group，又保留足够长的block以避免reference/cache thrash？
+- [ ] metric是否保留每个batch行，且matched checkpoint比较确认source cohort相同？
+- [ ] 旧schedule语义是否通过版本保留，而不是在同一recipe identity下静默改变已有checkpoint的query stream？
+
+具体请求字段、错误行为与测试入口见`../learning/online-training.md`和`../data/online-pipeline.md`。
+
 ---
 
 ## Cross-Platform Template Consistency

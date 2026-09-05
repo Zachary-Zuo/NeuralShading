@@ -317,9 +317,14 @@ class TrainingEngine:
         step: int,
         *,
         validation: bool = False,
+        validation_group_index: int | None = None,
     ) -> TrainingRouteRequest:
         options = dict(route.options)
         options.update({"recipes": dict(phase.recipes), "validation": validation})
+        if validation_group_index is not None:
+            if not validation or validation_group_index < 0:
+                raise ValueError("validation group index requires a validation request")
+            options["validation_group_index"] = validation_group_index
         name = f"validation:{phase.name}:{route.name}" if validation else f"{phase.name}:{route.name}"
         # Give every rank a deterministic, disjoint query subsequence. The
         # shared identity freezes the partition recipe, while rank-local state
@@ -388,9 +393,16 @@ class TrainingEngine:
         step: int,
         *,
         validation: bool = False,
+        validation_group_index: int | None = None,
     ) -> dict[str, TrainingRouteRequest]:
         return {
-            route.name: self._request(phase, route, step, validation=validation)
+            route.name: self._request(
+                phase,
+                route,
+                step,
+                validation=validation,
+                validation_group_index=validation_group_index,
+            )
             for route in phase.routes
         }
 
@@ -805,7 +817,12 @@ class TrainingEngine:
             for batch_index in range(batch_count):
                 while len(queue) < lookahead and submitted < batch_count:
                     logical_id = self.data_session.submit_step(
-                        self._route_requests(phase, global_step, validation=True),
+                        self._route_requests(
+                            phase,
+                            global_step,
+                            validation=True,
+                            validation_group_index=submitted,
+                        ),
                         boundary_id=boundary_id,
                     )
                     queue.append((submitted, logical_id))

@@ -34,7 +34,7 @@ payload:
         default_weight: 0.25
         boundary_weight: 0.5
       group_schedule:
-        recipe: group-block-balanced@1
+        recipe: group-block-balanced@2
         weight: record-count
         block_steps: 64
         validation_offset_blocks: 104729

@@ -443,6 +443,45 @@ def test_group_block_schedule_is_shared_by_routes_and_changes_only_at_boundary()
     assert producer._group_cursor == {}
 
 
+def test_group_block_schedule_v2_repeats_validation_groups_across_milestones() -> None:
+    groups = tuple(SimpleNamespace(group_id=str(index)) for index in range(7))
+    producer = OnlineTrainingProducer.__new__(OnlineTrainingProducer)
+    producer._group_schedule_recipe = "group-block-balanced@2"
+    producer._group_block_steps = 2
+    producer._group_validation_offset_blocks = 1
+    producer._group_sequence = groups
+    producer.ddp_world_size = 2
+    producer.ddp_rank = 1
+    producer._group_cursor = {}
+
+    def validation(step: int, index: int) -> TrainingRouteRequest:
+        return TrainingRouteRequest(
+            "validation:evaluator",
+            "reference-evaluator",
+            1,
+            1,
+            step,
+            4,
+            {"validation": True, "validation_group_index": index},
+        )
+
+    assert producer._select_group(validation(63, 0)) is groups[3]
+    assert producer._select_group(validation(1024, 0)) is groups[3]
+    assert producer._select_group(validation(1024, 1)) is groups[3]
+    assert producer._select_group(validation(1024, 2)) is groups[5]
+    missing_index = TrainingRouteRequest(
+        "validation:evaluator",
+        "reference-evaluator",
+        1,
+        1,
+        63,
+        4,
+        {"validation": True},
+    )
+    with pytest.raises(ValueError, match="validation_group_index"):
+        producer._select_group(missing_index)
+
+
 def test_group_block_cycle_has_full_prefix_and_exact_record_weighting() -> None:
     groups = tuple(
         SimpleNamespace(group_id=str(index), records=(object(),) * weight)
