@@ -148,6 +148,15 @@ def _gloo_worker(rank: int, init_uri: str, output_dir: str) -> None:
             {"prepare": float(rank + 1)},
             scope="test:stages",
         )
+        initialization_rows = context.concatenate_rank_tensor_rows(
+            {
+                "target": torch.full(
+                    (context.partition_count(5), 1),
+                    float(rank + 1),
+                )
+            },
+            scope="test:initialization-rows",
+        )
         gathered = context.gather_rank_payload({"cursor": rank + 10})
         rank_zero_result = context.run_rank_zero("test commit", lambda: 17)
         all_rank_result = context.run_all_ranks(
@@ -223,6 +232,7 @@ def _gloo_worker(rank: int, init_uri: str, output_dir: str) -> None:
             "report_row_losses": report_row_losses,
             "report_row_metrics": report_row_metrics,
             "rank_stats": rank_stats,
+            "initialization_rows": initialization_rows["target"].flatten().tolist(),
             "gathered": gathered,
             "rank_zero_result": rank_zero_result,
             "all_rank_result": all_rank_result,
@@ -275,6 +285,13 @@ def test_gloo_contract_covers_reducer_metrics_rank_state_and_failures(
         "prepare_rank_max": 2.0,
         "prepare_straggler_rank": 1.0,
     }
+    assert rows[0]["initialization_rows"] == rows[1]["initialization_rows"] == [
+        1.0,
+        1.0,
+        1.0,
+        2.0,
+        2.0,
+    ]
     assert [item["state"]["cursor"] for item in rows[0]["gathered"]] == [10, 11]
     assert rows[1]["gathered"] is None
     assert rows[0]["rank_zero_result"] == 17

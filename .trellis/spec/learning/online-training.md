@@ -217,6 +217,8 @@ DistributedContext.initialize(ExecutionContext) -> DistributedContext
 DistributedContext.build_objective(objective, model, phase_name)
   -> (DistributedObjective, DistributedDataParallel)
 DistributedContext.reduce_report(loss, metrics, scope) -> averaged scalars
+DistributedContext.partition_count(global_count) -> rank-local count
+DistributedContext.concatenate_rank_tensor_rows(values, scope) -> global rows
 DistributedContext.gather_rank_payload(local_rng_and_query_state) -> rank0 states
 DistributedContext.run_rank_zero(label, action) -> rank0 result/status broadcast
 ```
@@ -227,6 +229,7 @@ DistributedContext.run_rank_zero(label, action) -> rank0 result/status broadcast
 - lifecycle先配置phase的`requires_grad`与optimizer ownership，再按phase构造`DistributedObjective`和PyTorch`DistributedDataParallel`。wrapper拥有真实model，forward直接产生objective loss；phase内parameter graph稳定，phase boundary全rank同序重构。
 - phase-local objective已由目标机DDP logging和required-group audit证明：phase声明的active参数均参与稳定反向图。因此固定使用`find_unused_parameters=False`、`gradient_as_bucket_view=True`、`static_graph=True`；若未来候选引入条件分支，必须先修正phase ownership或拆phase并新增图稳定性测试，不得静默放宽成兼容模式。禁止重新引入逐parameter gradient `all_reduce`、dummy trigger或每step reducer重建。
 - NCCL data group只执行DDP reducer和GPU tensor collectives；辅助Gloo control group执行descriptor核对、小型rank state gather、rank-0 commit status与teardown readiness。model/resume/optimizer setup和phase transition等低频rank-local动作必须在进入下一次DDP collective前汇报任一rank异常；两组在所有rank同序创建和销毁，训练热循环不新增barrier。
+- `TrainingInitializationRequest.sample_count`是整个distributed job的全局样本预算，不是每rank预算。engine按`quotient + rank < remainder`确定性连续分片；train-only CPU tensor在Gloo control group按rank顺序合并，method lifecycle只接收一次全局shape并在各rank得到相同payload/identity。不能让各rank独立估计calibration后再期待descriptor相同，也不能只广播rank 0的局部source分布。
 - run开始时先核对config、resume cursor、stop target与checkpoint callback presence；scalar loss/metrics按冻结descriptor排序并pack成一次collective，字段或dtype跨rank不一致时在进入NCCL metric collective前由control group全部失败。
 - throughput固定记录`steps_per_second`、`local_work_units_per_second`和`global_work_units_per_second`；后者为本次进程已完成的全局work units除以active elapsed，不能写成`steps/s × world_size`。
 - checkpoint前所有rank drain并只gather RNG/query cursor；完整model/optimizer CPU snapshot和durable write只在rank 0执行。写入结束后广播success/failure，final artifact commit与hook close后全rank确认teardown readiness。
@@ -240,6 +243,7 @@ DistributedContext.run_rank_zero(label, action) -> rank0 result/status broadcast
 | phase parameter名称/shape/dtype/requires-grad跨rank不同 | DDP构造前control descriptor检查令所有rank失败 |
 | phase声明active参数但某step不参与loss | DDP/static-graph与required-group gate失败；修正phase合同，不启用unused兼容扫描 |
 | objective遗漏某rank的metric或scalar类型漂移 | packed metric reduce前失败，不进入次序不同的NCCL collectives |
+| 多source initialization各rank独立产生calibration | 全局样本先确定性分片、按rank合并；所有rank对同一全局tensor初始化并核对descriptor |
 | rank-0 checkpoint encode/write抛异常 | Gloo广播原error type/message；peer不等待NCCL watchdog |
 | 非rank-0尝试构造完整model/optimizer checkpoint | unit/static gate失败 |
 | data/reference rank长尾 | stage metrics保留每个rank原值并报告min/mean/max与straggler；reference group的48-bit identity同样逐rank汇总，不能仅归因为reducer |
@@ -249,12 +253,13 @@ DistributedContext.run_rank_zero(label, action) -> rank0 result/status broadcast
 
 - Good：一个phase只构造一个DDP reducer，25 MiB模型由少量gradient bucket处理；backward interval明确包含reducer，log row同时给出rank max和straggler。
 - Good：peer在rank-0写periodic checkpoint时等待Gloo commit status；写入失败后所有rank收到同一失败语义。
+- Good：16,384条calibration在DDP5中分成`3277/3277/3277/3277/3276`，合并后每个rank都对相同16,384条全局train-only target求分位数。
 - Base：单卡继续经同一个`DistributedObjective`执行，但不创建process group或DDP wrapper，checkpoint保存非envelope本地状态。
 - Bad：backward后遍历328个parameter逐个clone/`all_reduce`；或非rank-0在rank-0写summary时提前`destroy_process_group()`。
 
 ### 6. Tests Required
 
-- unit/Gloo：两rank objective gradient等于拼接global batch；packed metric均值、descriptor mismatch、rank state gather、rank-0 failure propagation与straggler字段。
+- unit/Gloo：两rank objective gradient等于拼接global batch；packed metric均值、全局initialization分片/按rank合并、descriptor mismatch、rank state gather、rank-0 failure propagation与straggler字段。
 - unit：单卡phase/resume与原结果一致；throughput按route work units计算；非rank-0不调用checkpoint codec。
 - static：production training hot path无逐parameter gradient `all_reduce`，launcher仍一进程一卡且debug env为显式opt-in。
 - Linux/NCCL：跨真实两phase的两卡smoke，检查DDP bucket/unused参数、rank0-only artifact、stop/resume与同序teardown；再做1/2/3/4卡matched scaling和故障注入。
@@ -306,7 +311,7 @@ tools/learning/build_metal_linux_handoff.py --output <artifact.json>
 - asset输入是detail/context两条RGBA8 SNORM response mip；prepare固定`24→32→32→24`，并把Detail四通道无参数residual到semantic前四维，使高频frame语义具有短梯度路径；evaluator固定`44→64→64→64→6`并消费全部24维semantic state。direct最终线性`f`只消费前三个positive RGB，后三个通道只承担与detached analytic core匹配的训练辅助；hybrid gate为逐RGB`sigmoid`，值域固定`[0,1]`。
 - source adapter保留exact MDL locator、typed state、access/frame/resource责任和最多9-slot native patch。确定性access/frame/resource/distribution字段绕过learned guess；`Aluminum_Anodized`所需Beckmann由registry BSDF-data slot确定，不能用材质名启发式。
 - proposal固定primary analytic、secondary analytic、uniform full-hemisphere fallback三个mixture component。component位置与distribution enum独立：primary可为GGX或Beckmann，secondary可与primary同为GGX；重复distribution ID合法。每个component折回renderer上半球，PDF累加原方向与z镜像两个preimage，sample后独立PDF必须逐值一致。
-- fresh run在第一次model forward之前，按`train-only-reference-rgb-percentiles@1`用固定seed `2026090401`取得16,384条`target_f`，冻结逐通道P50 scale、P95 peak和energy epsilon并写入checkpoint。resume只恢复这些buffer，不重新估计；validation数据不得进入calibration。
+- fresh run在第一次model forward之前，按`train-only-reference-rgb-percentiles@1`用固定seed `2026090401`取得全局共16,384条`target_f`，冻结逐通道P50 scale、P95 peak和energy epsilon并写入checkpoint。DDP按rank确定性分片source/query并在control group合并后再计算分位数，所有rank必须得到相同calibration identity；单材质上碰巧相同的rank-local结果不能替代该合同。resume只恢复这些buffer，不重新估计；validation数据不得进入calibration。
 - phase固定为`joint-response-fit → deployment-qat-refine`，六个参数组从step 1共同参与appearance/proposal目标。QAT仅在functional forward中对runtime浮点weight做FP16 STE、对asset做RGBA8 SNORM STE；master、optimizer引用、state key与checkpoint schema不变。
 - progress与metrics固定登记`loss/optimization_total`、`loss/appearance`、`loss/proposal`和`loss/proposal_weight`。连续密度NLL可为负，这是density超过1时合法的对数密度结果；进度显示不得把它误称complex loss，也不得用绝对值改变梯度。
 - DDP validation按一个validation window保留原始batch顺序和每batch的全rank平均metric row，但所有scalar先在device上堆叠，再用一次packed collective聚合并一次性回读host；不得为每个validation batch重复descriptor/metric collective，也不得把整个window压成单一均值而丢失bootstrap单元。validation提交使用phase-local bounded lookahead和同一window boundary，队列不得跨validation/checkpoint/phase边界。
@@ -320,7 +325,7 @@ tools/learning/build_metal_linux_handoff.py --output <artifact.json>
 |---|---|
 | profile MAC/state/read超界或layout identity漂移 | 构造/生成器失败；不放宽hard bound |
 | source distribution enum未知，或component位置被当成distribution | compiler/sampler fail closed；合法重复GGX必须保持有效 |
-| calibration缺失、样本数/seed/recipe漂移，或resume尝试重估 | training lifecycle拒绝 |
+| calibration缺失、全局样本数/seed/recipe漂移、DDP rank-local结果未合并，或resume尝试重估 | training lifecycle拒绝 |
 | direct/hybrid source、query、loss、optimizer、schedule、precision或asset mode不matched | handoff/config-pair测试失败 |
 | total、appearance、proposal或任一required gradient/update非有限 | engine/readiness失败 |
 | sample与independent forward/reverse PDF不一致 | sampler测试失败，不用clamp或fallback掩盖 |

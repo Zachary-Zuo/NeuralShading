@@ -158,6 +158,63 @@ class DistributedContext:
                 f"distributed descriptor mismatch for {scope!r}: {gathered!r}"
             )
 
+    def partition_count(self, global_count: int) -> int:
+        """Return this rank's deterministic share of a global work count."""
+
+        if global_count < self.world_size:
+            raise ValueError(
+                "distributed global work count must cover every rank"
+            )
+        quotient, remainder = divmod(int(global_count), self.world_size)
+        return quotient + int(self.rank < remainder)
+
+    def concatenate_rank_tensor_rows(
+        self,
+        values: Mapping[str, torch.Tensor],
+        *,
+        scope: str,
+    ) -> dict[str, torch.Tensor]:
+        """Concatenate bounded CPU initialization rows in deterministic rank order."""
+
+        if not values:
+            raise ValueError("distributed tensor rows require at least one field")
+        names = tuple(sorted(values))
+        descriptor = tuple(
+            (name, tuple(values[name].shape[1:]), str(values[name].dtype))
+            for name in names
+        )
+        for name in names:
+            value = values[name]
+            if value.ndim < 1 or value.device.type != "cpu" or not value.is_contiguous():
+                raise ValueError(
+                    "distributed initialization tensors must be contiguous CPU rows"
+                )
+        self.validate_descriptor(scope, descriptor)
+        if not self.is_distributed:
+            return {name: values[name] for name in names}
+        gathered: list[Any] = [None] * self.world_size
+        dist.all_gather_object(
+            gathered,
+            {name: values[name] for name in names},
+            group=self.control_group,
+        )
+        result: dict[str, torch.Tensor] = {}
+        for name in names:
+            rank_values = []
+            for payload in gathered:
+                if not isinstance(payload, Mapping) or set(payload) != set(names):
+                    raise RuntimeError(
+                        "distributed initialization tensor payload drifted"
+                    )
+                value = payload[name]
+                if not isinstance(value, torch.Tensor):
+                    raise RuntimeError(
+                        "distributed initialization payload is not a tensor"
+                    )
+                rank_values.append(value)
+            result[name] = torch.cat(rank_values, dim=0).contiguous()
+        return result
+
     def build_objective(
         self,
         objective: ObjectiveFacet,

@@ -231,6 +231,27 @@ backend.prepare → state.evaluate / state.sample / state.pdf → MIS / throughp
 
 典型失败是：候选profile单测、forward、DDP reducer和validation都正常，但默认模型生成的descriptor仍冻结旧参数shape，直到step128周期checkpoint才报shape mismatch。正确门禁应在YAML resolve时失败。
 
+## Distributed Initialization / Calibration Boundary
+
+当train-only initialization跨越`online query stream → DDP partition → method lifecycle → checkpoint identity`时，单材质各rank数值碰巧一致不能证明多source合同成立：
+
+- [ ] `sample_count`是否明确定义为global job预算，并确定性分到rank，而不是无意乘以world size？
+- [ ] 多source rank分片是否在求quantile、normalization或统计identity之前按稳定rank顺序合并？
+- [ ] 所有rank是否用同一全局payload执行method lifecycle，而不是广播rank 0的偏置样本或独立求值后才比较hash？
+- [ ] metadata是否只包含跨rank一致的plan/recipe/partition描述，checkpoint是否保存最终全局identity且resume不重估？
+- [ ] Gloo/NCCL测试是否至少让两个rank看到不同source/value；相同fixture会掩盖缺少聚合的问题。
+
+典型失败是：Tungsten单材质DDP5通过，因为同seed各rank抽到相同target；切到692-source group schedule后，各rank按设计选择不同group，calibration identity立即分叉。正确修复是全局预算分片后合并train-only tensor，不是放宽descriptor一致性门。
+
+## Content-addressed Compile Cache Concurrency Boundary
+
+- [ ] cache miss是否在每个content key的跨进程锁内再次检查，避免多个DDP rank重复启动同一个昂贵compiler？
+- [ ] atomic publish返回“已有winner”时，loser是否立即删除自己的partial；异常和中断路径是否也清理？
+- [ ] 测试是否同时覆盖锁的互斥与未遵守锁的publication race，不能只断言winner target存在？
+- [ ] startup profile是否把native compile/cache materialization与GPU train step分开，避免用低GPU利用率误判batch太小？
+
+典型失败是：原子`os.replace`保证target正确，却没有保证只编译一次，也没有删除返回`False`的loser目录。结果功能测试通过，但全cohort DDP冷启动重复消耗CPU并泄漏数GiB ignored cache。
+
 ---
 
 ## Cross-Platform Template Consistency

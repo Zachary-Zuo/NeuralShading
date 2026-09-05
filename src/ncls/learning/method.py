@@ -19,7 +19,11 @@ AdaptationAction = Literal["unchanged", "runtime-patch", "recompile", "unsupport
 
 @dataclass(frozen=True)
 class TrainingInitializationRequest:
-    """一次发生在任何模型前向之前的 train-only online 初始化请求。"""
+    """一次发生在任何模型前向之前的 train-only online 初始化请求。
+
+    ``sample_count``是整个distributed job的全局样本数；engine以确定性连续
+    分片分给各rank，再按rank顺序合并后交给method lifecycle。
+    """
 
     name: str
     phase_name: str

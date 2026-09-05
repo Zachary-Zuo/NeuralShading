@@ -479,7 +479,10 @@ class TrainingEngine:
             chunks: dict[str, list[torch.Tensor]] = {
                 field: [] for field in initialization.tensor_fields
             }
-            remaining = initialization.sample_count
+            local_sample_count = self.distributed.partition_count(
+                initialization.sample_count
+            )
+            remaining = local_sample_count
             batch_index = 0
             while remaining > 0:
                 take = min(remaining, query_count)
@@ -522,15 +525,26 @@ class TrainingEngine:
                     step_batch.release()
                 remaining -= take
                 batch_index += 1
-            collected[initialization.name] = {
+            local_values = {
                 field: torch.cat(values, dim=0)
                 for field, values in chunks.items()
             }
             if any(
+                value.shape[0] != local_sample_count
+                for value in local_values.values()
+            ):
+                raise RuntimeError("training initialization rank sample count drifted")
+            collected[initialization.name] = (
+                self.distributed.concatenate_rank_tensor_rows(
+                    local_values,
+                    scope=f"training:initialization:{initialization.name}:tensors",
+                )
+            )
+            if any(
                 value.shape[0] != initialization.sample_count
                 for value in collected[initialization.name].values()
             ):
-                raise RuntimeError("training initialization sample count drifted")
+                raise RuntimeError("training initialization global sample count drifted")
             request_manifest.append(
                 {
                     "name": initialization.name,
@@ -552,6 +566,10 @@ class TrainingEngine:
                 self.data_session.native_asset_collection_identity
             ),
             "query_stream_identity": self.data_session.query_stream_identity,
+            "sample_partition": {
+                "world_size": self.distributed.world_size,
+                "recipe": "rank-contiguous-balanced@1",
+            },
             "requests": request_manifest,
         }
         result = dict(

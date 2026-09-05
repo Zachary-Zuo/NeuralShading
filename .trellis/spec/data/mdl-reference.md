@@ -52,7 +52,7 @@ mdl.program@1 -> project MDL bridge -> locked MDL SDK target code
 - generated HLSL以`kind=slang-module-source`注入；argument block、RO segment、BSDF data、2D/3D texture与sampler均走通用typed binder。
 - 多typed state按generated module与resource binding进入同一个execution group，argument/RO使用显式16-byte aligned offsets。decoded texture/BSDF payload以`FileResourcePayload`指向verified provider cache；group key使用content hash而非主机path，lazy group首次执行才读取。
 - decoded payload的provider cache以SHA-256内容寻址；同一文件系统内可用hardlink复用，artifact与cache跨文件系统时必须使用临时文件加`os.replace`原子安装并保留artifact-local副本，不能因`EXDEV`退化为跳过校验或删除源文件。manifest、尺寸、路径和逐文件哈希检查在两种布局下都保持不变。
-- compiled artifact目录同样通过content-addressed临时目录原子发布。`os.replace(partial, target)`遇到瞬时`PermissionError`/`FileExistsError`时做固定次数指数退避；若target已经出现，视为并发winner并由正常artifact loader重新验证，不能覆盖target或用Windows专用旁路。重试耗尽则保留原异常并清理本进程partial。
+- compiled artifact目录同样通过content-addressed临时目录原子发布。每个cache key先取得本机跨进程文件锁，锁内再次检查target，避免DDP rank重复调用MDL SDK；`os.replace(partial, target)`遇到瞬时`PermissionError`/`FileExistsError`时做固定次数指数退避。若仍有未遵守锁的并发winner先发布target，本进程必须删除自己的partial并由正常artifact loader重新验证，不能覆盖target或用Windows专用旁路。异常路径同样清理本进程partial；锁文件可以保留为空的协调对象，不能当artifact。
 - 输入像素格式支持与 closure 输出支持是两个独立 capability。V1 decoded texture 至少支持 `Sint8`、`Rgb`、`Rgba`、`Rgb_16`、`Rgba_16`、`Float32`、`Float32<2/3/4>`、`Rgb_fp`、`Color`；`Rgba_16` 必须以每 texel 8 bytes 保留为 `uint16`，并绑定 `RGBA16Unorm`，不得量化为 8-bit。无对应 sRGB hardware view 的 uint16/float texture 可先无损归一化并显式线性化为 float32。
 - `geometry.cutout_opacity` 是输出/合成能力。当前 public evaluator 未实现它时，punched suede 必须以 `unsupported_reasons=["geometry.cutout_opacity"]` 失败关闭；这不允许 bridge 丢弃、跳过或降位其 `Rgba_16` cutout atlas。
 - 正式JPEG decoder固定独立`external/stb` pin/hash。不得从falcor2 import、链接或复制runtime。
@@ -78,13 +78,14 @@ mdl.program@1 -> project MDL bridge -> locked MDL SDK target code
 | 同content resource位于不同state cache目录 | 以content hash判为同一binding；若descriptor不同仍拒绝group |
 | artifact输出目录与provider cache不在同一文件系统 | 使用跨设备复制保留两份payload；不得直接调用跨设备`os.replace`或`os.link`导致训练/测试失败 |
 | compiled artifact目录发布时被临时文件句柄拒绝 | 有界指数退避；target已由并发者发布则转入严格load，重试耗尽则失败并清理partial |
+| 多个DDP rank冷启动同一snapshot | 以cache key文件锁串行一次SDK compile；等待者锁内复查target后直接严格load，不留下重复partial |
 | formal路径import/启动falcor2 | 静态边界测试失败 |
 
 ## 5. Good / Base / Bad Cases
 
 - Good：`Rgba_16` punched suede inspection 记录 `1024 * 1024 * 4 * 2` bytes 的 decoded runtime payload；typed binder 选择 `uint16/RGBA16Unorm`，随后仅因 public cutout 输出合同缺失而拒绝 evaluate。
 - Good：692个opaque locators进入registry，训练只选择batch所属group并懒加载该组资源；52-set collection用memmap按tile+halo读取source或BSDF table。
-- Good：两个worker并发编译同一snapshot时只有一个原子发布target，另一个发现content-addressed target后丢弃自身partial，并加载/校验winner产物。
+- Good：两个worker并发请求同一snapshot时只有一个进入SDK compile并原子发布target，另一个取得锁后直接加载/校验winner产物；即使有旧worker绕过锁，loser partial也必须删除。
 - Base：constant diffuse只绑定argument/RO buffer，canonical evaluate/sample/pdf均可运行。
 - Bad：看到 punched material 尚不可渲染，就跳过其 atlas、转成 8-bit，或把 preset 从 catalog 删除。
 - Bad：为MDL复制一个query shader或producer；正式失败后启动falcor2生成target。

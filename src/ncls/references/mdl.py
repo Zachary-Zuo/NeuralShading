@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import errno
 import json
@@ -10,7 +11,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import time
-from typing import Any, Mapping, Protocol
+from typing import Any, Iterator, Mapping, Protocol
 import uuid
 
 from ncls.core.identity import canonical_json, require_sha256, sha256_file, sha256_json
@@ -54,6 +55,46 @@ CODEGEN_OPTIONS = {
 # while repeated loads avoid rereading unchanged bytes.
 _FILE_HASH_CACHE_CAPACITY = 8192
 _FILE_HASH_CACHE: OrderedDict[tuple[int, int, int, int, int], str] = OrderedDict()
+
+
+@contextmanager
+def _compiled_cache_lock(path: Path) -> Iterator[None]:
+    """Serialize one content-addressed compile across local processes."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("a+b")
+    windows_locked = False
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            while not windows_locked:
+                handle.seek(0)
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    windows_locked = True
+                except OSError:
+                    time.sleep(0.05)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        if os.name == "nt" and windows_locked:
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        elif os.name != "nt":
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
 
 
 def _publish_compiled_artifact_directory(
@@ -844,24 +885,36 @@ class MdlSdkProgramProvider:
                 verify_texture_payloads=False,
             )
         self.cache_root.mkdir(parents=True, exist_ok=True)
-        temporary = self.cache_root / f".{key}.{uuid.uuid4().hex}.partial"
-        try:
-            artifact = self._run(
-                str(payload["module"]),
-                str(payload["export"]),
-                {
-                    name: item["value"]
-                    for name, item in payload.get("arguments", {}).items()
-                    if item.get("editable", False)
-                },
-                temporary,
-            )
-            _publish_compiled_artifact_directory(temporary, target)
-            return MdlCompiledArtifact.load(target, source_snapshot_id=snapshot.snapshot_id)
-        except Exception:
-            if temporary.is_dir():
-                shutil.rmtree(temporary)
-            raise
+        lock_path = self.cache_root / "compile-locks" / f"{key}.lock"
+        with _compiled_cache_lock(lock_path):
+            if target.exists():
+                return MdlCompiledArtifact.load(
+                    target,
+                    source_snapshot_id=snapshot.snapshot_id,
+                    verify_texture_payloads=False,
+                )
+            temporary = self.cache_root / f".{key}.{uuid.uuid4().hex}.partial"
+            try:
+                self._run(
+                    str(payload["module"]),
+                    str(payload["export"]),
+                    {
+                        name: item["value"]
+                        for name, item in payload.get("arguments", {}).items()
+                        if item.get("editable", False)
+                    },
+                    temporary,
+                )
+                published = _publish_compiled_artifact_directory(temporary, target)
+                if not published and temporary.is_dir():
+                    shutil.rmtree(temporary)
+                return MdlCompiledArtifact.load(
+                    target, source_snapshot_id=snapshot.snapshot_id
+                )
+            except Exception:
+                if temporary.is_dir():
+                    shutil.rmtree(temporary)
+                raise
 
 
 def create_mdl_program_provider(

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import errno
 from pathlib import Path
+import threading
+import time
 
 import numpy as np
 import pytest
@@ -16,6 +18,7 @@ from ncls.references.mdl import (
     CODEGEN_OPTIONS,
     MDL_SDK_BUILD,
     MdlSdkProgramProvider,
+    _compiled_cache_lock,
     _publish_compiled_artifact_directory,
     STB_COMMIT,
     STB_IMAGE_SHA256,
@@ -88,6 +91,31 @@ def test_compiled_artifact_publication_accepts_an_existing_identity(
 
     assert not _publish_compiled_artifact_directory(temporary, target)
     assert temporary.is_dir()
+
+
+def test_compiled_cache_lock_serializes_local_process_clients(tmp_path: Path) -> None:
+    lock_path = tmp_path / "locks" / "artifact.lock"
+    state_lock = threading.Lock()
+    active = 0
+    peak = 0
+
+    def worker() -> None:
+        nonlocal active, peak
+        with _compiled_cache_lock(lock_path):
+            with state_lock:
+                active += 1
+                peak = max(peak, active)
+            time.sleep(0.02)
+            with state_lock:
+                active -= 1
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert peak == 1
 
 
 def _rich_snapshot() -> SourceSnapshot:
