@@ -1,0 +1,2 @@
+ScatteringPackage@2 c2aec0d0fa90f0dbac34b38400fa43238bb09d33e82f3cdfd1ce9a676986378f: D:\01_Workspace\NeuralShading\outputs\nvidia-mdl-effect-pigment-smoke\260905-183524-047c85\exports\step-00000000\material-0
+Viewer: scripts/launch_viewer.ps1 -Package "D:\01_Workspace\NeuralShading\outputs\nvidia-mdl-effect-pigment-smoke\260905-183524-047c85\exports\step-00000000\material-0" -Material "D:\01_Workspace\NeuralShading\outputs\nvidia-mdl-effect-pigment-smoke\260905-183524-047c85\exports\step-00000000\material-0-source\catalog.json"

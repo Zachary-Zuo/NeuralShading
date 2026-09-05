@@ -1,0 +1,405 @@
+(Info) Falcor 8.0 (commit: 9dc819c1, branch: unknown)
+(Info) Created CUDA device 'NVIDIA GeForce RTX 4090' (architecture 8.9).
+(Info) Created GPU device 'NVIDIA GeForce RTX 4090' using 'Direct3D 12' API (SM6.7).
+(Warning) Warnings in program:
+Utils/UI/TextRenderer.3d.slang (vsMain, psMain)
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils\UI\TextRenderer.3d.slang(48): warning 30081: implicit conversion from 'vector<float,2>' to 'vector<int,2>' is not recommended
+    float4 color = gFontTex.Load(int3(texC, 0));
+                                      ^~~~
+
+(Info) Loaded 33 plugin(s) in 0.104s
+(Info) Importing scene: D:\01_Workspace\NeuralShading\assets\viewer\scenes\studio-v1\shaderball.glb
+(Warning) AssimpImporter: Material with no name found -> renaming to 'unnamed'.
+(Info) Loading asset file:       0.025580 s
+(Info) Verifying scene:          0.000019 s
+(Info) Creating materials:       0.000070 s
+(Info) Creating scene graph:     0.000020 s
+(Info) Creating meshes:          0.067253 s
+(Info) Creating animations:      0.000001 s
+(Info) Creating cameras:         0.000000 s
+(Info) Creating lights:          0.000000 s
+(Info) Optimized scene graph by merging 1 identical static nodes.
+(Info) Found 2 static non-instanced meshes, arranged in 1 mesh group.
+(Info) Found 0 displaced non-instanced meshes, arranged in 1 mesh group.
+(Info) Found 0 dynamic non-instanced meshes, arranged in 0 mesh groups.
+(Info) Found 0 instanced meshes, arranged in 0 mesh groups.
+(Info) HitInfo: Total size is 128 bits (type: 3 bits, instanceID: 1 bits, primitiveIndex: 17 bits)
+(Warning) Warnings in program:
+Scene/Material/MaterialSystem.slang (main)
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Math/FormatConversion.slang(393): warning 30081: implicit conversion from 'uint64_t' to 'uint' is not recommended
+    return uint2(v & 0xffffffff, v >> 32);
+                   ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Math/FormatConversion.slang(393): warning 30081: implicit conversion from 'uint64_t' to 'uint' is not recommended
+    return uint2(v & 0xffffffff, v >> 32);
+                                   ^~
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(140): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isDoubleSided() CONST_FUNCTION { return packedData.x & (1u << kDoubleSidedFlagOffset); }
+                                                              ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(148): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isThinSurface() CONST_FUNCTION { return packedData.x & (1u << kThinSurfaceFlagOffset); }
+                                                              ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(156): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isEmissive() CONST_FUNCTION { return packedData.x & (1u << kEmissiveFlagOffset); }
+                                                           ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(164): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isBasicMaterial() CONST_FUNCTION { return packedData.x & (1u << kIsBasicMaterialFlagOffset); }
+                                                                ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(172): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isLightProfileEnabled() CONST_FUNCTION { return packedData.y & (1u << kEnableLightProfileOffset); }
+                                                                      ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(180): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isDeltaSpecular() CONST_FUNCTION { return packedData.y & (1u << kDeltaSpecularFlagOffset); }
+                                                                ^
+command line(1): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+0
+^
+
+(Warning) Warnings in program:
+Scene/SceneBlock.slang (main)
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Math/FormatConversion.slang(393): warning 30081: implicit conversion from 'uint64_t' to 'uint' is not recommended
+    return uint2(v & 0xffffffff, v >> 32);
+                   ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Math/FormatConversion.slang(393): warning 30081: implicit conversion from 'uint64_t' to 'uint' is not recommended
+    return uint2(v & 0xffffffff, v >> 32);
+                                   ^~
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(140): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isDoubleSided() CONST_FUNCTION { return packedData.x & (1u << kDoubleSidedFlagOffset); }
+                                                              ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(148): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isThinSurface() CONST_FUNCTION { return packedData.x & (1u << kThinSurfaceFlagOffset); }
+                                                              ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(156): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isEmissive() CONST_FUNCTION { return packedData.x & (1u << kEmissiveFlagOffset); }
+                                                           ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(164): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isBasicMaterial() CONST_FUNCTION { return packedData.x & (1u << kIsBasicMaterialFlagOffset); }
+                                                                ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(172): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isLightProfileEnabled() CONST_FUNCTION { return packedData.y & (1u << kEnableLightProfileOffset); }
+                                                                      ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(180): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isDeltaSpecular() CONST_FUNCTION { return packedData.y & (1u << kDeltaSpecularFlagOffset); }
+                                                                ^
+command line(1): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+0
+^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Volume\Grid.slang(170): warning 30081: implicit conversion from 'vector<float,3>' to 'vector<int,3>' is not recommended
+        return lookupIndex(worldToIndexPos(pos), accessor);
+                                          ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Volume\Grid.slang(224): warning 30081: implicit conversion from 'vector<float,3>' to 'vector<int,3>' is not recommended
+        const int3 i = floor(indexOffset);
+                            ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Volume\Grid.slang(242): warning 30081: implicit conversion from 'vector<float,3>' to 'vector<int,3>' is not recommended
+        const int3 i = floor(indexOffset);
+                            ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Volume\Grid.slang(272): warning 30081: implicit conversion from 'vector<float,3>' to 'vector<int,3>' is not recommended
+        return lookupIndex(floor(index + (u - 0.5f)), accessor);
+                                ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Volume\Grid.slang(282): warning 30081: implicit conversion from 'vector<float,3>' to 'vector<int,3>' is not recommended
+        return lookupIndexTex(index + (u - 0.5f));
+                                    ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(195): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                     ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(195): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                                                      ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(195): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                                                                                       ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(206): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                     ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(206): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                                                      ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(206): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                                                                                       ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Displacement/DisplacementMapping.slang(432): warning 30081: implicit conversion from 'float' to 'int' is not recommended
+    int maxCount = ceil(abs(viewDirection.x)) + ceil(abs(viewDirection.y)) + 2;
+                                                                           ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Scene.slang(316): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+        uint3 vtxIndices = getLocalIndices(mesh.ibOffset, triangleIndex, mesh.flags & uint(MeshFlags::Use16BitIndices));
+                                                                                    ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Scene.slang(329): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+        uint3 vtxIndices = getLocalIndices(instance.ibOffset, triangleIndex, instance.flags & uint(GeometryInstanceFlags::Use16BitIndices));
+                                                                                            ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Scene.slang(613): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+        uint3 vtxIndices = getLocalIndices(instance.ibOffset, triangleIndex, instance.flags & uint(GeometryInstanceFlags::Use16BitIndices));
+                                                                                            ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Scene.slang(658): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+        uint3 vtxIndices = getLocalIndices(instance.ibOffset, hit.primitiveIndex, instance.flags & uint(GeometryInstanceFlags::Use16BitIndices));
+                                                                                                 ^
+
+(Info) Post processing geometry: 0.001914 s
+(Info) Optimizing materials:     0.000010 s
+(Info) Creating resources:       0.597544 s
+(Warning) Warnings in program:
+Rendering/Materials/StandardMaterial.slang NclsViewer/shaders/SceneVisibility.3d.slang (vsMain, psMain)
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(140): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isDoubleSided() CONST_FUNCTION { return packedData.x & (1u << kDoubleSidedFlagOffset); }
+                                                              ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(148): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isThinSurface() CONST_FUNCTION { return packedData.x & (1u << kThinSurfaceFlagOffset); }
+                                                              ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(156): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isEmissive() CONST_FUNCTION { return packedData.x & (1u << kEmissiveFlagOffset); }
+                                                           ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(164): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isBasicMaterial() CONST_FUNCTION { return packedData.x & (1u << kIsBasicMaterialFlagOffset); }
+                                                                ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(172): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isLightProfileEnabled() CONST_FUNCTION { return packedData.y & (1u << kEnableLightProfileOffset); }
+                                                                      ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(180): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isDeltaSpecular() CONST_FUNCTION { return packedData.y & (1u << kDeltaSpecularFlagOffset); }
+                                                                ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(195): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                     ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(195): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                                                      ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(195): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                                                                                       ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(206): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                     ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(206): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                                                      ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(206): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                                                                                       ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Math/FormatConversion.slang(393): warning 30081: implicit conversion from 'uint64_t' to 'uint' is not recommended
+    return uint2(v & 0xffffffff, v >> 32);
+                   ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Math/FormatConversion.slang(393): warning 30081: implicit conversion from 'uint64_t' to 'uint' is not recommended
+    return uint2(v & 0xffffffff, v >> 32);
+                                   ^~
+command line(1): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+0
+^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Rendering/Materials/BSDFs/StandardBSDF.slang(175): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+            (activeLobes & (uint)LobeType::DiffuseReflection) ? detach(diffuseWeight * dielectricBSDF * (1.f - diffTrans)) : 0.f;
+            ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Rendering/Materials/BSDFs/StandardBSDF.slang(177): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+            (activeLobes & (uint)LobeType::DiffuseTransmission) ? detach(diffuseWeight * dielectricBSDF * diffTrans) : 0.f;
+            ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Rendering/Materials/BSDFs/StandardBSDF.slang(178): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+        pSpecularReflection = (activeLobes & ((uint)LobeType::SpecularReflection | (uint)LobeType::DeltaReflection))
+                              ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Rendering/Materials/BSDFs/StandardBSDF.slang(181): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+        pSpecularTransmission = (activeLobes & ((uint)LobeType::SpecularReflection | (uint)LobeType::DeltaReflection |
+                                ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Rendering\Materials\StandardMaterial.slang(130): warning 30081: implicit conversion from 'bool' to 'float' is not recommended
+        d.hasSigmaSGreaterZero = (any(data.volumeScattering) > 0.f);
+                                     ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Volume\Grid.slang(170): warning 30081: implicit conversion from 'vector<float,3>' to 'vector<int,3>' is not recommended
+        return lookupIndex(worldToIndexPos(pos), accessor);
+                                          ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Volume\Grid.slang(224): warning 30081: implicit conversion from 'vector<float,3>' to 'vector<int,3>' is not recommended
+        const int3 i = floor(indexOffset);
+                            ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Volume\Grid.slang(242): warning 30081: implicit conversion from 'vector<float,3>' to 'vector<int,3>' is not recommended
+        const int3 i = floor(indexOffset);
+                            ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Volume\Grid.slang(272): warning 30081: implicit conversion from 'vector<float,3>' to 'vector<int,3>' is not recommended
+        return lookupIndex(floor(index + (u - 0.5f)), accessor);
+                                ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Volume\Grid.slang(282): warning 30081: implicit conversion from 'vector<float,3>' to 'vector<int,3>' is not recommended
+        return lookupIndexTex(index + (u - 0.5f));
+                                    ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Displacement/DisplacementMapping.slang(432): warning 30081: implicit conversion from 'float' to 'int' is not recommended
+    int maxCount = ceil(abs(viewDirection.x)) + ceil(abs(viewDirection.y)) + 2;
+                                                                           ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Scene.slang(316): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+        uint3 vtxIndices = getLocalIndices(mesh.ibOffset, triangleIndex, mesh.flags & uint(MeshFlags::Use16BitIndices));
+                                                                                    ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Scene.slang(329): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+        uint3 vtxIndices = getLocalIndices(instance.ibOffset, triangleIndex, instance.flags & uint(GeometryInstanceFlags::Use16BitIndices));
+                                                                                            ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Scene.slang(613): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+        uint3 vtxIndices = getLocalIndices(instance.ibOffset, triangleIndex, instance.flags & uint(GeometryInstanceFlags::Use16BitIndices));
+                                                                                            ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Scene.slang(658): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+        uint3 vtxIndices = getLocalIndices(instance.ibOffset, hit.primitiveIndex, instance.flags & uint(GeometryInstanceFlags::Use16BitIndices));
+                                                                                                 ^
+
+(Info) Loaded Falcor scene 'D:\01_Workspace\NeuralShading\assets\viewer\scenes\studio-v1\shaderball.glb' (2 instances, 1 materials, SHA-256 a47a52c37f6b)
+(Info) Loading source material 'D:\01_Workspace\NeuralShading\configs\materials\layer-stack-live-smoke.json'
+(Warning) Warnings in program:
+Rendering/Materials/StandardMaterial.slang NclsViewer/shaders/PathTracer.cs.slang (main)
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(140): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isDoubleSided() CONST_FUNCTION { return packedData.x & (1u << kDoubleSidedFlagOffset); }
+                                                              ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(148): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isThinSurface() CONST_FUNCTION { return packedData.x & (1u << kThinSurfaceFlagOffset); }
+                                                              ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(156): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isEmissive() CONST_FUNCTION { return packedData.x & (1u << kEmissiveFlagOffset); }
+                                                           ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(164): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isBasicMaterial() CONST_FUNCTION { return packedData.x & (1u << kIsBasicMaterialFlagOffset); }
+                                                                ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(172): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isLightProfileEnabled() CONST_FUNCTION { return packedData.y & (1u << kEnableLightProfileOffset); }
+                                                                      ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(180): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isDeltaSpecular() CONST_FUNCTION { return packedData.y & (1u << kDeltaSpecularFlagOffset); }
+                                                                ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(195): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                     ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(195): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                                                      ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(195): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                                                                                       ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(206): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                     ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(206): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                                                      ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(206): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                                                                                       ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Math/FormatConversion.slang(393): warning 30081: implicit conversion from 'uint64_t' to 'uint' is not recommended
+    return uint2(v & 0xffffffff, v >> 32);
+                   ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Math/FormatConversion.slang(393): warning 30081: implicit conversion from 'uint64_t' to 'uint' is not recommended
+    return uint2(v & 0xffffffff, v >> 32);
+                                   ^~
+command line(1): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+0
+^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Rendering/Materials/BSDFs/StandardBSDF.slang(175): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+            (activeLobes & (uint)LobeType::DiffuseReflection) ? detach(diffuseWeight * dielectricBSDF * (1.f - diffTrans)) : 0.f;
+            ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Rendering/Materials/BSDFs/StandardBSDF.slang(177): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+            (activeLobes & (uint)LobeType::DiffuseTransmission) ? detach(diffuseWeight * dielectricBSDF * diffTrans) : 0.f;
+            ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Rendering/Materials/BSDFs/StandardBSDF.slang(178): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+        pSpecularReflection = (activeLobes & ((uint)LobeType::SpecularReflection | (uint)LobeType::DeltaReflection))
+                              ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Rendering/Materials/BSDFs/StandardBSDF.slang(181): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+        pSpecularTransmission = (activeLobes & ((uint)LobeType::SpecularReflection | (uint)LobeType::DeltaReflection |
+                                ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Rendering\Materials\StandardMaterial.slang(130): warning 30081: implicit conversion from 'bool' to 'float' is not recommended
+        d.hasSigmaSGreaterZero = (any(data.volumeScattering) > 0.f);
+                                     ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Volume\Grid.slang(170): warning 30081: implicit conversion from 'vector<float,3>' to 'vector<int,3>' is not recommended
+        return lookupIndex(worldToIndexPos(pos), accessor);
+                                          ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Volume\Grid.slang(224): warning 30081: implicit conversion from 'vector<float,3>' to 'vector<int,3>' is not recommended
+        const int3 i = floor(indexOffset);
+                            ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Volume\Grid.slang(242): warning 30081: implicit conversion from 'vector<float,3>' to 'vector<int,3>' is not recommended
+        const int3 i = floor(indexOffset);
+                            ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Volume\Grid.slang(272): warning 30081: implicit conversion from 'vector<float,3>' to 'vector<int,3>' is not recommended
+        return lookupIndex(floor(index + (u - 0.5f)), accessor);
+                                ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Volume\Grid.slang(282): warning 30081: implicit conversion from 'vector<float,3>' to 'vector<int,3>' is not recommended
+        return lookupIndexTex(index + (u - 0.5f));
+                                    ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Displacement/DisplacementMapping.slang(432): warning 30081: implicit conversion from 'float' to 'int' is not recommended
+    int maxCount = ceil(abs(viewDirection.x)) + ceil(abs(viewDirection.y)) + 2;
+                                                                           ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Scene.slang(316): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+        uint3 vtxIndices = getLocalIndices(mesh.ibOffset, triangleIndex, mesh.flags & uint(MeshFlags::Use16BitIndices));
+                                                                                    ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Scene.slang(329): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+        uint3 vtxIndices = getLocalIndices(instance.ibOffset, triangleIndex, instance.flags & uint(GeometryInstanceFlags::Use16BitIndices));
+                                                                                            ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Scene.slang(613): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+        uint3 vtxIndices = getLocalIndices(instance.ibOffset, triangleIndex, instance.flags & uint(GeometryInstanceFlags::Use16BitIndices));
+                                                                                            ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Scene.slang(658): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+        uint3 vtxIndices = getLocalIndices(instance.ibOffset, hit.primitiveIndex, instance.flags & uint(GeometryInstanceFlags::Use16BitIndices));
+                                                                                                 ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/RaytracingInline.slang(232): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+    if (UseAlphaTest)
+        ^~~~~~~~~~~~
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/RaytracingInline.slang(329): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+    if (UseAlphaTest)
+        ^~~~~~~~~~~~
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Sampling/Pseudorandom/Xoshiro.slang(87): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+            if (JUMP[i] & (1u << b))
+                        ^
+
+(Info) Loaded source metadata: family='ncls.layer-stack@1' hash='aa522f723173'
+(Info) Accepted ScatteringPackage 'nvidia-neural-appearance' (8e5c5b97a0c1)
+(Warning) Warnings in program:
+Rendering/Materials/StandardMaterial.slang NclsViewer/shaders/DeferredRenderer.cs.slang (main)
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(140): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isDoubleSided() CONST_FUNCTION { return packedData.x & (1u << kDoubleSidedFlagOffset); }
+                                                              ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(148): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isThinSurface() CONST_FUNCTION { return packedData.x & (1u << kThinSurfaceFlagOffset); }
+                                                              ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(156): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isEmissive() CONST_FUNCTION { return packedData.x & (1u << kEmissiveFlagOffset); }
+                                                           ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(164): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isBasicMaterial() CONST_FUNCTION { return packedData.x & (1u << kIsBasicMaterialFlagOffset); }
+                                                                ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(172): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isLightProfileEnabled() CONST_FUNCTION { return packedData.y & (1u << kEnableLightProfileOffset); }
+                                                                      ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Scene/Material/MaterialData.slang(180): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+    bool isDeltaSpecular() CONST_FUNCTION { return packedData.y & (1u << kDeltaSpecularFlagOffset); }
+                                                                ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(195): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                     ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(195): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                                                      ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(195): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                                                                                       ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(206): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                     ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(206): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                                                      ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Geometry/GeometryHelpers.slang(206): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+        const float3 corner = float3((i & 1) ? aabbMin.x : aabbMax.x, (i & 2) ? aabbMin.y : aabbMax.y, (i & 4) ? aabbMin.z : aabbMax.z);
+                                                                                                       ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Math/FormatConversion.slang(393): warning 30081: implicit conversion from 'uint64_t' to 'uint' is not recommended
+    return uint2(v & 0xffffffff, v >> 32);
+                   ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Utils/Math/FormatConversion.slang(393): warning 30081: implicit conversion from 'uint64_t' to 'uint' is not recommended
+    return uint2(v & 0xffffffff, v >> 32);
+                                   ^~
+command line(1): warning 30081: implicit conversion from 'int' to 'bool' is not recommended
+0
+^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Rendering/Materials/BSDFs/StandardBSDF.slang(175): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+            (activeLobes & (uint)LobeType::DiffuseReflection) ? detach(diffuseWeight * dielectricBSDF * (1.f - diffTrans)) : 0.f;
+            ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Rendering/Materials/BSDFs/StandardBSDF.slang(177): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+            (activeLobes & (uint)LobeType::DiffuseTransmission) ? detach(diffuseWeight * dielectricBSDF * diffTrans) : 0.f;
+            ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Rendering/Materials/BSDFs/StandardBSDF.slang(178): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+        pSpecularReflection = (activeLobes & ((uint)LobeType::SpecularReflection | (uint)LobeType::DeltaReflection))
+                              ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Rendering/Materials/BSDFs/StandardBSDF.slang(181): warning 30081: implicit conversion from 'uint' to 'bool' is not recommended
+        pSpecularTransmission = (activeLobes & ((uint)LobeType::SpecularReflection | (uint)LobeType::DeltaReflection |
+                                ^
+D:\01_Workspace\NeuralShading\external\Falcor\build\windows-vs2022\bin\Release\shaders\Rendering\Materials\StandardMaterial.slang(130): warning 30081: implicit conversion from 'bool' to 'float' is not recommended
+        d.hasSigmaSGreaterZero = (any(data.volumeScattering) > 0.f);
+                                     ^
+
+(Info) Initiating BLAS build for 1 mesh groups
+(Info) BLAS build split into 1 groups
+(Info) BLAS build result buffer size: 5.45 MB
+(Info) BLAS build scratch buffer size: 4.25 MB
+(Info) BLAS group 0 final size: 2.40 MB
+(Info) Capture progress: frame=1 slot0=16 spp slot1=0 spp

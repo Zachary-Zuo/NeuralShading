@@ -1,0 +1,7 @@
+slot_0_linear (64, 64, 3) 0.25213634967803955
+slot_1_linear (64, 64, 3) 0.06950009614229202
+difference_linear (64, 64, 3) 0.22587794065475464
+capture D:\01_Workspace\NeuralShading\outputs\nvidia-mdl-effect-pigment-smoke\260905-183524-047c85\eval\step-00000000-79ee77\capture.json
+slots [('ready', 'path-tracing', 33), ('ready', 'deferred', 0)]
+images ['visual-eval/comparison', 'visual-eval/difference']
+display D:\01_Workspace\NeuralShading\outputs\nvidia-mdl-effect-pigment-smoke\260905-183524-047c85\eval\step-00000000-79ee77\capture-display.png

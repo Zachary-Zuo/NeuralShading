@@ -1,0 +1,21 @@
+compose:
+  method: nvidia
+  data: layer-stack-smoke
+  recipe: nvidia-layer-stack-smoke
+execution:
+  num_workers: 0
+  host_prefetch: 2
+  ready_batches: 2
+  reference_batch_steps: 1
+  reference_inflight: 1
+  transfer_streams: 0
+  residency:
+    budget_mib: 4096
+hooks:
+  visual_eval:
+    enabled: true
+    interval_steps: 1
+    reference_spp: 33
+    seed: 20260904
+    width: 128
+    height: 64

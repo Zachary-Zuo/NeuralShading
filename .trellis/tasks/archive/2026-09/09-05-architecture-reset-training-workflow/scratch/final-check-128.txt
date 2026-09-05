@@ -1,0 +1,7 @@
+slot_0_linear (360, 320, 3) 0.27405494451522827
+slot_1_linear (360, 320, 3) 0.06530629098415375
+difference_linear (360, 320, 3) 0.23164969682693481
+capture D:\01_Workspace\NeuralShading\outputs\nvidia-layer-stack-smoke\260905-172009-9d5b6c\eval\step-00000002-b129a9\capture.json
+slots [('ready', 'path-tracing', 128), ('ready', 'deferred', 0)]
+images ['visual-eval/comparison', 'visual-eval/difference']
+display D:\01_Workspace\NeuralShading\outputs\nvidia-layer-stack-smoke\260905-172009-9d5b6c\eval\step-00000002-b129a9\capture-display.png

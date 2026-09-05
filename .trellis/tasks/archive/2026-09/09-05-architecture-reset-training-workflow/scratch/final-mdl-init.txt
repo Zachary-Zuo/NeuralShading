@@ -1,0 +1,7 @@
+训练输出：D:\01_Workspace\NeuralShading\outputs\nvidia-mdl-effect-pigment-smoke\260905-183524-047c85
+(Warning) Cannot enable D3D12 Agility SDK: Calling SetSDKVersion failed.
+(Info) Loaded 33 plugin(s) in 0.102s
+(Info) Created CUDA device 'NVIDIA GeForce RTX 4090' (architecture 8.9).
+(Info) Created GPU device 'NVIDIA GeForce RTX 4090' using 'Direct3D 12' API (SM6.7).
+train: 0step [00:00, ?step/s]train: 0step [00:00, ?step/s]
+Checkpoint: D:\01_Workspace\NeuralShading\outputs\nvidia-mdl-effect-pigment-smoke\260905-183524-047c85\checkpoints\latest.pt
