@@ -1,4 +1,7 @@
 training:
+  correspondence_id: metal-budgeted-detail-frame-skip-hybrid@3
+  model_context:
+    profile_id: metal_budgeted_hybrid_v3
   run_class: profile
   recipe_id: metal-budgeted-tungsten-detail-frame-skip-hybrid-pilot-2048@4
   phases:

@@ -2,7 +2,22 @@
 
 所有 Python/pytest 命令使用 `neural-shading`。先按 `.trellis/spec/project/dev-environment.md` 判定机器能力，再运行对应检查。
 
-## 当前 Windows 检查
+## 原生多 UV 实施检查点
+
+本机仍为完整 Windows。当前任务 `09-05-neural-material-spatial-optimization-research` 的命令、真实 run 和边界见 [实施验证记录](.trellis/tasks/09-05-neural-material-spatial-optimization-research/research/implementation-validation.md)。全量 unit 366 passed；之后新增 C3/visual phase 回归 11 passed；多 UV GPU parity、独立 reference footprint witness、实际 train 0→2/validate/export/eval 和 Release viewer 均已执行。任务还在实施，尚无 matched 质量结论。
+
+```powershell
+conda run -n neural-shading python -m pytest tests/unit -q
+conda run -n neural-shading python -m tools.learning.generate_metal_budgeted_layout --check
+conda run -n neural-shading python -m ncls.runtime --device 0 -- -m pytest tests/gpu/test_metal_spatial_runtime.py tests/gpu/test_metal_spatial_reference.py tests/gpu/test_metal_model_correctness.py -q
+conda run -n neural-shading python -m ncls train 0 --config configs/training/runs/metal-spatial-probe-bronze-scratched.yaml --stop-at-step 0
+```
+
+后续 resume/validate/export/eval 使用命令返回的实际 checkpoint；已执行 smoke 为 `outputs/metal-spatial-probe-bronze-scratched/260905-220316-6185cc/checkpoints/latest.pt`。图像必须显式使用 `configs/training/runs/metal-spatial-stage-eval.yaml`，因为训练配方关闭 visual hook。新 profile 的 176 B state、12 次实际 reads（上限 54）与 768 B instance 必须按实际包核对，不能套用历史两次读取声明。
+
+待执行：三个实际 source 完整 D0、真正 summary-control 与 matched D1；Linux/NCCL 共享资源释放、动态语义 unused group、stop/resume 仍须目标实机检查。不要以 Windows fixture 代替平台或未见资产质量证据。构建 viewer 时先退出加载 Falcor DLL 的项目测试，防止链接目标被占用。
+
+## 架构基线 Windows 检查
 
 2026-09-05 本机为完整 Windows：RTX 4090、neural-shading、锁定 Windows Falcor Python 与 Release viewer 存在。本次检查的命令输出和具体结果保存在 `.trellis/tasks/archive/2026-09/09-05-architecture-reset-training-workflow/scratch/`，最终执行结果见该归档任务的 `research/validation.md`。Linux/NCCL 不在本机验证范围内。
 

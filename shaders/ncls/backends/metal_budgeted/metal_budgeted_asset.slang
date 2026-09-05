@@ -40,6 +40,9 @@ void nclsMetalBudgetedModulateLobe(
         1.0f);
 }
 
+#ifdef NCLS_METAL_SPATIAL
+#include "metal_spatial_asset.slang"
+#else
 NclsMetalBudgetedPrepared nclsMetalBudgetedPrepare(
     NclsScatteringContext context,
     NclsMetalBudgetedCompiledMaterial material)
@@ -228,5 +231,7 @@ NclsMetalBudgetedPrepared nclsMetalBudgetedPrepare(
         && all(isfinite(rawDetail)) && all(isfinite(rawContext)) ? 1u : 0u;
     return result;
 }
+
+#endif
 
 #endif

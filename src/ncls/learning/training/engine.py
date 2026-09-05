@@ -349,8 +349,7 @@ class TrainingEngine:
         """一次 packed collective 聚合 loss 与全部 scalar metrics。"""
         return self.distributed.reduce_report(loss, metrics, scope=scope)
 
-    @staticmethod
-    def _validate_batch_type(route: TrainingRoute, batch: OnlineTrainingBatch) -> None:
+    def _validate_batch_type(self, route: TrainingRoute, batch: OnlineTrainingBatch) -> None:
         expected = {
             "asset-tile": AssetTileBatch,
             "reference-evaluator": EvaluatorBatch,
@@ -358,6 +357,13 @@ class TrainingEngine:
         }[route.kind]
         if not isinstance(batch, expected):
             raise TypeError(f"{route.kind} route returned the wrong batch type")
+        required = self.plugin.descriptor.training_resource_requirements.get(route.kind, ())
+        if required:
+            conditioning = getattr(batch, "conditioning", None)
+            if conditioning is None or not set(required).issubset(conditioning.bindings):
+                raise ValueError(f"{route.kind} batch is missing declared conditioning resource bindings")
+            if not len(conditioning.resources):
+                raise ValueError(f"{route.kind} batch has no conditioning resources")
 
     def _route_requests(
         self,

@@ -36,6 +36,7 @@ class ScatteringQuery:
     uv: torch.Tensor | None = None
     uv_dx: torch.Tensor | None = None
     uv_dy: torch.Tensor | None = None
+    filter_random: torch.Tensor | None = None
 
     def __post_init__(self) -> None:
         if not self.execution_group_id:
@@ -64,6 +65,15 @@ class ScatteringQuery:
                 value.shape != (count, 2) or value.device != self.wo.device
             ):
                 raise ValueError(f"ScatteringQuery {name} must be [batch,2] on one device")
+        if self.filter_random is not None:
+            value = self.filter_random
+            if value.shape != (count,) or value.device != self.wo.device or not value.is_floating_point():
+                raise ValueError("ScatteringQuery filter_random must be floating [batch] on one device")
+            valid = (torch.isfinite(value) & (value >= 0.0) & (value < 1.0)).all()
+            if value.device.type == "cuda":
+                torch._assert_async(valid)
+            elif not bool(valid):
+                raise ValueError("ScatteringQuery filter_random must be in [0,1)")
 
     @property
     def batch_size(self) -> int:
@@ -642,7 +652,10 @@ class _ReferenceExecutionGroupSession:
         meta = torch.zeros((count, 4), dtype=torch.int32, device=query.device)
         meta[:, 0] = repeat(query.source_index).to(torch.int32)
         meta[:, 1] = seeds.reshape(-1).to(torch.int32)
-        meta[:, 2] = 1056964608  # asuint(0.5f)
+        if query.filter_random is None:
+            meta[:, 2] = 1056964608  # asuint(0.5f)
+        else:
+            meta[:, 2] = repeat(query.filter_random).to(torch.float32).contiguous().view(torch.int32)
         return {
             "gNclsQueryPosition": self._float4(
                 repeat(default_position if query.position is None else query.position), 3

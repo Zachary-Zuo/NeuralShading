@@ -1,0 +1,85 @@
+training:
+  run_class: diagnostic
+  recipe_id: metal-native-uv-spatial-d1-512@1
+  seed: 2026090501
+  source_adaptation_id: metal-spatial.mdl-native-uv-groups@1
+  checkpoint_interval: 128
+  online_query:
+    recipe_id: metal-native-uv-filtered-paired-d1@1
+    footprint_samples: 16
+    typed_state_recipe:
+      seed: 2026090501
+  phases:
+  - name: deployment-qat-refine
+    steps: 512
+    routes:
+    - name: evaluator
+      kind: reference-evaluator
+      batch_size: 128
+      direction_count: 1
+      seed_offset: 0
+      options:
+        direction_proposal: balanced-four-mode-probe@1
+        validation_seed: 2026090502
+        evaluation_samples: 1
+        footprint_samples: 16
+        source_execution_mode: authoritative@1
+        footprint_recipe: balanced-zero-one-four-texel@1
+        paired_uv: true
+        paired_uv_recipe: one-native-texel-axis-balanced@1
+        spatial_core_texels: 128
+        spatial_split_recipe: heldout-rf-tiles@1
+        spatial_split_seed: 2026090501
+        spatial_train_tiles: 32
+        spatial_validation_tiles: 8
+        maximum_rejection_rounds: 64
+    parameter_groups: [asset_encoder, typed_compiler, semantic_prepare, directional_evaluator]
+    loss_terms: [appearance-log-rgb, appearance-linear-rgb, appearance-chroma, appearance-channel-peak, appearance-spatial-gradient, semantic-runtime]
+    recipes:
+      profile_id: metal_spatial_hybrid_v1
+      asset_cook_mode: encoder-only@1
+      compiler_role: pure-typed-compiler@1
+      runtime_quantization: fp16-weights-state-rgba8-snorm-asset@1
+      appearance_calibration:
+        schema: train-only-reference-rgb-percentiles@1
+        route: evaluator
+        sample_count: 16384
+        seed: 2026090501
+        scale_percentile: 0.5
+        peak_percentile: 0.95
+        scale_clamp: [0.000244140625, 256.0]
+      proposal_weight:
+        schema: disabled@1
+    optimizer:
+      kind: adam
+      betas: [0.9, 0.99]
+      epsilon: 1.0e-8
+      weight_decay: 1.0e-6
+    optimizer_state_policy: reset
+    schedule:
+      kind: cosine
+      start: 0.0003
+      end: 0.00005
+      total_steps: 512
+      offset: 0
+    precision:
+      autocast: fp32
+      gradient_scaler: false
+    checkpoint_boundary: true
+    transition: null
+    log_interval: 16
+    gradient_audit_interval: 128
+    prefetch_depth: 1
+  validation:
+    interval: 128
+    batches: 8
+execution:
+  num_workers: 0
+  host_prefetch: 1
+  ready_batches: 1
+  reference_batch_steps: 1
+  residency:
+    budget_mib: 8192
+hooks:
+  visual_eval:
+    enabled: false

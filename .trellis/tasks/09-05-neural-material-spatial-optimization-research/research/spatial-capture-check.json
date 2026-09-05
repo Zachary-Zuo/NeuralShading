@@ -1,0 +1,89 @@
+{
+  "capture": "outputs\\metal-spatial-probe-bronze-scratched\\260905-220316-6185cc\\eval\\step-00000002-2d716c\\capture.json",
+  "slots": [
+    {
+      "asset_id": "",
+      "checkpoint_profile_id": "",
+      "diagnostic": "",
+      "gpu_median_ms": 129.798144,
+      "gpu_ms": 127.93446399999999,
+      "gpu_p90_ms": 135.098368,
+      "gpu_timing_samples": 8,
+      "instance_id": "",
+      "linear_output": "capture-slot-0.exr",
+      "mode": "path-tracing",
+      "package_id": "source-reference",
+      "program_id": "ncls.scene-path-tracer@1",
+      "slot_index": 0,
+      "source_snapshot_id": "805ff09dd725d4b5db9c82380ec0b5841ef570ac0289f38eb2785cc92f99bdcf",
+      "spp": 128,
+      "status": "ready",
+      "target_spp": 128
+    },
+    {
+      "asset_id": "ea1860a241037159d073d34ad413ac784cefcd2a83f3e4876c934c37a2ac498a",
+      "checkpoint_profile_id": "metal_spatial_hybrid_v1",
+      "diagnostic": "",
+      "gpu_median_ms": 2.004992,
+      "gpu_ms": 2.004992,
+      "gpu_p90_ms": 2.004992,
+      "gpu_timing_samples": 1,
+      "instance_id": "979fbcd3326449e12dce110ad05f65af4e2ea933a176e77751884f7bd8931476",
+      "linear_output": "capture-slot-1.exr",
+      "mode": "deferred",
+      "package_id": "d1131637d60352a3020d002bc09c287101d2dd9bade7edffa336ee9c76148c12",
+      "program_id": "19eea60057afee9a2850ad7d1168ea77bdb9b784098e0e55f29b9e294cbef3ec",
+      "slot_index": 1,
+      "source_snapshot_id": "fe424f7423553b53d385fe5b21f6fdba9d4aa4484dffd4ff35e17c9449a8fb7f",
+      "spp": 0,
+      "status": "ready",
+      "target_spp": 0
+    }
+  ],
+  "linear": {
+    "slot_0_linear": {
+      "shape": [
+        360,
+        320,
+        3
+      ],
+      "dtype": "float32",
+      "nonfinite": 0,
+      "minimum": 0.00015994079876691103,
+      "maximum": 5.24150276184082
+    },
+    "slot_1_linear": {
+      "shape": [
+        360,
+        320,
+        3
+      ],
+      "dtype": "float32",
+      "nonfinite": 0,
+      "minimum": 0.0010685946326702833,
+      "maximum": 1.2956167459487915
+    },
+    "comparison_linear": {
+      "shape": [
+        360,
+        640,
+        3
+      ],
+      "dtype": "float32",
+      "nonfinite": 0,
+      "minimum": 0.00015994079876691103,
+      "maximum": 5.24150276184082
+    },
+    "difference_linear": {
+      "shape": [
+        360,
+        320,
+        3
+      ],
+      "dtype": "float32",
+      "nonfinite": 0,
+      "minimum": 2.086162567138672e-07,
+      "maximum": 4.922647953033447
+    }
+  }
+}

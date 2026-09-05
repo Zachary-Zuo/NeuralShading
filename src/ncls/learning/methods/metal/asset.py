@@ -19,6 +19,9 @@ class MetalBudgetedAssetSample:
     mip_choice: torch.Tensor
     valid: torch.Tensor
     trace: Mapping[str, torch.Tensor]
+    group_features: torch.Tensor | None = None
+    group_latent: torch.Tensor | None = None
+    global_condition: torch.Tensor | None = None
 
 
 MetalBudgetedAssetCookMode = Literal[

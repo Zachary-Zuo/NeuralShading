@@ -226,15 +226,24 @@ class MetalBudgetedTypedCompiler(nn.Module):
 class MetalBudgetedOptimizedProgramStateControl(nn.Module):
     """只用于报告 compiler gap；确定性 access/frame/resource 不能被优化。"""
 
-    def __init__(self, initial: MetalBudgetedProgramState) -> None:
+    def __init__(self, initial: MetalBudgetedProgramState, *, delta_radius: float = 0.5) -> None:
         super().__init__()
-        self.compiler_condition = nn.Parameter(initial.compiler_condition.detach().clone())
-        self.primary_lobe = nn.Parameter(initial.primary_lobe.detach().clone())
-        self.secondary_lobe = nn.Parameter(initial.secondary_lobe.detach().clone())
-        self.spatial_scale_bias = nn.Parameter(initial.spatial_scale_bias.detach().clone())
-        self.proposal_logits = nn.Parameter(
-            torch.log(torch.clamp(initial.proposal_prior.detach(), min=1.0e-8))
-        )
+        if not 0.0 < delta_radius <= 1.0:
+            raise ValueError("optimized program delta radius must lie in (0,1]")
+        self.delta_radius = delta_radius
+        for name in ("compiler_condition", "primary_lobe", "secondary_lobe", "spatial_scale_bias"):
+            value = getattr(initial, name).detach()
+            if not bool(torch.isfinite(value).all()):
+                raise ValueError("optimized program initial state must be finite")
+            if name.endswith("lobe") and not torch.equal(self._bounded_lobe(value), value):
+                raise ValueError("optimized program initial lobe is outside its legal domain")
+            self.register_buffer(f"initial_{name}", value.clone())
+            setattr(self, name, nn.Parameter(torch.zeros_like(value)))
+        prior = initial.proposal_prior.detach()
+        if not bool(torch.isfinite(prior).all()) or not bool((prior >= 0).all()) or not torch.allclose(prior.sum(dim=1), torch.ones_like(prior[:, 0])):
+            raise ValueError("optimized program initial proposal must be a probability vector")
+        self.register_buffer("initial_proposal_prior", prior.clone())
+        self.proposal_logits = nn.Parameter(torch.zeros_like(prior))
         self.register_buffer(
             "resource_variant", initial.resource_variant.detach().clone()
         )
@@ -251,24 +260,25 @@ class MetalBudgetedOptimizedProgramStateControl(nn.Module):
                 torch.clamp(value[..., :3], 0.0, 1.0),
                 torch.clamp(value[..., 3:5], 0.015, 1.0),
                 torch.clamp(value[..., 5:6], min=0.0),
-                torch.remainder(value[..., 6:7] + torch.pi, 2.0 * torch.pi)
-                - torch.pi,
+                value[..., 6:7],
                 torch.clamp(value[..., 7:8], 0.0, 1.0),
             ),
             dim=-1,
         )
 
     def forward(self) -> MetalBudgetedProgramState:
-        primary = self._bounded_lobe(self.primary_lobe)
-        secondary = self._bounded_lobe(self.secondary_lobe)
-        proposal = torch.softmax(self.proposal_logits.float(), dim=1).to(
-            self.proposal_logits.dtype
-        )
+        primary = self._bounded_lobe(self.initial_primary_lobe + self.delta_radius * torch.tanh(self.primary_lobe))
+        secondary = self._bounded_lobe(self.initial_secondary_lobe + self.delta_radius * torch.tanh(self.secondary_lobe))
+        # 以 initial 加归一化变化量构造，零 delta 不产生重新归一化舍入漂移。
+        multiplier_delta = torch.expm1(self.delta_radius * torch.tanh(self.proposal_logits))
+        weighted_delta = self.initial_proposal_prior * multiplier_delta
+        total_delta = weighted_delta.sum(dim=1, keepdim=True)
+        proposal = self.initial_proposal_prior + (weighted_delta - self.initial_proposal_prior * total_delta) / (1.0 + total_delta)
         return MetalBudgetedProgramState(
-            compiler_condition=torch.tanh(self.compiler_condition),
+            compiler_condition=self.initial_compiler_condition + self.delta_radius * torch.tanh(self.compiler_condition),
             primary_lobe=primary,
             secondary_lobe=secondary,
-            spatial_scale_bias=torch.tanh(self.spatial_scale_bias),
+            spatial_scale_bias=self.initial_spatial_scale_bias + self.delta_radius * torch.tanh(self.spatial_scale_bias),
             proposal_prior=proposal,
             resource_variant=self.resource_variant,
             resource_and_flags=self.resource_and_flags,

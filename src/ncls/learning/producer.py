@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import Any, Mapping, cast
 
@@ -471,16 +472,21 @@ class OnlineTrainingProducer:
                 )
             wo = _uniform_hemisphere(request.batch_size, generator, self.device)
             evaluator_wi = None
-        adapted, provenance = self.adapter.sample_tensors(
+        adapted = self.adapter.sample_tensors(
             source_index,
             generator,
-            request.options,
+            {
+                **request.options,
+                "logical_request_index": request_index,
+                "logical_route_seed": request.seed,
+                "logical_route_name": request.name,
+            },
             execution_source_indices=execution_source_indices,
         )
         conditioning = TrainingConditioning(
             self.snapshots[0].family_id,
             self.source_snapshot_ids,
-            {"source_index": source_index, "wo": wo, **adapted},
+            {"source_index": source_index, "wo": wo, **adapted.tensors},
             {
                 "producer": "generic-online",
                 "host_response_readback": False,
@@ -500,8 +506,10 @@ class OnlineTrainingProducer:
                     self._group_validation_offset_blocks
                 ),
                 "source_adapter_identity": self.adapter.identity,
-                **provenance,
+                **adapted.provenance,
             },
+            adapted.resources,
+            adapted.bindings,
         )
         return conditioning, evaluator_wi
 
@@ -520,6 +528,7 @@ class OnlineTrainingProducer:
             uv=tensors.get(uv_name),
             uv_dx=tensors.get(uv_dx_name),
             uv_dy=tensors.get(uv_dy_name),
+            filter_random=tensors.get("filter_random"),
         )
 
     def _produce_route(self, request: TrainingRouteRequest) -> OnlineTrainingBatch:
@@ -616,7 +625,13 @@ class OnlineTrainingProducer:
                 scheduled = self._reference_scheduler.next_result()
                 try:
                     step_index, slot = evaluator_slots.pop(scheduled.logical_id)
-                    produced[step_index][slot] = scheduled.payload
+                    batch = scheduled.payload
+                    if batch.lease is not None:
+                        raise RuntimeError("packed evaluator output must own detached reference tensors")
+                    # scheduler 释放自身 payload；ready batch 必须持有独立的 conditioning owner。
+                    produced[step_index][slot] = EvaluatorBatch(
+                        batch.conditioning.retain(), batch.wi, batch.target_f, batch.paired_target_f,
+                    )
                 finally:
                     scheduled.release()
             self._reference_scheduler.assert_idle()
@@ -736,233 +751,138 @@ class OnlineTrainingProducer:
 
     def _dispatch_evaluator_requests(
         self,
-        packed: tuple[
-            LogicalReferenceRequest[_EvaluatorLogicalRequest], ...
-        ],
+        packed: tuple[LogicalReferenceRequest[_EvaluatorLogicalRequest], ...],
     ) -> tuple[EvaluatorBatch, ...]:
-        """Pack same-group logical requests while preserving per-request RNG."""
-
+        """保留逻辑请求 RNG，连同资源 binding 一起压实有效 query。"""
         if not packed:
             return ()
         payloads = tuple(item.payload for item in packed)
         if len({item.dispatch_identity for item in payloads}) != 1:
             raise RuntimeError("packed evaluator requests disagree on dispatch identity")
-        states = [
+        options = payloads[0].request.options
+        evaluation_samples = int(options.get(
+            "evaluation_samples", self.config.online_query.get("evaluation_samples", 1)
+        ))
+        footprint_samples = int(options.get(
+            "footprint_samples", self.config.online_query.get("footprint_samples", 1)
+        ))
+        source_execution_mode = str(options.get(
+            "source_execution_mode",
+            self.config.online_query.get("source_execution_mode", "authoritative@1"),
+        ))
+        states: list[dict[str, Any]] = [
             {
-                "accepted_conditioning": {},
-                "accepted_wi": [],
-                "accepted_f": [],
-                "accepted_paired_f": [],
-                "first_conditioning": None,
-                "candidate_count": 0,
-                "accepted_count": 0,
-                "rejection_rounds": 0,
+                "conditioning": [], "wi": [], "f": [], "paired_f": [],
+                "candidate_count": 0, "accepted_count": 0, "rejection_rounds": 0,
             }
             for _ in payloads
         ]
         active = list(range(len(payloads)))
-        while active:
-            candidates: list[
-                tuple[int, TrainingConditioning, torch.Tensor, torch.Tensor]
-            ] = []
-            for index in active:
-                payload = payloads[index]
-                request = payload.request
-                state = states[index]
-                maximum_rounds = int(
-                    request.options.get("maximum_rejection_rounds", 64)
-                )
-                if maximum_rounds < 1:
-                    raise ValueError("maximum_rejection_rounds must be positive")
-                if int(state["rejection_rounds"]) >= maximum_rounds:
-                    raise RuntimeError(
-                        "reference evaluator could not fill a valid online batch within "
-                        f"{maximum_rounds} rejection rounds"
-                    )
-                remaining = request.batch_size - int(state["accepted_count"])
-                candidate_request = TrainingRouteRequest(
-                    request.name,
-                    request.kind,
-                    remaining,
-                    request.direction_count,
-                    request.global_step,
-                    request.seed,
-                    request.options,
-                )
-                conditioning, evaluator_wi = self._conditioning(
-                    candidate_request,
-                    payload.group,
-                    payload.generator,
-                    payload.request_index,
-                )
-                if state["first_conditioning"] is None:
-                    state["first_conditioning"] = conditioning
-                if evaluator_wi is None:
-                    raise AssertionError("reference-evaluator route did not create wi")
-                wi = evaluator_wi[:, None, :]
-                seeds = torch.randint(
-                    0,
-                    2**31 - 1,
-                    (remaining, request.direction_count),
-                    generator=payload.generator,
-                    device=self.device,
-                    dtype=torch.int64,
-                )
-                candidates.append((index, conditioning, wi, seeds))
-            tensor_keys = tuple(candidates[0][1].tensors)
-            if any(tuple(item[1].tensors) != tensor_keys for item in candidates):
-                raise RuntimeError("packed evaluator conditioning fields disagree")
-            combined_conditioning = TrainingConditioning(
-                candidates[0][1].source_family_id,
-                candidates[0][1].source_snapshot_ids,
-                {
-                    name: torch.cat(
-                        [item[1].tensors[name] for item in candidates], dim=0
-                    )
-                    for name in tensor_keys
-                },
-                candidates[0][1].provenance,
-            )
-            combined_wi = torch.cat([item[2] for item in candidates], dim=0)
-            combined_seeds = torch.cat([item[3] for item in candidates], dim=0)
-            first_request = payloads[candidates[0][0]].request
-            evaluation_samples = int(
-                first_request.options.get(
-                    "evaluation_samples",
-                    self.config.online_query.get("evaluation_samples", 1),
-                )
-            )
-            footprint_samples = int(
-                first_request.options.get(
-                    "footprint_samples",
-                    self.config.online_query.get("footprint_samples", 1),
-                )
-            )
-            source_execution_mode = str(
-                first_request.options.get(
-                    "source_execution_mode",
-                    self.config.online_query.get(
-                        "source_execution_mode", "authoritative@1"
-                    ),
-                )
-            )
-            result = self.session.evaluate(
-                self._query(combined_conditioning),
-                combined_wi,
-                combined_seeds,
-                evaluation_samples=evaluation_samples,
-                footprint_samples=footprint_samples,
-                source_execution_mode=source_execution_mode,
-            )
-            paired_result = None
-            if "paired_uv" in combined_conditioning.tensors:
-                paired_result = self.session.evaluate(
-                    self._query(combined_conditioning, spatial_prefix="paired_"),
-                    combined_wi,
-                    combined_seeds,
-                    evaluation_samples=evaluation_samples,
-                    footprint_samples=footprint_samples,
-                    source_execution_mode=source_execution_mode,
-                )
-            try:
-                offset = 0
-                following: list[int] = []
-                for index, conditioning, wi, _ in candidates:
-                    state = states[index]
-                    count = conditioning.batch_size
-                    local_valid = result.valid[offset : offset + count]
-                    if paired_result is not None:
-                        local_valid = local_valid & paired_result.valid[
-                            offset : offset + count
-                        ]
-                    selected = torch.nonzero(
-                        local_valid.all(dim=1), as_tuple=False
-                    ).flatten()
-                    take = int(selected.shape[0])
-                    if take:
-                        accepted_conditioning = state["accepted_conditioning"]
-                        assert isinstance(accepted_conditioning, dict)
-                        for name, value in conditioning.tensors.items():
-                            accepted_conditioning.setdefault(name, []).append(
-                                value.index_select(0, selected)
+        with ExitStack() as accepted_owners, ExitStack() as output_owners:
+            while active:
+                with ExitStack() as candidate_owners:
+                    candidates = []
+                    for index in active:
+                        payload = payloads[index]
+                        request, state = payload.request, states[index]
+                        maximum_rounds = int(request.options.get("maximum_rejection_rounds", 64))
+                        if maximum_rounds < 1:
+                            raise ValueError("maximum_rejection_rounds must be positive")
+                        if state["rejection_rounds"] >= maximum_rounds:
+                            raise RuntimeError(
+                                "reference evaluator could not fill a valid online batch within "
+                                f"{maximum_rounds} rejection rounds"
                             )
-                        accepted_wi = state["accepted_wi"]
-                        accepted_f = state["accepted_f"]
-                        accepted_paired_f = state["accepted_paired_f"]
-                        assert isinstance(accepted_wi, list)
-                        assert isinstance(accepted_f, list)
-                        assert isinstance(accepted_paired_f, list)
-                        accepted_wi.append(wi.index_select(0, selected))
-                        accepted_f.append(
-                            result.f[offset : offset + count].index_select(
-                                0, selected
-                            )
+                        remaining = request.batch_size - state["accepted_count"]
+                        candidate_request = TrainingRouteRequest(
+                            request.name, request.kind, remaining, request.direction_count,
+                            request.global_step, request.seed, request.options,
                         )
-                        if paired_result is not None:
-                            accepted_paired_f.append(
-                                paired_result.f[offset : offset + count].index_select(
-                                    0, selected
-                                )
+                        conditioning, evaluator_wi = self._conditioning(
+                            candidate_request, payload.group, payload.generator,
+                            payload.request_index,
+                        )
+                        candidate_owners.callback(conditioning.release)
+                        if evaluator_wi is None:
+                            raise AssertionError("reference-evaluator route did not create wi")
+                        wi = evaluator_wi[:, None, :]
+                        seeds = torch.randint(
+                            0, 2**31 - 1, (remaining, request.direction_count),
+                            generator=payload.generator, device=self.device, dtype=torch.int64,
+                        )
+                        candidates.append((index, conditioning, wi, seeds))
+                    combined = TrainingConditioning.concatenate(tuple(item[1] for item in candidates))
+                    candidate_owners.callback(combined.release)
+                    combined_wi = torch.cat([item[2] for item in candidates])
+                    combined_seeds = torch.cat([item[3] for item in candidates])
+                    with ExitStack() as reference_owners:
+                        result = self.session.evaluate(
+                            self._query(combined), combined_wi, combined_seeds,
+                            evaluation_samples=evaluation_samples,
+                            footprint_samples=footprint_samples,
+                            source_execution_mode=source_execution_mode,
+                        )
+                        reference_owners.callback(result.lease.release)
+                        paired_result = None
+                        if "paired_uv" in combined.tensors:
+                            paired_result = self.session.evaluate(
+                                self._query(combined, spatial_prefix="paired_"),
+                                combined_wi, combined_seeds,
+                                evaluation_samples=evaluation_samples,
+                                footprint_samples=footprint_samples,
+                                source_execution_mode=source_execution_mode,
                             )
-                        state["accepted_count"] = int(state["accepted_count"]) + take
-                    state["candidate_count"] = int(state["candidate_count"]) + count
-                    state["rejection_rounds"] = int(state["rejection_rounds"]) + 1
-                    if int(state["accepted_count"]) < payloads[index].request.batch_size:
-                        following.append(index)
-                    offset += count
-                active = following
-            finally:
-                if paired_result is not None:
-                    paired_result.lease.release()
-                result.lease.release()
-        batches: list[EvaluatorBatch] = []
-        for payload, state in zip(payloads, states, strict=True):
-            request = payload.request
-            first_conditioning = state["first_conditioning"]
-            if not isinstance(first_conditioning, TrainingConditioning):
-                raise AssertionError("reference-evaluator route did not create conditioning")
-            accepted_conditioning = state["accepted_conditioning"]
-            accepted_wi = state["accepted_wi"]
-            accepted_f = state["accepted_f"]
-            accepted_paired_f = state["accepted_paired_f"]
-            assert isinstance(accepted_conditioning, dict)
-            assert isinstance(accepted_wi, list)
-            assert isinstance(accepted_f, list)
-            assert isinstance(accepted_paired_f, list)
-            tensors = {
-                name: torch.cat(values, dim=0)[: request.batch_size]
-                for name, values in accepted_conditioning.items()
-            }
-            provenance = {
-                **first_conditioning.provenance,
-                "candidate_count": int(state["candidate_count"]),
-                "rejected_count": int(state["candidate_count"]) - request.batch_size,
-                "rejection_rounds": int(state["rejection_rounds"]),
-                "evaluation_samples": evaluation_samples,
-                "footprint_samples": footprint_samples,
-                "source_execution_mode": source_execution_mode,
-                "reference_dispatch_identity": payload.dispatch_identity,
-                "reference_dispatch_logical_steps": len(packed),
-            }
-            compacted = TrainingConditioning(
-                first_conditioning.source_family_id,
-                first_conditioning.source_snapshot_ids,
-                tensors,
-                provenance,
-            )
-            batches.append(
-                EvaluatorBatch(
-                    compacted,
-                    torch.cat(accepted_wi, dim=0)[: request.batch_size],
-                    torch.cat(accepted_f, dim=0)[: request.batch_size],
-                    (
-                        torch.cat(accepted_paired_f, dim=0)[: request.batch_size]
-                        if accepted_paired_f
-                        else None
-                    ),
+                            reference_owners.callback(paired_result.lease.release)
+                        offset, following = 0, []
+                        for index, conditioning, wi, _ in candidates:
+                            state = states[index]
+                            count = conditioning.batch_size
+                            valid = result.valid[offset:offset + count]
+                            if paired_result is not None:
+                                valid = valid & paired_result.valid[offset:offset + count]
+                            selected = torch.nonzero(valid.all(dim=1), as_tuple=False).flatten()
+                            take = int(selected.shape[0])
+                            if take:
+                                accepted = conditioning.select_rows(selected)
+                                accepted_owners.callback(accepted.release)
+                                state["conditioning"].append(accepted)
+                                state["wi"].append(wi.index_select(0, selected))
+                                state["f"].append(result.f[offset:offset + count].index_select(0, selected))
+                                if paired_result is not None:
+                                    state["paired_f"].append(
+                                        paired_result.f[offset:offset + count].index_select(0, selected)
+                                    )
+                                state["accepted_count"] += take
+                            state["candidate_count"] += count
+                            state["rejection_rounds"] += 1
+                            if state["accepted_count"] < payloads[index].request.batch_size:
+                                following.append(index)
+                            offset += count
+                        active = following
+            batches = []
+            for payload, state in zip(payloads, states, strict=True):
+                provenance = {
+                    **state["conditioning"][0].provenance,
+                    "candidate_count": state["candidate_count"],
+                    "rejected_count": state["candidate_count"] - payload.request.batch_size,
+                    "rejection_rounds": state["rejection_rounds"],
+                    "evaluation_samples": evaluation_samples,
+                    "footprint_samples": footprint_samples,
+                    "source_execution_mode": source_execution_mode,
+                    "reference_dispatch_identity": payload.dispatch_identity,
+                    "reference_dispatch_logical_steps": len(packed),
+                }
+                compacted = TrainingConditioning.concatenate(
+                    tuple(state["conditioning"]), provenance=provenance,
                 )
-            )
-        return tuple(batches)
+                output_owners.callback(compacted.release)
+                batch = EvaluatorBatch(
+                    compacted, torch.cat(state["wi"]), torch.cat(state["f"]),
+                    torch.cat(state["paired_f"]) if state["paired_f"] else None,
+                )
+                batches.append(batch)
+            output_owners.pop_all()
+            return tuple(batches)
 
     @property
     def native_asset_collection_identity(self) -> str:

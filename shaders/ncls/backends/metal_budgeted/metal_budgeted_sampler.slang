@@ -29,7 +29,11 @@ bool nclsMetalBudgetedProposalBasis(
     NclsMetalBudgetedPrepared state, uint component, float3 wo,
     out NclsMetalBudgetedFrame basis)
 {
+#ifdef NCLS_METAL_SPATIAL
+    const NclsMetalBudgetedFrame frame = state.proposalFrames[component == 1u ? 1u : 0u];
+#else
     const NclsMetalBudgetedFrame frame = state.frames[component == 1u ? 1u : 0u];
+#endif
     uint normalValid, axisValid, unused;
     float3 normal = nclsMetalBudgetedSafeNormalize(frame.normal, float3(0, 0, 1), normalValid);
     normal = normal.z >= 0.0f ? normal : -normal;

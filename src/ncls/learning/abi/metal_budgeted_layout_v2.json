@@ -1,0 +1,303 @@
+{
+  "schema": "ncls.metal-budgeted-layout@2",
+  "method_key": "metal-budgeted-neural-material",
+  "correspondence": "metal-spatial-native-uv-encoder@1",
+  "profiles": {
+    "metal_spatial_hybrid_v1": {
+      "evaluator_mode": "hybrid",
+      "asset_detail_aggregation": "uv-group-fusion@1",
+      "asset_detail_center": "full-native-grid@1",
+      "asset_spatial_features": "semantic-cnn@1",
+      "asset_context_resolution_divisor": 4
+    },
+    "metal_spatial_summary_control_v1": {
+      "evaluator_mode": "hybrid",
+      "asset_detail_aggregation": "uv-group-fusion@1",
+      "asset_detail_center": "full-native-grid@1",
+      "asset_spatial_features": "native-summary-control@1",
+      "asset_context_resolution_divisor": 4
+    }
+  },
+  "shape": {
+    "maximum_texture_slots": 9,
+    "maximum_typed_tokens": 32,
+    "typed_token_width": 16,
+    "responsibility_count": 6,
+    "asset_plane_channels": 4,
+    "asset_plane_count": 2,
+    "semantic_decoder_layers": [
+      137,
+      32,
+      32,
+      24
+    ],
+    "semantic_decoder_macs": 6176,
+    "directional_width": 44,
+    "evaluator_layers": [
+      44,
+      64,
+      64,
+      64,
+      6
+    ],
+    "evaluate_dense_macs": 11392,
+    "analytic_lobe_count": 2,
+    "proposal_component_count": 3,
+    "maximum_uv_groups": 9,
+    "maximum_native_lookups": 3,
+    "proposal_decoder_layers": [
+      80,
+      16,
+      13
+    ],
+    "proposal_decoder_macs": 1488
+  },
+  "bounded_execution": {
+    "maximum_prepare_steps": 5,
+    "maximum_evaluate_steps": 4,
+    "maximum_sample_steps": 20,
+    "maximum_pdf_steps": 16,
+    "maximum_sample_random_values": 2,
+    "maximum_sample_evaluator_calls": 1,
+    "maximum_texture_reads": 54,
+    "maximum_evaluate_dense_macs": 20000,
+    "maximum_prepared_state_bytes": 192
+  },
+  "material_program_state": {
+    "alignment": 16,
+    "total_bytes": 160,
+    "fields": [
+      {
+        "name": "compiler_condition",
+        "dtype": "float16",
+        "shape": [
+          8
+        ],
+        "offset": 0
+      },
+      {
+        "name": "primary_lobe",
+        "dtype": "float16",
+        "shape": [
+          8
+        ],
+        "offset": 16
+      },
+      {
+        "name": "secondary_lobe",
+        "dtype": "float16",
+        "shape": [
+          8
+        ],
+        "offset": 32
+      },
+      {
+        "name": "spatial_scale_bias",
+        "dtype": "float16",
+        "shape": [
+          8
+        ],
+        "offset": 48
+      },
+      {
+        "name": "proposal_prior",
+        "dtype": "float16",
+        "shape": [
+          3
+        ],
+        "offset": 64
+      },
+      {
+        "name": "access_state",
+        "dtype": "float16",
+        "shape": [
+          16
+        ],
+        "offset": 80
+      },
+      {
+        "name": "frame_state",
+        "dtype": "float16",
+        "shape": [
+          8
+        ],
+        "offset": 112
+      },
+      {
+        "name": "resource_and_flags",
+        "dtype": "uint32",
+        "shape": [
+          8
+        ],
+        "offset": 128
+      }
+    ]
+  },
+  "prepared_state": {
+    "alignment": 16,
+    "total_bytes": 176,
+    "fields": [
+      {
+        "name": "semantic_state",
+        "dtype": "float16",
+        "shape": [
+          24
+        ],
+        "offset": 0
+      },
+      {
+        "name": "view_state",
+        "dtype": "float16",
+        "shape": [
+          8
+        ],
+        "offset": 48
+      },
+      {
+        "name": "frame_state",
+        "dtype": "float16",
+        "shape": [
+          8
+        ],
+        "offset": 64
+      },
+      {
+        "name": "analytic_lobes",
+        "dtype": "float16",
+        "shape": [
+          2,
+          8
+        ],
+        "offset": 80
+      },
+      {
+        "name": "proposal_state",
+        "dtype": "float16",
+        "shape": [
+          3,
+          4
+        ],
+        "offset": 112
+      },
+      {
+        "name": "access_state",
+        "dtype": "float16",
+        "shape": [
+          4
+        ],
+        "offset": 136
+      },
+      {
+        "name": "proposal_frame_state",
+        "dtype": "float16",
+        "shape": [
+          8
+        ],
+        "offset": 144
+      },
+      {
+        "name": "identity_and_flags",
+        "dtype": "uint32",
+        "shape": [
+          4
+        ],
+        "offset": 160
+      }
+    ]
+  },
+  "asset_packing": {
+    "schema": "ncls.metal-spatial-uv-group-asset@1",
+    "variant_selection": "native-uv-group-bindings@1",
+    "detail": {
+      "dtype": "int8",
+      "format": "rgba8-snorm",
+      "channels": 4,
+      "read": "one-filtered-adjacent-mip-stochastic"
+    },
+    "context": {
+      "dtype": "int8",
+      "format": "rgba8-snorm",
+      "channels": 4,
+      "read": "one-filtered-adjacent-mip-stochastic"
+    }
+  },
+  "directional_features": {
+    "schema": "ncls.metal-positive-z-continuous-half-difference@2",
+    "fields": [
+      {
+        "name": "wo_shading",
+        "width": 3
+      },
+      {
+        "name": "wi_shading",
+        "width": 3
+      },
+      {
+        "name": "half_shading",
+        "width": 3
+      },
+      {
+        "name": "difference_half_frame",
+        "width": 3
+      },
+      {
+        "name": "wo_feature_frame",
+        "width": 3
+      },
+      {
+        "name": "wi_feature_frame",
+        "width": 3
+      },
+      {
+        "name": "wo_dot_wi",
+        "width": 1
+      },
+      {
+        "name": "half_valid",
+        "width": 1
+      },
+      {
+        "name": "prepared_condition",
+        "width": 24
+      }
+    ]
+  },
+  "proposal": {
+    "schema": "ncls.metal-view-independent-proposal-parameters@2",
+    "state_fields": [
+      "normalized_weight",
+      "alpha_x",
+      "alpha_y",
+      "distribution_id"
+    ],
+    "components": [
+      "primary-specular",
+      "secondary-specular",
+      "full-hemisphere-fallback"
+    ],
+    "frame_indices": [
+      0,
+      1,
+      0
+    ],
+    "fallback_weight_floor": 0.02,
+    "distribution_enum": {
+      "folded-anisotropic-ggx": 0,
+      "folded-anisotropic-beckmann": 1,
+      "folded-uniform": 2
+    },
+    "random_tuple": {
+      "shape": [
+        2
+      ],
+      "component_select_and_remap": 0,
+      "component_azimuth": 1
+    }
+  },
+  "precision": {
+    "shared_weights": "float16-master-pack",
+    "asset_planes": "rgba8-snorm-per-texel-before-bilinear",
+    "sensitive_accumulation": "float32"
+  },
+  "identity": "34f461179771d50e4e8ead48849151f374fefe8db80543a092be75fa829f6612"
+}

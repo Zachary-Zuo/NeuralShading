@@ -2,6 +2,7 @@ from pathlib import Path
 import random
 
 import numpy as np
+import pytest
 from PIL import Image
 import torch
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
@@ -70,3 +71,30 @@ def test_common_hook_linux_does_no_work_and_windows_result_reaches_tensorboard(t
     assert calls == [3]
     accumulator = EventAccumulator(str(tmp_path / "tensorboard")).Reload()
     assert accumulator.Images("visual-eval/comparison")[0].step == 3
+
+
+@pytest.mark.parametrize("step", [0, 2, 512])
+def test_visual_package_records_completed_phase_instead_of_default_initialization(tmp_path, monkeypatch, step):
+    from types import SimpleNamespace
+    from ncls.paths import PROJECT_ROOT
+    from ncls.learning.training.plan import TrainingPlanResolver
+    from ncls.visual_eval import windows
+
+    plan = TrainingPlanResolver(PROJECT_ROOT).resolve(
+        PROJECT_ROOT / "configs/training/runs/metal-spatial-probe-bronze-scratched.yaml")
+    method = SimpleNamespace(key="metal", export_training_state=lambda model: {})
+    context = VisualContext(step, method, plan.training, (), plan.hooks.visual_eval, tmp_path / "eval")
+    viewer = tmp_path / "viewer.exe"
+    viewer.touch()
+    observed = []
+    class StopAtCompile(Exception):
+        pass
+    def compile_probe(checkpoint, *args, **kwargs):
+        observed.append(checkpoint)
+        raise StopAtCompile
+    monkeypatch.setattr(windows, "compile_evaluation_package", compile_probe)
+    with pytest.raises(StopAtCompile):
+        windows.WindowsVisualEvaluator(viewer).evaluate(None, context)
+    checkpoint = observed[0]
+    assert checkpoint.global_step == checkpoint.phase_step == step
+    assert checkpoint.phase_name == ("deployment-qat-refine" if step else "initialization")

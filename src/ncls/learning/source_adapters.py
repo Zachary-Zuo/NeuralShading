@@ -7,6 +7,7 @@ from ncls.core.source import SourceSnapshot
 from ncls.data import DataExecutionPlan, PipelineTrace
 from ncls.learning.source_adaptation import NativeAssetCollection
 from ncls.learning.batches import TrainingRouteRequest
+from ncls.learning.conditioning_resources import AdaptedConditioning
 
 
 class MethodSourceAdapter(ABC):
@@ -49,7 +50,7 @@ class MethodSourceAdapter(ABC):
         options: Mapping[str, Any],
         *,
         execution_source_indices: Sequence[int] | None = None,
-    ) -> tuple[Mapping[str, torch.Tensor], Mapping[str, str]]:
+    ) -> AdaptedConditioning:
         raise NotImplementedError
 
     def configure_data_execution(

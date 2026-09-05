@@ -10,6 +10,7 @@ from ncls.learning.source_adaptation import DenseNativeAssetCollection, Material
 from ncls.source_materials.mdl import MdlMaterialSource
 
 from ncls.learning.source_adapters import MethodSourceAdapter
+from ncls.learning.conditioning_resources import AdaptedConditioning
 
 
 class NvidiaLayerStackSourceAdapter(MethodSourceAdapter):
@@ -67,10 +68,10 @@ class NvidiaLayerStackSourceAdapter(MethodSourceAdapter):
         options: Mapping[str, Any],
         *,
         execution_source_indices: Sequence[int] | None = None,
-    ) -> tuple[Mapping[str, torch.Tensor], Mapping[str, str]]:
+    ) -> AdaptedConditioning:
         del generator, options, execution_source_indices
         count = int(source_index.shape[0])
-        return (
+        return AdaptedConditioning(
             {
                 "uv": torch.zeros((count, 2), dtype=torch.float32, device=self.device),
                 "uv_dx": torch.zeros((count, 2), dtype=torch.float32, device=self.device),
@@ -121,7 +122,7 @@ class NvidiaMaterialXSourceAdapter(MethodSourceAdapter):
         options: Mapping[str, Any],
         *,
         execution_source_indices: Sequence[int] | None = None,
-    ) -> tuple[Mapping[str, torch.Tensor], Mapping[str, str]]:
+    ) -> AdaptedConditioning:
         del options, execution_source_indices
         count = int(source_index.shape[0])
         uv = torch.rand((count, 2), generator=generator, device=self.device)
@@ -138,7 +139,7 @@ class NvidiaMaterialXSourceAdapter(MethodSourceAdapter):
         footprint = torch.pow(2.0, mip_level) / float(texel_extent)
         uv_dx = torch.stack((footprint, torch.zeros_like(footprint)), dim=1)
         uv_dy = torch.stack((torch.zeros_like(footprint), footprint), dim=1)
-        return (
+        return AdaptedConditioning(
             {
                 "uv": uv,
                 "uv_dx": uv_dx,
@@ -201,13 +202,13 @@ class NvidiaMdlFixedSourceAdapter(MethodSourceAdapter):
         options: Mapping[str, Any],
         *,
         execution_source_indices: Sequence[int] | None = None,
-    ) -> tuple[Mapping[str, torch.Tensor], Mapping[str, str]]:
+    ) -> AdaptedConditioning:
         del generator, options, execution_source_indices
         if bool((source_index != 0).any()):
             raise ValueError("MDL fixed-uniform adapter accepts only source index zero")
         count = int(source_index.shape[0])
         zeros = torch.zeros((count, 2), dtype=torch.float32, device=self.device)
-        return (
+        return AdaptedConditioning(
             {
                 "uv": zeros,
                 "uv_dx": zeros.clone(),

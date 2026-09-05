@@ -27,10 +27,9 @@ def metal_budgeted_runtime_parameter_names(
     names = {
         name
         for name, _ in model.named_parameters()
-        if name.startswith("typed_compiler.")
-        or name.startswith("prepared_model.")
+        if name.startswith("prepared_model.")
         or name.startswith("evaluator.")
-        or name == "asset.variant_scale_bias.weight"
+        or (not model.profile.is_spatial and name == "asset.variant_scale_bias.weight")
     }
     if not names or any(name.startswith("asset.detail_encoder.") for name in names):
         raise ValueError("Metal budgeted runtime parameter classification drifted")
@@ -62,6 +61,8 @@ def pack_metal_budgeted_program(
     }
     if len(defines) != len(names):
         raise ValueError("Metal budgeted runtime weight define collision")
+    if model.profile.is_spatial:
+        defines["NCLS_METAL_SPATIAL"] = "1"
     return MetalBudgetedPackedProgram(payload, layout, defines)
 
 
@@ -122,6 +123,10 @@ def pack_metal_budgeted_compiled_material(
     program: MetalBudgetedProgramState,
     asset: MetalBudgetedCompiledAsset,
 ) -> bytes:
+    from ncls.learning.methods.metal.spatial_cook import MetalSpatialCompiledAsset
+    if isinstance(asset, MetalSpatialCompiledAsset):
+        from ncls.learning.methods.metal.spatial_runtime import pack_spatial_compiled_material
+        return pack_spatial_compiled_material(program, asset)
     if (
         program.compiler_condition.shape[0] != 1
         or program.resource_and_flags.shape
@@ -263,9 +268,18 @@ def prepare_metal_budgeted_cooked_asset(
     mip_level: float,
     filter_random: float,
     wo: Sequence[float],
+    uv_dx: Sequence[float] = (0., 0.),
+    uv_dy: Sequence[float] = (0., 0.),
 ) -> MetalBudgetedPreparedState:
     device = next(model.parameters()).device
     runtime_tensors = {name: value.to(device) for name, value in tensors.items()}
+    if model.profile.is_spatial:
+        from ncls.learning.methods.metal.spatial_runtime import prepare_spatial_cooked_asset
+        if mip_level != 0:
+            raise ValueError("spatial runtime derives per-group LOD from explicit UV derivatives")
+        with torch.no_grad():
+            return prepare_spatial_cooked_asset(model, asset, runtime_tensors, uv=uv, wo=wo,
+                filter_random=filter_random, uv_dx=uv_dx, uv_dy=uv_dy)
     with torch.no_grad():
         program = quantize_metal_budgeted_program_state(
             model.compile_program_state(runtime_tensors)

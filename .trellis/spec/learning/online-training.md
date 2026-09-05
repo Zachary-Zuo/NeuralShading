@@ -29,6 +29,9 @@ TrainingEngine(method, session, config, checkpoint_callback, visual_callback).ru
 - Nvidia 保留 evaluator/sampler、encoder materialization 与 latent finetune 的实际模型语义。Metal 保留当前 budgeted asset/prepare/evaluator/proposal、train-only calibration 和 QAT；数值预算从 YAML 获取。
 - Metal sampler 的 component index 与 distribution enum 独立；多个 GGX 合法。折回上半球后的 PDF 累加两个 preimage，sample 与独立 PDF 一致。资源 ABI 由当前 layout 和 Slang 对应，不保留 full Metal。
 - calibration 使用训练 reference 数据；resume 恢复已有 buffer，不重新估计或消费 validation。
+- 当前 Metal `metal_spatial_hybrid_v1` 使用原生 mip0 raw tile 和语义 CNN。CPU 逻辑 request 冻结 source/UV cohort、完整 raw RF 与 train/held-out tile；GPU 生成 UV/derivatives/filter random 和 row binding。训练 split 的所有原始感受野不得触及 held-out RF；非空间原生 lookup 是共享 source 条件。主/pair 同 step 共用编码图，optimizer 更新后必须重建 learned feature。
+- latent 按原生 UV 表达式分组；不同 UV 不在 cook 时重投影融合。单组不同原生分辨率在 stem 后对齐，nonrepeat 按原生三个位置和权重读取。footprint query 提供完整 Jacobian 和 fractional LOD；SNORM8 先量化四邻 texel，再 bilinear 插值。完整 response 的 footprint 平均仍由 reference dispatcher 在线产生。
+- `metal_spatial_summary_control_v1` 是预留对照 identity，当前未实现，构造时必须明确拒绝；不能将同一个 raw CNN 标为 matched summary。历史 profile 不能通过新 raw adapter/public checkpoint schema 静默开训。
 
 ## 4. 错误矩阵
 

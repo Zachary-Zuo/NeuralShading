@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from collections import deque
-from contextlib import contextmanager
-from dataclasses import dataclass
+from contextlib import contextmanager, ExitStack
+from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Iterator, Mapping
 
@@ -10,6 +10,9 @@ import numpy as np
 import torch
 
 from ncls.core.identity import sha256_json
+from ncls.learning.conditioning_resources import ConditioningResource
+from ncls.learning.methods.metal.spatial_encoder import EncodingPlan, RawSlot
+from ncls.learning.methods.metal.spatial_bundle import SpatialBundlePlan
 from ncls.data import (
     GpuResidencyManager,
     HostPipeline,
@@ -157,6 +160,35 @@ class _HostMipDecodeRequest:
     domain: NativeAssetDomain
 
 
+@dataclass(frozen=True)
+class _HostRawDecodeRequest:
+    payload: _HostMipDecodeRequest
+    rect: tuple[int, int, int, int]
+    depth: int
+
+
+def _decode_host_raw(request: _HostRawDecodeRequest) -> torch.Tensor:
+    payload = request.payload
+    values = np.memmap(payload.path, mode="r", dtype=np.dtype(payload.dtype), shape=payload.shape)
+    collection = MdlMetalNativeAssetCollection.__new__(MdlMetalNativeAssetCollection)
+    return collection._read_raw_rectangle(values, payload.manifest_slot, payload.slot,
+                                           request.rect, request.depth)
+
+
+def _decode_host_resource(request):
+    if isinstance(request, _HostRawDecodeRequest):
+        return _decode_host_raw(request)
+    return _decode_host_mip_pyramid(request)
+
+
+class _BundleLease:
+    def __init__(self, stack: ExitStack) -> None:
+        self.stack = stack
+
+    def release(self) -> None:
+        self.stack.close()
+
+
 def _decode_host_mip_pyramid(
     request: _HostMipDecodeRequest,
 ) -> tuple[torch.Tensor, ...]:
@@ -241,8 +273,8 @@ class MdlMetalNativeAssetCollection:
             )
             descriptors.append(NativeAssetDescriptor(texture_set_id, schema_id, tuple(domains)))
         self.descriptors = tuple(descriptors)
-        if len(self.descriptors) != 52:
-            raise ValueError("Metal native asset collection must contain 52 texture sets")
+        if not self.descriptors:
+            raise ValueError("Metal native asset collection cannot be empty")
         self._cache = _WorkingSetCache(working_set_capacity)
         self._artifact_cache: dict[int, MdlCompiledArtifact] = {}
         self._mip_pyramid_key: tuple[int, int] | None = None
@@ -319,7 +351,7 @@ class MdlMetalNativeAssetCollection:
         )
         if num_workers:
             self._host_pipeline = HostPipeline(
-                _decode_host_mip_pyramid,
+                _decode_host_resource,
                 num_workers=num_workers,
                 capacity=host_prefetch,
                 stage="metal-mip-decode",
@@ -431,6 +463,108 @@ class MdlMetalNativeAssetCollection:
             )
         groups = _channel_groups(slot)
         return _canonicalize_decoded_channels(source, groups)
+
+    def raw_slots(self, asset_index: int) -> tuple[RawSlot, ...]:
+        """原生声明；lookup 域不参与表面 UV 尺寸、mip 或边界策略。"""
+        slots = []
+        for position, domain in enumerate(self.descriptors[asset_index].domains):
+            native_index = int(domain.domain_id.removeprefix("slot-"))
+            declaration = self._sources[asset_index].slots[native_index]
+            width, height, depth = map(int, declaration["dimensions"])
+            roles = tuple(role.semantic for role in domain.roles for _ in range(role.channel_count))
+            spatial = declaration["shape"] == "2d" and "color-lookup" not in roles
+            slots.append(RawSlot(position, (height, width), roles,
+                                 domain.address_mode if spatial else "clamp",
+                                 spatial=spatial, depth=depth))
+        return tuple(slots)
+
+    def _read_raw_rectangle(
+        self, values: np.ndarray, manifest: Mapping[str, Any], slot: Mapping[str, Any],
+        rect: tuple[int, int, int, int], depth: int = 1,
+    ) -> torch.Tensor:
+        y, x, h, w = rect
+        height = values.shape[0] // depth
+        if min(y, x) < 0 or y + h > height or x + w > values.shape[1]:
+            raise ValueError("raw rectangle must be inside its canonical native slice")
+        xx = np.arange(x, x + w, dtype=np.int64)
+        blocks = []
+        for z in range(depth):
+            yy = np.arange(y, y + h, dtype=np.int64) + z * height
+            blocks.append(self._read_block(values, manifest, slot, yy, xx).transpose(2, 0, 1))
+        # normal 的 decode/strength/normalize 属于 native graph，不能提前在每 texel 上单位化。
+        return torch.from_numpy(np.ascontiguousarray(np.stack(blocks)))
+
+    def acquire_encoding_resource(self, asset_index: int, plan: EncodingPlan) -> ConditioningResource:
+        """只取 RF planner 列出的原生 mip0 矩形；共享 residency 按实际 bytes 保有 lease。"""
+        if self._gpu_residency is None or self._gpu_device is None:
+            raise RuntimeError("raw encoder requires configured GPU residency")
+        descriptor = self.descriptors[asset_index]
+        identity = sha256_json({"schema": "ncls.raw-metal-encoding-plan@1",
+                                "asset": descriptor.asset_id, "collection": self.collection_id,
+                                "plan": asdict(plan)})
+        tensors = {}
+        with ExitStack() as leases:
+            for read_id, read in enumerate(plan.raw_reads):
+                slot = plan.slots[read.slot]
+                domain = descriptor.domains[slot.slot]
+                native_index = int(domain.domain_id.removeprefix("slot-"))
+                key = ResidencyKey(sha256_json({"collection": self.collection_id,
+                    "asset": descriptor.asset_id, "domain": domain.domain_id, "rect": read.rect,
+                    "depth": slot.depth}), "native-fixed-decode-mip0@1", str(self._gpu_device))
+                size = slot.depth * len(slot.channel_roles) * read.rect[2] * read.rect[3] * 4
+
+                def materialize():
+                    if self._host_pipeline is not None:
+                        if self._host_scheduled:
+                            raise RuntimeError("raw tile and historical mip schedules cannot be mixed")
+                        request = _HostRawDecodeRequest(self._host_decode_request(asset_index, native_index, domain),
+                                                       read.rect, slot.depth)
+                        logical_id = self._host_request_id
+                        self._host_request_id += 1
+                        self._host_pipeline.submit(HostRequest(logical_id, request, {"asset": descriptor.asset_id}))
+                        result = self._host_pipeline.next_result()
+                        if result.logical_id != logical_id:
+                            raise RuntimeError("raw host decode returned a different logical request")
+                        decoded = result.payload
+                    else:
+                        values, manifest, declaration = self._base_array(asset_index, native_index)
+                        decoded = self._read_raw_rectangle(values, manifest, declaration, read.rect, slot.depth)
+                    tensor = decoded.to(device=self._gpu_device)
+                    return ResidentAllocation(tensor, tensor.nelement() * tensor.element_size())
+
+                lease = self._gpu_residency.acquire(key, estimated_bytes=size, materialize=materialize)
+                leases.callback(lease.release)
+                tensors[f"raw-{read_id}"] = lease.value
+            return ConditioningResource(identity, tensors, {"plan": plan, "asset_id": descriptor.asset_id},
+                                        _BundleLease(leases.pop_all()))
+
+    def read_raw_tile(self, asset_index: int, slot: RawSlot, rect: tuple[int, int, int, int]) -> torch.Tensor:
+        """cook 的有界 host tile；与训练共享固定 decode，逐 slice 保持原生布局。"""
+        domain = self.descriptors[asset_index].domains[slot.slot]
+        native_index = int(domain.domain_id.removeprefix("slot-"))
+        values, manifest, declaration = self._base_array(asset_index, native_index)
+        y, x, h, w = rect
+        yy, xx = np.arange(y, y + h), np.arange(x, x + w)
+        if slot.address_mode == "wrap":
+            yy, xx = yy % slot.shape[0], xx % slot.shape[1]
+        else:
+            yy, xx = yy.clip(0, slot.shape[0] - 1), xx.clip(0, slot.shape[1] - 1)
+        return torch.from_numpy(np.ascontiguousarray(np.stack([
+            self._read_block(values, manifest, declaration, yy + z * slot.shape[0], xx).transpose(2, 0, 1)
+            for z in range(slot.depth)
+        ])))
+
+    def acquire_spatial_bundle(self, asset_index: int, plan: SpatialBundlePlan) -> ConditioningResource:
+        tensors = {}
+        with ExitStack() as leases:
+            for index, part in enumerate(plan.parts):
+                resource = self.acquire_encoding_resource(asset_index, part.plan)
+                if resource.lease is not None:
+                    leases.callback(resource.lease.release)
+                tensors.update({f"part-{index}/{key}": value for key, value in resource.tensors.items()})
+            key = sha256_json({"schema": "ncls.metal-uv-bundle@1", "collection": self.collection_id,
+                               "asset": self.descriptors[asset_index].asset_id, "plan": asdict(plan)})
+            return ConditioningResource(key, tensors, {"bundle": plan}, _BundleLease(leases.pop_all()))
 
     def _sample_mip_patches(
         self,

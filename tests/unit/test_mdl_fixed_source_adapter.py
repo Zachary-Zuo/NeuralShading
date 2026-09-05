@@ -93,9 +93,11 @@ def test_mdl_fixed_uniform_adapter_is_bounded_finite_and_one_by_one() -> None:
     adapter = get_method("nvidia").create_source_adapter(
         (snapshot,), torch.device("cpu")
     )
-    tensors, provenance = adapter.sample_tensors(
+    adapted = adapter.sample_tensors(
         torch.zeros(3, dtype=torch.int64), torch.Generator().manual_seed(7), {}
     )
+    tensors, provenance = adapted.tensors, adapted.provenance
+    assert len(adapted.resources) == 0 and not adapted.bindings
     layout = mdl_fixed_native_feature_layout()
     assert layout.channel_count == 896
     assert tensors["native_features"].shape == (3, layout.channel_count)

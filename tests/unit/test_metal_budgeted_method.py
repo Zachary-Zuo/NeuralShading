@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
 from ncls.learning.conformance import validate_objective_outputs
@@ -10,6 +11,10 @@ from ncls.learning.batches import (
 )
 from ncls.learning.methods.metal.method import METHOD
 from ncls.learning.methods.metal.model import METAL_BUDGETED_REQUIRED_CONTEXT
+from ncls.learning.methods.metal.spatial_bundle import build_spatial_bundle
+from ncls.learning.methods.metal.spatial_encoder import RawSlot
+from ncls.learning.methods.metal.native_uv import UVGroup, UVMapping
+from tests.unit.test_metal_spatial_asset import _resource
 
 
 def _values(batch: int = 2) -> dict[str, torch.Tensor]:
@@ -24,6 +29,7 @@ def _values(batch: int = 2) -> dict[str, torch.Tensor]:
             torch.tensor([[0.25, -0.1, 1.0], [-0.15, 0.2, 1.0]])[:batch], dim=1
         ),
         "uv": uv,
+        "filter_random": torch.tensor([0.3, 0.8])[:batch],
         "uv_dx": torch.tensor([[1.0 / 4096.0, 0.0]]).expand(batch, -1).clone(),
         "uv_dy": torch.tensor([[0.0, 1.0 / 4096.0]]).expand(batch, -1).clone(),
         "paired_uv": uv + torch.tensor([[1.0 / 4096.0, 0.0]]),
@@ -68,8 +74,13 @@ def _values(batch: int = 2) -> dict[str, torch.Tensor]:
 def _batches() -> dict[str, EvaluatorBatch | MethodSamplerBatch]:
     values = _values()
     snapshot_ids = ("a" * 64, "b" * 64)
+    slots = (RawSlot(0, (16, 16), ("base-color",)*3), RawSlot(1, (16, 16), ("normal-tangent",)*3),
+             RawSlot(2, (16, 16), ("height",)), RawSlot(3, (16, 16), ("mask", "roughness")))
+    groups = (UVGroup(UVMapping("fixture", (1.,0.,0.,0.,1.,0.)), (0,1,2,3)),)
+    bundle = build_spatial_bundle(slots, groups, (0.,0.,1.,1.), (0.01,0.), (0.,0.01))
+    resources = _resource(bundle, {slot.slot: torch.rand(1,len(slot.channel_roles),*slot.shape) for slot in slots})
     evaluator_conditioning = TrainingConditioning(
-        "mdl.program@1", snapshot_ids, values, {"fixture": True}
+        "mdl.program@1", snapshot_ids, values, {"fixture": True}, resources, {"metal_spatial": torch.zeros(2,dtype=torch.int64)}
     )
     wi = torch.nn.functional.normalize(
         torch.tensor([[[0.1, 0.3, 1.0]], [[-0.2, 0.4, 1.0]]]), dim=-1
@@ -85,7 +96,7 @@ def _batches() -> dict[str, EvaluatorBatch | MethodSamplerBatch]:
         and name != "metal_paired_texture_patches"
     }
     sampler_conditioning = TrainingConditioning(
-        "mdl.program@1", snapshot_ids, sampler_values, {"fixture": True}
+        "mdl.program@1", snapshot_ids, sampler_values, {"fixture": True}, resources.retain(), {"metal_spatial": torch.zeros(2,dtype=torch.int64)}
     )
     sampler = MethodSamplerBatch(
         sampler_conditioning, torch.tensor([[0.31, 0.77], [0.81, 0.19]])
@@ -140,12 +151,13 @@ def test_budgeted_method_descriptor_and_parameter_registry_are_exact() -> None:
     model = METHOD.create_trainable(METAL_BUDGETED_REQUIRED_CONTEXT)
     groups = METHOD.parameter_registry(model)
     assert descriptor.method_key == "metal-budgeted-neural-material"
-    assert descriptor.runtime_abi == "ncls.metal-budgeted-method@3"
+    assert descriptor.runtime_abi == "ncls.metal-spatial-method@1"
     assert descriptor.cost_claims["C_eval_macs"] == 11_392
-    assert descriptor.cost_claims["B_prepared"] == 160
-    assert descriptor.cost_claims["P_trainable"] == 30_825
-    assert descriptor.cost_claims["P_runtime_prepare_evaluate"] == 14_313
-    assert descriptor.cost_claims["B_runtime_fp16_weights"] == 28_626
+    assert descriptor.cost_claims["B_prepared"] == 176
+    assert descriptor.cost_claims["C_prepare_macs"] == 7664
+    assert descriptor.cost_claims["P_trainable"] == sum(p.numel() for p in model.parameters())
+    assert descriptor.cost_claims["P_runtime_prepare_evaluate"] == 19371
+    assert descriptor.cost_claims["B_runtime_fp16_weights"] == 38742
 
 
 def test_budgeted_joint_objective_reports_standard_losses_and_gradients() -> None:
@@ -202,20 +214,18 @@ def test_budgeted_proposal_objective_detaches_nonproposal_parameters() -> None:
             assert all(value is None for value in gradients)
 
 
-def test_budgeted_qat_quantizes_weights_and_direct_auxiliary_stays_training_only() -> None:
-    context = {
-        **METAL_BUDGETED_REQUIRED_CONTEXT,
-        "profile_id": "metal_budgeted_direct_control_v3",
-    }
-    model = METHOD.create_trainable(context)
+def test_spatial_qat_quantizes_weights_with_evaluator_only_diagnostic() -> None:
+    model = METHOD.create_trainable(METAL_BUDGETED_REQUIRED_CONTEXT)
     _initialize_calibration(model)
-    loss, metrics = METHOD.training_objective(
-        model, _batches(), _phase("deployment-qat-refine")
-    )
+    phase = _phase("deployment-qat-refine")
+    phase["recipes"]["proposal_weight"] = {"schema": "disabled@1"}
+    batches = _batches()
+    loss, metrics = METHOD.training_objective(model, {"evaluator": batches["evaluator"]}, phase)
     loss.backward()
     assert bool(torch.isfinite(loss))
     assert bool(torch.isfinite(metrics["qat/runtime_weight_mae"]))
-    assert float(metrics["appearance/direct_core_auxiliary"]) > 0.0
+    assert float(metrics["loss/proposal"]) == 0.0
+    assert all(p.grad is None for p in model.prepared_model.proposal_adapter.parameters())
 
 
 def test_budgeted_calibration_is_train_only_state_and_checkpoint_visible() -> None:
@@ -238,13 +248,9 @@ def test_budgeted_calibration_is_train_only_state_and_checkpoint_visible() -> No
     )
 
 
-def test_all_budgeted_profiles_match_the_public_checkpoint_tensor_schema() -> None:
+def test_spatial_profile_matches_the_public_checkpoint_tensor_schema() -> None:
     for profile_id in (
-        "metal_budgeted_hybrid_v3",
-        "metal_budgeted_direct_control_v3",
-        "metal_budgeted_hybrid_role_detail_v4",
-        "metal_budgeted_hybrid_center_detail_v5",
-        "metal_budgeted_hybrid_dual_local_v6",
+        "metal_spatial_hybrid_v1",
     ):
         model = METHOD.create_trainable(
             {**METAL_BUDGETED_REQUIRED_CONTEXT, "profile_id": profile_id}
@@ -253,3 +259,15 @@ def test_all_budgeted_profiles_match_the_public_checkpoint_tensor_schema() -> No
         assert set(state) == {
             field.name for field in METHOD.descriptor.tensor_state_schema
         }
+
+
+def test_pending_summary_control_cannot_silently_run_the_raw_encoder() -> None:
+    with pytest.raises(ValueError, match="matched summary encoder"):
+        METHOD.create_trainable({**METAL_BUDGETED_REQUIRED_CONTEXT,
+                                 "profile_id": "metal_spatial_summary_control_v1"})
+
+
+def test_historical_profile_cannot_silently_use_the_current_raw_adapter() -> None:
+    with pytest.raises(ValueError, match="历史配置"):
+        METHOD.create_trainable({**METAL_BUDGETED_REQUIRED_CONTEXT,
+                                 "profile_id": "metal_budgeted_hybrid_v3"})

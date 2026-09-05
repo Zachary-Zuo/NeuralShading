@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, Mapping, Protocol, TypeAlias
 
 import torch
 
 from ncls.learning.source_adaptation import NativeAssetDescriptor, NativeAssetTile
+from ncls.learning.conditioning_resources import ConditioningResources
 
 
 TrainingRouteKind = Literal["asset-tile", "reference-evaluator", "method-sampler"]
@@ -63,6 +64,8 @@ class TrainingConditioning:
     source_snapshot_ids: tuple[str, ...]
     tensors: Mapping[str, torch.Tensor]
     provenance: Mapping[str, Any]
+    resources: ConditioningResources = field(default_factory=ConditioningResources, compare=False)
+    bindings: Mapping[str, torch.Tensor] = field(default_factory=dict, compare=False)
 
     def __post_init__(self) -> None:
         if not self.source_family_id or not self.source_snapshot_ids:
@@ -77,6 +80,22 @@ class TrainingConditioning:
         if source_index.ndim != 1 or source_index.dtype != torch.int64:
             raise ValueError("source_index must be int64 [batch]")
         batch_size = int(source_index.shape[0])
+        if any(value.ndim == 0 or value.shape[0] != batch_size for value in tensors.values()):
+            raise ValueError("conditioning tensors must have one row per query")
+        bindings = dict(self.bindings)
+        for entry in self.resources.entries:
+            if entry.device != wo.device:
+                raise ValueError("conditioning resource must share the query device")
+        for name, indices in bindings.items():
+            if not name or indices.dtype != torch.int64 or indices.shape != (batch_size,):
+                raise ValueError("conditioning bindings must be named int64 [batch]")
+            if indices.device != wo.device:
+                raise ValueError("conditioning binding must share the query device")
+            in_bounds = ((indices >= 0) & (indices < len(self.resources))).all()
+            if indices.device.type == "cuda":
+                torch._assert_async(in_bounds)
+            elif not bool(in_bounds):
+                raise ValueError("conditioning binding is outside resources")
         source_bounds = torch.all(source_index >= 0) & torch.all(
             source_index < len(self.source_snapshot_ids)
         )
@@ -94,6 +113,7 @@ class TrainingConditioning:
             "paired_uv_dx": (batch_size, 2),
             "paired_uv_dy": (batch_size, 2),
             "mip_level": (batch_size,),
+            "filter_random": (batch_size,),
         }
         for name, shape in spatial_shapes.items():
             if name in tensors and tensors[name].shape != shape:
@@ -113,6 +133,71 @@ class TrainingConditioning:
         object.__setattr__(self, "source_snapshot_ids", tuple(self.source_snapshot_ids))
         object.__setattr__(self, "tensors", tensors)
         object.__setattr__(self, "provenance", dict(self.provenance))
+        object.__setattr__(self, "bindings", bindings)
+
+    def select_rows(self, indices: torch.Tensor) -> TrainingConditioning:
+        resources = self.resources.retain()
+        try:
+            return replace(
+                self,
+                tensors={name: value.index_select(0, indices) for name, value in self.tensors.items()},
+                bindings={name: value.index_select(0, indices) for name, value in self.bindings.items()},
+                resources=resources,
+            )
+        except BaseException:
+            resources.release()
+            raise
+
+    def retain(self) -> TrainingConditioning:
+        resources = self.resources.retain()
+        try:
+            return replace(self, resources=resources)
+        except BaseException:
+            resources.release()
+            raise
+
+    @staticmethod
+    def concatenate(
+        values: tuple[TrainingConditioning, ...],
+        *,
+        provenance: Mapping[str, Any] | None = None,
+    ) -> TrainingConditioning:
+        if not values:
+            raise ValueError("conditioning concatenation requires inputs")
+        first = values[0]
+        for value in values:
+            if (
+                value.source_family_id != first.source_family_id
+                or value.source_snapshot_ids != first.source_snapshot_ids
+                or set(value.tensors) != set(first.tensors)
+                or set(value.bindings) != set(first.bindings)
+                or value.device != first.device
+            ):
+                raise ValueError("conditioning concatenation contracts disagree")
+        resources, remaps = ConditioningResources.concatenate(tuple(value.resources for value in values))
+        try:
+            bindings = {
+                name: torch.cat(
+                    [
+                        torch.tensor(remap, dtype=torch.int64, device=first.device)[value.bindings[name]]
+                        for value, remap in zip(values, remaps, strict=True)
+                    ]
+                )
+                for name in first.bindings
+            }
+            return replace(
+                first,
+                tensors={name: torch.cat([value.tensors[name] for value in values]) for name in first.tensors},
+                provenance=first.provenance if provenance is None else provenance,
+                resources=resources,
+                bindings=bindings,
+            )
+        except BaseException:
+            resources.release()
+            raise
+
+    def release(self) -> None:
+        self.resources.release()
 
     @property
     def batch_size(self) -> int:
@@ -187,8 +272,11 @@ class EvaluatorBatch:
         return self.conditioning.provenance
 
     def release(self) -> None:
-        if self.lease is not None:
-            self.lease.release()
+        try:
+            if self.lease is not None:
+                self.lease.release()
+        finally:
+            self.conditioning.release()
 
 
 @dataclass(frozen=True)
@@ -217,8 +305,11 @@ class MethodSamplerBatch:
         return self.conditioning.provenance
 
     def release(self) -> None:
-        if self.lease is not None:
-            self.lease.release()
+        try:
+            if self.lease is not None:
+                self.lease.release()
+        finally:
+            self.conditioning.release()
 
 
 @dataclass(frozen=True)

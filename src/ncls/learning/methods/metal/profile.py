@@ -11,8 +11,10 @@ from ncls.core.identity import sha256_json
 
 from ncls.paths import PROJECT_ROOT
 METAL_BUDGETED_LAYOUT_PATH = (
-    PROJECT_ROOT / "src/ncls/learning/abi/metal_budgeted_layout_v1.json"
+    PROJECT_ROOT / "src/ncls/learning/abi/metal_budgeted_layout_v2.json"
 )
+METAL_SPATIAL_PROFILE_ID = "metal_spatial_hybrid_v1"
+METAL_SPATIAL_SUMMARY_PROFILE_ID = "metal_spatial_summary_control_v1"
 METAL_BUDGETED_HYBRID_PROFILE_ID = "metal_budgeted_hybrid_v3"
 METAL_BUDGETED_DIRECT_PROFILE_ID = "metal_budgeted_direct_control_v3"
 METAL_BUDGETED_ROLE_DETAIL_PROFILE_ID = "metal_budgeted_hybrid_role_detail_v4"
@@ -85,9 +87,13 @@ class MetalBudgetedProfile:
         return _dense_macs(self.semantic_decoder_layers)
 
     @property
+    def is_spatial(self) -> bool:
+        return self.profile_id in {METAL_SPATIAL_PROFILE_ID, METAL_SPATIAL_SUMMARY_PROFILE_ID}
+
+    @property
     def runtime_prepare_dense_macs(self) -> int:
         """完整部署包含语义解码与 proposal adapter；训练 profile 身份保持冻结。"""
-        return self.prepare_dense_macs + self.semantic_decoder_layers[-1] * self.proposal_component_count
+        return self.prepare_dense_macs + (1488 if self.is_spatial else self.semantic_decoder_layers[-1] * self.proposal_component_count)
 
     @property
     def evaluate_dense_macs(self) -> int:
@@ -100,6 +106,8 @@ class MetalBudgetedProfile:
             METAL_BUDGETED_ROLE_DETAIL_PROFILE_ID,
             METAL_BUDGETED_CENTER_DETAIL_PROFILE_ID,
             METAL_BUDGETED_DUAL_LOCAL_PROFILE_ID,
+            METAL_SPATIAL_PROFILE_ID,
+            METAL_SPATIAL_SUMMARY_PROFILE_ID,
         }:
             raise ValueError("unsupported Metal budgeted profile identity")
         expected_mode = (
@@ -114,6 +122,8 @@ class MetalBudgetedProfile:
             if self.profile_id == METAL_BUDGETED_ROLE_DETAIL_PROFILE_ID
             else "shared-slot-softmax@1"
         )
+        if self.is_spatial:
+            expected_aggregation = "uv-group-fusion@1"
         if self.asset_detail_aggregation != expected_aggregation:
             raise ValueError(
                 "Metal budgeted profile Detail aggregation disagrees with its identity"
@@ -127,6 +137,8 @@ class MetalBudgetedProfile:
             }
             else "two-by-two-mean@1"
         )
+        if self.is_spatial:
+            expected_center = "full-native-grid@1"
         if self.asset_detail_center != expected_center:
             raise ValueError(
                 "Metal budgeted profile Detail center disagrees with its identity"
@@ -136,6 +148,8 @@ class MetalBudgetedProfile:
             if self.profile_id == METAL_BUDGETED_DUAL_LOCAL_PROFILE_ID
             else "isotropic-summary@1"
         )
+        if self.is_spatial:
+            expected_spatial = "semantic-cnn@1" if self.profile_id == METAL_SPATIAL_PROFILE_ID else "native-summary-control@1"
         if self.asset_spatial_features != expected_spatial:
             raise ValueError(
                 "Metal budgeted profile spatial feature recipe disagrees with its identity"
@@ -154,15 +168,15 @@ class MetalBudgetedProfile:
             or self.responsibility_count != 6
             or self.asset_plane_channels != 4
             or self.asset_plane_count != 2
-            or self.semantic_decoder_layers != (24, 32, 32, 24)
+            or self.semantic_decoder_layers != ((137, 32, 32, 24) if self.is_spatial else (24, 32, 32, 24))
             or self.directional_width != 44
             or self.evaluator_layers != (44, 64, 64, 64, 6)
             or self.analytic_lobe_count != 2
             or self.proposal_component_count != 3
         ):
             raise ValueError("Metal budgeted NVIDIA-class shape drifted")
-        if self.maximum_texture_reads != 2:
-            raise ValueError("Metal budgeted prepare must perform exactly two texture reads")
+        if self.maximum_texture_reads != (54 if self.is_spatial else 2):
+            raise ValueError("Metal prepare texture-read bound disagrees with its native UV profile")
         if self.evaluate_dense_macs > self.maximum_evaluate_dense_macs:
             raise ValueError("Metal budgeted evaluator exceeds the 20k dense-MAC hard bound")
         if self.prepared_state_bytes > self.maximum_prepared_state_bytes:
@@ -173,7 +187,7 @@ def load_metal_budgeted_layout(
     path: Path = METAL_BUDGETED_LAYOUT_PATH,
 ) -> Mapping[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
-    if value.get("schema") != "ncls.metal-budgeted-layout@1":
+    if value.get("schema") not in {"ncls.metal-budgeted-layout@1", "ncls.metal-budgeted-layout@2"}:
         raise ValueError("unsupported Metal budgeted layout schema")
     identity = str(value.get("identity", ""))
     canonical = dict(value)
@@ -193,9 +207,8 @@ def load_metal_budgeted_layout(
     )
     if directional_width != int(shape["directional_width"]):
         raise ValueError("Metal budgeted directional feature width drifted")
-    if int(shape["asset_plane_count"]) != int(
-        value["bounded_execution"]["maximum_texture_reads"]
-    ):
+    expected_reads = int(shape["asset_plane_count"]) * int(shape.get("maximum_uv_groups", 1)) * int(shape.get("maximum_native_lookups", 1))
+    if expected_reads != int(value["bounded_execution"]["maximum_texture_reads"]):
         raise ValueError("Metal budgeted asset reads disagree with its plane count")
     _validate_packed_state("material_program_state", value["material_program_state"])
     _validate_packed_state("prepared_state", value["prepared_state"])
@@ -209,7 +222,11 @@ def metal_budgeted_profile(
     *,
     layout: Mapping[str, Any] | None = None,
 ) -> MetalBudgetedProfile:
-    value = load_metal_budgeted_layout() if layout is None else layout
+    if layout is None:
+        spatial = profile_id in {METAL_SPATIAL_PROFILE_ID, METAL_SPATIAL_SUMMARY_PROFILE_ID}
+        value = load_metal_budgeted_layout(METAL_BUDGETED_LAYOUT_PATH if spatial else METAL_BUDGETED_LAYOUT_PATH.with_name("metal_budgeted_layout_v1.json"))
+    else:
+        value = layout
     try:
         selected = value["profiles"][profile_id]
     except KeyError as error:
@@ -266,6 +283,7 @@ METAL_BUDGETED_CENTER_DETAIL_PROFILE = metal_budgeted_profile(
 METAL_BUDGETED_DUAL_LOCAL_PROFILE = metal_budgeted_profile(
     METAL_BUDGETED_DUAL_LOCAL_PROFILE_ID
 )
+METAL_SPATIAL_PROFILE = metal_budgeted_profile(METAL_SPATIAL_PROFILE_ID)
 
 
 __all__ = [

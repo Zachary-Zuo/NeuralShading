@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Mapping
 
 import torch
@@ -20,13 +20,19 @@ from ncls.learning.methods.metal.evaluator import (
     MetalBudgetedEvaluator,
     MetalBudgetedPrepare,
     MetalBudgetedPreparedState,
+    _local_frames,
 )
 from ncls.learning.methods.metal.profile import (
     METAL_BUDGETED_HYBRID_PROFILE,
     METAL_BUDGETED_HYBRID_PROFILE_ID,
     MetalBudgetedProfile,
     metal_budgeted_profile,
+    METAL_SPATIAL_PROFILE_ID,
+    METAL_SPATIAL_SUMMARY_PROFILE_ID,
 )
+from ncls.learning.conditioning_resources import ConditioningResources
+from ncls.learning.methods.metal.asset_read import fp16_ste
+from ncls.learning.methods.metal.spatial_asset import MetalSpatialAsset
 from ncls.learning.methods.metal.sampler import (
     MetalBudgetedProposalPdf,
     MetalBudgetedProposalSample,
@@ -36,11 +42,11 @@ from ncls.learning.methods.metal.sampler import (
 
 
 METAL_BUDGETED_REQUIRED_CONTEXT = {
-    "profile_id": METAL_BUDGETED_HYBRID_PROFILE_ID,
-    "asset_variant_count": 52,
+    "profile_id": METAL_SPATIAL_PROFILE_ID,
     "maximum_texture_slots": 9,
     "maximum_typed_tokens": 32,
-    "runtime_asset_reads": 2,
+    "maximum_uv_groups": 9,
+    "runtime_asset_reads": 54,
 }
 
 
@@ -95,7 +101,10 @@ def pack_metal_budgeted_prepared_state(
         ),
         dim=1,
     )
-    if floats.shape[1] != 72 or prepared.identity_and_flags.shape[1] != 4:
+    if prepared.compact_proposal_frame_state is not None:
+        floats = torch.cat((floats, prepared.compact_proposal_frame_state), dim=1)
+    expected = 80 if prepared.compact_proposal_frame_state is not None else 72
+    if floats.shape[1] != expected or prepared.identity_and_flags.shape[1] != 4:
         raise RuntimeError("Metal budgeted PreparedState packing width drifted")
     return floats.to(torch.float16), prepared.identity_and_flags.to(torch.uint32)
 
@@ -108,11 +117,11 @@ class MetalBudgetedModel(nn.Module):
         asset_variant_count: int = 52,
     ) -> None:
         super().__init__()
+        if profile.profile_id == METAL_SPATIAL_SUMMARY_PROFILE_ID:
+            raise ValueError("matched summary encoder 尚未实现；不能用 raw CNN 冒充 summary control")
         self.profile = profile
         self.typed_compiler = MetalBudgetedTypedCompiler(profile)
-        self.asset = MetalBudgetedTwoReadAsset(
-            profile, asset_variant_count=asset_variant_count
-        )
+        self.asset = MetalSpatialAsset() if profile.is_spatial else MetalBudgetedTwoReadAsset(profile, asset_variant_count=asset_variant_count)
         self.prepared_model = MetalBudgetedPrepare(profile)
         self.directional = MetalBudgetedDirectionalRepresentation(profile)
         self.evaluator = MetalBudgetedEvaluator(profile)
@@ -189,15 +198,14 @@ class MetalBudgetedModel(nn.Module):
     def from_context(cls, context: Mapping[str, Any]) -> "MetalBudgetedModel":
         expected = dict(METAL_BUDGETED_REQUIRED_CONTEXT)
         profile_id = str(context.get("profile_id", expected["profile_id"]))
+        if not metal_budgeted_profile(profile_id).is_spatial:
+            raise ValueError("当前 Metal 入口需要 spatial profile；历史配置不能作为新实验运行")
         expected["profile_id"] = profile_id
         if dict(context) != expected:
             raise ValueError(
-                "Metal budgeted trainable requires the exact NVIDIA-class context"
+                "Metal spatial trainable requires the exact native UV context"
             )
-        return cls(
-            metal_budgeted_profile(profile_id),
-            asset_variant_count=int(context["asset_variant_count"]),
-        )
+        return cls(metal_budgeted_profile(profile_id))
 
     def compile_program_state(
         self, tensors: Mapping[str, torch.Tensor]
@@ -210,7 +218,14 @@ class MetalBudgetedModel(nn.Module):
         program: MetalBudgetedProgramState,
         *,
         qat: bool = True,
+        resources: ConditioningResources | None = None,
+        binding: torch.Tensor | None = None,
+        encoded=None,
     ) -> MetalBudgetedAssetSample:
+        if self.profile.is_spatial:
+            if resources is None or binding is None:
+                raise ValueError("spatial asset requires its conditioning resource binding")
+            return self.asset(tensors, program, qat=qat, resources=resources, binding=binding, encoded=encoded)
         return self.asset(tensors, program, qat=qat)
 
     def prepare_from_components(
@@ -218,8 +233,29 @@ class MetalBudgetedModel(nn.Module):
         program: MetalBudgetedProgramState,
         asset: MetalBudgetedAssetSample,
         wo: torch.Tensor,
+        *, qat: bool = True,
     ) -> MetalBudgetedPreparedState:
-        return self.prepared_model(program, asset, wo)
+        if self.profile.is_spatial and asset.global_condition is not None:
+            program = replace(program, compiler_condition=program.compiler_condition + 0.25 * asset.global_condition)
+        if self.profile.is_spatial and qat:
+            program = replace(program, **{name: fp16_ste(getattr(program, name)) for name in (
+                "compiler_condition", "primary_lobe", "secondary_lobe", "spatial_scale_bias", "proposal_prior", "access_state", "frame_state")})
+        prepared = self.prepared_model(program, asset, wo)
+        if self.profile.is_spatial and qat:
+            updates = {name: fp16_ste(getattr(prepared, name)) for name in (
+                "semantic_state", "view_state", "compact_frame_state", "analytic_lobes", "proposal_state", "access_state", "compact_proposal_frame_state")}
+            proposal = updates["proposal_state"]
+            proposal = torch.cat((proposal[..., :1], proposal[..., 1:3].clamp_min(0.015), proposal[..., 3:]), dim=-1)
+            updates["proposal_state"] = proposal
+            updates["frames"] = _local_frames(updates["compact_frame_state"][:, :4].reshape(-1, 2, 2), updates["analytic_lobes"][..., 6])
+            compact = updates["compact_proposal_frame_state"]
+            updates["proposal_frames"] = _local_frames(compact[:, :4].reshape(-1, 2, 2), torch.atan2(compact[:, 6:8], compact[:, 4:6]))
+            valid = prepared.valid
+            for value in updates.values():
+                valid = valid & torch.isfinite(value).flatten(start_dim=1).all(dim=1)
+            updates["valid"] = valid
+            prepared = replace(prepared, **updates)
+        return prepared
 
     def prepare(
         self,
@@ -227,11 +263,14 @@ class MetalBudgetedModel(nn.Module):
         *,
         wo: torch.Tensor | None = None,
         qat: bool = True,
+        resources: ConditioningResources | None = None,
+        binding: torch.Tensor | None = None,
+        encoded=None,
     ) -> MetalBudgetedPreparedState:
         program = self.compile_program_state(tensors)
-        asset = self.sample_asset(tensors, program, qat=qat)
+        asset = self.sample_asset(tensors, program, qat=qat, resources=resources, binding=binding, encoded=encoded)
         return self.prepare_from_components(
-            program, asset, tensors["wo"] if wo is None else wo
+            program, asset, tensors["wo"] if wo is None else wo, qat=qat
         )
 
     def prepare_paired(
@@ -240,6 +279,9 @@ class MetalBudgetedModel(nn.Module):
         program: MetalBudgetedProgramState,
         *,
         qat: bool = True,
+        resources: ConditioningResources | None = None,
+        binding: torch.Tensor | None = None,
+        encoded=None,
     ) -> MetalBudgetedPreparedState:
         required = {
             "paired_uv",
@@ -247,6 +289,8 @@ class MetalBudgetedModel(nn.Module):
             "paired_uv_dy",
             "metal_paired_texture_patches",
         }
+        if self.profile.is_spatial:
+            required.remove("metal_paired_texture_patches")
         missing = required - set(tensors)
         if missing:
             raise ValueError(
@@ -257,10 +301,11 @@ class MetalBudgetedModel(nn.Module):
             "uv": tensors["paired_uv"],
             "uv_dx": tensors["paired_uv_dx"],
             "uv_dy": tensors["paired_uv_dy"],
-            "metal_texture_patches": tensors["metal_paired_texture_patches"],
         }
-        asset = self.sample_asset(paired, program, qat=qat)
-        return self.prepare_from_components(program, asset, tensors["wo"])
+        if not self.profile.is_spatial:
+            paired["metal_texture_patches"] = tensors["metal_paired_texture_patches"]
+        asset = self.sample_asset(paired, program, qat=qat, resources=resources, binding=binding, encoded=encoded)
+        return self.prepare_from_components(program, asset, tensors["wo"], qat=qat)
 
     def evaluate_prepared(
         self,
@@ -279,7 +324,7 @@ class MetalBudgetedModel(nn.Module):
     ) -> MetalBudgetedProposalPdf:
         return metal_budgeted_proposal_pdf(
             prepared.proposal_state,
-            prepared.frames,
+            prepared.proposal_frames if prepared.proposal_frames is not None else prepared.frames,
             prepared.valid,
             wo,
             wi,
@@ -293,7 +338,7 @@ class MetalBudgetedModel(nn.Module):
     ) -> MetalBudgetedProposalSample:
         return metal_budgeted_sample_proposal(
             prepared.proposal_state,
-            prepared.frames,
+            prepared.proposal_frames if prepared.proposal_frames is not None else prepared.frames,
             prepared.valid,
             wo,
             sample_u,

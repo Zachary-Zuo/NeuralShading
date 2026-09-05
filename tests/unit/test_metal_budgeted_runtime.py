@@ -21,6 +21,7 @@ from ncls.learning.methods.metal.runtime import (
 from ncls.learning.methods.metal.model import MetalBudgetedModel
 from ncls.learning.methods.metal.profile import (
     METAL_BUDGETED_DUAL_LOCAL_PROFILE,
+    metal_budgeted_profile,
 )
 
 
@@ -109,15 +110,7 @@ def test_budgeted_runtime_pack_has_exact_offsets_flags_and_profile_mode() -> Non
         ("metal_budgeted_hybrid_dual_local_v6", 0, 8),
     ):
         model = quantize_metal_budgeted_runtime_model(
-            MetalBudgetedModel.from_context(
-                {
-                    "profile_id": profile_id,
-                    "asset_variant_count": 52,
-                    "maximum_texture_slots": 9,
-                    "maximum_typed_tokens": 32,
-                    "runtime_asset_reads": 2,
-                }
-            )
+            MetalBudgetedModel(metal_budgeted_profile(profile_id))
         )
         program = quantize_metal_budgeted_program_state(
             model.compile_program_state(_conditioning())

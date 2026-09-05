@@ -1,9 +1,9 @@
 training:
   method_key: metal-budgeted-neural-material
-  correspondence_id: metal-budgeted-detail-frame-skip-hybrid@3
+  correspondence_id: metal-native-uv-spatial-hybrid@1
   model_context:
-    profile_id: metal_budgeted_hybrid_v3
-    asset_variant_count: 52
+    profile_id: metal_spatial_hybrid_v1
     maximum_texture_slots: 9
     maximum_typed_tokens: 32
-    runtime_asset_reads: 2
+    maximum_uv_groups: 9
+    runtime_asset_reads: 54

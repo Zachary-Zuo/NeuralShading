@@ -1,0 +1,8 @@
+compose:
+  method: metal
+  data: mdl-metal-budgeted-bronze-scratched
+  recipe: metal-spatial-pilot
+hooks:
+  visual_eval:
+    enabled: true
+    reference_spp: 128

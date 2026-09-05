@@ -38,9 +38,14 @@ class WindowsVisualEvaluator:
         # compiler 可以创建临时模型；恢复全局 RNG，训练数据游标不参与出图。
         try:
             with torch.random.fork_rng():
+                # step 是已完成更新数；恰在 phase 边界时归属刚完成的 phase。
+                phase_index, phase_step = context.config.locate_step(max(0, context.step - 1))
                 checkpoint = TrainingCheckpoint(
                     context.method.key, context.config.to_dict(), context.method.export_training_state(model),
                     global_step=context.step, source_snapshot_ids=context.source_snapshot_ids,
+                    phase_index=phase_index,
+                    phase_name=context.config.phases[phase_index].name if context.step else "initialization",
+                    phase_step=phase_step + 1 if context.step else 0,
                 )
                 compiled = compile_evaluation_package(checkpoint, output / "package", material_index=material_index)
                 source = prepare_source_reference(compiled, output, context.config.source["materials"][material_index]["locator"])

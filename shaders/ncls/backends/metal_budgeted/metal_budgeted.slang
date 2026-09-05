@@ -6,9 +6,40 @@
 
 StructuredBuffer<uint> gNclsRuntimeWeights;
 StructuredBuffer<uint> gNclsCompiledMaterials;
+#ifdef NCLS_METAL_SPATIAL
+Texture2D<float4> gNclsMetalSpatialDetail0;
+Texture2D<float4> gNclsMetalSpatialContext0;
+SamplerState gNclsMetalSpatialSampler0;
+Texture2D<float4> gNclsMetalSpatialDetail1;
+Texture2D<float4> gNclsMetalSpatialContext1;
+SamplerState gNclsMetalSpatialSampler1;
+Texture2D<float4> gNclsMetalSpatialDetail2;
+Texture2D<float4> gNclsMetalSpatialContext2;
+SamplerState gNclsMetalSpatialSampler2;
+Texture2D<float4> gNclsMetalSpatialDetail3;
+Texture2D<float4> gNclsMetalSpatialContext3;
+SamplerState gNclsMetalSpatialSampler3;
+Texture2D<float4> gNclsMetalSpatialDetail4;
+Texture2D<float4> gNclsMetalSpatialContext4;
+SamplerState gNclsMetalSpatialSampler4;
+Texture2D<float4> gNclsMetalSpatialDetail5;
+Texture2D<float4> gNclsMetalSpatialContext5;
+SamplerState gNclsMetalSpatialSampler5;
+Texture2D<float4> gNclsMetalSpatialDetail6;
+Texture2D<float4> gNclsMetalSpatialContext6;
+SamplerState gNclsMetalSpatialSampler6;
+Texture2D<float4> gNclsMetalSpatialDetail7;
+Texture2D<float4> gNclsMetalSpatialContext7;
+SamplerState gNclsMetalSpatialSampler7;
+Texture2D<float4> gNclsMetalSpatialDetail8;
+Texture2D<float4> gNclsMetalSpatialContext8;
+SamplerState gNclsMetalSpatialSampler8;
+#else
 Texture2D<float4> gNclsMetalBudgetedDetail;
 Texture2D<float4> gNclsMetalBudgetedContext;
 SamplerState gNclsMetalBudgetedSampler;
+
+#endif
 
 #include "metal_budgeted_asset.slang"
 #include "metal_budgeted_evaluator.slang"
@@ -28,10 +59,11 @@ struct NclsMetalBudgetedContractState : INclsScatteringState
             context.surface.shadingFrame, context.woWorld);
         const float3 wi = nclsFrameToLocal(
             context.surface.shadingFrame, wiWorld);
-        result.f = nclsMetalBudgetedEvaluateF(prepared, wo, wi);
+        const NclsMetalBudgetedEvaluation evaluation = nclsMetalBudgetedEvaluateF(prepared, wo, wi);
+        result.f = evaluation.f;
         result.eventFlags = (uint)NclsScatteringEvent::Reflection
             | (uint)NclsScatteringEvent::Glossy;
-        result.valid = prepared.valid != 0u && all(isfinite(result.f)) ? 1u : 0u;
+        result.valid = evaluation.valid;
         return result;
     }
 
@@ -46,7 +78,9 @@ struct NclsMetalBudgetedContractState : INclsScatteringState
         float3 wi;
         if (!nclsMetalBudgetedSampleProposal(prepared, wo, u, wi, result.pdf)) return false;
         result.wiWorld = nclsFrameToWorld(context.surface.shadingFrame, wi);
-        result.weight = nclsMetalBudgetedEvaluateF(prepared, wo, wi) * max(wi.z, 0.0f)
+        const NclsMetalBudgetedEvaluation evaluation = nclsMetalBudgetedEvaluateF(prepared, wo, wi);
+        if (evaluation.valid == 0u) return false;
+        result.weight = evaluation.f * max(wi.z, 0.0f)
             / max(result.pdf.forward, 1e-12f);
         result.eta = 1.0f;
         result.eventFlags = (uint)NclsScatteringEvent::Reflection | (uint)NclsScatteringEvent::Glossy;
@@ -104,10 +138,18 @@ NclsMetalBudgetedPackedState nclsPackMethodState(
     for (uint index = 0u; index < 4u; ++index)
         values[index] = state.prepared.accessState[index];
     nclsMetalBudgetedPackHalfArray(packed, 34u, 4u, values);
+#ifdef NCLS_METAL_SPATIAL
+    [unroll] for (uint index = 0u; index < 8u; ++index)
+        values[index] = state.prepared.compactProposalFrame[index];
+    nclsMetalBudgetedPackHalfArray(packed, 36u, 8u, values);
+    const uint flagsOffset = 40u;
+#else
+    const uint flagsOffset = 36u;
+#endif
     [unroll]
     for (uint index = 0u; index < 4u; ++index)
-        packed.words[36u + index] = state.prepared.identityAndFlags[index];
-    packed.words[39] = (packed.words[39] & 0xffff0000u)
+        packed.words[flagsOffset + index] = state.prepared.identityAndFlags[index];
+    packed.words[flagsOffset + 3u] = (packed.words[flagsOffset + 3u] & 0xffff0000u)
         | (state.prepared.valid != 0u ? 1u : 0u);
     return packed;
 }
@@ -149,10 +191,21 @@ NclsMetalBudgetedContractState nclsUnpackMethodState(
     [unroll]
     for (uint index = 0u; index < 4u; ++index)
         state.prepared.accessState[index] = nclsMetalBudgetedUnpackHalf(packed, 68u + index);
+#ifdef NCLS_METAL_SPATIAL
+    [unroll] for (uint index = 0u; index < 8u; ++index)
+        state.prepared.compactProposalFrame[index] = nclsMetalBudgetedUnpackHalf(packed, 72u + index);
+    [unroll] for (uint frame = 0u; frame < 2u; ++frame)
+        state.prepared.proposalFrames[frame] = nclsMetalBudgetedLocalFrame(
+            float2(state.prepared.compactProposalFrame[2u*frame], state.prepared.compactProposalFrame[2u*frame+1u]),
+            atan2(state.prepared.compactProposalFrame[6u+frame], state.prepared.compactProposalFrame[4u+frame]));
+    const uint flagsOffset = 40u;
+#else
+    const uint flagsOffset = 36u;
+#endif
     [unroll]
     for (uint index = 0u; index < 4u; ++index)
-        state.prepared.identityAndFlags[index] = packed.words[36u + index];
-    state.prepared.valid = packed.words[39] & 0xffffu;
+        state.prepared.identityAndFlags[index] = packed.words[flagsOffset + index];
+    state.prepared.valid = packed.words[flagsOffset + 3u] & 0xffffu;
     const float2 primarySlope = float2(
         state.prepared.compactFrame[0], state.prepared.compactFrame[1]);
     const float2 secondarySlope = float2(

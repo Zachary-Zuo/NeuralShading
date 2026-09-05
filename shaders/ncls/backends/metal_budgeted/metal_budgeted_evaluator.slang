@@ -73,15 +73,23 @@ float3 nclsMetalBudgetedAnalyticLobe(
         * prepared.lobes[base + 7u] * active;
 }
 
-float3 nclsMetalBudgetedEvaluateF(
+struct NclsMetalBudgetedEvaluation
+{
+    float3 f;
+    uint valid;
+};
+
+NclsMetalBudgetedEvaluation nclsMetalBudgetedEvaluateF(
     NclsMetalBudgetedPrepared prepared, float3 wo, float3 wi)
 {
-    if (prepared.valid == 0u || wo.z <= 0.0f || wi.z <= 0.0f)
-        return float3(0.0f);
+    NclsMetalBudgetedEvaluation evaluation = {};
+    if (prepared.valid == 0u || wo.z <= 0.0f || wi.z <= 0.0f
+        || !all(isfinite(wo)) || !all(isfinite(wi)))
+        return evaluation;
     uint halfValid;
     const float3 halfVector = nclsMetalBudgetedSafeNormalize(
         wo + wi, float3(0.0f, 0.0f, 1.0f), halfValid);
-    if (halfValid == 0u) return float3(0.0f);
+    if (halfValid == 0u) return evaluation;
     const NclsMetalBudgetedFrame halfFrame =
         nclsMetalBudgetedOrthonormalFrame(halfVector);
     const float3 difference = nclsMetalBudgetedToFrame(halfFrame, wi);
@@ -129,15 +137,16 @@ float3 nclsMetalBudgetedEvaluateF(
         nclsMetalBudgetedSoftplus(output[1]),
         nclsMetalBudgetedSoftplus(output[2]));
     const uint mode = prepared.identityAndFlags[3] >> 16u;
-    if (mode == 1u) return positive;
     const float3 gate = 1.0f / (1.0f + exp(-float3(
         output[3], output[4], output[5])));
     const float3 analytic = nclsMetalBudgetedAnalyticLobe(
         prepared, 0u, wo, wi, halfVector)
         + nclsMetalBudgetedAnalyticLobe(
             prepared, 1u, wo, wi, halfVector);
-    const float3 result = positive + gate * analytic;
-    return all(isfinite(result)) ? result : float3(0.0f);
+    const float3 result = mode == 1u ? positive : positive + gate * analytic;
+    evaluation.valid = all(isfinite(result)) ? 1u : 0u;
+    evaluation.f = evaluation.valid != 0u ? result : float3(0.0f);
+    return evaluation;
 }
 
 #endif

@@ -158,6 +158,7 @@ class MethodDescriptor:
     cost_claims: Mapping[str, int | float | str | bool]
     parameter_groups: Mapping[str, tuple[str, ...]]
     components: tuple[ComponentContract, ...]
+    training_resource_requirements: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     schema_name: str = "ncls.method-descriptor"
     schema_version: int = 2
 
@@ -185,6 +186,12 @@ class MethodDescriptor:
             raise ValueError("reference-evaluator requirements must include target_f")
         if "method-sampler" in requirements and "sample_u" not in requirements["method-sampler"]:
             raise ValueError("method-sampler requirements must include sample_u")
+        resources = {str(kind): tuple(names) for kind, names in self.training_resource_requirements.items()}
+        if not set(resources).issubset(requirements) or any(
+            not names or len(set(names)) != len(names) or any(not name for name in names)
+            for names in resources.values()
+        ):
+            raise ValueError("method resource bindings must be unique and reference a declared route")
         if len({field.name for field in self.tensor_state_schema}) != len(self.tensor_state_schema):
             raise ValueError("method tensor state fields must be unique")
         if self.capabilities <= 0:
@@ -216,6 +223,7 @@ class MethodDescriptor:
             raise ValueError("every method parameter group must belong to a required component")
         object.__setattr__(self, "supported_sources", tuple(self.supported_sources))
         object.__setattr__(self, "training_batch_requirements", requirements)
+        object.__setattr__(self, "training_resource_requirements", resources)
         object.__setattr__(self, "tensor_state_schema", tuple(self.tensor_state_schema))
         object.__setattr__(self, "bounded_execution", dict(self.bounded_execution))
         object.__setattr__(self, "cost_claims", dict(self.cost_claims))
@@ -239,6 +247,7 @@ class MethodDescriptor:
                 kind: list(fields)
                 for kind, fields in self.training_batch_requirements.items()
             },
+            "training_resource_requirements": {kind: list(names) for kind, names in self.training_resource_requirements.items()},
             "tensor_state_schema": [item.to_dict() for item in self.tensor_state_schema],
             "runtime_abi": self.runtime_abi,
             "capabilities": self.capabilities,
@@ -263,10 +272,17 @@ class Method(ABC):
     key: str
     descriptor: MethodDescriptor
 
-    def requirements(self):
+    def requirements(self, config: Mapping[str, Any] | None = None):
         from ncls.data import DataRequirement
 
-        return tuple(DataRequirement(kind, tuple(fields)) for kind, fields in self.descriptor.training_batch_requirements.items())
+        selected = set(self.descriptor.training_batch_requirements)
+        if config is not None:
+            self.validate_training_config(config)
+            selected = {str(route["kind"]) for phase in config["phases"] for route in phase["routes"]}
+            if not selected.issubset(self.descriptor.training_batch_requirements):
+                raise ValueError("training config contains a route not supported by the method")
+        return tuple(DataRequirement(kind, tuple(fields)) for kind, fields in self.descriptor.training_batch_requirements.items()
+                     if kind in selected)
 
     @abstractmethod
     def create_source_adapter(self, snapshots, device):

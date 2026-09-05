@@ -35,9 +35,8 @@ from ncls.learning.method import (
     TrainingInitializationRequest,
 )
 from ncls.learning.method import Method
-from ncls.learning.methods.metal.asset_cook import MetalBudgetedAssetCompiler
+from ncls.learning.methods.metal.spatial_runtime import SPATIAL_COMPILED_WORD_COUNT
 from ncls.learning.methods.metal.runtime import (
-    METAL_BUDGETED_COMPILED_WORD_COUNT,
     evaluate_metal_budgeted_cooked_asset,
     metal_budgeted_runtime_parameter_names,
     pack_metal_budgeted_compiled_material,
@@ -58,6 +57,9 @@ from ncls.learning.methods.metal.profile import (
     METAL_BUDGETED_ROLE_DETAIL_PROFILE_ID,
     METAL_BUDGETED_LAYOUT_PATH,
     load_metal_budgeted_layout,
+    METAL_SPATIAL_PROFILE,
+    METAL_SPATIAL_PROFILE_ID,
+    METAL_SPATIAL_SUMMARY_PROFILE_ID,
 )
 from ncls.learning.objectives import sampler_forward_kl_score
 from ncls.learning.methods.metal.data import MetalBudgetedMdlSourceAdapter
@@ -76,7 +78,6 @@ def fake_quantize_fp16_ste(value: torch.Tensor) -> torch.Tensor:
 _PHASES = ("joint-response-fit", "deployment-qat-refine")
 _GROUPS = (
     "asset_encoder",
-    "asset_variant",
     "typed_compiler",
     "semantic_prepare",
     "directional_evaluator",
@@ -91,12 +92,7 @@ _PREPARE_TENSORS = (
     "paired_uv",
     "paired_uv_dx",
     "paired_uv_dy",
-    "mip_level",
-    "metal_mip_fraction",
-    "metal_texture_patches",
-    "metal_paired_texture_patches",
-    "metal_texture_slot_mask",
-    "metal_texture_role_class",
+    "filter_random",
     "metal_graph_index",
     "metal_schema_index",
     "metal_recipe_index",
@@ -123,8 +119,6 @@ def metal_budgeted_parameter_groups(
     for name, _ in model.named_parameters():
         if name.startswith("typed_compiler."):
             group = "typed_compiler"
-        elif name == "asset.variant_scale_bias.weight":
-            group = "asset_variant"
         elif name.startswith("asset."):
             group = "asset_encoder"
         elif name.startswith("prepared_model.proposal_adapter."):
@@ -179,6 +173,16 @@ def _implementation_sha256() -> str:
         Path(__file__),
         PROJECT_ROOT / "src/ncls/learning/methods/metal/model.py",
         PROJECT_ROOT / "src/ncls/learning/methods/metal/asset.py",
+        PROJECT_ROOT / "src/ncls/learning/methods/metal/asset_read.py",
+        PROJECT_ROOT / "src/ncls/learning/methods/metal/spatial_encoder.py",
+        PROJECT_ROOT / "src/ncls/learning/methods/metal/spatial_asset.py",
+        PROJECT_ROOT / "src/ncls/learning/methods/metal/spatial_bundle.py",
+        PROJECT_ROOT / "src/ncls/learning/methods/metal/spatial_cook.py",
+        PROJECT_ROOT / "src/ncls/learning/methods/metal/spatial_runtime.py",
+        PROJECT_ROOT / "src/ncls/learning/methods/metal/spatial_schedule.py",
+        PROJECT_ROOT / "src/ncls/learning/methods/metal/native_uv.py",
+        PROJECT_ROOT / "src/ncls/learning/methods/metal/native_assets.py",
+        PROJECT_ROOT / "src/ncls/learning/conditioning_resources.py",
         PROJECT_ROOT / "src/ncls/learning/methods/metal/compiler.py",
         PROJECT_ROOT / "src/ncls/learning/methods/metal/evaluator.py",
         PROJECT_ROOT / "src/ncls/learning/methods/metal/sampler.py",
@@ -191,6 +195,7 @@ def _implementation_sha256() -> str:
         PROJECT_ROOT / "shaders/ncls/backends/metal_budgeted/metal_budgeted.slang",
         PROJECT_ROOT / "shaders/ncls/backends/metal_budgeted/metal_budgeted_common.slang",
         PROJECT_ROOT / "shaders/ncls/backends/metal_budgeted/metal_budgeted_asset.slang",
+        PROJECT_ROOT / "shaders/ncls/backends/metal_budgeted/metal_spatial_asset.slang",
         PROJECT_ROOT / "shaders/ncls/backends/metal_budgeted/metal_budgeted_evaluator.slang",
         PROJECT_ROOT / "shaders/ncls/backends/metal_budgeted/metal_budgeted_sampler.slang",
         METAL_BUDGETED_LAYOUT_PATH,
@@ -230,7 +235,7 @@ def _parameter_accounting() -> Mapping[str, int]:
         "P_typed_compiler": sum(
             parameter.numel() for parameter in model.typed_compiler.parameters()
         ),
-        "P_asset_encoder_and_variant": sum(
+        "P_asset_encoder": sum(
             parameter.numel() for parameter in model.asset.parameters()
         ),
     }
@@ -265,13 +270,13 @@ _COMPONENTS = (
         ("compiler_responsibility_groups_trace",),
     ),
     _component(
-        "two-read-detail-context-asset",
-        ("asset_encoder", "asset_variant"),
+        "native-uv-group-spatial-asset",
+        ("asset_encoder",),
         ("reference-evaluator",),
         ("asset_detail_trace", "asset_context_trace"),
     ),
     _component(
-        "runtime-semantic-24x32x32x24-prepare",
+        "runtime-semantic-137x32x32x24-prepare",
         ("semantic_prepare",),
         ("reference-evaluator",),
         ("semantic_runtime_trace", "appearance/semantic_runtime"),
@@ -338,8 +343,8 @@ class MetalBudgetedMethod(Method):
     _layout = load_metal_budgeted_layout()
     descriptor = MethodDescriptor(
         "metal-budgeted-neural-material",
-        1,
-        "NVIDIA-class Metal budgeted neural material",
+        2,
+        "Metal 原始语义与多 UV 空间 neural material",
         _implementation_sha256(),
         (
             SourceAdaptationContract(
@@ -364,7 +369,7 @@ class MetalBudgetedMethod(Method):
             ),
         },
         _state_schema(),
-        "ncls.metal-budgeted-method@3",
+        "ncls.metal-spatial-method@1",
         int(
             BackendCapability.PREPARE
             | BackendCapability.EVALUATE
@@ -388,13 +393,13 @@ class MetalBudgetedMethod(Method):
             ),
         },
         {
-            "runtime_class": "nvidia-class-budgeted-neural-material",
-            "profile_id": METAL_BUDGETED_HYBRID_PROFILE.profile_id,
-            "direct_control_profile_id": METAL_BUDGETED_DIRECT_PROFILE_ID,
-            "C_prepare_macs": METAL_BUDGETED_HYBRID_PROFILE.prepare_dense_macs,
-            "C_eval_macs": METAL_BUDGETED_HYBRID_PROFILE.evaluate_dense_macs,
-            "B_prepared": METAL_BUDGETED_HYBRID_PROFILE.prepared_state_bytes,
-            "maximum_texture_reads": METAL_BUDGETED_HYBRID_PROFILE.maximum_texture_reads,
+            "runtime_class": "native-uv-spatial-neural-material",
+            "profile_id": METAL_SPATIAL_PROFILE_ID,
+            "planned_summary_control_profile_id": METAL_SPATIAL_SUMMARY_PROFILE_ID,
+            "C_prepare_macs": METAL_SPATIAL_PROFILE.runtime_prepare_dense_macs,
+            "C_eval_macs": METAL_SPATIAL_PROFILE.evaluate_dense_macs,
+            "B_prepared": METAL_SPATIAL_PROFILE.prepared_state_bytes,
+            "maximum_texture_reads": METAL_SPATIAL_PROFILE.maximum_texture_reads,
             "proposal_components": 3,
             **_PARAMETER_ACCOUNTING,
             "observed_quality_gate": False,
@@ -404,6 +409,7 @@ class MetalBudgetedMethod(Method):
             MetalBudgetedModel.from_context(METAL_BUDGETED_REQUIRED_CONTEXT)
         ),
         _COMPONENTS,
+        training_resource_requirements={"reference-evaluator": ("metal_spatial",), "method-sampler": ("metal_spatial",)},
     )
 
     def create_trainable(self, context: Mapping[str, Any]) -> nn.Module:
@@ -427,15 +433,15 @@ class MetalBudgetedMethod(Method):
             or set(value) != required
             or value.get("schema") != "train-only-reference-rgb-percentiles@1"
             or value.get("route") != "evaluator"
-            or int(value.get("sample_count", 0)) != 16384
-            or int(value.get("seed", -1)) != 2026090401
+            or int(value.get("sample_count", 0)) < 1
+            or int(value.get("seed", -1)) < 0
             or float(value.get("scale_percentile", -1.0)) != 0.5
             or float(value.get("peak_percentile", -1.0)) != 0.95
             or tuple(float(item) for item in value.get("scale_clamp", ()))
             != (2.0**-12, 2.0**8)
         ):
             raise ValueError(
-                "Metal budgeted phase requires the frozen train-only RGB calibration recipe"
+                "Metal phase requires a valid train-only RGB calibration recipe"
             )
         return dict(value)
 
@@ -481,7 +487,10 @@ class MetalBudgetedMethod(Method):
         if set(tensors) != {"target_f"}:
             raise ValueError("Metal budgeted calibration requires only target_f")
         target = tensors["target_f"].to(dtype=torch.float32).reshape(-1, 3)
-        if target.shape != (16384, 3):
+        requests = metadata.get("requests", ())
+        requested = next((int(item["sample_count"]) for item in requests
+                          if item["name"] == "appearance-calibration"), target.shape[0])
+        if target.shape != (requested, 3) or requested < 1:
             raise ValueError("Metal budgeted calibration query count drifted")
         scale_values: list[torch.Tensor] = []
         peak_values: list[torch.Tensor] = []
@@ -513,13 +522,15 @@ class MetalBudgetedMethod(Method):
         model.set_appearance_calibration(scale, peak, epsilon, identity)
         return {
             "appearance_calibration_identity": identity,
-            "appearance_calibration_sample_count": 16384,
+            "appearance_calibration_sample_count": requested,
         }
 
     @staticmethod
     def _proposal_weight(phase: Mapping[str, Any]) -> float:
         recipes = phase.get("recipes")
         schedule = recipes.get("proposal_weight") if isinstance(recipes, Mapping) else None
+        if isinstance(schedule, Mapping) and schedule == {"schema": "disabled@1"}:
+            return 0.0
         if not isinstance(schedule, Mapping) or schedule.get("schema") != "linear-nonzero-ramp@1":
             raise ValueError("Metal budgeted proposal schedule is invalid")
         start = float(schedule.get("start", 0.0))
@@ -546,10 +557,15 @@ class MetalBudgetedMethod(Method):
     ) -> tuple[torch.Tensor, Mapping[str, torch.Tensor | float]]:
         values = batch.tensors
         program = model.compile_program_state(values)
-        asset = model.sample_asset(values, program, qat=qat)
-        prepared = model.prepare_from_components(program, asset, values["wo"])
+        resource_args = {}
+        if model.profile.is_spatial:
+            resource_args = {"resources": batch.conditioning.resources,
+                             "binding": batch.conditioning.bindings["metal_spatial"],
+                             "encoded": model.asset.encode_resources(batch.conditioning.resources)}
+        asset = model.sample_asset(values, program, qat=qat, **resource_args)
+        prepared = model.prepare_from_components(program, asset, values["wo"], qat=qat)
         evaluated = model.evaluate_prepared(prepared, values["wo"], values["wi"])
-        paired_prepared = model.prepare_paired(values, program, qat=qat)
+        paired_prepared = model.prepare_paired(values, program, qat=qat, **resource_args)
         paired = model.evaluate_prepared(
             paired_prepared, values["wo"], values["wi"]
         )
@@ -684,7 +700,8 @@ class MetalBudgetedMethod(Method):
             raise ValueError("Metal budgeted proposal received wrong typed batches")
 
         sampler_values = sampler_batch.tensors
-        sampler_prepared = model.prepare(sampler_values, qat=qat)
+        sampler_prepared = model.prepare(sampler_values, qat=qat, resources=sampler_batch.conditioning.resources,
+                                         binding=sampler_batch.conditioning.bindings.get("metal_spatial"))
         sampled = model.sample_prepared(
             sampler_prepared,
             sampler_values["wo"],
@@ -698,7 +715,8 @@ class MetalBudgetedMethod(Method):
         )
 
         evaluator_values = evaluator_batch.tensors
-        evaluator_prepared = model.prepare(evaluator_values, qat=qat)
+        evaluator_prepared = model.prepare(evaluator_values, qat=qat, resources=evaluator_batch.conditioning.resources,
+                                           binding=evaluator_batch.conditioning.bindings.get("metal_spatial"))
         density = model.pdf_prepared(
             evaluator_prepared,
             evaluator_values["wo"],
@@ -765,19 +783,22 @@ class MetalBudgetedMethod(Method):
         if not isinstance(model, MetalBudgetedModel):
             raise TypeError("Metal budgeted method requires MetalBudgetedModel")
         phase_name = str(phase.get("name"))
-        if phase_name not in _PHASES or set(batches) != {"evaluator", "sampler"}:
-            raise ValueError("Metal budgeted phases require evaluator and sampler routes")
+        proposal_weight = self._proposal_weight(phase)
+        expected_routes = {"evaluator", "sampler"} if proposal_weight > 0 else {"evaluator"}
+        if phase_name not in _PHASES or set(batches) != expected_routes:
+            raise ValueError("Metal phase routes disagree with its evaluator/proposal objectives")
         evaluator = batches["evaluator"]
         if not isinstance(evaluator, EvaluatorBatch):
             raise ValueError("Metal budgeted evaluator route has the wrong batch type")
-        qat = phase_name == "deployment-qat-refine"
+        qat = phase_name == "deployment-qat-refine" or phase.get("recipes", {}).get("runtime_quantization") == "fp16-weights-state-rgba8-snorm-asset@1"
         appearance, metrics = self._appearance_objective(
             model, evaluator, phase, qat=qat
         )
-        proposal, proposal_metrics = self._proposal_objective(
-            model, batches, qat=qat
-        )
-        proposal_weight = self._proposal_weight(phase)
+        if proposal_weight > 0:
+            proposal, proposal_metrics = self._proposal_objective(model, batches, qat=qat)
+        else:
+            proposal = appearance.new_zeros(())
+            proposal_metrics = {"proposal/sample_pdf_identity": proposal}
         total = appearance + proposal_weight * proposal
         result: dict[str, torch.Tensor | float] = {
             **metrics,
@@ -854,17 +875,14 @@ class MetalBudgetedMethod(Method):
         cached = getattr(self, "_deployment_cache", None)
         if isinstance(cached, tuple) and cached[0] == cache_key:
             return cached[1]
-        state_ids = checkpoint.get("source_snapshot_ids")
         state = checkpoint.get("model_state")
         training_config = checkpoint.get("training_config")
         if (
-            not isinstance(state_ids, (list, tuple))
-            or snapshot.snapshot_id not in map(str, state_ids)
-            or not isinstance(state, Mapping)
+            not isinstance(state, Mapping)
             or not isinstance(training_config, Mapping)
         ):
             raise ValueError(
-                "Metal budgeted deployment requires a checkpoint containing this source"
+                "Metal deployment requires checkpoint model state and model context"
             )
         context = training_config.get("model_context")
         if not isinstance(context, Mapping):
@@ -878,16 +896,11 @@ class MetalBudgetedMethod(Method):
         adapter = MetalBudgetedMdlSourceAdapter((snapshot,), device)
         try:
             tensors = adapter.compiler_tensors_for_source(0, device=device)
-            asset_index = adapter.asset_index_for_source(0)
-            asset = MetalBudgetedAssetCompiler(
-                model,
-                adapter.native_assets(),
-            ).compile(asset_index)
+            from ncls.learning.methods.metal.spatial_cook import compile_spatial_asset
+            asset_index, slots, groups = adapter.spatial_contract_for_source(0)
+            asset = compile_spatial_asset(model, adapter.native_assets(), asset_index, slots, groups)
             with torch.no_grad():
                 program_state = model.compile_program_state(tensors)
-                program_state = quantize_metal_budgeted_program_state(
-                    program_state
-                )
         finally:
             adapter.close()
         result = {
@@ -923,6 +936,7 @@ class MetalBudgetedMethod(Method):
             | BackendCapability.SAMPLE
             | BackendCapability.PDF
             | BackendCapability.ANISOTROPIC_FRAME
+            | BackendCapability.REVERSE_PDF
         )
         return RuntimePayload(
             module,
@@ -946,55 +960,8 @@ class MetalBudgetedMethod(Method):
         self, snapshot: SourceSnapshot, checkpoint: Mapping[str, Any]
     ) -> MaterialPayload:
         asset = self._deployment(snapshot, checkpoint)["asset"]
-        detail_height, detail_width = asset.detail_levels[0].shape[:2]
-        context_height, context_width = asset.context_levels[0].shape[:2]
-        return MaterialPayload(
-            snapshot.snapshot_id,
-            {},
-            {},
-            {
-                "metal-budgeted-detail.dds": encode_rgba8_snorm_dds(
-                    asset.detail_levels
-                ),
-                "metal-budgeted-context.dds": encode_rgba8_snorm_dds(
-                    asset.context_levels
-                ),
-            },
-            {
-                "metal-budgeted-detail.dds": {
-                    "dtype": RGBA8_SNORM_DDS_DTYPE,
-                    "shape": [
-                        detail_width,
-                        detail_height,
-                        len(asset.detail_levels),
-                        4,
-                    ],
-                    "stride": 4,
-                    "alignment": 16,
-                    "usage": "gNclsMetalBudgetedDetail",
-                },
-                "metal-budgeted-context.dds": {
-                    "dtype": RGBA8_SNORM_DDS_DTYPE,
-                    "shape": [
-                        context_width,
-                        context_height,
-                        len(asset.context_levels),
-                        4,
-                    ],
-                    "stride": 4,
-                    "alignment": 16,
-                    "usage": "gNclsMetalBudgetedContext",
-                },
-            },
-            {
-                "metal-budgeted-latent": {
-                    "kind": "sampler",
-                    "usage": "gNclsMetalBudgetedSampler",
-                    "filter": "linear",
-                    "address_mode": asset.address_mode,
-                }
-            },
-        )
+        from ncls.learning.methods.metal.spatial_runtime import spatial_material_payload
+        return spatial_material_payload(snapshot.snapshot_id, asset)
 
     def compile_instance(
         self, snapshot: SourceSnapshot, checkpoint: Mapping[str, Any]
@@ -1009,8 +976,8 @@ class MetalBudgetedMethod(Method):
             {
                 "compiled-material": {
                     "kind": "structured-buffer",
-                    "dtype": "ncls-metal-budgeted-compiled-material@1",
-                    "shape": [METAL_BUDGETED_COMPILED_WORD_COUNT],
+                    "dtype": "ncls-metal-spatial-compiled-material@1",
+                    "shape": [SPATIAL_COMPILED_WORD_COUNT],
                     "stride": 4,
                     "alignment": 16,
                     "usage": "gNclsCompiledMaterials",
@@ -1062,8 +1029,8 @@ class MetalBudgetedMethod(Method):
             "runtime_cost": {
                 "prepare_dense_macs": deployment["model"].profile.runtime_prepare_dense_macs,
                 "evaluate_dense_macs": deployment["model"].profile.evaluate_dense_macs,
-                "prepared_state_bytes": 160,
-                "asset_reads": 2,
+                "prepared_state_bytes": model.profile.prepared_state_bytes,
+                "asset_reads": asset.texture_reads,
             },
             "sampling": {
                 "oracle": "metal-budgeted-fp16-snorm8-python@1",
@@ -1085,22 +1052,18 @@ class MetalBudgetedMethod(Method):
             },
             "storage": {
                 "B_shared": len(packed.payload),
-                "B_asset": sum(
-                    level.nbytes
-                    for levels in (asset.detail_levels, asset.context_levels)
-                    for level in levels
-                ),
-                "B_instance": 4 * METAL_BUDGETED_COMPILED_WORD_COUNT,
+                "B_asset": asset.latent_bytes,
+                "B_instance": 4 * SPATIAL_COMPILED_WORD_COUNT,
             },
         }
 
     def validate_training_config(self, config: Mapping[str, Any]) -> None:
         for phase in config["phases"]:
             self._calibration_recipe(phase)
-            self._proposal_weight(phase)
+            proposal_weight = self._proposal_weight(phase)
             routes = {route["name"]: route for route in phase["routes"]}
-            if set(routes) != {"evaluator", "sampler"}:
-                raise ValueError("Metal objective 需要 evaluator 和 sampler 两条 route")
+            if set(routes) != ({"evaluator", "sampler"} if proposal_weight > 0 else {"evaluator"}):
+                raise ValueError("Metal route 必须与 evaluator/proposal objective 一致")
             if not routes["evaluator"]["options"].get("paired_uv", False):
                 raise ValueError("当前 Metal 空间差分 objective 需要 paired_uv")
 

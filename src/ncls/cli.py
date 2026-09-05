@@ -119,7 +119,7 @@ def _run_training(
             data_key=resolved_plan.selection.data,
             source_family_id=str(config.source["family_id"]),
             routes=[route.to_dict() for route in config.all_routes],
-            requirements=plugin.requirements(),
+            requirements=plugin.requirements(config.to_dict()),
             execution=resolved_plan.execution.to_dict(),
             rank=execution_context.rank, world_size=execution_context.world_size,
         )
@@ -256,7 +256,7 @@ def _validate_checkpoint(checkpoint_path: Path, batches: int, device: int) -> in
     config = resolved_plan.training
     data_execution_plan = DataExecutionPlan.build(
         data_key=resolved_plan.selection.data, source_family_id=str(config.source["family_id"]),
-        routes=[route.to_dict() for route in config.all_routes], requirements=plugin.requirements(),
+        routes=[route.to_dict() for route in config.all_routes], requirements=plugin.requirements(config.to_dict()),
         execution=resolved_plan.execution.to_dict(), rank=0, world_size=1,
     )
     producer = OnlineTrainingProducer(

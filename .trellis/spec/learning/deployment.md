@@ -20,6 +20,10 @@ Method.compile_program / compile_asset / compile_instance / package_validation
 - package 记录当前 compiler 生成的 program/asset/instance 资源。shader module closure、资源大小/stride、sampler 和 ABI 对应真实 runtime；未知资源类型或坏绑定不能静默运行。
 - 产出默认进入 run/exports。Windows 图像所需临时 package 留在同 run/eval。旧 artifacts 中的权重和视觉证据不移动、不修改。
 - Python/Slang parity 检查真实部署算子与打包；不能仅以有文件或 ready slot 宣称数值正确。
+- Metal spatial 的新 tensor/runtime ABI 为 `ncls.metal-spatial-method@1`，prepared layout 源为 `metal_budgeted_layout_v2.json`：80 half + 4 uint32，共 176 B；compiled instance 为 192 words（768 B）。prepare 137→32→32→24，proposal 80→16→13，共 7,664 dense MAC；evaluate 为 11,392 dense MAC。这些是静态算量，不能替代 GPU 时间/寄存器实测。
+- 最多 9 个原生 UV 组，每组独立 Detail/Context SNORM8 plane 与 sampler；nonrepeat 每组最多三个 lookup，保守上限 54 reads/prepare。编译记录实际读取数与 latent bytes，evaluate/pdf 不重读纹理。空组有合法零纹理 binding，shader 跳过读取。上述成本只适用于当前 Metal backend，不是公共 source 或 state 合同。
+- spatial cook 使用训练 encoder 的同一 hierarchy，按层暂存有预算的 host FP32 feature、GPU tile 推理，只持久化最终 latent。未见 snapshot 只要原生 schema/resource 兼容即可 cook，不要求训练 asset-ID，不创建 optimizer，不做隐藏 refinement。
+- proposal 参数及其独立 frames 不依赖 wo；反向密度必须对照独立 `prepare(wi).pdf(wo)`，不能只验证冻结 prepared state 的 Python/Slang 互相一致。evaluator 用自身 view-conditioned frames；prepared FP16 后再次检查有限性，invalid 不得清成有效零。
 
 ## 4. 错误矩阵
 

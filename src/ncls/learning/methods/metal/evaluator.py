@@ -23,13 +23,11 @@ def _safe_normalize(
 
 
 def _orthonormal_frame(normal: torch.Tensor) -> torch.Tensor:
-    y_axis = torch.zeros_like(normal)
-    y_axis[..., 1] = 1.0
-    x_axis = torch.zeros_like(normal)
-    x_axis[..., 0] = 1.0
-    helper = torch.where((normal[..., 2:3].abs() < 0.999), y_axis, x_axis)
-    tangent, _ = _safe_normalize(torch.cross(helper, normal, dim=-1), x_axis)
-    bitangent = torch.cross(normal, tangent, dim=-1)
+    # 当前 slope/有效 half-vector 的正 Z 域内连续；原生 pole 对应局部 X/Y。
+    x, y, z = normal.unbind(dim=-1)
+    a = 1.0 / (1.0 + z)
+    tangent = torch.stack((1.0 - x * x * a, -x * y * a, -x), dim=-1)
+    bitangent = torch.stack((-x * y * a, 1.0 - y * y * a, -y), dim=-1)
     return torch.stack((tangent, bitangent, normal), dim=-2)
 
 
@@ -65,6 +63,8 @@ class MetalBudgetedPreparedState:
     identity_and_flags: torch.Tensor
     valid: torch.Tensor
     trace: Mapping[str, torch.Tensor]
+    proposal_frames: torch.Tensor | None = None
+    compact_proposal_frame_state: torch.Tensor | None = None
 
 
 class MetalBudgetedPrepare(nn.Module):
@@ -81,7 +81,10 @@ class MetalBudgetedPrepare(nn.Module):
             nn.SiLU(),
             nn.Linear(widths[2], widths[3]),
         )
-        self.proposal_adapter = nn.Linear(widths[-1], profile.proposal_component_count)
+        self.proposal_adapter = (
+            nn.Sequential(nn.Linear(80, 16), nn.SiLU(), nn.Linear(16, 13))
+            if profile.is_spatial else nn.Linear(widths[-1], profile.proposal_component_count)
+        )
 
     @staticmethod
     def _view_features(wo: torch.Tensor) -> torch.Tensor:
@@ -139,6 +142,12 @@ class MetalBudgetedPrepare(nn.Module):
             ),
             dim=1,
         )
+        if self.profile.is_spatial:
+            if asset.group_features is None or asset.group_latent is None:
+                raise ValueError("spatial prepare requires separately read native UV groups")
+            decoder_input = torch.cat((program.compiler_condition, normalized_wo, asset.group_features.flatten(start_dim=1)), dim=1)
+            # query8 只保存公共 footprint 的见证；各组完整条件已进入 decoder。
+            view_state = torch.cat((normalized_wo, asset.group_features[:, 0, 8:13]), dim=1)
         if decoder_input.shape[1] != self.profile.semantic_decoder_layers[0]:
             raise RuntimeError("Metal budgeted semantic decoder input width drifted")
         decoded_semantic = self.semantic_decoder(decoder_input)
@@ -166,11 +175,27 @@ class MetalBudgetedPrepare(nn.Module):
             ),
             dim=1,
         )
+        proposal_frames = frames
+        compact_proposal = None
+        proposal_lobes = lobes
+        if self.profile.is_spatial:
+            proposal_input = torch.cat((program.compiler_condition, asset.group_latent.flatten(start_dim=1)), dim=1)
+            proposal_delta = self.proposal_adapter(proposal_input)
+            proposal_slopes = 0.75 * torch.tanh(proposal_delta[:, :4]).reshape(-1, 2, 2)
+            proposal_angles = base_lobes[..., 6] + 0.5 * torch.pi * torch.tanh(proposal_delta[:, 4:6])
+            proposal_roughness = torch.clamp(base_lobes[..., 3:5] * torch.exp(0.75 * torch.tanh(proposal_delta[:, 6:10]).reshape(-1, 2, 2)), 0.015, 1.)
+            proposal_lobes = base_lobes
+            proposal_frames = _local_frames(proposal_slopes, proposal_angles)
+            compact_proposal = torch.cat((proposal_slopes.flatten(start_dim=1), torch.cos(proposal_angles), torch.sin(proposal_angles)), dim=1)
+            proposal_logits = proposal_delta[:, 10:13]
+        else:
+            proposal_roughness = lobes[..., 3:5]
+            proposal_logits = self.proposal_adapter(semantic)
         luminance = wo.new_tensor((0.2126, 0.7152, 0.0722))
         clue = (
-            torch.sum(lobes[..., :3] * luminance, dim=-1)
-            * lobes[..., 5]
-            * lobes[..., 7]
+            torch.sum(proposal_lobes[..., :3] * luminance, dim=-1)
+            * proposal_lobes[..., 5]
+            * proposal_lobes[..., 7]
         )
         raw_weight = torch.cat(
             (
@@ -179,7 +204,7 @@ class MetalBudgetedPrepare(nn.Module):
             ),
             dim=1,
         ).float() * torch.exp(
-            torch.clamp(self.proposal_adapter(semantic).float(), min=-4.0, max=4.0)
+            torch.clamp(proposal_logits.float(), min=-4.0, max=4.0)
         )
         normalized = raw_weight / torch.clamp(raw_weight.sum(dim=1, keepdim=True), min=1e-12)
         fallback_floor = 0.02
@@ -189,7 +214,7 @@ class MetalBudgetedPrepare(nn.Module):
         ).to(wo.dtype)
         alpha = torch.cat(
             (
-                lobes[..., 3:5],
+                proposal_roughness,
                 torch.ones((wo.shape[0], 1, 2), dtype=wo.dtype, device=wo.device),
             ),
             dim=1,
@@ -240,6 +265,8 @@ class MetalBudgetedPrepare(nn.Module):
                 "prepared_lobes": lobes.square().mean(),
                 "prepared_proposal": weights.square().mean(),
             },
+            proposal_frames=proposal_frames if self.profile.is_spatial else None,
+            compact_proposal_frame_state=compact_proposal,
         )
 
 

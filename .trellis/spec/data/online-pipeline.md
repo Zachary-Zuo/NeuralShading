@@ -58,6 +58,16 @@ residency: {budget_mib: 4096}
 
 ## 4. Validation & Error Matrix
 
+### 共享 conditioning 资源的所有权
+
+`AdaptedConditioning` 把 `[B,...]` query tensor 与共享资源分开返回。`TrainingConditioning.bindings` 为具名 int64 `[B]` 索引，指向 `ConditioningResources` 中由 CPU key 标识的不可变资源；不把纹理沿 B 复制。generic producer/engine 只检查 descriptor 声明的 binding，不识别方法名。
+
+`select_rows()` 与 `concatenate()` 同时筛选/重映射 binding，并持有独立 resource owner；同 key 的 metadata/layout 必须一致。`retain()` 共享 query tensor 和资源内容，只增加 owner。最后一个 owner 释放时，底层 native lease 恰好释放一次；stop、异常和空选择遵循同一规则。
+
+`ScheduledReferenceResult.release()` 会释放其 payload。producer 发布已脱离 reference 输出 lease 的 batch 前，必须 `batch.conditioning.retain()` 建立 consumer owner，再释放 scheduler 结果。不能将同一 conditioning 对象放入 ready batch 后直接释放 scheduled result。回归必须穿过 scheduler → producer → consumer，单测 adapter 或 dispatcher 不能覆盖移交失效。
+
+`Method.requirements(config)` 在方法验证 objective/route 之后，仅返回配方启用的 route kind；不传 config 时返回 descriptor 全集。evaluator-only 配方不要求创建停用的 sampler route，未知 kind 仍在 plan 构造前拒绝。
+
 | 条件 | 行为 |
 |---|---|
 | method requirement 与 route kind/fields 不闭合 | `DataExecutionPlan.build()` 拒绝 |

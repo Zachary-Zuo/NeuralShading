@@ -3,9 +3,15 @@
 
 #include "metal_budgeted_layout.generated.slang"
 
+#ifdef NCLS_METAL_SPATIAL
+static const uint NCLS_METAL_BUDGETED_MAX_WIDTH = 137u;
+static const uint NCLS_METAL_BUDGETED_COMPILED_WORD_COUNT = 192u;
+static const uint NCLS_METAL_BUDGETED_COMPILED_LAYOUT_VERSION = 2u;
+#else
 static const uint NCLS_METAL_BUDGETED_MAX_WIDTH = 64u;
 static const uint NCLS_METAL_BUDGETED_COMPILED_WORD_COUNT = 48u;
 static const uint NCLS_METAL_BUDGETED_COMPILED_LAYOUT_VERSION = 1u;
+#endif
 static const uint NCLS_METAL_BUDGETED_PROGRAM_FLOAT_WORDS = 32u;
 static const uint NCLS_METAL_BUDGETED_PROGRAM_FLAGS = 32u;
 static const uint NCLS_METAL_BUDGETED_METADATA = 40u;
@@ -40,7 +46,18 @@ float nclsMetalBudgetedSilu(float value)
 
 float nclsMetalBudgetedSoftplus(float value)
 {
-    return value > 20.0f ? value : log(1.0f + exp(value));
+    const float y = exp(-abs(value));
+    const float t = y / (2.0f + y);
+    const float t2 = t * t;
+    float power = t;
+    float sum = 0.0f;
+    [unroll]
+    for (uint k = 0u; k < 8u; ++k)
+    {
+        sum += power / float(2u * k + 1u);
+        power *= t2;
+    }
+    return max(value, 0.0f) + 2.0f * sum;
 }
 
 void nclsMetalBudgetedDense(
@@ -83,15 +100,12 @@ struct NclsMetalBudgetedFrame
 
 NclsMetalBudgetedFrame nclsMetalBudgetedOrthonormalFrame(float3 normal)
 {
-    const float3 helper = abs(normal.z) < 0.999f
-        ? float3(0.0f, 1.0f, 0.0f)
-        : float3(1.0f, 0.0f, 0.0f);
-    uint valid;
-    const float3 tangent = nclsMetalBudgetedSafeNormalize(
-        cross(helper, normal), float3(1.0f, 0.0f, 0.0f), valid);
+    const float a = 1.0f / (1.0f + normal.z);
     NclsMetalBudgetedFrame result;
-    result.tangent = tangent;
-    result.bitangent = cross(normal, tangent);
+    result.tangent = float3(1.0f - normal.x * normal.x * a,
+        -normal.x * normal.y * a, -normal.x);
+    result.bitangent = float3(-normal.x * normal.y * a,
+        1.0f - normal.y * normal.y * a, -normal.y);
     result.normal = normal;
     return result;
 }
@@ -135,13 +149,21 @@ struct NclsMetalBudgetedPrepared
     float lobes[16];
     float proposal[12];
     float accessState[4];
+#ifdef NCLS_METAL_SPATIAL
+    float compactProposalFrame[8];
+    NclsMetalBudgetedFrame proposalFrames[2];
+#endif
     uint identityAndFlags[4];
     uint valid;
 };
 
 struct NclsMetalBudgetedPackedState
 {
+#ifdef NCLS_METAL_SPATIAL
+    uint words[44];
+#else
     uint words[40];
+#endif
 };
 
 uint nclsMetalBudgetedPackHalf2(float first, float second)
