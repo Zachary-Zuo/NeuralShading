@@ -10,6 +10,8 @@
 
 后续fixed-batch spatial-only容量诊断显示，现有路径128步也只能把青铜/钢预测梯度从`0.00309/0.00112`提高到`0.00806/0.00219`，远小于target `0.50342/0.25905`；各参数组梯度finite/nonzero。center-texel v5再验证“取消输入平滑”假设：青铜和钢的spatial分别显著退化`+0.000136/+0.0000620`，peak也都退化。至此可排除单纯增益、role softmax和单点中心三个局部修补；下一轮应把二维signed局部结构和至少color/normal/packed的高分辨率带宽作为显式配置轴，而不是增加step或spatial loss权重。
 
+dual-local v6随后把两张RGBA plane都提升为请求texel加signed x/y局部差分的全分辨率输入，保持两读、160 B state和11,392 MAC，但预计asset bytes为v3的`1.882×`。fresh matched结果中，青铜appearance/peak改善`-0.003751/-0.008728`而spatial无显著变化；钢appearance改善`-0.000485`但peak/spatial退化`+0.003180/+0.000130`。v6固定batch复核仍只能把青铜/钢预测gradient提高到`0.007018/0.004989`，远低于target `0.503423/0.259045`。因此“增加同类局部统计和带宽”仍不足，v6停止且不替换v3；下一轮优先改变source语义到runtime latent的映射和asset cook监督。因两种高频材质共同支持该failure mechanism，追加一轮已有冻结692-source fragment上的v3 hybrid、单seed、512-step mixed cohort，仅检查趋势能否普适，不作为formal long。
+
 | 日期 | run ID | 候选+配置 | 数据版本 | 预算档 | seeds | 方向 L1 (med/p95) | 能量误差 (med/p95) | 结论 | artifacts |
 |---|---|---|---|---|---|---|---|---|---|
 | 2026-08-25 | `4ce8bd54ddd0b7c27d279cc4ece426c200488f3aab15b366a9d841c41719a27b` | M1 FiLM S | LayerStack P1 v1 `0513d0c8…` | 25k（实际 25k） | `20260824` × 1 | 0.0506 / 0.1196 | 0.0116 / 0.2169 | median 略高于 0.05 参考线；`C_eval` 1.2e5 MAC、state 512 B、烘焙资产 5.6 KB 超 framework §0.1 软线，非部署候选 | `artifacts/runs/p1-film-s-seed-20260824/` |

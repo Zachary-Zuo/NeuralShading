@@ -213,3 +213,11 @@ authored 参数 state 固定为 registry default：`texture_scale=[1,1]`、`text
 - `interpretation`：重点看两项spatial的方向与peak/aggregate trade-off。只有两项spatial都改善且没有一致的aggregate/peak退化，才把dual-local列为下一轮优先结构；否则登记为asset带宽/局部导数不足或无效的有限观察。无论结果如何，本轮不自动创建v7、不延长step，也不替换已交付v3 package。
 - `implementation correction`：首次v6在step128 validation后、周期checkpoint提交前失败；root cause是24维输入把`asset.slot_score/detail/context`首层参数shape改了，而公共`MethodDescriptor`仍冻结v3的checkpoint tensor schema。DDP reducer、validation与跨rank失败传播均正常，该run不是质量证据且不得resume。修复把v6输入改为20维`request texel + signed dx + signed dy + role embedding`，去掉patch mean，保持公共checkpoint shape；config resolve和unit新增全profile tensor-schema门禁。修复identity下四组必须fresh重跑。
 - `failure classification probe`：若matched结果没有同时改善两项spatial，只从两份v6 step256 checkpoint各加载一个固定validation batch，执行与§14相同的128步spatial-only内存优化，并与v3结果比较；不保存模型。若仍不能让predicted gradient接近target，则不把loss重加权或延长训练列为下一优先项。
+- `outcome`：修复后的四组fresh DDP5均完成。青铜v6相对v3的appearance/peak为`-0.003751/-0.008728`，spatial差`+0.0000339`且95% CI跨零；钢的appearance改善`-0.000485`，但peak/spatial退化`+0.003180/+0.000130`。固定batch spatial-only 128步后，青铜/钢预测gradient仅为`0.007018/0.004989`，远低于target `0.503423/0.259045`。因此v6没有跨材质空间收益，预计`1.882×`asset bytes也没有形成对应价值；不延长、不创建v7、不替换v3。下一优先项是改变source语义到latent的映射与cook监督，而不是增加step、loss权重或同类局部统计。
+
+## 17. 2026-09-05 mixed cohort 普适性检查
+
+- `trigger`：划痕青铜和开裂钢在v3/v4/v5/v6及fixed-batch容量诊断中共同表现为target one-texel变化远大于预测，满足§8“至少两个专项指向同一failure mechanism”的条件。
+- `scope`：直接复用已经冻结的`mdl-metal-budgeted-full` fragment及其692-source registry、四责任组、每export四个typed state和group-block schedule；使用v3 hybrid、单seed、per-rank batch2048、DDP5和最多512 step。新增run config只组合既有data/recipe，不修改source/query/model/loss/optimizer或硬预算。
+- `interpretation`：只比较同一run的step128/256/384/512轨迹与分组trace，判断平均response改善是否仍伴随spatial平台；不和Tungsten或四个单材质的绝对metric排序，不宣称formal泛化质量。
+- `stop`：512 step无论结果如何停止；不追加seed、候选或692-source long。首次调用误把CLI设备写成remapped `0–4`，topology guard在数据/collective前一致拒绝且未产生checkpoint；有效run使用物理设备声明`5–9` fresh启动。

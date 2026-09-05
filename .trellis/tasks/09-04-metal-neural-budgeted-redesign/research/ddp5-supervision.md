@@ -105,3 +105,10 @@
 - step2048 paired bootstrap的`direct-hybrid` appearance为`+0.68544 [0.67929,0.69144]`；log、linear、chroma、peak也都显著偏向hybrid。direct的spatial为`-0.001790 [-0.001967,-0.001617]`，但不改变两者均未恢复one-texel细节的判断。
 - 新Windows handoff位于`artifacts/viewer/metal-budgeted-ddp5-wrap-1d5f813-step2048/`；hybrid/direct真实ScatteringPackage的边界GPU parity最大绝对误差分别为`1.87e-5/2.23e-4`。旧`2dc0965` handoff已显式标记失效。
 - 后续batch profile在同一Tungsten/hybrid上比较per-rank `512/1024/2048`；steady median global work units/s分别约`21.1k/42.4k/87.7k`，peak显存约`0.73/0.94/1.37 GiB`。选择2048用于四项特征材质probe；它不改变已完成主pair的matched结论。
+
+## 专项期 DDP checkpoint schema 缺陷
+
+- dual-local v6首次fresh run正常完成step128 validation，但在周期checkpoint提交前失败：profile把asset encoder输入从20改到24维，实际首层tensor shape与公共`MethodDescriptor`冻结的checkpoint schema不一致。
+- 五rank的reducer、validation、Gloo错误传播和teardown均正常，没有collective desync或NCCL failure；该错误分类为profile注册实现缺陷，失败artifact不作质量证据。
+- 修复`ba024f0`保留20维输入，并把所选profile的完整checkpoint tensor-shape验证前移到config resolve；unit枚举所有注册profile。随后v3/v6在青铜与钢上的四个fresh run均完成step256、checkpoint和teardown。
+- mixed cohort第一次调用传入remapped设备`0–4`，被launcher topology guard在数据初始化前拒绝；正确调用仍以物理GPU`5–9`声明设备，worker内部再各自映射为`cuda:0`。这同样是调用错误，不是DDP实现故障。

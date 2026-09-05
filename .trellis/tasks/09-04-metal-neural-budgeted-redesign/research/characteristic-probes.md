@@ -86,6 +86,25 @@ fresh v3 checkpoint各加载一个固定online batch，只优化现有非sampler
 
 v5停止在diagnostic candidate，不延长、不替换v3。v4和v5共同说明：消除角色竞争或增加单点变化幅度都只能重新分配误差，不能恢复正确空间方向。当前encoder还把8×8 patch压成center/high-pass/context三个无方向均值；而青铜活跃变化以normal/packed为主，钢同时有color/normal/packed。后续优先项因此是两个高分辨率RGBA plane共同承载带signed x/y局部导数的8维特征，并显式报告相对当前“一张全分辨率Detail + 一张1/4线性分辨率Context”的asset bytes增量；它不是本轮已经验证的结论。
 
+## dual-local signed-derivative matched pilot
+
+实现`560e2ca`新增`metal_budgeted_hybrid_dual_local_v6`：两张RGBA plane均由请求texel、signed x/y中心差分与role embedding形成20维per-slot输入，第二张plane也使用全分辨率。它仍固定两次RGBA8读取、160 B PreparedState和11,392 evaluate MAC；如果部署，两张全分辨率mip相对v3的一张全分辨率加一张1/4线性分辨率预计需要约`1.882×`asset bytes。
+
+首次运行在step128 validation后、checkpoint写出前发现profile与公共checkpoint tensor schema不一致。DDP reducer、跨rank异常传播和清理均正确；失败属于profile注册实现缺陷，不是NCCL问题，旧artifact已标记无效且没有用于质量解释。修复`ba024f0`将输入保持为20维并在config resolve时前置验证所选profile的全部checkpoint tensor shape，随后四组均以新identity fresh运行到step256。
+
+共同step256的candidate-minus-control paired bootstrap如下；负值表示v6改善：
+
+| 材质 | appearance Δ | peak Δ | spatial Δ | 判断 |
+|---|---:|---:|---:|---|
+| 划痕青铜 | `-0.003751 [-0.004244,-0.003264]` | `-0.008728 [-0.009912,-0.007545]` | `+0.0000339 [-0.0000088,+0.0000763]` | 平均响应与peak改善，但spatial无可确认变化 |
+| 开裂涂漆钢 | `-0.000485 [-0.000679,-0.000291]` | `+0.003180 [+0.002738,+0.003640]` | `+0.000130 [+0.000116,+0.000145]` | 平均响应改善，但peak与spatial显著退化 |
+
+v6的额外局部导数与asset带宽只能改善部分平均响应，没有形成跨材质空间收益。固定batch的128步spatial-only容量复核进一步显示：青铜target gradient为`0.503423`，预测只从`0.005933`到`0.007018`，error从`0.503352`到`0.503186`；钢target为`0.259045`，预测从`0.001920`到`0.004989`，error从`0.259046`到`0.257854`。这排除了“v6只需更多step或更高spatial loss权重”的优先解释。v6停止、不创建v7、不替换v3；下一轮必须改变source语义到runtime latent的映射，而不是继续围绕同一个patch-summary encoder调幅度或导数。
+
+## mixed cohort 普适性检查
+
+青铜与钢的fresh对照、机制probe和fixed-batch容量复核均指向同一局部语义带宽瓶颈，因此满足预登记的普适性检查触发条件。仓库已有冻结的`mdl-metal-budgeted-full`数据fragment：692个registry source、每export四个typed state、按`metal-core/finish-microstructure/aging-contamination/coating-composite`四类责任分组调度。本轮直接复用它和v3 hybrid recipe，单seed、per-rank batch`2048`、global batch`10,240`，最多512 step；run identity为`metal-budgeted-hybrid-mixed-cohort-probe`，artifact固定在`artifacts/metal-budgeted-probes/mixed-cohort-v1/`。它只检查专项结论能否扩到更广source，不是formal 692-source质量结论，也不与单材质绝对metric直接排序。
+
 ## 预先解释规则
 
 - high-frequency与composite的spatial仍接近target自身梯度尺度、而其他appearance下降：支持“Detail高频通路是跨材质瓶颈”，下一轮优先显式role-separated Detail/Context，而不是增加主干宽度或仅加spatial loss权重。
@@ -93,4 +112,4 @@ v5停止在diagnostic candidate，不延长、不替换v3。v4和v5共同说明�
 - 四项行为差异明显：保留机制特定结论，下一轮做小型混合cohort，不宣称一个局部修复普适。
 - 四项出现一致的finite/梯度/身份失败：先分类实现或protocol缺陷，不解释模型质量。
 
-四项probe与增益诊断固定写入`artifacts/metal-budgeted-probes/characteristic-v1/`；role-separated matched pilot固定写入`artifacts/metal-budgeted-probes/role-detail-v1/`；center-texel matched pilot固定写入`artifacts/metal-budgeted-probes/center-detail-v1/`。stdout、metrics、checkpoint、review与dmon不进入根仓库。本文件只追加实际结果和跨材质解释，不反写选择规则。
+四项probe与增益诊断固定写入`artifacts/metal-budgeted-probes/characteristic-v1/`；role-separated、center-texel与dual-local matched pilot分别写入`role-detail-v1/`、`center-detail-v1/`与`dual-local-v2/`；mixed cohort写入`mixed-cohort-v1/`。stdout、metrics、checkpoint、review与dmon不进入根仓库。本文件只追加实际结果和跨材质解释，不反写选择规则。
