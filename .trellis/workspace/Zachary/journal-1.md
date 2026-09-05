@@ -369,3 +369,39 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 17: 项目架构重置与统一训练工作流
+
+**Date**: 2026-09-05
+**Task**: 项目架构重置与统一训练工作流
+**Branch**: `main`
+
+### Summary
+
+完成统一 Python 训练入口、config/run 输出聚合、当前 checkpoint 与方法接口重置，按用户要求提交并归档。
+
+### Main Changes
+
+- Windows/Linux 共用 train GPU_LIST --config YAML；Linux 自动 DDP，数值 validation 保留，图像接口为空实现。
+- 新成果集中到 outputs；Windows 图像写入 TensorBoard，默认 128 spp，YAML 可直接修改。删除旧 checkpoint 兼容、转发 adapter、跨机 visual 队列与退役 full Metal。
+- 旧 viewer 视觉证据原地保留；源码、配置、文档和 spec 同步。任务归档至 .trellis/tasks/archive/2026-09/09-05-architecture-reset-training-workflow。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ea2d743` | (see git log) |
+
+### Testing
+
+- [OK] 314 项 unit、19 项 GPU 回归与 Release viewer 构建通过；新训练、续训、128/33 spp、TensorBoard、初始化 MDL 导出及出图通过。
+- [OK] 提交前检查暂存文件范围和空白格式；external/Falcor 保持干净。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 在原生 Linux 目标机按 TESTING.md 验证单卡、NCCL 两卡、物理设备映射和续训；此项尚未实机验证。
